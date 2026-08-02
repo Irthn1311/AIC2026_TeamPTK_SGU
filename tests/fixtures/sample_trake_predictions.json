@@ -1,0 +1,10 @@
+[
+  {
+    "query_id": "trake-001",
+    "predictions": [
+      {"video_id": "video_001", "frame_ids": [15, 55, 105, 999]},
+      {"video_id": "video_002", "frame_ids": [15, 55, 105, 155]}
+    ]
+  }
+]
+

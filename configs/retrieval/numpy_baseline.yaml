@@ -1,0 +1,6 @@
+index:
+  name: numpy_flat_cosine
+  version: "0.1"
+retrieval:
+  top_k: 5
+

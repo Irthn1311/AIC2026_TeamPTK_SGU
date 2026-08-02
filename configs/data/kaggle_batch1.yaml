@@ -1,0 +1,5 @@
+# Path template only. Update it to match the attached Kaggle Dataset.
+data_root: /kaggle/input/aic2026-batch1
+output_root: /kaggle/working/artifacts
+dataset_version: kaggle-batch1-template
+

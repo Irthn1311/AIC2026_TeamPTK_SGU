@@ -1,0 +1,5 @@
+# Set these values through the environment; do not hard-code workstation paths.
+data_root: ${AIC_DATA_ROOT}
+output_root: ${AIC_OUTPUT_ROOT}
+dataset_version: local-sample-v0.1
+

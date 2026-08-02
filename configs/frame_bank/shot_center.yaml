@@ -1,0 +1,7 @@
+detector:
+  name: dummy
+  version: "0.1"
+selector:
+  policy: shot_center
+  extraction_version: "0.1"
+

@@ -1,0 +1,6 @@
+# Example only: ADAPTIVE_MULTIFRAME is not implemented in v0.1.
+short_shot_max_seconds: 5
+medium_shot_max_seconds: 15
+long_shot_interval_seconds: 5
+max_frame_gap_seconds: 5
+

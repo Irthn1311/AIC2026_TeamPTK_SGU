@@ -1,0 +1,22 @@
+experiment_id: exp001_template
+data:
+  config: configs/data/local_sample.yaml
+  dataset_version: synthetic-v0.1
+frame_bank:
+  config: configs/frame_bank/shot_center.yaml
+  detector_name: dummy
+  detector_version: "0.1"
+  extraction_version: "0.1"
+features:
+  config: configs/features/dummy_encoder.yaml
+  encoder_name: deterministic_dummy
+  encoder_version: "0.1"
+  dimension: 32
+retrieval:
+  config: configs/retrieval/numpy_baseline.yaml
+  index: numpy_flat_cosine
+  top_k: 4
+artifact:
+  name: demo_pipeline
+  output_root: artifacts
+query: "a person presenting an idea"

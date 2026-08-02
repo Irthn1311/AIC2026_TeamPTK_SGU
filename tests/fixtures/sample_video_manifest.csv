@@ -1,0 +1,4 @@
+video_id,relative_path,batch_id,fps,total_frames,duration_ms,width,height,has_audio,dataset_version
+video_001,videos/video_001.mp4,sample,25.0,250,10000,1920,1080,true,sample-v0.1
+video_002,videos/video_002.mp4,sample,30.0,360,12000,1280,720,false,sample-v0.1
+

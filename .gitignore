@@ -1,0 +1,33 @@
+# Local data and generated artifacts
+/data/
+artifacts/
+outputs/
+checkpoints/
+indexes/
+models/
+*.npy
+*.npz
+*.pt
+*.pth
+*.ckpt
+*.faiss
+*.index
+*.mp4
+*.avi
+*.mkv
+*.mov
+*.jpg
+*.jpeg
+*.png
+*.parquet
+
+# To commit a deliberately tiny image fixture, add a narrow !tests/fixtures/... exception.
+.env
+kaggle.json
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+dist/
+build/
+*.egg-info/

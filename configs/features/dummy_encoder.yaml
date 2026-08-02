@@ -1,0 +1,5 @@
+encoder:
+  name: deterministic_dummy
+  version: "0.1"
+  dimension: 32
+

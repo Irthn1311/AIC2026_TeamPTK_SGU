@@ -1,0 +1,10 @@
+[
+  {
+    "query_id": "kis-001",
+    "predictions": [
+      {"video_id": "video_001", "frame_id": 120},
+      {"video_id": "video_002", "frame_id": 90}
+    ]
+  }
+]
+

@@ -1,0 +1,4 @@
+policy: btc_keyframe
+status: baseline-interface-only
+source_policy: BTC_KEYFRAME
+
