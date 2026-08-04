@@ -156,6 +156,35 @@ def test_diagnostic_candidate_schema_and_deterministic_order() -> None:
     }
 
 
+def test_batched_gemm_drift_does_not_corrupt_actual_rank() -> None:
+    randomizer = np.random.default_rng(0)
+    vectors = randomizer.normal(size=(128, 512)).astype(np.float16)
+    query_rows = np.arange(100, dtype=np.int64)
+    norms = np.linalg.norm(vectors.astype(np.float32), axis=1).astype(np.float32)
+    diagnostics = exact_cosine_self_diagnostics(
+        vectors,
+        norms,
+        query_rows,
+        top_k=5,
+        diagnostic_top_k=100,
+        chunk_rows=128,
+    )
+    assert any(
+        item["search_self_score"] != item["direct_self_score"]
+        for item in diagnostics
+    )
+    for item in diagnostics:
+        own_candidate = next(
+            candidate
+            for candidate in item["diagnostic_top_candidates"]
+            if candidate["global_row"] == item["global_row"]
+        )
+        assert item["search_self_score_consistent"]
+        assert item["raw_higher_count"] == 0
+        assert item["tie_equivalent_count"] == 1
+        assert item["actual_deterministic_rank"] == own_candidate["rank"] == 1
+
+
 @pytest.mark.parametrize(
     ("classifications", "expected"),
     [

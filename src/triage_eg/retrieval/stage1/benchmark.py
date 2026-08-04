@@ -56,6 +56,8 @@ def classify_self_query(
         or diagnostic.get("stored_norm") is None
         or float(diagnostic["stored_norm"]) <= 0
         or abs(float(direct_score) - 1.0) > self_score_tolerance
+        or not diagnostic.get("search_self_score_finite")
+        or not diagnostic.get("search_self_score_consistent")
         or int(diagnostic.get("non_finite_corpus_score_count") or 0) > 0
     ):
         return "SELF_SCORE_INVALID"
@@ -163,6 +165,8 @@ def run_self_retrieval(
                         "global_row": diagnostic["global_row"],
                         "actual_deterministic_rank": diagnostic["actual_deterministic_rank"],
                         "direct_self_score": diagnostic["direct_self_score"],
+                        "search_self_score": diagnostic["search_self_score"],
+                        "rank_higher_count": diagnostic["rank_higher_count"],
                         "tie_equivalent_count": diagnostic["tie_equivalent_count"],
                         "top_candidate_rows": [
                             item["global_row"]
@@ -182,6 +186,8 @@ def run_self_retrieval(
                             "actual_deterministic_rank"
                         ],
                         "direct_self_score": diagnostic["direct_self_score"],
+                        "search_self_score": diagnostic["search_self_score"],
+                        "rank_higher_count": diagnostic["rank_higher_count"],
                         "strictly_better_beyond_tolerance_count": diagnostic[
                             "strictly_better_beyond_tolerance_count"
                         ],

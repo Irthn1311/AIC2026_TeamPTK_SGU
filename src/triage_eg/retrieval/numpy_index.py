@@ -197,9 +197,14 @@ def exact_cosine_self_diagnostics(
             "direct_self_score": None,
             "self_score_abs_error_from_one": None,
             "self_score_finite": False,
+            "search_self_score": None,
+            "search_self_score_abs_delta_from_direct": None,
+            "search_self_score_finite": False,
+            "search_self_score_consistent": False,
             "raw_higher_count": None,
             "strictly_better_beyond_tolerance_count": None,
             "tie_equivalent_count": None,
+            "rank_higher_count": None,
             "exact_equal_before_count": None,
             "actual_deterministic_rank": None,
             "included_top_k": False,
@@ -252,7 +257,10 @@ def exact_cosine_self_diagnostics(
     raw_higher = np.zeros(len(queries), dtype=np.int64)
     strict_higher = np.zeros(len(queries), dtype=np.int64)
     ties = np.zeros(len(queries), dtype=np.int64)
-    exact_before = np.zeros(len(queries), dtype=np.int64)
+    rank_far_higher = np.zeros(len(queries), dtype=np.int64)
+    search_self_scores = np.full(len(queries), np.nan, dtype=np.float32)
+    rank_score_counts: list[dict[float, int]] = [{} for _ in queries]
+    rank_score_before_counts: list[dict[float, int]] = [{} for _ in queries]
     non_finite = np.zeros(len(queries), dtype=np.int64)
     best_scores = [np.empty(0, dtype=np.float32) for _ in queries]
     best_rows = [np.empty(0, dtype=np.int64) for _ in queries]
@@ -271,17 +279,51 @@ def exact_cosine_self_diagnostics(
             finite_values = values[finite]
             finite_rows = chunk_global_rows[finite]
             self_score = direct[query_index]
-            raw_higher[query_index] += int(np.sum(finite_values > self_score))
+            query_row = int(rows[valid_result_indices[query_index]])
+            query_position = query_row - start
+            if 0 <= query_position < len(values):
+                search_self_scores[query_index] = values[query_position]
+            other_rows = finite_rows != query_row
+            other_values = finite_values[other_rows]
+            raw_higher[query_index] += int(np.sum(other_values > self_score))
             strict_higher[query_index] += int(
-                np.sum(finite_values > self_score + tie_tolerance)
+                np.sum(other_values > self_score + tie_tolerance)
             )
             ties[query_index] += int(
                 np.sum(np.abs(finite_values - self_score) <= tie_tolerance)
             )
-            query_row = rows[valid_result_indices[query_index]]
-            exact_before[query_index] += int(
-                np.sum((finite_values == self_score) & (finite_rows < query_row))
+            rank_window_tolerance = (
+                2 * tie_tolerance + 4 * float(np.finfo(np.float32).eps)
             )
+            other_rank_window = (
+                np.abs(other_values - self_score) <= rank_window_tolerance
+            )
+            rank_far_higher[query_index] += int(
+                np.sum((other_values > self_score) & ~other_rank_window)
+            )
+            rank_window = (
+                np.abs(finite_values - self_score) <= rank_window_tolerance
+            )
+            window_values = finite_values[rank_window]
+            window_rows = finite_rows[rank_window]
+            unique_scores, score_counts = np.unique(
+                window_values, return_counts=True
+            )
+            for score, count in zip(unique_scores, score_counts, strict=True):
+                key = float(score)
+                rank_score_counts[query_index][key] = (
+                    rank_score_counts[query_index].get(key, 0)
+                    + int(count)
+                )
+            before_scores, before_counts = np.unique(
+                window_values[window_rows < query_row], return_counts=True
+            )
+            for score, count in zip(before_scores, before_counts, strict=True):
+                key = float(score)
+                rank_score_before_counts[query_index][key] = (
+                    rank_score_before_counts[query_index].get(key, 0)
+                    + int(count)
+                )
             combined_scores = np.concatenate((best_scores[query_index], finite_values))
             combined_rows = np.concatenate((best_rows[query_index], finite_rows))
             best_scores[query_index], best_rows[query_index] = (
@@ -297,6 +339,38 @@ def exact_cosine_self_diagnostics(
         selected_rows = best_rows[query_index]
         requested_rows = selected_rows[: min(top_k, len(selected_rows))]
         diagnostic_positions = np.flatnonzero(selected_rows == query_row)
+        search_self_score = float(search_self_scores[query_index])
+        search_self_finite = bool(np.isfinite(search_self_score))
+        search_self_delta = (
+            abs(search_self_score - float(direct[query_index]))
+            if search_self_finite
+            else None
+        )
+        search_self_consistent = bool(
+            search_self_delta is not None and search_self_delta <= tie_tolerance
+        )
+        rank_higher_count: int | None = None
+        exact_equal_before_count: int | None = None
+        actual_deterministic_rank: int | None = None
+        if search_self_consistent:
+            near_higher = sum(
+                count
+                for score, count in rank_score_counts[query_index].items()
+                if score > search_self_score
+            )
+            rank_higher_count = int(rank_far_higher[query_index] + near_higher)
+            exact_equal_before_count = rank_score_before_counts[query_index].get(
+                search_self_score, 0
+            )
+            actual_deterministic_rank = (
+                1 + rank_higher_count + exact_equal_before_count
+            )
+            if diagnostic_positions.size and actual_deterministic_rank != int(
+                diagnostic_positions[0] + 1
+            ):
+                raise RuntimeError(
+                    "Full-corpus rank counts disagree with diagnostic candidate order"
+                )
         candidates = []
         for rank, (score, candidate_row) in enumerate(
             zip(selected_scores, selected_rows, strict=True), start=1
@@ -319,10 +393,13 @@ def exact_cosine_self_diagnostics(
                     strict_higher[query_index]
                 ),
                 "tie_equivalent_count": int(ties[query_index]),
-                "exact_equal_before_count": int(exact_before[query_index]),
-                "actual_deterministic_rank": int(
-                    1 + raw_higher[query_index] + exact_before[query_index]
-                ),
+                "search_self_score": search_self_score if search_self_finite else None,
+                "search_self_score_abs_delta_from_direct": search_self_delta,
+                "search_self_score_finite": search_self_finite,
+                "search_self_score_consistent": search_self_consistent,
+                "rank_higher_count": rank_higher_count,
+                "exact_equal_before_count": exact_equal_before_count,
+                "actual_deterministic_rank": actual_deterministic_rank,
                 "included_top_k": bool(np.any(requested_rows == query_row)),
                 "queried_row_top1": bool(len(selected_rows) and selected_rows[0] == query_row),
                 "queried_row_present_in_diagnostic_top_k": bool(

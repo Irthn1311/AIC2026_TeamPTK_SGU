@@ -71,4 +71,7 @@ Its full-corpus, chunked diagnostic distinguishes deterministic tie saturation f
 strict score anomalies and catalog/index misalignment. A valid row ranked outside
 top-k only because its numerical-equivalence class is larger than top-k produces
 `PASS_WITH_WARNINGS` and `READY_WITH_TIE_WARNINGS`, not a semantic retrieval failure.
+The report preserves direct-dot self cosine for numerical integrity and separately
+captures the exact-scan self score. Deterministic rank uses the latter so batched
+matrix-multiplication rounding cannot make a query count itself as a higher row.
 Latency benchmarks intentionally do not report Recall@K without ground truth.
