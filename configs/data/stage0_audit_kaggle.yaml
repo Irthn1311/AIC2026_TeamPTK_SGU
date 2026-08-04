@@ -1,0 +1,19 @@
+audit_version: "0.1.0"
+dataset_version: "aic25-b1"
+dataset_root: "/kaggle/input/datasets/nadkli/dataset-aic"
+output_root: "/kaggle/working/triage_eg_stage0_audit"
+mode: "sample"
+sample_size: 10
+seed: 2026
+clip_validation: "full"
+object_validation: "full"
+max_object_json_bytes: 1048576
+ffprobe_timeout_seconds: 30
+resume: false
+overwrite: false
+strict_root: true
+expected:
+  clip_dimension: 512
+  keyframe_suffix: ".jpg"
+  ordinal_width: 3
+  object_suffix: ".json"

@@ -1,0 +1,19 @@
+audit_version: "0.1.0"
+dataset_version: "aic25-b1"
+dataset_root: "${AIC_DATA_ROOT}"
+output_root: "${AIC_AUDIT_OUTPUT_ROOT}"
+mode: "sample"
+sample_size: 2
+seed: 2026
+clip_validation: "full"
+object_validation: "full"
+max_object_json_bytes: 1048576
+ffprobe_timeout_seconds: 5
+resume: false
+overwrite: false
+strict_root: false
+expected:
+  clip_dimension: 512
+  keyframe_suffix: ".jpg"
+  ordinal_width: 3
+  object_suffix: ".json"
