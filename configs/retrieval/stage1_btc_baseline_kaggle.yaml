@@ -1,0 +1,34 @@
+stage1_version: "0.1.0"
+dataset_version: "aic25-b1"
+dataset_root: "/kaggle/input/datasets/nadkli/dataset-aic"
+stage0_root: "/kaggle/working/triage_eg_stage0_audit"
+output_root: "/kaggle/working/triage_eg_stage1_baseline"
+index:
+  backend: "numpy_exact"
+  metric: "cosine"
+  vector_dtype: "float16"
+  runtime_dtype: "float32"
+  dimension: 512
+  search_chunk_rows: 16384
+catalog:
+  expected_rows: 177321
+  expected_videos: 873
+  ordering: "video_id_then_n"
+search:
+  top_k: 100
+  video_grouping: "max"
+  deduplicate_output_pairs: true
+encoder:
+  compatibility_status: "BLOCKED"
+  implementation: null
+  model_name: null
+  pretrained: null
+  checkpoint_path: null
+  tokenizer: null
+  output_dimension: 512
+  normalize_text_embedding: true
+  allow_unverified: false
+benchmark:
+  self_queries: 100
+  random_queries: 50
+  seed: 2026

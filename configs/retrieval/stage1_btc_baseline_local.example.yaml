@@ -1,0 +1,34 @@
+stage1_version: "0.1.0"
+dataset_version: "aic25-b1"
+dataset_root: "${AIC_DATA_ROOT}"
+stage0_root: "${AIC_STAGE0_ROOT}"
+output_root: "${AIC_STAGE1_OUTPUT_ROOT}"
+index:
+  backend: "numpy_exact"
+  metric: "cosine"
+  vector_dtype: "float16"
+  runtime_dtype: "float32"
+  dimension: 512
+  search_chunk_rows: 4096
+catalog:
+  expected_rows: 177321
+  expected_videos: 873
+  ordering: "video_id_then_n"
+search:
+  top_k: 100
+  video_grouping: "max"
+  deduplicate_output_pairs: true
+encoder:
+  compatibility_status: "BLOCKED"
+  implementation: null
+  model_name: null
+  pretrained: null
+  checkpoint_path: null
+  tokenizer: null
+  output_dimension: 512
+  normalize_text_embedding: true
+  allow_unverified: false
+benchmark:
+  self_queries: 10
+  random_queries: 5
+  seed: 2026
