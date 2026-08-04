@@ -20,13 +20,20 @@ SPEC.loader.exec_module(CALIBRATION)
 
 class FrameMappingCalibrationTests(unittest.TestCase):
     @staticmethod
-    def row(order: int, frame: int, physical_row: int = 0):
+    def row(
+        order: int,
+        frame: int,
+        physical_row: int = 0,
+        *,
+        pts_time: str | float | None = None,
+        fps: str | float = 1,
+    ):
         return CALIBRATION.CalibrationMappingRow(
             keyframe_order=order,
             actual_frame_id=frame,
             physical_row=physical_row,
-            pts_time=float(frame),
-            fps=1.0,
+            pts_time=float(frame) if pts_time is None else pts_time,
+            fps=fps,
         )
 
     @staticmethod
@@ -53,7 +60,10 @@ class FrameMappingCalibrationTests(unittest.TestCase):
             frames.__getitem__,
             total_frames=len(frames),
         )
-        self.assertEqual(report["status"], "PASSED")
+        self.assertEqual(report["status"], "VISUAL_ALIGNMENT_EXPLAINED")
+        self.assertEqual(
+            report["mapping_coordinate_validation"]["status"], "MAPPING_POLICY_PASSED"
+        )
         self.assertEqual(report["zero_best_ratio"], 1.0)
         self.assertFalse(report["frame_policy"]["automatic_offset_correction_applied"])
 
@@ -67,9 +77,90 @@ class FrameMappingCalibrationTests(unittest.TestCase):
             frames.__getitem__,
             total_frames=len(frames),
         )
-        self.assertEqual(report["status"], "FAILED")
-        self.assertEqual(report["superior_nonzero_offsets"][0]["offset"], 1)
+        self.assertEqual(report["status"], "MAPPING_POLICY_FAILED")
+        self.assertEqual(report["systematic_unexplained_offsets"][0]["offset"], 1)
         self.assertFalse(report["frame_policy"]["automatic_offset_correction_applied"])
+
+    def test_positive_offset_explained_by_round_half_up_is_not_failure(self) -> None:
+        frames = self.video_frames(7)
+        rows = tuple(
+            self.row(
+                index,
+                index,
+                index - 1,
+                pts_time=f"{index}.99",
+            )
+            for index in (1, 2, 4)
+        )
+        references = {row.keyframe_order: frames[row.actual_frame_id + 1] for row in rows}
+        report = CALIBRATION.evaluate_frame_offsets(
+            rows,
+            references,
+            frames.__getitem__,
+            total_frames=len(frames),
+        )
+        self.assertEqual(report["status"], "VISUAL_ALIGNMENT_EXPLAINED")
+        self.assertEqual(
+            report["visual_artifact_agreement"]["visual_best_offset_distribution"]["1"],
+            3,
+        )
+        self.assertTrue(
+            all(
+                sample["visual_best_matches_round_half_up_prediction"]
+                for sample in report["samples"]
+            )
+        )
+
+    def test_non_systematic_unexplained_offset_is_inconclusive(self) -> None:
+        frames = self.video_frames(7)
+        rows = tuple(self.row(index, index, index - 1) for index in (1, 2, 4))
+        references = {
+            rows[0].keyframe_order: frames[rows[0].actual_frame_id],
+            rows[1].keyframe_order: frames[rows[1].actual_frame_id],
+            rows[2].keyframe_order: frames[rows[2].actual_frame_id + 1],
+        }
+        report = CALIBRATION.evaluate_frame_offsets(
+            rows,
+            references,
+            frames.__getitem__,
+            total_frames=len(frames),
+        )
+        self.assertEqual(report["status"], "VISUAL_ALIGNMENT_INCONCLUSIVE")
+
+    def test_random_and_sequential_decoder_disagreement_fails(self) -> None:
+        frames = self.video_frames(6)
+        rows = (self.row(1, 2),)
+        references = {1: frames[2]}
+
+        def disagreeing_decoder(frame_id: int) -> np.ndarray:
+            return np.full_like(frames[frame_id], 255)
+
+        report = CALIBRATION.evaluate_frame_offsets(
+            rows,
+            references,
+            frames.__getitem__,
+            sequential_decode_frame=disagreeing_decoder,
+            total_frames=len(frames),
+        )
+        self.assertEqual(report["status"], "MAPPING_POLICY_FAILED")
+        self.assertEqual(report["decoder_agreement"]["status"], "DISAGREEMENT")
+
+    def test_out_of_bounds_frame_idx_fails_mapping_policy(self) -> None:
+        report = CALIBRATION.validate_mapping_coordinates(
+            [self.row(1, 6)], total_frames=6
+        )
+        self.assertEqual(report["status"], "MAPPING_POLICY_FAILED")
+        self.assertEqual(report["out_of_bounds_rows"][0]["actual_frame_id"], 6)
+
+    def test_decimal_floor_difference_does_not_fail_mapping_policy(self) -> None:
+        row = self.row(63, 7811, pts_time="260.4", fps="30")
+        numeric = CALIBRATION.timestamp_rounding_diagnostic(row)
+        mapping = CALIBRATION.validate_mapping_coordinates([row], total_frames=8000)
+        self.assertEqual(numeric["frame_idx_minus_decimal_floor"], -1)
+        self.assertEqual(numeric["frame_idx_minus_binary_float_truncation"], 0)
+        self.assertEqual(numeric["predicted_visual_offset"], 1)
+        self.assertEqual(mapping["status"], "MAPPING_POLICY_PASSED")
+        self.assertFalse(numeric["numeric_rule_modifies_mapping_validity"])
 
     def test_invalid_boundary_offsets_are_reported_not_decoded(self) -> None:
         frames = self.video_frames(3)

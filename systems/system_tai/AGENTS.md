@@ -41,7 +41,13 @@ Use these status values: `IMPLEMENTED`, `BASELINE`, `TEMPLATE`, `EXPERIMENTAL`,
 - Raw BTC video is the final frame-coordinate source of truth.
 - For BTC keyframes, preserve `frame_idx` from the BTC map-keyframes CSV exactly as
   `actual_frame_id`; never add or subtract one.
-- The current working interpretation is zero-based, pending raw-video calibration.
+- The zero-based coordinate and raw-video bounds are verified for `L21_V001`; behavior
+  across the dataset remains pending multi-video calibration.
+- `keyframe_visual_frame_id = decimal_round_half_up(pts_time * fps)` is diagnostic only
+  and must never replace or offset `actual_frame_id`.
+- Decimal floor, binary-float truncation, and Decimal nearest are separate numeric
+  diagnostics. Matching any proposed generation rule is not required for an in-bounds
+  mapping to be valid.
 - Internal `actual_frame_id` must equal the original frame index in the original BTC video.
 - At an accepted shared boundary, `frame_id` must carry that same original-frame value.
 - Keyframe order `n`, CLIP row, `local_frame_idx`, and filename number are never shared
@@ -59,8 +65,8 @@ later task explicitly authorizes that operation.
 
 ## Kaggle data rules
 
-- Discover the private Dataset_AIC2026 attachment under `/kaggle/input` at runtime; do
-  not hard-code its Kaggle slug.
+- Discover the private Dataset_AIC2026 attachment recursively within the bounded
+  `/kaggle/input` runtime layout; do not hard-code its Kaggle slug or nesting depth.
 - Never copy videos, keyframes, feature arrays, or dataset folders into the repository or
   `/kaggle/working`.
 - Calibration output is restricted to

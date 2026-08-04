@@ -25,10 +25,14 @@ Serialization must remain behind an adapter so an accepted team schema can repla
 video. At a shared boundary, `frame_id` is an alias for that value.
 
 For BTC keyframes, `actual_frame_id` preserves `frame_idx` from the map-keyframes CSV
-exactly; no one-based correction is applied. Zero-based indexing is the working
-interpretation until decoded raw-video calibration confirms it. Keyframe order, CLIP
-row, local frame index, and filename number are separate identifiers and must be
-connected to the raw-video coordinate by validated mapping data.
+exactly; no one-based correction is applied. Zero-based bounds and decoded behavior are
+verified for `L21_V001`, but dataset-wide confirmation still requires more videos.
+`keyframe_visual_frame_id = decimal_round_half_up(pts_time * fps)` is a separate
+diagnostic and never changes the shared coordinate. Decimal floor, binary-float
+truncation, and Decimal nearest are candidate numeric models, not mapping-validity
+requirements. Keyframe order, CLIP row, local frame index, and filename number are
+separate identifiers and must be connected to the raw-video coordinate by validated
+mapping data.
 
 ## First implementation scope
 
@@ -49,15 +53,19 @@ Gate B checks retrieval sanity on a small positive/distractor corpus with at lea
 manually verified queries when data is available. It reports Video Recall@K and observed
 rankings, not official performance.
 
-## Phase 1.5A calibration scope
+## Phase 1.5B calibration scope
 
-The private Dataset_AIC2026 remains attached under a runtime-discovered child of
-`/kaggle/input`. Phase 1.5A discovers per-video artifacts, compares preserved
-`frame_idx` values with decoded `f-1/f/f+1`, and optionally compares three ViT-B/32
-implementation interfaces against BTC image-feature rows. BTC currently confirms only
-the clip-ViT-B-32 family label and feature-row order matching keyframe order. Exact
-weights, preprocessing, normalization, similarity metric, and text compatibility remain
-unverified until real multi-video Kaggle reports satisfy the identification gate.
+The private Dataset_AIC2026 remains attached somewhere within the nested runtime layout
+under `/kaggle/input`. Phase 1.5B discovers per-video artifacts, audits Decimal timestamp
+rounding, compares binary-float truncation, validates preserved `frame_idx` bounds, and
+separately compares JPEGs with decoded `f-1/f/f+1`. The full `L21_V001` mapping has 303
+Decimal-floor matches and four valid `-1` differences; the Decimal-nearest offset is
+`0` for 233 rows and `+1` for 74. All 15 visually decoded samples match that nearest
+prediction. Binary truncation and nearest timestamp extraction remain inferred rules.
+Optional ViT-B/32 implementation comparison remains gated on three passing videos. BTC
+currently confirms only the clip-ViT-B-32 family label and feature-row order matching
+keyframe order. Exact weights, preprocessing, normalization, similarity metric, and text
+compatibility remain unverified.
 
 ## Deferred scope
 
@@ -78,8 +86,8 @@ in the shared repository on a personal branch. TRIAGE-EG remains untouched.
 ## Blocking uncertainties
 
 - Exact BTC CLIP model, weights, tokenizer, preprocessing, and text/visual compatibility.
-- Decoded raw-frame agreement and dataset-wide confirmation of the zero-based working
-  interpretation.
+- Reproduction of decoded-frame, rounding, and mapping behavior on at least three real
+  videos; current real evidence covers only `L21_V001`.
 - Accepted shared JSONL schema and required version fields.
 - Official BTC submission format.
 - Authoritative mapping between CSV rows, keyframe order, feature rows, and raw frames.

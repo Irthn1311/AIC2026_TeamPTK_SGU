@@ -52,6 +52,16 @@ class KaggleInputDiscoveryTests(unittest.TestCase):
         with self.assertRaisesRegex(DISCOVERY.DiscoveryError, "no Dataset_AIC2026"):
             DISCOVERY.discover(self.input_root, "L21_V001")
 
+    def test_discovers_nested_kaggle_runtime_layout(self) -> None:
+        nested_input = self.input_root / "datasets" / "runtime-owner"
+        nested_input.mkdir(parents=True)
+        original_root = self.input_root
+        self.input_root = nested_input
+        dataset_root = self.create_dataset("dataset-aic")
+        self.input_root = original_root
+        report = DISCOVERY.discover(original_root, "L21_V001")
+        self.assertEqual(Path(report["dataset_root"]), dataset_root.resolve())
+
     def test_multiple_matching_dataset_roots_are_ambiguous(self) -> None:
         self.create_dataset("first-slug")
         self.create_dataset("second-slug")

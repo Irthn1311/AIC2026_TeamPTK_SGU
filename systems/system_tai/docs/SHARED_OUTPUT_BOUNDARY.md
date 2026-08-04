@@ -17,9 +17,11 @@ At a shared boundary:
 
 `frame_id = actual_frame_id = original_frame_idx`
 
-Preserve `frame_idx` exactly without adding or subtracting one. The current working
-interpretation is zero-based and still requires decoded raw-video calibration. The
-numeric coordinate must not change at export. Keyframe order `n`, CLIP row,
+Preserve `frame_idx` exactly without adding or subtracting one. Zero-based raw-video
+bounds and the visual rounding explanation are verified for `L21_V001`; dataset-wide
+confirmation remains pending. Decimal floor, binary-float truncation, and Decimal
+nearest are diagnostics only. The diagnostic `keyframe_visual_frame_id` must not change
+the numeric coordinate at export. Keyframe order `n`, CLIP row,
 `local_frame_idx`, filename number, and resampled coordinates are forbidden substitutes.
 
 For self-extracted frames, `frame_id` is the position in the original BTC video

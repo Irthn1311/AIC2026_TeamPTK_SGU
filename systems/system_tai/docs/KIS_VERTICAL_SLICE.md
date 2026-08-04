@@ -74,7 +74,7 @@ mapping CSV + BTC CLIP NPY
 
 No guessed encoder or dummy embedding may be substituted.
 
-## Phase 1.5A — Kaggle-native calibration
+## Phase 1.5B — Kaggle-native calibration
 
 ### Module 2A — Kaggle input discovery
 
@@ -82,7 +82,8 @@ No guessed encoder or dummy embedding may be substituted.
 - **Output:** compact JSON manifest resolving the dataset root, original video,
   map-keyframes CSV, CLIP NPY, keyframes, and optional media/object artifacts.
 - **Intended source:** `scripts/discover_kaggle_inputs.py`
-- **Status:** `IMPLEMENTED` and locally tested; real Kaggle discovery remains pending.
+- **Status:** `IMPLEMENTED` and locally tested; real `L21_V001` discovery is verified,
+  while two additional videos remain pending.
 - **Dependencies:** attached private Dataset_AIC2026 and runtime directory layout.
 - **Unit tests:** zero/one/multiple dataset roots; missing artifacts; ambiguous matches;
   optional artifacts; custom input root.
@@ -96,14 +97,50 @@ No guessed encoder or dummy embedding may be substituted.
 - **Output:** JSON report comparing mapped frame `f` against valid `f-1`, `f`, and `f+1`
   decodes with aggregate and per-sample scores.
 - **Intended source:** `scripts/calibrate_frame_mapping.py`
-- **Status:** `IMPLEMENTED` with synthetic mechanics tests; BTC calibration remains
-  pending Kaggle execution.
+- **Status:** `IMPLEMENTED` with local mechanics tests and a real 15-sample
+  `L21_V001` calibration; multi-video reproduction remains pending.
 - **Dependencies:** original video decoder, map-keyframes CSV, keyframe images.
 - **Unit tests:** beginning/middle/end sampling; invalid offsets; deterministic pixel
-  scores; zero-offset pass; consistent non-zero-offset failure; batch aggregation.
-- **Acceptance:** `frame_idx` is never silently corrected, a consistently superior
-  non-zero offset fails calibration, and at least three real videos can be processed in
-  one batch.
+  scores; exact zero-offset explanation; timestamp-explained `+1`; systematic
+  unexplained offset failure; decoder disagreement; bounds failure; batch aggregation.
+- **Acceptance:** `frame_idx` is never silently corrected; bounds and zero-based mapping
+  policy are validated separately; timestamp-explained visual offsets pass; systematic
+  unexplained offsets or material decoder disagreement fail; and at least three real
+  videos can be processed in one batch.
+
+Phase 1.5B revises this acceptance model: mapping-coordinate validity is independent of
+JPEG visual alignment. `actual_frame_id` always preserves `frame_idx`. A JPEG best match
+at `frame_idx + 1` is explained, rather than failed, when it equals
+`decimal_round_half_up(pts_time * fps)`. Numeric-generation-rule identification is
+diagnostic and cannot invalidate an in-bounds `frame_idx`. The implementation exposes
+separate mapping-policy, numeric-model, decoder-agreement, and visual-agreement results.
+
+### Module 2D — Mapping rounding audit
+
+- **Input:** BTC map-keyframes CSV and `video_id`.
+- **Output:** JSON summary or CSV row diagnostics for Decimal-exact product/floor/
+  nearest, binary-float product/truncation/floor, agreement counts and ratios, and all
+  required frame-delta distributions.
+- **Intended source:** `scripts/audit_mapping_rounding.py`
+- **Status:** `IMPLEMENTED` with local Decimal boundary tests; real `L21_V001` evidence
+  is documented separately from dataset-wide claims.
+- **Dependencies:** Python `decimal`, documented Python binary-float behavior, and
+  map-keyframes columns `n`, `pts_time`, `fps`, and `frame_idx`.
+- **Unit tests:** integer timestamps; fractional products at 0.001, 0.49, 0.50, and
+  0.99; non-30 FPS; the verified `260.4`, `1024.1`, `1031.1`, and `1058.6` binary-float
+  regression cases; malformed and non-finite values.
+- **Acceptance:** Decimal and binary-float models are reported separately; a Decimal
+  floor difference is not unresolved when binary-float truncation matches; numeric-rule
+  status does not gate mapping validity; and diagnostics never modify shared
+  `actual_frame_id` or `frame_id`.
+
+For real `L21_V001`, the 307-row audit verifies 303 Decimal-floor matches and four
+`frame_idx - Decimal floor = -1` cases. Decimal-nearest offset is `0` for 233 rows and
+`+1` for 74. Only 15 rows have been visually decoded; all 15 visual best offsets match
+the Decimal-nearest prediction, and random/sequential decoding agrees for all 15.
+Binary-float truncation as the mapping-generation rule and nearest timestamp alignment
+as the JPEG extraction rule remain inferred until reproduced on `L21_V002` and
+`L22_V001`.
 
 ### Module 2C — BTC CLIP pipeline identification
 

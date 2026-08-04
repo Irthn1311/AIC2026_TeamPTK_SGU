@@ -1,19 +1,20 @@
-phase: "1.5A"
+phase: "1.5B"
 execution_environment: kaggle_notebook
 
 input_root: /kaggle/input
 repository_root: /kaggle/working/AI_Challenge_HCM
 report_output_directory: /kaggle/working/system_tai_outputs/calibration
 
-# The Kaggle runtime dataset slug is intentionally absent. Discovery scans every direct
-# child of input_root and resolves exactly one unambiguous Dataset_AIC2026 root.
+# The Kaggle runtime dataset slug is intentionally absent. Discovery recursively inspects
+# the bounded runtime layout and resolves exactly one unambiguous Dataset_AIC2026 root.
 requested_video_ids:
   - L21_V001
   - L21_V002
-  - L21_V003
+  - L22_V001
 
 discovery_hints:
   - Videos_L21_a
+  - Videos_L22_a
   - clip-features-32-aic25-b1
   - keyframes
   - map-keyframes-aic25-b1
@@ -21,12 +22,19 @@ discovery_hints:
   - objects-aic25-b1
 
 frame_calibration:
-  sample_count: 9
+  sample_count: 15
   explicit_keyframe_orders: null
   frame_offset_candidates: [-1, 0, 1]
   superiority_margin: 0.0001
   consistency_ratio: 0.8
+  decoder_agreement_tolerance: 0.0001
   minimum_real_video_count: 3
+
+mapping_rounding_audit:
+  use_decimal_arithmetic: true
+  compare_binary_float_truncation: true
+  preserve_frame_idx_exactly: true
+  numeric_rule_diagnostic_only: true
 
 clip_identification:
   sample_count: 9
@@ -38,6 +46,7 @@ clip_identification:
     - huggingface_clip
   allow_model_download: false
   minimum_identification_videos: 3
+  require_all_video_input_and_mapping_gates: true
   model_family_claim: unverified_clip_ViT_B_32
 
 output_policy:

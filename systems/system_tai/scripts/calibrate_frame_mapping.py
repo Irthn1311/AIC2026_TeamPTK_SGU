@@ -5,10 +5,12 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import re
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from decimal import ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -24,8 +26,8 @@ class CalibrationMappingRow:
     keyframe_order: int
     actual_frame_id: int
     physical_row: int
-    pts_time: float
-    fps: float
+    pts_time: Decimal | float | str
+    fps: Decimal | float | str
 
 
 def load_mapping_rows(path: Path) -> tuple[CalibrationMappingRow, ...]:
@@ -34,6 +36,7 @@ def load_mapping_rows(path: Path) -> tuple[CalibrationMappingRow, ...]:
         raise FileNotFoundError(f"mapping CSV not found: {path}")
     rows: list[CalibrationMappingRow] = []
     seen_orders: set[int] = set()
+    seen_frames: set[int] = set()
     with path.open("r", encoding="utf-8-sig", newline="") as stream:
         reader = csv.DictReader(stream)
         required = {"n", "pts_time", "fps", "frame_idx"}
@@ -46,17 +49,22 @@ def load_mapping_rows(path: Path) -> tuple[CalibrationMappingRow, ...]:
             try:
                 order = int((raw.get("n") or "").strip())
                 frame_idx = int((raw.get("frame_idx") or "").strip())
-                pts_time = float((raw.get("pts_time") or "").strip())
-                fps = float((raw.get("fps") or "").strip())
-            except ValueError as exc:
+                pts_time = Decimal((raw.get("pts_time") or "").strip())
+                fps = Decimal((raw.get("fps") or "").strip())
+            except (InvalidOperation, ValueError) as exc:
                 raise ValueError(f"invalid mapping value at line {line_number}") from exc
             if order < 0 or frame_idx < 0 or pts_time < 0 or fps <= 0:
                 raise ValueError(f"invalid non-positive mapping value at line {line_number}")
-            if not np.isfinite(pts_time) or not np.isfinite(fps):
+            if not pts_time.is_finite() or not fps.is_finite():
                 raise ValueError(f"non-finite mapping value at line {line_number}")
             if order in seen_orders:
                 raise ValueError(f"duplicate keyframe order at line {line_number}: {order}")
+            if frame_idx in seen_frames:
+                raise ValueError(
+                    f"ambiguous duplicate frame_idx at line {line_number}: {frame_idx}"
+                )
             seen_orders.add(order)
+            seen_frames.add(frame_idx)
             rows.append(
                 CalibrationMappingRow(
                     keyframe_order=order,
@@ -69,6 +77,82 @@ def load_mapping_rows(path: Path) -> tuple[CalibrationMappingRow, ...]:
     if not rows:
         raise ValueError("mapping CSV contains no records")
     return tuple(rows)
+
+
+def _as_decimal(value: Decimal | float | str, field: str) -> Decimal:
+    try:
+        decimal_value = value if isinstance(value, Decimal) else Decimal(str(value))
+    except InvalidOperation as exc:
+        raise ValueError(f"invalid {field}: {value!r}") from exc
+    if not decimal_value.is_finite():
+        raise ValueError(f"non-finite {field}: {value!r}")
+    return decimal_value
+
+
+def timestamp_rounding_diagnostic(row: CalibrationMappingRow) -> dict[str, Any]:
+    pts_time = _as_decimal(row.pts_time, "pts_time")
+    fps = _as_decimal(row.fps, "fps")
+    if pts_time < 0 or fps <= 0:
+        raise ValueError("pts_time must be non-negative and fps must be positive")
+    decimal_exact_product = pts_time * fps
+    decimal_floor = int(decimal_exact_product.to_integral_value(rounding=ROUND_FLOOR))
+    decimal_round_half_up = int(
+        decimal_exact_product.to_integral_value(rounding=ROUND_HALF_UP)
+    )
+    decimal_ceil = int(decimal_exact_product.to_integral_value(rounding=ROUND_CEILING))
+    binary_float_product = float(pts_time) * float(fps)
+    if not math.isfinite(binary_float_product):
+        raise ValueError("binary float timestamp product must be finite")
+    binary_float_truncation = int(binary_float_product)
+    return {
+        "decimal_exact_product": format(decimal_exact_product, "f"),
+        "decimal_floor": decimal_floor,
+        "decimal_round_half_up": decimal_round_half_up,
+        "decimal_ceil": decimal_ceil,
+        "binary_float_product": repr(binary_float_product),
+        "binary_float_truncation": binary_float_truncation,
+        "binary_float_floor": math.floor(binary_float_product),
+        "frame_idx_minus_decimal_floor": row.actual_frame_id - decimal_floor,
+        "frame_idx_minus_binary_float_truncation": (
+            row.actual_frame_id - binary_float_truncation
+        ),
+        "decimal_nearest_minus_frame_idx": decimal_round_half_up - row.actual_frame_id,
+        "predicted_visual_offset": decimal_round_half_up - row.actual_frame_id,
+        "numeric_generation_rule_is_diagnostic": True,
+        "numeric_rule_modifies_mapping_validity": False,
+    }
+
+
+def validate_mapping_coordinates(
+    rows: Sequence[CalibrationMappingRow], *, total_frames: int
+) -> dict[str, Any]:
+    if total_frames <= 0:
+        raise ValueError("total_frames must be positive")
+    if not rows:
+        raise ValueError("mapping rows must not be empty")
+    invalid = [
+        {
+            "keyframe_order": row.keyframe_order,
+            "actual_frame_id": row.actual_frame_id,
+            "expected_bounds": [0, total_frames - 1],
+        }
+        for row in rows
+        if not 0 <= row.actual_frame_id < total_frames
+    ]
+    return {
+        "status": "MAPPING_POLICY_PASSED" if not invalid else "MAPPING_POLICY_FAILED",
+        "actual_frame_id_source": "frame_idx_exactly",
+        "working_coordinate": "zero_based",
+        "frame_bounds": [0, total_frames - 1],
+        "mapping_row_count": len(rows),
+        "actual_frame_range": [
+            min(row.actual_frame_id for row in rows),
+            max(row.actual_frame_id for row in rows),
+        ],
+        "out_of_bounds_rows": invalid,
+        "numeric_generation_rule_required": False,
+        "automatic_offset_correction_applied": False,
+    }
 
 
 def select_mapping_rows(
@@ -137,21 +221,40 @@ def evaluate_frame_offsets(
     offsets: Sequence[int] = (-1, 0, 1),
     align_candidate: Callable[[NDArray[np.number], NDArray[np.number]], NDArray[np.number]]
     | None = None,
+    sequential_decode_frame: Callable[[int], NDArray[np.number]] | None = None,
+    decoder_agreement_tolerance: float = 1e-6,
     superiority_margin: float = 1e-4,
     consistency_ratio: float = 0.8,
 ) -> dict[str, Any]:
-    if total_frames <= 0:
-        raise ValueError("total_frames must be positive")
     if 0 not in offsets:
         raise ValueError("offset candidates must include zero")
     if len(set(offsets)) != len(offsets):
         raise ValueError("offset candidates must be unique")
+    if decoder_agreement_tolerance < 0:
+        raise ValueError("decoder_agreement_tolerance must be non-negative")
     if superiority_margin < 0:
         raise ValueError("superiority_margin must be non-negative")
     if not 0 < consistency_ratio <= 1:
         raise ValueError("consistency_ratio must be in (0, 1]")
 
+    mapping_validation = validate_mapping_coordinates(rows, total_frames=total_frames)
+    if mapping_validation["status"] == "MAPPING_POLICY_FAILED":
+        return {
+            "status": "MAPPING_POLICY_FAILED",
+            "reason": "one or more frame_idx values are outside zero-based video bounds",
+            "mapping_coordinate_validation": mapping_validation,
+            "timestamp_rounding_diagnostics": {"status": "NOT_RUN"},
+            "visual_artifact_agreement": {"status": "NOT_RUN"},
+            "decoder_agreement": {"status": "NOT_RUN"},
+            "frame_policy": {
+                "mapped_value": "frame_idx preserved exactly",
+                "automatic_offset_correction_applied": False,
+            },
+            "samples": [],
+        }
+
     samples: list[dict[str, Any]] = []
+    decoder_disagreements: list[dict[str, Any]] = []
     for row in rows:
         try:
             reference = references[row.keyframe_order]
@@ -174,12 +277,28 @@ def evaluate_frame_offsets(
             if align_candidate is not None:
                 candidate = align_candidate(reference, candidate)
             scores = compare_images(reference, candidate)
+            decoder_scores: dict[str, float] | None = None
+            if sequential_decode_frame is not None:
+                sequential_candidate = sequential_decode_frame(decoded_frame_id)
+                if align_candidate is not None:
+                    sequential_candidate = align_candidate(reference, sequential_candidate)
+                decoder_scores = compare_images(candidate, sequential_candidate)
+                if decoder_scores["normalized_mae"] > decoder_agreement_tolerance:
+                    decoder_disagreements.append(
+                        {
+                            "keyframe_order": row.keyframe_order,
+                            "decoded_frame_id": decoded_frame_id,
+                            "offset": offset,
+                            "scores": decoder_scores,
+                        }
+                    )
             comparisons.append(
                 {
                     "offset": offset,
                     "decoded_frame_id": decoded_frame_id,
                     "valid": True,
                     "scores": scores,
+                    "random_vs_sequential_scores": decoder_scores,
                 }
             )
         valid = [item for item in comparisons if item["valid"]]
@@ -194,13 +313,21 @@ def evaluate_frame_offsets(
                 item["offset"],
             ),
         )[0]
+        rounding = timestamp_rounding_diagnostic(row)
+        visual_best_offset = int(best["offset"])
+        predicted_visual_offset = int(rounding["predicted_visual_offset"])
         samples.append(
             {
                 "keyframe_order": row.keyframe_order,
                 "mapped_actual_frame_id": row.actual_frame_id,
                 "physical_row": row.physical_row,
+                "timestamp_rounding": rounding,
                 "comparisons": comparisons,
-                "best_offset": best["offset"],
+                "visual_best_offset": visual_best_offset,
+                "predicted_visual_offset": predicted_visual_offset,
+                "visual_best_matches_round_half_up_prediction": (
+                    visual_best_offset == predicted_visual_offset
+                ),
             }
         )
 
@@ -218,56 +345,98 @@ def evaluate_frame_offsets(
             "median_similarity": (float(np.median(similarities)) if similarities else float("nan")),
         }
 
-    superior_nonzero: list[dict[str, Any]] = []
+    visual_best_counts = {
+        str(offset): sum(sample["visual_best_offset"] == offset for sample in samples)
+        for offset in offsets
+    }
+    explained_count = sum(
+        sample["visual_best_matches_round_half_up_prediction"] for sample in samples
+    )
+    explained_ratio = explained_count / len(samples)
+    systematic_unexplained_offsets: list[dict[str, Any]] = []
     for offset in offsets:
         if offset == 0:
             continue
-        paired: list[tuple[float, float]] = []
-        for sample in samples:
-            by_offset = {
-                item["offset"]: item["scores"]["similarity"]
-                for item in sample["comparisons"]
-                if item["valid"]
-            }
-            if 0 in by_offset and offset in by_offset:
-                paired.append((by_offset[0], by_offset[offset]))
-        if not paired:
-            continue
-        wins = sum(candidate > zero + superiority_margin for zero, candidate in paired)
-        ratio = wins / len(paired)
-        improvement = float(np.mean([candidate - zero for zero, candidate in paired]))
-        if ratio >= consistency_ratio and improvement > superiority_margin:
-            superior_nonzero.append(
+        unexplained = [
+            sample
+            for sample in samples
+            if sample["visual_best_offset"] == offset
+            and sample["predicted_visual_offset"] != offset
+        ]
+        ratio = len(unexplained) / len(samples)
+        if ratio >= consistency_ratio:
+            systematic_unexplained_offsets.append(
                 {
                     "offset": offset,
-                    "win_ratio_vs_zero": ratio,
-                    "mean_similarity_improvement_vs_zero": improvement,
+                    "sample_count": len(unexplained),
+                    "ratio": ratio,
                 }
             )
 
-    zero_best_ratio = sum(sample["best_offset"] == 0 for sample in samples) / len(samples)
-    if superior_nonzero:
-        status = "FAILED"
-        reason = "a consistent non-zero offset is superior to the preserved frame_idx"
-    elif zero_best_ratio >= consistency_ratio:
-        status = "PASSED"
-        reason = "zero offset is the deterministic best match for the required ratio"
+    if decoder_disagreements:
+        status = "MAPPING_POLICY_FAILED"
+        reason = "random and sequential decoding disagree materially"
+    elif systematic_unexplained_offsets:
+        status = "MAPPING_POLICY_FAILED"
+        reason = "a systematic visual offset is not explained by Decimal-nearest rounding"
+    elif explained_count == len(samples):
+        status = "VISUAL_ALIGNMENT_EXPLAINED"
+        reason = (
+            "all visual best offsets equal "
+            "decimal_round_half_up(pts_time * fps) - frame_idx"
+        )
     else:
-        status = "INCONCLUSIVE"
-        reason = "no consistent superior offset was established"
+        status = "VISUAL_ALIGNMENT_INCONCLUSIVE"
+        reason = "visual offsets are not systematic but are not fully explained"
 
     return {
         "status": status,
         "reason": reason,
+        "mapping_coordinate_validation": mapping_validation,
+        "timestamp_rounding_diagnostics": {
+            "status": "DIAGNOSTIC_ONLY",
+            "mapping_validity_dependency": False,
+            "numeric_models": [
+                "decimal_exact_floor",
+                "binary_float_truncation",
+                "decimal_round_half_up_visual_prediction",
+            ],
+            "visual_prediction": "decimal_round_half_up(pts_time * fps) - frame_idx",
+        },
+        "visual_artifact_agreement": {
+            "status": (
+                status
+                if status in {"VISUAL_ALIGNMENT_EXPLAINED", "VISUAL_ALIGNMENT_INCONCLUSIVE"}
+                else "MAPPING_POLICY_FAILED"
+            ),
+            "explained_sample_count": explained_count,
+            "explained_sample_ratio": explained_ratio,
+            "visual_best_offset_distribution": visual_best_counts,
+            "systematic_unexplained_offsets": systematic_unexplained_offsets,
+        },
+        "decoder_agreement": {
+            "status": (
+                "NOT_COMPARED"
+                if sequential_decode_frame is None
+                else "DISAGREEMENT"
+                if decoder_disagreements
+                else "AGREEMENT"
+            ),
+            "normalized_mae_tolerance": decoder_agreement_tolerance,
+            "material_disagreement_count": len(decoder_disagreements),
+            "material_disagreements": decoder_disagreements,
+        },
         "frame_policy": {
             "mapped_value": "frame_idx preserved exactly",
             "working_interpretation": "zero_based",
+            "keyframe_visual_frame_id": "decimal_round_half_up(pts_time * fps)",
+            "visual_diagnostic_modifies_actual_frame_id": False,
             "automatic_offset_correction_applied": False,
         },
         "sample_count": len(samples),
         "offset_candidates": list(offsets),
-        "zero_best_ratio": zero_best_ratio,
-        "superior_nonzero_offsets": superior_nonzero,
+        "zero_best_ratio": visual_best_counts.get("0", 0) / len(samples),
+        "systematic_unexplained_offsets": systematic_unexplained_offsets,
         "aggregate_by_offset": aggregate,
         "samples": samples,
     }
@@ -349,6 +518,35 @@ class OpenCVFrameDecoder:
         self.close()
 
 
+def decode_frames_sequentially(
+    video_path: Path, frame_ids: Sequence[int]
+) -> dict[int, NDArray[np.number]]:
+    cv2 = _load_cv2()
+    requested = sorted(set(frame_ids))
+    if not requested:
+        return {}
+    if requested[0] < 0:
+        raise ValueError("sequential decoder frame IDs must be non-negative")
+    capture = cv2.VideoCapture(str(video_path))
+    if not capture.isOpened():
+        raise RuntimeError(f"cannot open original video for sequential decode: {video_path}")
+    decoded: dict[int, NDArray[np.number]] = {}
+    targets = set(requested)
+    try:
+        for frame_id in range(requested[-1] + 1):
+            ok, frame = capture.read()
+            if not ok or frame is None:
+                raise RuntimeError(f"sequential decoder read failed at frame {frame_id}")
+            if frame_id in targets:
+                decoded[frame_id] = frame
+    finally:
+        capture.release()
+    missing = sorted(targets - set(decoded))
+    if missing:
+        raise RuntimeError(f"sequential decoder did not produce requested frames: {missing}")
+    return decoded
+
+
 def calibrate_case(
     *,
     video_id: str,
@@ -358,6 +556,7 @@ def calibrate_case(
     sample_count: int,
     keyframe_orders: Sequence[int] | None,
     offsets: Sequence[int],
+    decoder_agreement_tolerance: float,
     superiority_margin: float,
     consistency_ratio: float,
 ) -> dict[str, Any]:
@@ -379,16 +578,44 @@ def calibrate_case(
         return cv2.resize(candidate, (width, height), interpolation=cv2.INTER_AREA)
 
     with OpenCVFrameDecoder(video_path) as decoder:
-        report = evaluate_frame_offsets(
-            selected,
-            references,
-            decoder.decode,
-            total_frames=decoder.total_frames,
-            offsets=offsets,
-            align_candidate=align,
-            superiority_margin=superiority_margin,
-            consistency_ratio=consistency_ratio,
+        mapping_validation = validate_mapping_coordinates(
+            rows, total_frames=decoder.total_frames
         )
+        if mapping_validation["status"] == "MAPPING_POLICY_FAILED":
+            report = {
+                "status": "MAPPING_POLICY_FAILED",
+                "reason": "one or more frame_idx values are outside video bounds",
+                "mapping_coordinate_validation": mapping_validation,
+                "timestamp_rounding_diagnostics": {"status": "NOT_RUN"},
+                "visual_artifact_agreement": {"status": "NOT_RUN"},
+                "decoder_agreement": {"status": "NOT_RUN"},
+                "samples": [],
+                "frame_policy": {
+                    "mapped_value": "frame_idx preserved exactly",
+                    "automatic_offset_correction_applied": False,
+                },
+            }
+        else:
+            target_frames = [
+                row.actual_frame_id + offset
+                for row in selected
+                for offset in offsets
+                if 0 <= row.actual_frame_id + offset < decoder.total_frames
+            ]
+            sequential_frames = decode_frames_sequentially(video_path, target_frames)
+            report = evaluate_frame_offsets(
+                selected,
+                references,
+                decoder.decode,
+                total_frames=decoder.total_frames,
+                offsets=offsets,
+                align_candidate=align,
+                sequential_decode_frame=sequential_frames.__getitem__,
+                decoder_agreement_tolerance=decoder_agreement_tolerance,
+                superiority_margin=superiority_margin,
+                consistency_ratio=consistency_ratio,
+            )
+            report["mapping_coordinate_validation"] = mapping_validation
     report.update(
         {
             "video_id": video_id,
@@ -432,6 +659,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--offset-candidates", type=int, nargs="+", default=[-1, 0, 1])
     parser.add_argument("--superiority-margin", type=float, default=1e-4)
     parser.add_argument("--consistency-ratio", type=float, default=0.8)
+    parser.add_argument("--decoder-agreement-tolerance", type=float, default=1e-6)
     parser.add_argument("--output", type=Path, required=True)
     return parser
 
@@ -459,28 +687,58 @@ def main(argv: list[str] | None = None) -> int:
         )
         reports: list[dict[str, Any]] = []
         for case in cases:
-            reports.append(
-                calibrate_case(
-                    video_id=str(case["video_id"]),
-                    video_path=Path(case["video_path"]),
-                    mapping_csv=Path(case["mapping_csv"]),
-                    keyframes=Path(case["keyframes"]),
-                    sample_count=int(case.get("sample_count", args.sample_count)),
-                    keyframe_orders=case.get("keyframe_orders", args.keyframe_orders),
-                    offsets=case.get("offset_candidates", args.offset_candidates),
-                    superiority_margin=float(
-                        case.get("superiority_margin", args.superiority_margin)
-                    ),
-                    consistency_ratio=float(case.get("consistency_ratio", args.consistency_ratio)),
+            video_id = str(case.get("video_id", "UNKNOWN"))
+            try:
+                reports.append(
+                    calibrate_case(
+                        video_id=video_id,
+                        video_path=Path(case["video_path"]),
+                        mapping_csv=Path(case["mapping_csv"]),
+                        keyframes=Path(case["keyframes"]),
+                        sample_count=int(case.get("sample_count", args.sample_count)),
+                        keyframe_orders=case.get("keyframe_orders", args.keyframe_orders),
+                        offsets=case.get("offset_candidates", args.offset_candidates),
+                        decoder_agreement_tolerance=float(
+                            case.get(
+                                "decoder_agreement_tolerance",
+                                args.decoder_agreement_tolerance,
+                            )
+                        ),
+                        superiority_margin=float(
+                            case.get("superiority_margin", args.superiority_margin)
+                        ),
+                        consistency_ratio=float(
+                            case.get("consistency_ratio", args.consistency_ratio)
+                        ),
+                    )
                 )
-            )
+            except ValueError as exc:
+                reports.append(
+                    {
+                        "video_id": video_id,
+                        "status": "MAPPING_POLICY_FAILED",
+                        "reason": str(exc),
+                        "automatic_offset_correction_applied": False,
+                    }
+                )
+            except (OSError, RuntimeError, KeyError) as exc:
+                reports.append(
+                    {
+                        "video_id": video_id,
+                        "status": "ERROR",
+                        "reason": str(exc),
+                        "automatic_offset_correction_applied": False,
+                    }
+                )
         statuses = [report["status"] for report in reports]
         overall = (
-            "FAILED"
-            if "FAILED" in statuses
-            else "INCONCLUSIVE"
-            if "INCONCLUSIVE" in statuses
-            else "PASSED"
+            "ERROR"
+            if "ERROR" in statuses
+            else "MAPPING_POLICY_FAILED"
+            if "MAPPING_POLICY_FAILED" in statuses
+            else "VISUAL_ALIGNMENT_INCONCLUSIVE"
+            if "VISUAL_ALIGNMENT_INCONCLUSIVE" in statuses
+            else "VISUAL_ALIGNMENT_EXPLAINED"
         )
         output = {
             "status": overall,
@@ -490,7 +748,7 @@ def main(argv: list[str] | None = None) -> int:
             "cases": reports,
             "automatic_offset_correction_applied": False,
         }
-        exit_code = 1 if overall == "FAILED" else 0
+        exit_code = 1 if overall in {"ERROR", "MAPPING_POLICY_FAILED"} else 0
     except (OSError, RuntimeError, ValueError, KeyError, json.JSONDecodeError) as exc:
         output = {
             "status": "ERROR",

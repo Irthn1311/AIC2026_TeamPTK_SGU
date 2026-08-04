@@ -88,6 +88,22 @@ def _candidate_families(root: Path, hints: Sequence[str]) -> dict[str, list[Path
     return families
 
 
+def _likely_dataset_roots(input_root: Path, *, max_depth: int = 4) -> list[Path]:
+    candidates: list[Path] = []
+    for directory in _limited_directories(input_root, max_depth=max_depth):
+        try:
+            child_kinds = {
+                kind
+                for child in directory.iterdir()
+                if child.is_dir() and (kind := _family_kind(child)) is not None
+            }
+        except OSError:
+            continue
+        if len(child_kinds) >= 2:
+            candidates.append(directory.resolve(strict=False))
+    return sorted(set(candidates), key=lambda path: str(path).lower())
+
+
 def _walk_target_files(
     roots: Iterable[Path],
     *,
@@ -234,7 +250,8 @@ def discover(
         (path for path in input_root.iterdir() if path.is_dir()),
         key=lambda path: str(path).lower(),
     )
-    inspections = [_inspect_dataset_root(root, video_id, hints) for root in direct_children]
+    likely_roots = _likely_dataset_roots(input_root)
+    inspections = [_inspect_dataset_root(root, video_id, hints) for root in likely_roots]
     candidates = [
         item
         for item in inspections
@@ -243,7 +260,10 @@ def discover(
     if not candidates:
         raise DiscoveryError(
             f"no Dataset_AIC2026 candidate contains artifacts for {video_id}",
-            details={"scanned_children": [str(path) for path in direct_children]},
+            details={
+                "scanned_children": [str(path) for path in direct_children],
+                "likely_dataset_roots": [str(path) for path in likely_roots],
+            },
         )
     if len(candidates) > 1:
         raise DiscoveryError(
