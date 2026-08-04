@@ -1,0 +1,47 @@
+phase: "1.5A"
+execution_environment: kaggle_notebook
+
+input_root: /kaggle/input
+repository_root: /kaggle/working/AI_Challenge_HCM
+report_output_directory: /kaggle/working/system_tai_outputs/calibration
+
+# The Kaggle runtime dataset slug is intentionally absent. Discovery scans every direct
+# child of input_root and resolves exactly one unambiguous Dataset_AIC2026 root.
+requested_video_ids:
+  - L21_V001
+  - L21_V002
+  - L21_V003
+
+discovery_hints:
+  - Videos_L21_a
+  - clip-features-32-aic25-b1
+  - keyframes
+  - map-keyframes-aic25-b1
+  - media-info-aic25-b1
+  - objects-aic25-b1
+
+frame_calibration:
+  sample_count: 9
+  explicit_keyframe_orders: null
+  frame_offset_candidates: [-1, 0, 1]
+  superiority_margin: 0.0001
+  consistency_ratio: 0.8
+  minimum_real_video_count: 3
+
+clip_identification:
+  sample_count: 9
+  explicit_keyframe_orders: null
+  expected_dimension: null
+  enabled_candidate_backends:
+    - openai_clip
+    - open_clip
+    - huggingface_clip
+  allow_model_download: false
+  minimum_identification_videos: 3
+  model_family_claim: unverified_clip_ViT_B_32
+
+output_policy:
+  json_reports_only: true
+  csv_comparison_tables_only: true
+  copy_source_artifacts: false
+  official_submission_export: false

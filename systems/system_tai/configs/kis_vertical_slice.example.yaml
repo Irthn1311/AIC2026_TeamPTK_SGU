@@ -1,0 +1,29 @@
+system_id: system_tai
+status: skeleton
+
+data:
+  video_catalog: REQUIRED
+  mapping_csv: REQUIRED
+  clip_npy: REQUIRED
+  frame_index_base: PENDING_TEAM_DECISION
+  mapping_version: REQUIRED
+
+features:
+  encoder_id: PENDING_BTC_CONFIRMATION
+  expected_dimension: null
+
+retrieval:
+  backend: exact_numpy_planned
+  top_k: 100
+
+checkpoint:
+  format: jsonl
+  schema_status: proposed_not_accepted
+  output_path: REQUIRED
+
+official_export:
+  enabled: false
+  reason: official_format_unresolved
+
+evaluation:
+  ground_truth_fixture: null
