@@ -1,0 +1,2642 @@
+project:
+  repository: AIC2026_TeamPTK_SGU
+  system_name: TRIAGE-EG
+  full_name: Tool-Routed Intelligent Agent with Event-Graph and Semantic-Moment Grounding
+  version: '1.0'
+  language: vi
+  description: Trợ lý truy xuất video đa phương thức dựa trên điều phối công cụ, đồ thị sự kiện, định vị khoảnh khắc ngữ nghĩa và kiểm chứng bằng chứng.
+  central_message: TRIAGE-EG tìm đúng video bằng index, hiểu chuỗi bằng Event Graph, chọn đúng frame bằng Semantic Moment Localizer, kiểm chứng bằng raw evidence và tối ưu điểm bằng Ranked Answer List Constructor.
+  principles:
+    - Retrieval-first, không phải LLM-first.
+    - Event Graph nằm sau candidate retrieval; hệ thống graph-enhanced, không graph-only.
+    - Raw video là source of truth; mọi representation khác là evidence hỗ trợ.
+    - Chỉ xây Candidate Local Event Graph cho top videos hoặc query phức tạp.
+    - Shot khác Event; Event interval khác Semantic Moment submission frame.
+    - Agent chỉ điều phối tool và không tự tạo ID, score, identity hoặc causal truth.
+    - Baseline không dùng GNN; ưu tiên filtering, traversal, DP, beam search và constraint scoring.
+    - Mọi hypothesis có confidence, provenance, status và evidence references.
+    - Luôn có deterministic fallback.
+
+statuses:
+  CONFIRMED: {label: Đã xác nhận, stroke: '#166534', stroke_width: 3, dashed: false}
+  CURRENT_TEMPLATE: {label: Đang có trong template, stroke: '#0369a1', stroke_width: 2, dashed: false}
+  BASELINE: {label: Baseline dự kiến, stroke: '#15803d', stroke_width: 2, dashed: false}
+  CANDIDATE: {label: Đang khảo sát, stroke: '#7e22ce', stroke_width: 2, dashed: false}
+  OPTIONAL: {label: Tùy chọn, stroke: '#7c3aed', stroke_width: 2, dashed: true}
+  DEFERRED: {label: Tạm hoãn, stroke: '#64748b', stroke_width: 2, dashed: true}
+
+owners:
+  TRI:
+    name: Hữu Tri
+    responsibilities: [Architecture, Event Graph, Agent, Integration]
+  KHOA:
+    name: Nguyễn Đăng Khoa
+    responsibilities: [Data, Kaggle, Environment]
+  PHAT:
+    name: Phát Lê
+    responsibilities: [Frame Bank, Feature Extraction]
+  PHUC:
+    name: Hồng Phúc
+    responsibilities: [Retrieval, Ranking, Evaluation]
+  TAI:
+    name: Nguyễn Tài
+    responsibilities: [UI, Output, Interaction]
+
+styles:
+  layers:
+    data: {fill: '#dbeafe', stroke: '#2563eb', text: '#172554'}
+    representation: {fill: '#ede9fe', stroke: '#7c3aed', text: '#2e1065'}
+    retrieval: {fill: '#dcfce7', stroke: '#16a34a', text: '#14532d'}
+    graph: {fill: '#ffedd5', stroke: '#ea580c', text: '#7c2d12'}
+    grounding: {fill: '#ffe4e6', stroke: '#e11d48', text: '#881337'}
+    control: {fill: '#fef3c7', stroke: '#ca8a04', text: '#713f12'}
+    output: {fill: '#e2e8f0', stroke: '#475569', text: '#0f172a'}
+    storage: {fill: '#f1f5f9', stroke: '#64748b', text: '#1e293b'}
+
+models:
+  btc_clip:
+    name: CLIP ViT-B/32
+    role: BTC frame feature
+    status: CONFIRMED
+  btc_object_detector:
+    name: Faster R-CNN Inception-ResNet-v2
+    dataset: Open Images V4
+    role: BTC object JSON
+    status: CONFIRMED
+  shot_detector:
+    interface: ShotDetector
+    current_direction: Shot detection
+    candidates: [TransNetV2]
+    selected: null
+    status: CANDIDATE
+    note: Final detector must be selected by benchmark.
+  team_visual_encoder:
+    interface: MultimodalEncoder
+    candidates: [CLIP, OpenCLIP, compatible multimodal encoder]
+    selected: null
+    status: CANDIDATE
+    note: Final model must be selected by benchmark.
+  vector_index:
+    current_template: NumPy flat cosine
+    baseline_target: FAISS or compatible ANN
+    status: BASELINE
+  OCR:
+    selected: null
+    status: OPTIONAL
+  ASR:
+    selected: null
+    status: OPTIONAL
+  caption_model:
+    selected: null
+    status: CANDIDATE
+    note: Caption is evidence, not ground truth.
+  VLM_verifier:
+    selected: null
+    status: OPTIONAL
+  graph_solver:
+    algorithms: [Filtering, Graph traversal, Dynamic Programming, Beam Search, Constraint scoring]
+    status: BASELINE
+  GNN:
+    selected: null
+    status: DEFERRED
+    note: Not used in baseline.
+
+node_defaults: &node_defaults
+  subtitle: Architecture module
+  type: process
+  status: BASELINE
+  owner: TRI
+  responsibility: []
+  non_responsibility: []
+  inputs: []
+  processing: []
+  implementations: []
+  outputs: []
+  artifacts: []
+  metrics: []
+  failure_modes: []
+  fallback: Deterministic fallback theo contract.
+  dependencies: []
+  next_modules: []
+
+pages:
+  - id: PAGE_00
+    title: 00 — Legend & Reading Guide
+    description: Quy ước status, shape, edge, layer, representation, offline/online và Fast/Graph Lane.
+    direction: LR
+    mermaid_file: 00_legend_and_reading_guide.mmd
+    detail_level: legend
+    groups:
+      - {id: G00_LEGEND, title: Architecture Reading Guide, layer: output, geometry: {x: 20, y: 20, width: 2240, height: 500}}
+    nodes:
+      - <<: *node_defaults
+        id: P00_STATUS
+        number: L1
+        title: Status Legend
+        subtitle: CONFIRMED · CURRENT_TEMPLATE · BASELINE · CANDIDATE · OPTIONAL · DEFERRED
+        layer: output
+        type: note
+        status: CONFIRMED
+        owner: TRI
+        responsibility: [Giải thích maturity và certainty]
+        processing: [Đọc badge trước khi review model hoặc module]
+        outputs: [Status interpretation]
+        group: G00_LEGEND
+        geometry: {x: 60, y: 100, width: 300, height: 150}
+      - <<: *node_defaults
+        id: P00_SHAPES
+        number: L2
+        title: Shape Meaning
+        subtitle: Process · Store · Decision · Artifact · Agent · Graph · Deferred
+        layer: representation
+        type: note
+        status: CONFIRMED
+        owner: TRI
+        responsibility: [Phân biệt vai trò node]
+        inputs: [Node type]
+        processing: [Map type sang native draw.io shape]
+        outputs: [Visual semantics]
+        group: G00_LEGEND
+        geometry: {x: 380, y: 100, width: 300, height: 150}
+      - <<: *node_defaults
+        id: P00_ARROWS
+        number: L3
+        title: Arrow Meaning
+        subtitle: Data · Control · Optional · FALLBACK · EVIDENCE · ARTIFACT
+        layer: control
+        type: note
+        status: CONFIRMED
+        owner: TRI
+        responsibility: [Phân biệt flow type]
+        inputs: [Edge type]
+        processing: [Solid hoặc dotted/dashed connector]
+        outputs: [Flow semantics]
+        group: G00_LEGEND
+        geometry: {x: 700, y: 100, width: 300, height: 150}
+      - <<: *node_defaults
+        id: P00_LAYERS
+        number: L4
+        title: Layer Colors
+        subtitle: Data · Representation · Retrieval · Graph · Grounding · Control · Output · Storage
+        layer: data
+        type: note
+        status: CONFIRMED
+        owner: TRI
+        responsibility: [Nhận diện layer bằng màu dịu]
+        inputs: [Layer ID]
+        processing: [Apply palette nền trắng]
+        outputs: [Consistent visual grouping]
+        group: G00_LEGEND
+        geometry: {x: 1020, y: 100, width: 300, height: 150}
+      - <<: *node_defaults
+        id: P00_REPRESENTATION
+        number: L5
+        title: Three Representation Levels
+        subtitle: Technical/Retrieval Frame → Event Interval → Semantic Moment
+        layer: grounding
+        status: CONFIRMED
+        owner: TRI
+        responsibility: [Tách frame kỹ thuật, interval và submission moment]
+        inputs: [Retrieval frame]
+        processing: [Interval reasoning, dense raw-video localization]
+        outputs: [Semantic submission frame]
+        group: G00_LEGEND
+        geometry: {x: 1340, y: 100, width: 300, height: 150}
+      - <<: *node_defaults
+        id: P00_EXECUTION
+        number: L6
+        title: Offline vs Online
+        subtitle: Offline chạy trước query · Online chạy khi query xuất hiện
+        layer: storage
+        status: CONFIRMED
+        owner: TRI
+        responsibility: [Tách preprocessing khỏi query-time refinement]
+        inputs: [Corpus, Query]
+        processing: [Precompute index, route query tools]
+        outputs: [Offline assets, Online evidence]
+        group: G00_LEGEND
+        geometry: {x: 1660, y: 100, width: 260, height: 150}
+      - <<: *node_defaults
+        id: P00_LANES
+        number: L7
+        title: Fast Lane vs Graph Lane
+        subtitle: Simple confident query · TRAKE/multi-event/ambiguous/complex Q&A
+        layer: graph
+        type: decision
+        status: BASELINE
+        owner: TRI
+        responsibility: [Chọn mức reasoning theo uncertainty]
+        inputs: [Query complexity, confidence]
+        processing: [Route fast hoặc graph]
+        outputs: [Selected execution lane]
+        group: G00_LEGEND
+        geometry: {x: 1940, y: 100, width: 280, height: 150}
+    edges:
+      - {id: E00_01, source: P00_STATUS, target: P00_SHAPES, label: đọc tiếp, flow_type: data}
+      - {id: E00_02, source: P00_SHAPES, target: P00_ARROWS, label: đọc tiếp, flow_type: data}
+      - {id: E00_03, source: P00_ARROWS, target: P00_LAYERS, label: đọc tiếp, flow_type: data}
+      - {id: E00_04, source: P00_LAYERS, target: P00_REPRESENTATION, label: đọc tiếp, flow_type: data}
+      - {id: E00_05, source: P00_REPRESENTATION, target: P00_EXECUTION, label: execution context, flow_type: data}
+      - {id: E00_06, source: P00_EXECUTION, target: P00_LANES, label: online route, flow_type: control}
+    notes:
+      - Optional và Deferred dùng dashed border.
+      - Raw video là source of truth cho actual frame ID.
+
+  - id: PAGE_01
+    title: 01 — Complete System Overview
+    description: Level 1 overview từ raw data tới ranked answers và evaluation, với Agent Control Plane.
+    direction: LR
+    mermaid_file: 01_complete_system_overview.mmd
+    detail_level: overview
+    groups:
+      - {id: G01_A, title: A — Offline Data & Representation, layer: data, geometry: {x: 20, y: 20, width: 1800, height: 650}}
+      - {id: G01_B, title: B — Online Query & Retrieval, layer: retrieval, geometry: {x: 1850, y: 20, width: 2300, height: 650}}
+      - {id: G01_C, title: C — Reasoning, layer: graph, geometry: {x: 4180, y: 20, width: 1500, height: 650}}
+      - {id: G01_D, title: D — Fine Grounding, layer: grounding, geometry: {x: 5710, y: 20, width: 1300, height: 650}}
+      - {id: G01_E, title: E — Output & Evaluation, layer: output, geometry: {x: 7040, y: 20, width: 1100, height: 650}}
+      - {id: G01_F, title: F — Agent Control Plane, layer: control, geometry: {x: 1850, y: 700, width: 5160, height: 400}}
+    nodes:
+      - <<: *node_defaults
+        id: P01_A1
+        number: A1
+        title: Raw Data Sources
+        subtitle: Raw video là source of truth
+        layer: data
+        type: store
+        status: CONFIRMED
+        owner: KHOA
+        responsibility: [Cung cấp raw videos và BTC auxiliary evidence]
+        inputs: [Raw Videos, BTC Keyframes, BTC CLIP, BTC Object JSON, Metadata, Optional Audio]
+        outputs: [Auditable corpus sources]
+        group: G01_A
+        geometry: {x: 60, y: 100, width: 220, height: 120}
+      - <<: *node_defaults
+        id: P01_A2
+        number: A2
+        title: Data Audit & Manifest
+        subtitle: Validate corpus metadata
+        layer: data
+        status: CURRENT_TEMPLATE
+        owner: KHOA
+        responsibility: [Audit existence, IDs, FPS, duration và compatibility]
+        inputs: [Corpus sources]
+        outputs: [VideoManifest, DataAuditReport]
+        group: G01_A
+        geometry: {x: 300, y: 100, width: 220, height: 120}
+      - <<: *node_defaults
+        id: P01_A3
+        number: A3
+        title: Unified ID & Temporal Mapping
+        subtitle: actual_frame_id là canonical submission ID
+        layer: data
+        status: CURRENT_TEMPLATE
+        owner: KHOA
+        responsibility: [Khóa canonical IDs và temporal coordinates]
+        inputs: [VideoManifest]
+        outputs: [VideoRecord, ShotRecord, FrameRecord, FrameMap]
+        group: G01_A
+        geometry: {x: 540, y: 100, width: 220, height: 120}
+      - <<: *node_defaults
+        id: P01_A4
+        number: A4
+        title: Hybrid Frame Bank
+        subtitle: BTC Auxiliary + Team Retrieval
+        layer: representation
+        status: BASELINE
+        owner: PHAT
+        responsibility: [Giữ BTC branch và xây Team Frame Bank song song]
+        inputs: [Raw Video, BTC Keyframes, FrameMap]
+        outputs: [Retrieval FrameRecord list]
+        group: G01_A
+        geometry: {x: 780, y: 100, width: 220, height: 120}
+      - <<: *node_defaults
+        id: P01_A5
+        number: A5
+        title: Evidence & Feature Extraction
+        subtitle: Multimodal representations
+        layer: representation
+        status: CANDIDATE
+        owner: PHAT
+        responsibility: [Sinh visual, segment, object, OCR, ASR và caption evidence]
+        inputs: [Hybrid Frame Bank, Optional Audio]
+        outputs: [FeatureRecord, Evidence references]
+        group: G01_A
+        geometry: {x: 1020, y: 100, width: 220, height: 120}
+      - <<: *node_defaults
+        id: P01_A6
+        number: A6
+        title: Index & Storage Builder
+        subtitle: Corpus-scale retrieval representations
+        layer: storage
+        status: BASELINE
+        owner: PHUC
+        responsibility: [Build multimodal indexes và mapping stores]
+        inputs: [FeatureRecord, Evidence]
+        outputs: [Vector, lexical, metadata và temporal indexes]
+        group: G01_A
+        geometry: {x: 1260, y: 100, width: 220, height: 120}
+      - <<: *node_defaults
+        id: P01_A7
+        number: A7
+        title: Skeleton Temporal Catalog
+        subtitle: Lightweight whole-corpus temporal catalog
+        layer: storage
+        status: BASELINE
+        owner: TRI
+        responsibility: [Lưu segment hypothesis và deterministic temporal edges]
+        non_responsibility: [Không xây rich Event Graph toàn corpus]
+        inputs: [Segments, Evidence references]
+        outputs: [SegmentEventHypothesis catalog]
+        group: G01_A
+        geometry: {x: 1500, y: 100, width: 260, height: 120}
+      - <<: *node_defaults
+        id: P01_B1
+        number: B1
+        title: Query Input
+        subtitle: KIS · Q&A · TRAKE
+        layer: retrieval
+        status: BASELINE
+        owner: TAI
+        responsibility: [Capture original query without overwrite]
+        inputs: [User query]
+        outputs: [Task request]
+        group: G01_B
+        geometry: {x: 1890, y: 100, width: 220, height: 120}
+      - <<: *node_defaults
+        id: P01_B2
+        number: B2
+        title: Query Ledger & Task Policy
+        subtitle: Trace hypotheses and route task
+        layer: control
+        status: BASELINE
+        owner: TRI
+        responsibility: [Preserve query history và choose KIS/Q&A/TRAKE policy]
+        inputs: [Task request]
+        outputs: [Ledger, Task policy]
+        group: G01_B
+        geometry: {x: 2130, y: 100, width: 220, height: 120}
+      - <<: *node_defaults
+        id: P01_B3
+        number: B3
+        title: Query Compiler
+        subtitle: Structured query hypothesis
+        layer: control
+        status: BASELINE
+        owner: TRI
+        responsibility: [Compile roles, constraints và moment definitions]
+        inputs: [Original query, Task policy]
+        outputs: [Query hypothesis, QueryEvent list]
+        group: G01_B
+        geometry: {x: 2370, y: 100, width: 220, height: 120}
+      - <<: *node_defaults
+        id: P01_B4
+        number: B4
+        title: Fast Probe
+        subtitle: Cheap confidence probe
+        layer: retrieval
+        status: BASELINE
+        owner: PHUC
+        responsibility: [Estimate initial candidates và uncertainty]
+        inputs: [Compiled query, Offline indexes]
+        outputs: [InitialCandidates, UncertaintySignals]
+        group: G01_B
+        geometry: {x: 2610, y: 100, width: 220, height: 120}
+      - <<: *node_defaults
+        id: P01_B5
+        number: B5
+        title: Modality Router
+        subtitle: Deterministic baseline · bounded Agent candidate
+        layer: control
+        type: decision
+        status: BASELINE
+        owner: TRI
+        responsibility: [Chọn retrieval branches theo query]
+        inputs: [Query hypothesis, Probe signals]
+        outputs: [Tool calls]
+        group: G01_B
+        geometry: {x: 2850, y: 100, width: 220, height: 120}
+      - <<: *node_defaults
+        id: P01_B6
+        number: B6
+        title: Multimodal Retrieval
+        subtitle: Visual · Segment · Object · OCR · ASR · Caption · Metadata
+        layer: retrieval
+        status: BASELINE
+        owner: PHUC
+        responsibility: [Search corpus indexes]
+        inputs: [Tool calls, Offline indexes]
+        outputs: [Ranked branch candidates]
+        group: G01_B
+        geometry: {x: 3090, y: 100, width: 240, height: 120}
+      - <<: *node_defaults
+        id: P01_B7
+        number: B7
+        title: Fusion, Grouping & Deduplication
+        subtitle: RRF then temporal/video grouping
+        layer: retrieval
+        status: CURRENT_TEMPLATE
+        owner: PHUC
+        responsibility: [Fuse ranks without mixing raw score scales]
+        inputs: [Ranked branch candidates]
+        outputs: [Grouped CandidateFrame list]
+        group: G01_B
+        geometry: {x: 3350, y: 100, width: 240, height: 120}
+      - <<: *node_defaults
+        id: P01_B8
+        number: B8
+        title: Candidate Video Ranker
+        subtitle: Correct video before deep refinement
+        layer: retrieval
+        status: BASELINE
+        owner: PHUC
+        responsibility: [Rank videos by evidence and event coverage]
+        inputs: [Grouped candidates]
+        outputs: [CandidateVideo list]
+        group: G01_B
+        geometry: {x: 3610, y: 100, width: 230, height: 120}
+      - <<: *node_defaults
+        id: P01_B9
+        number: B9
+        title: Uncertainty Manager
+        subtitle: Fast Lane hoặc Graph Lane
+        layer: control
+        type: decision
+        status: BASELINE
+        owner: TRI
+        responsibility: [Route reasoning depth]
+        inputs: [CandidateVideo list, UncertaintySignals]
+        outputs: [Lane decision]
+        group: G01_B
+        geometry: {x: 3860, y: 100, width: 240, height: 120}
+      - <<: *node_defaults
+        id: P01_C1
+        number: C1
+        title: Fast Lane
+        subtitle: Direct local refinement for simple confident query
+        layer: graph
+        status: BASELINE
+        owner: TRI
+        responsibility: [Skip graph construction when evidence is sufficient]
+        inputs: [Clear CandidateVideo]
+        outputs: [Coarse interval]
+        group: G01_C
+        geometry: {x: 4220, y: 100, width: 220, height: 120}
+      - <<: *node_defaults
+        id: P01_C2
+        number: C2
+        title: Query Event Graph
+        subtitle: Structured query events and relations
+        layer: graph
+        type: graph
+        status: BASELINE
+        owner: TRI
+        responsibility: [Represent query events, constraints và moment definitions]
+        inputs: [QueryEvent list]
+        outputs: [Query Event Graph]
+        group: G01_C
+        geometry: {x: 4460, y: 100, width: 220, height: 120}
+      - <<: *node_defaults
+        id: P01_C3
+        number: C3
+        title: Candidate Local Event Graph
+        subtitle: Query-local graph for top videos only
+        layer: graph
+        type: graph
+        status: BASELINE
+        owner: TRI
+        responsibility: [Build versioned local temporal graph]
+        non_responsibility: [Không gate toàn corpus]
+        inputs: [Top CandidateVideo, Skeleton Catalog, Evidence]
+        outputs: [Candidate Local Event Graph]
+        group: G01_C
+        geometry: {x: 4700, y: 100, width: 240, height: 120}
+      - <<: *node_defaults
+        id: P01_C4
+        number: C4
+        title: Event Matcher
+        subtitle: Cross-modal query/candidate event scores
+        layer: graph
+        status: BASELINE
+        owner: TRI
+        responsibility: [Build EventMatchMatrix]
+        inputs: [Query graph, Candidate graph]
+        outputs: [EventMatchMatrix]
+        group: G01_C
+        geometry: {x: 4960, y: 100, width: 220, height: 120}
+      - <<: *node_defaults
+        id: P01_C5
+        number: C5
+        title: Temporal & Entity Solver
+        subtitle: DP · Beam · constraints · no GNN baseline
+        layer: graph
+        status: BASELINE
+        owner: TRI
+        responsibility: [Find ordered event chains]
+        inputs: [EventMatchMatrix, Graph constraints]
+        outputs: [Top-M Event Chains]
+        group: G01_C
+        geometry: {x: 5200, y: 100, width: 220, height: 120}
+      - <<: *node_defaults
+        id: P01_C6
+        number: C6
+        title: Gap Detector & Graph Expansion
+        subtitle: Balanced EXPLOIT and EXPLORE
+        layer: graph
+        type: decision
+        status: BASELINE
+        owner: TRI
+        responsibility: [Detect missing evidence and request bounded expansion]
+        inputs: [Event chains, Evidence gaps]
+        outputs: [Refinement request]
+        group: G01_C
+        geometry: {x: 5440, y: 100, width: 200, height: 120}
+      - <<: *node_defaults
+        id: P01_D1
+        number: D1
+        title: In-video Search
+        subtitle: Refine within selected video
+        layer: grounding
+        status: BASELINE
+        owner: TRI
+        responsibility: [Refine coarse event interval]
+        inputs: [CandidateVideo, QueryEvent, Coarse interval]
+        outputs: [RefinedEventInterval]
+        group: G01_D
+        geometry: {x: 5750, y: 100, width: 220, height: 120}
+      - <<: *node_defaults
+        id: P01_D2
+        number: D2
+        title: Dense Raw-video Decoder
+        subtitle: Preserve actual_frame_id
+        layer: grounding
+        status: BASELINE
+        owner: PHAT
+        responsibility: [Decode dense frames around candidate interval]
+        inputs: [Raw Video, Refined interval]
+        outputs: [DenseFrameWindow]
+        group: G01_D
+        geometry: {x: 5990, y: 100, width: 220, height: 120}
+      - <<: *node_defaults
+        id: P01_D3
+        number: D3
+        title: Semantic Moment Localizer
+        subtitle: Select exact moment semantics
+        layer: grounding
+        status: CANDIDATE
+        owner: TRI
+        responsibility: [Localize exact submission frame from raw evidence]
+        inputs: [DenseFrameWindow, Moment definition]
+        outputs: [SemanticMomentHypothesis list]
+        group: G01_D
+        geometry: {x: 6230, y: 100, width: 240, height: 120}
+      - <<: *node_defaults
+        id: P01_D4
+        number: D4
+        title: Evidence Verifier
+        subtitle: Independent deterministic and model checks
+        layer: grounding
+        status: BASELINE
+        owner: TRI
+        responsibility: [Verify mappings, order, relation and evidence support]
+        inputs: [Moment hypotheses, Raw evidence]
+        outputs: [VerifiedEvidencePacket, Rejections]
+        group: G01_D
+        geometry: {x: 6490, y: 100, width: 220, height: 120}
+      - <<: *node_defaults
+        id: P01_D5
+        number: D5
+        title: Q&A Answer Extractor
+        subtitle: Evidence-specific answer extraction
+        layer: grounding
+        status: OPTIONAL
+        owner: TRI
+        responsibility: [Extract canonical answer backed by evidence]
+        inputs: [Question, Verified clip evidence]
+        outputs: [Answer hypothesis]
+        group: G01_D
+        geometry: {x: 6730, y: 100, width: 220, height: 120}
+      - <<: *node_defaults
+        id: P01_E1
+        number: E1
+        title: Evidence Packet
+        subtitle: Grounded hypothesis provenance
+        layer: output
+        type: artifact
+        status: BASELINE
+        owner: TRI
+        responsibility: [Package evidence and provenance]
+        inputs: [Verified evidence, Answer hypothesis]
+        outputs: [EvidencePacket]
+        group: G01_E
+        geometry: {x: 7080, y: 100, width: 220, height: 120}
+      - <<: *node_defaults
+        id: P01_E2
+        number: E2
+        title: Ranked Answer List Constructor
+        subtitle: Precision at top · coverage at depth
+        layer: output
+        status: BASELINE
+        owner: TAI
+        responsibility: [Rank diverse non-duplicate answer hypotheses]
+        inputs: [EvidencePacket list]
+        outputs: [Up to 100 ranked answers]
+        group: G01_E
+        geometry: {x: 7320, y: 100, width: 240, height: 120}
+      - <<: *node_defaults
+        id: P01_E3
+        number: E3
+        title: KIS/Q&A/TRAKE Formatter
+        subtitle: Official task tuple schemas
+        layer: output
+        status: CURRENT_TEMPLATE
+        owner: TAI
+        responsibility: [Format task-specific submission]
+        inputs: [Ranked answers]
+        outputs: [Submission records]
+        group: G01_E
+        geometry: {x: 7580, y: 100, width: 220, height: 120}
+      - <<: *node_defaults
+        id: P01_E4
+        number: E4
+        title: Official Metric Evaluator
+        subtitle: R@1/5/20/50/100 and Final Score
+        layer: output
+        status: CURRENT_TEMPLATE
+        owner: PHUC
+        responsibility: [Evaluate ranked results]
+        inputs: [Submission records, Ground truth]
+        outputs: [Evaluation report]
+        group: G01_E
+        geometry: {x: 7820, y: 100, width: 260, height: 120}
+      - <<: *node_defaults
+        id: P01_F1
+        number: F1
+        title: Tool Registry
+        subtitle: Versioned callable contracts
+        layer: control
+        type: store
+        status: BASELINE
+        owner: TRI
+        responsibility: [Expose validated tool schemas]
+        inputs: [Tool implementations]
+        outputs: [Tool contracts]
+        group: G01_F
+        geometry: {x: 1900, y: 780, width: 260, height: 120}
+      - <<: *node_defaults
+        id: P01_F2
+        number: F2
+        title: Bounded Planner
+        subtitle: Plan · execute · inspect · max one revise
+        layer: control
+        type: agent
+        status: CANDIDATE
+        owner: TRI
+        responsibility: [Choose tools and bounded refinement]
+        inputs: [Query, Tool Registry]
+        outputs: [Execution plan]
+        group: G01_F
+        geometry: {x: 2180, y: 780, width: 260, height: 120}
+      - <<: *node_defaults
+        id: P01_F3
+        number: F3
+        title: Plan Validator
+        subtitle: Schema, order and budget checks
+        layer: control
+        type: decision
+        status: BASELINE
+        owner: TRI
+        responsibility: [Reject unsafe or invalid plans]
+        inputs: [Execution plan, Tool contracts]
+        outputs: [Validated plan]
+        group: G01_F
+        geometry: {x: 2460, y: 780, width: 260, height: 120}
+      - <<: *node_defaults
+        id: P01_F4
+        number: F4
+        title: Budget Manager
+        subtitle: Bound variants, videos, frames and model calls
+        layer: control
+        status: BASELINE
+        owner: TRI
+        responsibility: [Enforce latency and compute limits]
+        inputs: [Validated plan, Budget policy]
+        outputs: [Execution allowance]
+        group: G01_F
+        geometry: {x: 2740, y: 780, width: 280, height: 120}
+      - <<: *node_defaults
+        id: P01_F5
+        number: F5
+        title: Fallback Controller
+        subtitle: Deterministic retrieval-first path
+        layer: control
+        type: decision
+        status: BASELINE
+        owner: TRI
+        responsibility: [Recover from Agent or advanced model failure]
+        inputs: [Failure signal, Original query]
+        outputs: [Fallback plan]
+        group: G01_F
+        geometry: {x: 3040, y: 780, width: 280, height: 120}
+      - <<: *node_defaults
+        id: P01_F6
+        number: F6
+        title: Execution Trace
+        subtitle: Reproducible control provenance
+        layer: control
+        type: artifact
+        status: BASELINE
+        owner: TRI
+        responsibility: [Record tools, hypotheses, evidence and stop reason]
+        inputs: [Tool execution events]
+        outputs: [ExecutionTrace]
+        group: G01_F
+        geometry: {x: 3340, y: 780, width: 280, height: 120}
+    edges:
+      - {id: E01_A1, source: P01_A1, target: P01_A2, label: raw corpus, flow_type: data}
+      - {id: E01_A2, source: P01_A2, target: P01_A3, label: audited manifest, flow_type: data}
+      - {id: E01_A3, source: P01_A3, target: P01_A4, label: canonical mapping, flow_type: data}
+      - {id: E01_A4, source: P01_A4, target: P01_A5, label: retrieval frames, flow_type: data}
+      - {id: E01_A5, source: P01_A5, target: P01_A6, label: features and evidence, flow_type: data}
+      - {id: E01_A6, source: P01_A6, target: P01_A7, label: indexed segments, flow_type: artifact}
+      - {id: E01_B1, source: P01_B1, target: P01_B2, label: original query, flow_type: data}
+      - {id: E01_B2, source: P01_B2, target: P01_B3, label: task policy, flow_type: control}
+      - {id: E01_B3, source: P01_B3, target: P01_B4, label: compiled query, flow_type: data}
+      - {id: E01_B4, source: P01_B4, target: P01_B5, label: probe signals, flow_type: control}
+      - {id: E01_B5, source: P01_B5, target: P01_B6, label: selected branches, flow_type: control}
+      - {id: E01_AB, source: P01_A6, target: P01_B6, label: corpus indexes, flow_type: artifact}
+      - {id: E01_B6, source: P01_B6, target: P01_B7, label: branch candidates, flow_type: data}
+      - {id: E01_B7, source: P01_B7, target: P01_B8, label: grouped frames, flow_type: data}
+      - {id: E01_B8, source: P01_B8, target: P01_B9, label: candidate videos, flow_type: data}
+      - {id: E01_FAST, source: P01_B9, target: P01_C1, label: simple and confident, flow_type: control}
+      - {id: E01_GRAPH, source: P01_B9, target: P01_C2, label: complex or uncertain, flow_type: control}
+      - {id: E01_C2, source: P01_C2, target: P01_C3, label: query constraints, flow_type: data}
+      - {id: E01_AC, source: P01_A7, target: P01_C3, label: skeleton catalog, flow_type: artifact}
+      - {id: E01_C3, source: P01_C3, target: P01_C4, label: local event graph, flow_type: data}
+      - {id: E01_C4, source: P01_C4, target: P01_C5, label: EventMatchMatrix, flow_type: data}
+      - {id: E01_C5, source: P01_C5, target: P01_C6, label: event chains and gaps, flow_type: data}
+      - {id: E01_CD, source: P01_C6, target: P01_D1, label: bounded refinement, flow_type: control}
+      - {id: E01_FD, source: P01_C1, target: P01_D1, label: direct interval, flow_type: data}
+      - {id: E01_D1, source: P01_D1, target: P01_D2, label: refined interval, flow_type: data}
+      - {id: E01_RAW, source: P01_A1, target: P01_D2, label: raw source of truth, flow_type: evidence}
+      - {id: E01_D2, source: P01_D2, target: P01_D3, label: dense frames, flow_type: data}
+      - {id: E01_D3, source: P01_D3, target: P01_D4, label: moment hypotheses, flow_type: evidence}
+      - {id: E01_D4, source: P01_D4, target: P01_D5, label: Q&A when required, flow_type: optional}
+      - {id: E01_E1A, source: P01_D4, target: P01_E1, label: verified evidence, flow_type: evidence}
+      - {id: E01_E1B, source: P01_D5, target: P01_E1, label: grounded answer, flow_type: evidence}
+      - {id: E01_E1, source: P01_E1, target: P01_E2, label: evidence packets, flow_type: data}
+      - {id: E01_E2, source: P01_E2, target: P01_E3, label: ranked list, flow_type: data}
+      - {id: E01_E3, source: P01_E3, target: P01_E4, label: task submission, flow_type: data}
+      - {id: E01_F1, source: P01_F1, target: P01_F2, label: available tools, flow_type: control}
+      - {id: E01_F2, source: P01_F2, target: P01_F3, label: proposed plan, flow_type: control}
+      - {id: E01_F3, source: P01_F3, target: P01_F4, label: valid plan, flow_type: control}
+      - {id: E01_F4, source: P01_F4, target: P01_B3, label: bounded online execution, flow_type: control}
+      - {id: E01_F5, source: P01_F2, target: P01_C2, label: graph plan, flow_type: control}
+      - {id: E01_F6, source: P01_F2, target: P01_D3, label: grounding plan, flow_type: control}
+      - {id: E01_FB, source: P01_F5, target: P01_B6, label: primary visual retrieval, flow_type: fallback}
+      - {id: E01_TRACE, source: P01_F4, target: P01_F6, label: execution events, flow_type: artifact}
+    notes:
+      - Retrieval-first main flow luôn rank CandidateVideo trước Candidate Local Event Graph.
+      - Agent Control Plane chỉ tạo control edges; mọi score và ID đến từ tool contracts.
+
+  - id: PAGE_02
+    title: 02 — Offline Data & Representation
+    description: Audit, canonical mapping, Hybrid Frame Bank, multimodal evidence, indexes và Skeleton Temporal Catalog.
+    direction: LR
+    mermaid_file: 02_offline_data_and_representation.mmd
+    detail_level: detail
+    groups:
+      - {id: G02_DATA, title: Raw Data, Audit & Mapping, layer: data, geometry: {x: 20, y: 20, width: 1120, height: 760}}
+      - {id: G02_FRAME, title: Hybrid Frame Bank, layer: representation, geometry: {x: 1170, y: 20, width: 1080, height: 760}}
+      - {id: G02_FEATURE, title: Feature & Evidence Extraction, layer: representation, geometry: {x: 2280, y: 20, width: 2240, height: 760}}
+      - {id: G02_STORE, title: Index, Mapping Store & Skeleton Catalog, layer: storage, geometry: {x: 4550, y: 20, width: 800, height: 760}}
+    nodes:
+      - <<: *node_defaults
+        id: P02_M1
+        number: M1
+        title: Raw Data Sources
+        subtitle: Raw video and BTC auxiliary evidence
+        layer: data
+        type: store
+        status: CONFIRMED
+        owner: KHOA
+        responsibility: [Preserve raw video source of truth, Register BTC artifacts and metadata]
+        inputs: [Raw Videos, BTC keyframes, BTC CLIP features, BTC object JSON, YouTube metadata, Optional audio]
+        processing: [Inventory source paths and versions]
+        implementations: [Filesystem and Kaggle Dataset mounts]
+        outputs: [Versioned raw source inventory]
+        artifacts: [raw-source-inventory]
+        metrics: [File coverage]
+        failure_modes: [Missing file, Version mismatch]
+        fallback: Mark missing evidence; never synthesize raw frames.
+        next_modules: [P02_M2]
+        group: G02_DATA
+        geometry: {x: 60, y: 100, width: 300, height: 280}
+      - <<: *node_defaults
+        id: P02_M2
+        number: M2
+        title: Data Audit
+        subtitle: Metadata and compatibility validation
+        layer: data
+        status: CURRENT_TEMPLATE
+        owner: KHOA
+        responsibility: [Check files, duplicate IDs, FPS, duration, frame count, missing metadata, keyframe/feature/object compatibility]
+        non_responsibility: [Không đánh giá semantic retrieval quality]
+        inputs: [Raw source inventory]
+        processing: [Existence checks, ID uniqueness, numeric validation, compatibility counts]
+        implementations: [Python manifest validator, ffprobe or equivalent video reader candidate]
+        outputs: [VideoManifest, DataAuditReport, InvalidRecordList]
+        artifacts: [video-manifest-vX, data-audit-report-vX]
+        metrics: [Valid record rate, Missing path count, Compatibility error count]
+        failure_modes: [Corrupt metadata, Duplicate video ID, Incompatible BTC artifacts]
+        fallback: Quarantine invalid records and continue with valid subset.
+        dependencies: [P02_M1]
+        next_modules: [P02_M3]
+        group: G02_DATA
+        geometry: {x: 390, y: 100, width: 320, height: 300}
+      - <<: *node_defaults
+        id: P02_M3
+        number: M3
+        title: Unified ID & Temporal Mapping
+        subtitle: Keyframe order is never actual_frame_id
+        layer: data
+        status: CURRENT_TEMPLATE
+        owner: KHOA
+        responsibility: [Canonicalize dataset, batch, video, shot, segment, frame, time, feature and evidence identifiers]
+        non_responsibility: [Không suy actual frame từ keyframe ordinal]
+        inputs: [VideoManifest, BTC mappings]
+        processing: [Build bidirectional frame/time/evidence references, Validate actual frame bounds]
+        implementations: [VideoRecord, ShotRecord, FrameRecord, SegmentRecord, FrameMap]
+        outputs: [Canonical records and FrameMap]
+        artifacts: [temporal-mapping-store-vX]
+        metrics: [Mapping coverage, Round-trip mapping error]
+        failure_modes: [Wrong FPS, Off-by-one frame, Orphan feature row]
+        fallback: Reject ambiguous mapping and require raw-video verification.
+        dependencies: [P02_M2]
+        next_modules: [P02_M4]
+        group: G02_DATA
+        geometry: {x: 740, y: 100, width: 350, height: 320}
+      - <<: *node_defaults
+        id: P02_M4
+        number: M4
+        title: Hybrid Frame Bank Router
+        subtitle: BTC Auxiliary + Team Retrieval
+        layer: representation
+        type: decision
+        status: BASELINE
+        owner: PHAT
+        responsibility: [Preserve complementary frame branches and unified mapping]
+        inputs: [Raw Video, BTC artifacts, FrameMap]
+        processing: [Route confirmed BTC evidence and team-selected retrieval frames]
+        implementations: [Parallel frame bank branches]
+        outputs: [Hybrid Frame Bank Manifest]
+        artifacts: [hybrid-frame-bank-vX]
+        metrics: [Coverage, Branch overlap]
+        failure_modes: [Branch unavailable, Mapping divergence]
+        fallback: Use BTC branch plus uniform raw-video fallback.
+        dependencies: [P02_M3]
+        next_modules: [P02_M41, P02_M42]
+        group: G02_FRAME
+        geometry: {x: 1210, y: 100, width: 300, height: 260}
+      - <<: *node_defaults
+        id: P02_M41
+        number: M4.1
+        title: BTC Auxiliary Frame Bank
+        subtitle: Baseline, fallback, debugging and object evidence
+        layer: representation
+        type: store
+        status: CONFIRMED
+        owner: PHAT
+        responsibility: [Load BTC keyframes, CLIP ViT-B/32 features and object JSON]
+        non_responsibility: [Không thay thế raw video semantic localization]
+        inputs: [BTC keyframes, BTC CLIP features, BTC object JSON]
+        processing: [Validate counts, Bind keyframes to actual frame mapping]
+        implementations: [Confirmed BTC artifacts]
+        outputs: [BTC FrameRecord and evidence references]
+        artifacts: [btc-aux-frame-bank-vX]
+        metrics: [Mapping validity, Feature/object coverage]
+        failure_modes: [Missing keyframe, Feature count mismatch, Object reference mismatch]
+        fallback: Retain available BTC modalities and mark missing evidence.
+        dependencies: [P02_M4]
+        next_modules: [P02_M51, P02_M54]
+        group: G02_FRAME
+        geometry: {x: 1540, y: 100, width: 320, height: 300}
+      - <<: *node_defaults
+        id: P02_M42
+        number: M4.2
+        title: Team Retrieval Frame Bank
+        subtitle: BASELINE + CANDIDATE
+        layer: representation
+        status: BASELINE
+        owner: PHAT
+        responsibility: [Select retrieval frames, Create frame mapping, Ensure preliminary coverage]
+        non_responsibility: [Không chọn semantic submission frame cuối, Không xây Event Graph, Không trả lời Q&A]
+        inputs: [Raw Video, VideoRecord]
+        processing: [Shot detect, Duration analysis, Shot-center/adaptive selection, Long-shot fallback, Quality filter, Temporal/visual deduplication, Frame mapping]
+        implementations: [Current template dummy full-video shot and shot center, Candidate TransNetV2, Candidate adaptive multi-frame, Candidate visual diversity]
+        outputs: [ShotRecord list, FrameRecord list, Frame Bank Manifest]
+        artifacts: [team-frame-bank-vX]
+        metrics: [Frames per video, Temporal gap, Coverage, Duplicate rate]
+        failure_modes: [Missed cut, Long shot, Duplicate frames, Blur/black/transition frame, Decode error, Wrong mapping]
+        fallback: Maximum temporal gap with uniform frame insertion.
+        dependencies: [P02_M4]
+        next_modules: [P02_M52]
+        group: G02_FRAME
+        geometry: {x: 1890, y: 100, width: 320, height: 400}
+      - <<: *node_defaults
+        id: P02_M51
+        number: M5.1
+        title: BTC Visual Feature Loader
+        subtitle: Confirmed CLIP ViT-B/32 features
+        layer: representation
+        status: CONFIRMED
+        owner: PHAT
+        inputs: [BTC feature files, BTC FrameRecord]
+        processing: [Validate row count, normalization and mapping]
+        implementations: [CLIP ViT-B/32 loader]
+        outputs: [BTC FeatureRecord list]
+        artifacts: [btc-feature-manifest-vX]
+        metrics: [Mapped feature rows]
+        failure_modes: [Wrong row alignment]
+        fallback: Disable invalid BTC feature rows.
+        group: G02_FEATURE
+        geometry: {x: 2320, y: 100, width: 280, height: 260}
+      - <<: *node_defaults
+        id: P02_M52
+        number: M5.2
+        title: Team Visual Encoder
+        subtitle: Model final TBD after benchmark
+        layer: representation
+        status: CANDIDATE
+        owner: PHAT
+        inputs: [Team FrameRecord, Text query contract]
+        processing: [Preprocess, Encode frame/text, Normalize, Record model metadata]
+        implementations: [Current deterministic dummy contract, Candidate CLIP/OpenCLIP compatible encoder]
+        outputs: [Team FeatureRecord list]
+        artifacts: [team-frame-features-vX]
+        metrics: [Retrieval benchmark, Throughput, Dimension]
+        failure_modes: [Model drift, Preprocessing mismatch, OOM]
+        fallback: Deterministic dummy only for contract tests; BTC features for retrieval fallback.
+        group: G02_FEATURE
+        geometry: {x: 2620, y: 100, width: 300, height: 300}
+      - <<: *node_defaults
+        id: P02_M53
+        number: M5.3
+        title: Segment/Clip Representation
+        subtitle: Representative sets or pooled clip encoding
+        layer: representation
+        status: CANDIDATE
+        owner: PHAT
+        inputs: [Frame features, Segment intervals]
+        processing: [Representative-vector set, Pooling, Optional clip/video encoding]
+        implementations: [TBD after benchmark]
+        outputs: [Segment representations]
+        artifacts: [segment-features-vX]
+        metrics: [Segment recall, Storage cost]
+        failure_modes: [Over-pooling, Lost short action]
+        fallback: Keep representative frame set without pooling.
+        group: G02_FEATURE
+        geometry: {x: 2940, y: 100, width: 280, height: 280}
+      - <<: *node_defaults
+        id: P02_M54
+        number: M5.4
+        title: Object Evidence
+        subtitle: BTC confirmed · team extension optional
+        layer: representation
+        status: CONFIRMED
+        owner: PHAT
+        inputs: [BTC Object JSON, Optional team frames]
+        processing: [Bind detections to frame/time, Preserve boxes and confidence]
+        implementations: [BTC Faster R-CNN Inception-ResNet-v2 on Open Images V4, Optional team detector TBD]
+        outputs: [Object evidence references]
+        artifacts: [object-evidence-vX]
+        metrics: [Mapped detections, Query object support]
+        failure_modes: [Class mismatch, Bad box mapping]
+        fallback: Treat object result as evidence, never identity truth.
+        group: G02_FEATURE
+        geometry: {x: 3240, y: 100, width: 310, height: 320}
+      - <<: *node_defaults
+        id: P02_M55
+        number: M5.5
+        title: OCR Evidence
+        subtitle: Optional lexical evidence
+        layer: representation
+        status: OPTIONAL
+        owner: PHAT
+        inputs: [Frames or crops]
+        processing: [Extract text, box, confidence and timestamp]
+        implementations: [OCR model TBD after benchmark]
+        outputs: [OCR spans]
+        artifacts: [ocr-evidence-vX]
+        metrics: [Text accuracy, Coverage]
+        failure_modes: [Blurred text, Wrong script]
+        fallback: Skip OCR branch and preserve uncertainty.
+        group: G02_FEATURE
+        geometry: {x: 3570, y: 100, width: 280, height: 280}
+      - <<: *node_defaults
+        id: P02_M56
+        number: M5.6
+        title: ASR Evidence
+        subtitle: Optional speech evidence
+        layer: representation
+        status: OPTIONAL
+        owner: PHAT
+        inputs: [Optional audio]
+        processing: [Transcribe with start/end time and confidence]
+        implementations: [ASR model TBD after benchmark]
+        outputs: [ASR spans]
+        artifacts: [asr-evidence-vX]
+        metrics: [Word accuracy, Time alignment]
+        failure_modes: [No audio, Noise, Language mismatch]
+        fallback: Mark speech evidence unavailable.
+        group: G02_FEATURE
+        geometry: {x: 3870, y: 100, width: 280, height: 280}
+      - <<: *node_defaults
+        id: P02_M57
+        number: M5.7
+        title: Caption/Event Description
+        subtitle: Caption is evidence, not ground truth
+        layer: representation
+        status: CANDIDATE
+        owner: PHAT
+        inputs: [Frames, Segments, Optional evidence]
+        processing: [Generate coarse description and role hints with supporting refs]
+        implementations: [Caption model and prompt TBD]
+        outputs: [Versioned coarse descriptions]
+        artifacts: [caption-evidence-vX]
+        metrics: [Grounded support rate]
+        failure_modes: [Hallucination, Unsupported role]
+        fallback: Use visual/object evidence without caption.
+        group: G02_FEATURE
+        geometry: {x: 4170, y: 100, width: 300, height: 300}
+      - <<: *node_defaults
+        id: P02_M6
+        number: M6
+        title: Index & Storage Builder
+        subtitle: Multimodal corpus indexes
+        layer: storage
+        type: store
+        status: BASELINE
+        owner: PHUC
+        inputs: [Frame/segment features, Object/OCR/ASR/Caption/Metadata, FrameMap]
+        processing: [Build vector, lexical, inverted, metadata and temporal stores]
+        implementations: [Current NumPy flat cosine, Target FAISS or compatible ANN, Parquet, DuckDB or SQLite; no graph database baseline]
+        outputs: [BTC/Team/Segment indexes, Lexical indexes, Metadata index, Temporal Mapping Store]
+        artifacts: [multimodal-index-bundle-vX]
+        metrics: [Recall, Build time, Index size]
+        failure_modes: [Stale mapping, Dimension mismatch, Partial index]
+        fallback: Rebuild affected branch; exact NumPy search for small validation sets.
+        group: G02_STORE
+        geometry: {x: 4590, y: 100, width: 340, height: 380}
+      - <<: *node_defaults
+        id: P02_M7
+        number: M7
+        title: Skeleton Temporal Catalog
+        subtitle: Lightweight whole-corpus catalog, not rich Event Graph
+        layer: storage
+        type: graph
+        status: BASELINE
+        owner: TRI
+        inputs: [Segments, Representative frames, Embeddings, Evidence refs, Coarse descriptions]
+        processing: [Create SegmentEventHypothesis, Add CONTAINS/PRECEDES/FOLLOWS/OVERLAPS/ADJACENT]
+        implementations: [Deterministic temporal catalog]
+        outputs: [Versioned skeleton catalog with confidence, status and provenance]
+        artifacts: [skeleton-temporal-catalog-vX]
+        metrics: [Segment coverage, Temporal edge validity]
+        failure_modes: [Boundary uncertainty, Missing evidence refs]
+        fallback: Keep minimal interval nodes and deterministic adjacency only.
+        group: G02_STORE
+        geometry: {x: 4960, y: 100, width: 340, height: 400}
+    edges:
+      - {id: E02_01, source: P02_M1, target: P02_M2, label: source inventory, flow_type: data}
+      - {id: E02_02, source: P02_M2, target: P02_M3, label: audited manifest, flow_type: data}
+      - {id: E02_03, source: P02_M3, target: P02_M4, label: canonical mapping, flow_type: data}
+      - {id: E02_04A, source: P02_M4, target: P02_M41, label: BTC branch, flow_type: data}
+      - {id: E02_04B, source: P02_M4, target: P02_M42, label: team branch, flow_type: data}
+      - {id: E02_051, source: P02_M41, target: P02_M51, label: confirmed BTC features, flow_type: data}
+      - {id: E02_052, source: P02_M42, target: P02_M52, label: team frames, flow_type: data}
+      - {id: E02_053, source: P02_M52, target: P02_M53, label: frame representations, flow_type: optional}
+      - {id: E02_054, source: P02_M41, target: P02_M54, label: object JSON, flow_type: evidence}
+      - {id: E02_055, source: P02_M42, target: P02_M55, label: text crops, flow_type: optional}
+      - {id: E02_056, source: P02_M1, target: P02_M56, label: optional audio, flow_type: optional}
+      - {id: E02_057, source: P02_M53, target: P02_M57, label: segment context, flow_type: optional}
+      - {id: E02_06A, source: P02_M51, target: P02_M6, label: BTC FeatureRecord, flow_type: artifact}
+      - {id: E02_06B, source: P02_M52, target: P02_M6, label: Team FeatureRecord, flow_type: artifact}
+      - {id: E02_06C, source: P02_M54, target: P02_M6, label: object evidence, flow_type: artifact}
+      - {id: E02_06D, source: P02_M55, target: P02_M6, label: OCR spans, flow_type: artifact}
+      - {id: E02_06E, source: P02_M56, target: P02_M6, label: ASR spans, flow_type: artifact}
+      - {id: E02_06F, source: P02_M57, target: P02_M6, label: captions, flow_type: artifact}
+      - {id: E02_07, source: P02_M6, target: P02_M7, label: indexed segments and evidence refs, flow_type: artifact}
+    notes:
+      - Motion/contact/separation extraction is query-time refinement, not an offline core requirement.
+      - Full causal graph, cross-video identity and every-frame graph nodes are explicitly excluded.
+
+  - id: PAGE_03
+    title: 03 — Online Query & Retrieval
+    description: Query ledger, task policy, compiler, fast probe, modality routing, retrieval, fusion, grouping, video ranking và uncertainty routing.
+    direction: LR
+    mermaid_file: 03_online_query_and_retrieval.mmd
+    detail_level: detail
+    groups:
+      - {id: G03_QUERY, title: Query Understanding & Ledger, layer: control, geometry: {x: 20, y: 20, width: 1380, height: 700}}
+      - {id: G03_RETRIEVAL, title: Retrieval, Fusion & Video Ranking, layer: retrieval, geometry: {x: 1430, y: 20, width: 2500, height: 700}}
+      - {id: G03_ROUTE, title: Lane Decision, layer: control, geometry: {x: 3960, y: 20, width: 500, height: 700}}
+    nodes:
+      - <<: *node_defaults
+        id: P03_M8
+        number: M8
+        title: Query Input
+        subtitle: KIS event · Q&A event+question · TRAKE sequence
+        layer: control
+        status: BASELINE
+        owner: TAI
+        inputs: [Natural-language task request]
+        processing: [Capture exact original query and task hints]
+        implementations: [Task input schema]
+        outputs: [Immutable original query]
+        artifacts: [query-request]
+        metrics: [Schema validity]
+        failure_modes: [Missing task fields]
+        fallback: Reject malformed request with clear schema error.
+        next_modules: [P03_M9]
+        group: G03_QUERY
+        geometry: {x: 60, y: 100, width: 280, height: 260}
+      - <<: *node_defaults
+        id: P03_M9
+        number: M9
+        title: Query Ledger
+        subtitle: Original query is never overwritten
+        layer: control
+        type: artifact
+        status: BASELINE
+        owner: TRI
+        responsibility: [Record normalized query, constraints, hypotheses, variants, executions, candidates, chains, moments, answers and submissions]
+        inputs: [Original query, Runtime events]
+        processing: [Append-only hypothesis and execution history]
+        implementations: [Versioned QueryLedger contract]
+        outputs: [QueryLedger]
+        artifacts: [query-ledger-vX]
+        metrics: [Trace completeness]
+        failure_modes: [Lost provenance, Query overwrite]
+        fallback: Preserve original request and deterministic trace minimum.
+        dependencies: [P03_M8]
+        next_modules: [P03_M10]
+        group: G03_QUERY
+        geometry: {x: 370, y: 100, width: 300, height: 300}
+      - <<: *node_defaults
+        id: P03_M10
+        number: M10
+        title: Task Policy
+        subtitle: Route KIS · Q&A · TRAKE
+        layer: control
+        type: decision
+        status: BASELINE
+        owner: TRI
+        inputs: [Original query, Explicit task type]
+        processing: [Select output schema, required evidence and solver policy]
+        implementations: [Deterministic task router]
+        outputs: [TaskPolicy]
+        artifacts: [task-policy]
+        metrics: [Routing accuracy]
+        failure_modes: [Ambiguous task type]
+        fallback: Require explicit task type; never infer output tuple silently.
+        dependencies: [P03_M9]
+        next_modules: [P03_M11]
+        group: G03_QUERY
+        geometry: {x: 700, y: 100, width: 280, height: 280}
+      - <<: *node_defaults
+        id: P03_M11
+        number: M11
+        title: Query Compiler
+        subtitle: Rules baseline · bounded LLM candidate
+        layer: control
+        status: BASELINE
+        owner: TRI
+        responsibility: [Parse roles, answer type, QueryEvent list, relations, hard/soft constraints and moment definitions]
+        non_responsibility: [Không coi rewrite hoặc LLM output là ground truth]
+        inputs: [Original query, TaskPolicy]
+        processing: [Rule/template parsing, Optional structured LLM output, Schema validation]
+        implementations: [Baseline deterministic parser, Candidate bounded LLM]
+        outputs: [CompiledQuery, QueryEvent list, Query hypotheses]
+        artifacts: [compiled-query-vX]
+        metrics: [Schema pass rate, Constraint coverage]
+        failure_modes: [Unsupported parse, Invalid structured output, Hallucinated constraint]
+        fallback: Use original query plus conservative lexical/visual hypothesis.
+        dependencies: [P03_M10]
+        next_modules: [P03_M12]
+        group: G03_QUERY
+        geometry: {x: 1010, y: 100, width: 340, height: 340}
+      - <<: *node_defaults
+        id: P03_M12
+        number: M12
+        title: Fast Probe
+        subtitle: Cheap retrieval confidence estimate
+        layer: retrieval
+        status: BASELINE
+        owner: PHUC
+        inputs: [CompiledQuery, Primary indexes]
+        processing: [Primary visual search, Optional object/OCR probe, Group by video, Compute score margin, Variant agreement, Concentration and evidence coverage]
+        implementations: [Existing NumPy retrieval contract, Baseline grouping]
+        outputs: [InitialCandidates, UncertaintySignals]
+        artifacts: [fast-probe-result]
+        metrics: [Candidate concentration, Score margin, Evidence coverage]
+        failure_modes: [Flat scores, Conflicting variants, Empty result]
+        fallback: Expand modalities and candidate budget.
+        dependencies: [P03_M11]
+        next_modules: [P03_M13]
+        group: G03_RETRIEVAL
+        geometry: {x: 1470, y: 100, width: 320, height: 320}
+      - <<: *node_defaults
+        id: P03_M13
+        number: M13
+        title: Modality Router
+        subtitle: Deterministic rules baseline
+        layer: control
+        type: decision
+        status: BASELINE
+        owner: TRI
+        inputs: [CompiledQuery, UncertaintySignals]
+        processing: [Choose visual, segment, object, OCR, ASR, caption and metadata tools]
+        implementations: [Baseline deterministic task/query rules, Candidate bounded Agent routing]
+        outputs: [RetrievalToolCall list]
+        artifacts: [retrieval-plan]
+        metrics: [Useful branch rate, Budget use]
+        failure_modes: [Missing needed modality, Repeated tool call]
+        fallback: Primary visual plus object/OCR hints when explicit.
+        dependencies: [P03_M12]
+        next_modules: [P03_M14]
+        group: G03_RETRIEVAL
+        geometry: {x: 1820, y: 100, width: 300, height: 300}
+      - <<: *node_defaults
+        id: P03_M14
+        number: M14
+        title: Multimodal Retrieval
+        subtitle: Every branch returns rank, score, source and evidence refs
+        layer: retrieval
+        status: BASELINE
+        owner: PHUC
+        inputs: [RetrievalToolCall list, Corpus indexes]
+        processing: [Search selected modalities independently]
+        implementations: [visual_frame_search, segment_search, object_search, OCR_search, ASR_search, caption_search, metadata_search]
+        outputs: [Branch CandidateFrame/Segment lists]
+        artifacts: [retrieval-branch-results]
+        metrics: [Recall@K per branch, Latency]
+        failure_modes: [Index unavailable, Dimension mismatch, Empty branch]
+        fallback: Continue available branches and record missing branch.
+        dependencies: [P03_M13]
+        next_modules: [P03_M15]
+        group: G03_RETRIEVAL
+        geometry: {x: 2150, y: 100, width: 340, height: 340}
+      - <<: *node_defaults
+        id: P03_M15
+        number: M15
+        title: Fusion
+        subtitle: Reciprocal Rank Fusion baseline
+        layer: retrieval
+        status: CURRENT_TEMPLATE
+        owner: PHUC
+        non_responsibility: [Không cộng trực tiếp raw scores khác scale]
+        inputs: [Multiple ranked branch lists]
+        processing: [Weighted reciprocal rank aggregation]
+        implementations: [RRF score = sum weight / (k + rank)]
+        outputs: [Fused CandidateFrame list]
+        artifacts: [fusion-result]
+        metrics: [Recall gain over best branch]
+        failure_modes: [Dominant noisy branch, Duplicate candidate]
+        fallback: Primary visual ranking with explicit branch provenance.
+        dependencies: [P03_M14]
+        next_modules: [P03_M16]
+        group: G03_RETRIEVAL
+        geometry: {x: 2520, y: 100, width: 300, height: 300}
+      - <<: *node_defaults
+        id: P03_M16
+        number: M16
+        title: Grouping & Deduplication
+        subtitle: Frame → temporal cluster → shot → video
+        layer: retrieval
+        status: CURRENT_TEMPLATE
+        owner: PHUC
+        inputs: [Fused CandidateFrame list]
+        processing: [Temporal clustering, Shot grouping, Duplicate suppression, Video grouping, Representative selection]
+        implementations: [Nearby-frame deduplication and video grouping baseline]
+        outputs: [Grouped candidates by video]
+        artifacts: [candidate-groups]
+        metrics: [Duplicate reduction, Videos retained]
+        failure_modes: [Over-deduplication, Cluster boundary error]
+        fallback: Keep highest-score candidate per conservative window.
+        dependencies: [P03_M15]
+        next_modules: [P03_M17]
+        group: G03_RETRIEVAL
+        geometry: {x: 2850, y: 100, width: 320, height: 320}
+      - <<: *node_defaults
+        id: P03_M17
+        number: M17
+        title: Candidate Video Ranker
+        subtitle: KIS/Q&A evidence scores · TRAKE event coverage/order
+        layer: retrieval
+        status: BASELINE
+        owner: PHUC
+        inputs: [Grouped candidates, QueryEvent list]
+        processing: [Best-frame, Top-k pooled, Modality agreement, Distinctive evidence, Event coverage, Order feasibility, Compactness and penalties]
+        implementations: [Current best-frame/top-k mean, Candidate task-aware video ranker]
+        outputs: [CandidateVideo list]
+        artifacts: [candidate-video-ranking]
+        metrics: [Video Recall@K, Event coverage]
+        failure_modes: [Wrong video dominates, Missing event, Infeasible order]
+        fallback: Rank by best primary visual frame plus modality agreement.
+        dependencies: [P03_M16]
+        next_modules: [P03_M18]
+        group: G03_RETRIEVAL
+        geometry: {x: 3200, y: 100, width: 340, height: 340}
+      - <<: *node_defaults
+        id: P03_M18
+        number: M18
+        title: Uncertainty Manager
+        subtitle: Fast Lane vs Graph Lane
+        layer: control
+        type: decision
+        status: BASELINE
+        owner: TRI
+        inputs: [CandidateVideo list, Task, Score margin, Evidence coverage]
+        processing: [Fast for one clear event; Graph for TRAKE, multi-event, temporal/entity constraints, ambiguity, complex Q&A or missing evidence]
+        implementations: [Deterministic uncertainty thresholds]
+        outputs: [LaneDecision]
+        artifacts: [uncertainty-decision]
+        metrics: [Fast-lane precision, Graph-lane trigger rate]
+        failure_modes: [Premature fast route, Unnecessary graph cost]
+        fallback: Prefer Graph Lane when temporal constraints are explicit.
+        dependencies: [P03_M17]
+        next_modules: [Query Event Graph, In-video Search]
+        group: G03_ROUTE
+        geometry: {x: 4000, y: 100, width: 420, height: 340}
+    edges:
+      - {id: E03_01, source: P03_M8, target: P03_M9, label: immutable query, flow_type: data}
+      - {id: E03_02, source: P03_M9, target: P03_M10, label: task request, flow_type: control}
+      - {id: E03_03, source: P03_M10, target: P03_M11, label: task policy, flow_type: control}
+      - {id: E03_04, source: P03_M11, target: P03_M12, label: compiled query, flow_type: data}
+      - {id: E03_05, source: P03_M12, target: P03_M13, label: probe and uncertainty, flow_type: control}
+      - {id: E03_06, source: P03_M13, target: P03_M14, label: tool calls, flow_type: control}
+      - {id: E03_07, source: P03_M14, target: P03_M15, label: ranked branch lists, flow_type: data}
+      - {id: E03_08, source: P03_M15, target: P03_M16, label: fused candidates, flow_type: data}
+      - {id: E03_09, source: P03_M16, target: P03_M17, label: video groups, flow_type: data}
+      - {id: E03_10, source: P03_M17, target: P03_M18, label: ranked candidate videos, flow_type: data}
+      - {id: E03_LEDGER, source: P03_M18, target: P03_M9, label: candidates and lane decision, flow_type: artifact}
+    notes:
+      - Candidate Video ranking always precedes deep Candidate Local Event Graph construction.
+      - Fast Probe reduces cost but never replaces final evidence verification.
+
+  - id: PAGE_04
+    title: 04 — Event Graph Internals
+    description: Query Event Graph, Candidate Local Event Graph, semantics, confidence/provenance, matching, temporal/entity solver và bounded expansion.
+    direction: LR
+    mermaid_file: 04_event_graph_internals.mmd
+    detail_level: detail
+    groups:
+      - {id: G04_GRAPHS, title: Query Graph & Candidate Local Graph, layer: graph, geometry: {x: 20, y: 20, width: 1520, height: 780}}
+      - {id: G04_SEMANTICS, title: Graph Semantics, Confidence & Provenance, layer: graph, geometry: {x: 1570, y: 20, width: 1060, height: 780}}
+      - {id: G04_SOLVER, title: Matching, Solving & Expansion, layer: graph, geometry: {x: 2660, y: 20, width: 1760, height: 780}}
+    nodes:
+      - <<: *node_defaults
+        id: P04_M19
+        number: M19
+        title: Query Event Graph
+        subtitle: Explicit · Inferred · Hypothesis constraints
+        layer: graph
+        type: graph
+        status: BASELINE
+        owner: TRI
+        responsibility: [Represent QueryEvent nodes, source spans, roles, modalities, moment definitions and hard/soft constraints, Preserve multiple hypotheses]
+        non_responsibility: [Không assert inferred relation as explicit truth]
+        inputs: [Compiled QueryEvent list]
+        processing: [Create QueryEventNode, Add BEFORE/AFTER/OVERLAPS/SAME_VIDEO/POSSIBLE_SAME_ACTOR]
+        implementations: [Typed query graph contract]
+        outputs: [Versioned Query Event Graph]
+        artifacts: [query-event-graph-vX]
+        metrics: [Constraint coverage, Schema validity]
+        failure_modes: [Ambiguous span, Conflicting constraints]
+        fallback: Keep multiple conservative hypotheses.
+        next_modules: [P04_M23]
+        group: G04_GRAPHS
+        geometry: {x: 60, y: 100, width: 430, height: 380}
+      - <<: *node_defaults
+        id: P04_M20
+        number: M20
+        title: Candidate Local Event Graph Builder
+        subtitle: Top candidate videos only
+        layer: graph
+        type: graph
+        status: BASELINE
+        owner: TRI
+        responsibility: [Build query-local graph from retrieved and neighboring segments, timeline, objects, OCR, ASR, captions and optional tracks]
+        non_responsibility: [Không xây rich Event Graph toàn corpus, Evidence có thể chỉ là reference]
+        inputs: [Top CandidateVideo, Retrieved/neighbor segments, Skeleton catalog, Evidence refs]
+        processing: [Create VideoNode, SegmentEventNode, EntityHypothesisNode, SemanticMomentHypothesisNode]
+        implementations: [Directed attributed heterogeneous temporal graph with versioned query-local refinement]
+        outputs: [Candidate Local Event Graph]
+        artifacts: [candidate-local-event-graph-vX]
+        metrics: [Graph node budget, Evidence coverage]
+        failure_modes: [Locality bias, Missing segment, Graph explosion]
+        fallback: Bounded timeline with deterministic temporal edges only.
+        next_modules: [P04_M21, P04_M23]
+        group: G04_GRAPHS
+        geometry: {x: 520, y: 100, width: 470, height: 420}
+      - <<: *node_defaults
+        id: P04_M21
+        number: M21
+        title: Graph Types & Semantics
+        subtitle: Core · Soft · On-demand edges
+        layer: graph
+        type: graph
+        status: BASELINE
+        owner: TRI
+        responsibility: [Define CONTAINS/BEFORE/AFTER/OVERLAPS/ADJACENT/SUPPORTS/CONTRADICTS/ANCHORS, Soft entity/object/location/interaction/similarity, On-demand causal hypotheses]
+        non_responsibility: [Không biến temporal order thành causal hard truth]
+        inputs: [Candidate graph nodes, Evidence references]
+        processing: [Type edges and mark confidence/status/provenance]
+        implementations: [Typed edge registry]
+        outputs: [Semantically typed local graph]
+        artifacts: [graph-schema-vX]
+        metrics: [Invalid edge count, Unsupported causal edge count]
+        failure_modes: [Causal hallucination, Hardening soft relation]
+        fallback: Downgrade uncertain relation to hypothesis or evidence reference.
+        dependencies: [P04_M20]
+        next_modules: [P04_M22]
+        group: G04_GRAPHS
+        geometry: {x: 1020, y: 100, width: 470, height: 420}
+      - <<: *node_defaults
+        id: P04_M22
+        number: M22
+        title: Confidence & Provenance
+        subtitle: Every hypothesis is traceable and stateful
+        layer: graph
+        type: artifact
+        status: BASELINE
+        owner: TRI
+        responsibility: [Track boundary, semantic, caption, object, OCR/ASR, entity, agreement, coverage, moment and verification confidence]
+        inputs: [Graph hypotheses, Model/tool executions, Source evidence]
+        processing: [Attach source model/version, prompt version, frames/clip, creation time, graph version and verification method, Set hypothesis status]
+        implementations: [segment_hypothesis, event_hypothesis, verified_event, rejected_event, incomplete_event]
+        outputs: [ConfidenceComponents, ProvenanceRecord, NodeStatus]
+        artifacts: [graph-provenance-vX]
+        metrics: [Provenance completeness, Verified hypothesis rate]
+        failure_modes: [Missing source refs, Stale version, Uncalibrated confidence]
+        fallback: Mark incomplete_event and block unsupported promotion.
+        dependencies: [P04_M21]
+        next_modules: [P04_M23, P04_M26]
+        group: G04_SEMANTICS
+        geometry: {x: 1610, y: 100, width: 470, height: 440}
+      - <<: *node_defaults
+        id: P04_M23
+        number: M23
+        title: Event Matcher
+        subtitle: QueryEvent ↔ CandidateEvent evidence scoring
+        layer: graph
+        status: BASELINE
+        owner: TRI
+        inputs: [Query Event Graph, Candidate Local Event Graph, Evidence references]
+        processing: [Score visual, caption, object, OCR, ASR, region, motion/action and metadata support]
+        implementations: [Weighted evidence scoring with provenance]
+        outputs: [EventMatchMatrix]
+        artifacts: [event-match-matrix]
+        metrics: [Match separation, Event coverage]
+        failure_modes: [Cross-modal conflict, Missing modality]
+        fallback: Use available high-confidence signals and uncertainty penalty.
+        dependencies: [P04_M19, P04_M20, P04_M22]
+        next_modules: [P04_M24]
+        group: G04_SOLVER
+        geometry: {x: 2700, y: 100, width: 380, height: 340}
+      - <<: *node_defaults
+        id: P04_M24
+        number: M24
+        title: Temporal & Entity Solver
+        subtitle: DP · Beam · Monotonic Alignment · Limited Graph Search
+        layer: graph
+        status: BASELINE
+        owner: TRI
+        responsibility: [Score semantic matches, temporal consistency, coverage, entity compatibility and penalties, Produce Top-M chains]
+        non_responsibility: [Không dùng generic subgraph isomorphism trên graph lớn, Không dùng GNN baseline]
+        inputs: [EventMatchMatrix, Temporal graph, Entity constraints]
+        processing: [Linear DP/Beam/Monotonic alignment, Constraint-guided beam for branch/overlap, Top-M repeated-event chains]
+        implementations: [Dynamic Programming, Beam Search, Constraint scoring, Limited Graph Search]
+        outputs: [Top-M EventChain hypotheses]
+        artifacts: [event-chain-hypotheses]
+        metrics: [Chain accuracy, Event coverage, Order feasibility]
+        failure_modes: [Missing event, Contradiction, Combinatorial expansion]
+        fallback: Monotonic best-match chain with explicit missing-event penalty.
+        dependencies: [P04_M23]
+        next_modules: [P04_M25, P04_M26]
+        group: G04_SOLVER
+        geometry: {x: 3110, y: 100, width: 450, height: 420}
+      - <<: *node_defaults
+        id: P04_M25
+        number: M25
+        title: Entity Consistency
+        subtitle: Usually a soft relation
+        layer: graph
+        status: CANDIDATE
+        owner: TRI
+        responsibility: [Compare tracking, appearance, temporal/spatial continuity, object association and caption aliases]
+        non_responsibility: [Không assert entity identity from caption alias alone]
+        inputs: [EntityHypothesis nodes, Tracks and evidence]
+        processing: [Aggregate identity evidence conservatively]
+        implementations: [Candidate tracking and appearance embeddings]
+        outputs: [same_entity, possible_same_entity, different_entity]
+        artifacts: [entity-consistency-result]
+        metrics: [Identity consistency precision]
+        failure_modes: [Occlusion, Similar appearance, Track switch]
+        fallback: possible_same_entity with uncertainty penalty.
+        dependencies: [P04_M24]
+        next_modules: [P04_M26]
+        group: G04_SOLVER
+        geometry: {x: 3590, y: 100, width: 380, height: 360}
+      - <<: *node_defaults
+        id: P04_M26
+        number: M26
+        title: Gap Detector & Graph Expansion
+        subtitle: EXPLOIT local evidence + EXPLORE alternatives
+        layer: graph
+        type: decision
+        status: BASELINE
+        owner: TRI
+        responsibility: [Detect unknown color/moment/speech/identity, Request neighboring frame/segment/crop/OCR/ASR/VLM/dense decode or global re-search]
+        non_responsibility: [Không khóa Agent trong locality bias]
+        inputs: [Event chains, Confidence/Provenance, Missing evidence]
+        processing: [Classify gap, Balance bounded EXPLOIT and EXPLORE, Record expansion provenance]
+        implementations: [Rule-based gap policies, Budgeted tool calls]
+        outputs: [GraphExpansionRequest or GlobalResearchRequest]
+        artifacts: [gap-expansion-trace]
+        metrics: [Gap closure rate, Expansion cost]
+        failure_modes: [Locality bias, Infinite refinement, Budget overflow]
+        fallback: Stop with insufficient evidence or deterministic global visual re-search.
+        dependencies: [P04_M22, P04_M24, P04_M25]
+        next_modules: [In-video Search, Multimodal Retrieval]
+        group: G04_SOLVER
+        geometry: {x: 4000, y: 100, width: 380, height: 400}
+    edges:
+      - {id: E04_QM, source: P04_M19, target: P04_M23, label: QueryEvent constraints, flow_type: data}
+      - {id: E04_CG, source: P04_M20, target: P04_M21, label: local graph nodes, flow_type: data}
+      - {id: E04_SP, source: P04_M21, target: P04_M22, label: typed hypotheses, flow_type: data}
+      - {id: E04_CM, source: P04_M20, target: P04_M23, label: CandidateEvent nodes, flow_type: data}
+      - {id: E04_EV, source: P04_M22, target: P04_M23, label: confidence and evidence refs, flow_type: evidence}
+      - {id: E04_MS, source: P04_M23, target: P04_M24, label: EventMatchMatrix, flow_type: data}
+      - {id: E04_SE, source: P04_M24, target: P04_M25, label: entity hypotheses, flow_type: optional}
+      - {id: E04_SG, source: P04_M24, target: P04_M26, label: chain gaps, flow_type: data}
+      - {id: E04_EG, source: P04_M25, target: P04_M26, label: identity uncertainty, flow_type: data}
+      - {id: E04_BACK, source: P04_M26, target: P04_M20, label: bounded local expansion, flow_type: control}
+    notes:
+      - Candidate Local Event Graph is query-local and versioned; it is never the only corpus retrieval gate.
+      - Causal relations remain on-demand hypotheses unless independently verified.
+
+  - id: PAGE_05
+    title: 05 — Fine Grounding & Verification
+    description: In-video refinement, dense raw-video decoding, Semantic Moment localization, independent verification và evidence-grounded Q&A.
+    direction: LR
+    mermaid_file: 05_fine_grounding_and_verification.mmd
+    detail_level: detail
+    groups:
+      - {id: G05_GROUND, title: Fine Grounding on Raw Video, layer: grounding, geometry: {x: 20, y: 20, width: 1900, height: 760}}
+      - {id: G05_VERIFY, title: Evidence Verification, layer: grounding, geometry: {x: 1950, y: 20, width: 900, height: 760}}
+      - {id: G05_QA, title: Q&A Evidence Extraction, layer: output, geometry: {x: 2880, y: 20, width: 1480, height: 760}}
+    nodes:
+      - <<: *node_defaults
+        id: P05_M27
+        number: M27
+        title: In-video Search
+        subtitle: Search only inside selected CandidateVideo
+        layer: grounding
+        status: BASELINE
+        owner: TRI
+        inputs: [CandidateVideo, QueryEvent, Coarse interval]
+        processing: [Retrieve neighboring frames, Search candidate timeline, Refine event interval]
+        implementations: [Local vector/evidence search]
+        outputs: [RefinedEventInterval]
+        artifacts: [refined-event-interval]
+        metrics: [Frame-window hit, Interval shrink ratio]
+        failure_modes: [Wrong coarse interval, Missing neighboring frames]
+        fallback: Expand temporal margin within the same video.
+        next_modules: [P05_M28]
+        group: G05_GROUND
+        geometry: {x: 60, y: 100, width: 360, height: 320}
+      - <<: *node_defaults
+        id: P05_M28
+        number: M28
+        title: Dense Raw-video Decoder
+        subtitle: Preserve exact actual_frame_id and FPS mapping
+        layer: grounding
+        status: BASELINE
+        owner: PHAT
+        responsibility: [Decode dense frames around refined interval with optional multi-stage sampling]
+        inputs: [Raw Video, Start/end interval, Temporal margin, FPS]
+        processing: [Decode frames, Preserve actual IDs, Build local before/after states]
+        implementations: [Video reader adapter TBD; no offline motion core requirement]
+        outputs: [DenseFrameWindow]
+        artifacts: [dense-frame-window]
+        metrics: [Decode coverage, Frame mapping validity, Latency]
+        failure_modes: [Decode error, Variable FPS mismatch, Excessive window]
+        fallback: Coarser uniform sampling then focused decode around best frame.
+        dependencies: [P05_M27]
+        next_modules: [P05_M29]
+        group: G05_GROUND
+        geometry: {x: 450, y: 100, width: 380, height: 340}
+      - <<: *node_defaults
+        id: P05_M29
+        number: M29
+        title: Semantic Moment Localizer
+        subtitle: Event Graph finds interval; Localizer finds exact frame
+        layer: grounding
+        status: CANDIDATE
+        owner: TRI
+        responsibility: [Localize STATE, FIRST/LAST_OCCURRENCE, TRANSITION_ONSET/OFFSET, CONTACT, SEPARATION, EXTREMUM, RELATION_SATISFIED and COUNT_STABLE]
+        non_responsibility: [Không equate shot center or event interval with final frame]
+        inputs: [DenseFrameWindow, Query moment definition, Region/object/motion evidence]
+        processing: [Score frame, region, relation, motion difference, pose/keypoints, before/after state and optional VLM listwise comparison]
+        implementations: [Deterministic state/transition checks baseline, Optional VLM verifier candidate]
+        outputs: [SemanticMomentHypothesis list with frame/time/type/window/scores/states/evidence/status]
+        artifacts: [semantic-moment-hypotheses]
+        metrics: [Moment localization error, Nearest-frame distance, Window hit]
+        failure_modes: [Near-miss frame, Wrong moment definition, Unstable count/relation]
+        fallback: Return top local alternatives with explicit uncertainty.
+        dependencies: [P05_M28]
+        next_modules: [P05_M30]
+        group: G05_GROUND
+        geometry: {x: 860, y: 100, width: 500, height: 460}
+      - <<: *node_defaults
+        id: P05_M30
+        number: M30
+        title: Evidence Verifier
+        subtitle: Independent checks; no single creator/verifier model
+        layer: grounding
+        type: decision
+        status: BASELINE
+        owner: TRI
+        responsibility: [Check mapping, order, uniqueness, OCR/ASR constraints, object/region evidence, interval feasibility, action/relation and clip support]
+        non_responsibility: [Không để cùng một model là nguồn tạo và nguồn xác minh duy nhất]
+        inputs: [SemanticMomentHypothesis, Raw frames/clip, Object/OCR/ASR evidence]
+        processing: [Deterministic validation, Independent model checks when configured, Contradiction detection]
+        implementations: [Rule checks baseline, Optional independent model verifier]
+        outputs: [VerifiedEvidencePacket, RejectedHypothesis, InsufficientEvidence]
+        artifacts: [verification-report]
+        metrics: [Verification pass rate, Contradiction rate]
+        failure_modes: [Self-verification bias, Unsupported hypothesis]
+        fallback: Reject or mark insufficient evidence; retain verified mapping-only candidate if policy allows.
+        dependencies: [P05_M29]
+        next_modules: [P05_M31, Evidence Packet]
+        group: G05_VERIFY
+        geometry: {x: 1990, y: 100, width: 820, height: 460}
+      - <<: *node_defaults
+        id: P05_M31
+        number: M31
+        title: Q&A Answer Type Router
+        subtitle: Count · Color · Object · Person · Action · Location · OCR · Speech · Yes/No · Temporal
+        layer: output
+        type: decision
+        status: BASELINE
+        owner: TRI
+        inputs: [Question, Verified event interval]
+        processing: [Classify required evidence and extractor]
+        implementations: [Rule/template answer type routing]
+        outputs: [AnswerType, Evidence requirement]
+        artifacts: [answer-type-decision]
+        metrics: [Answer-type accuracy]
+        failure_modes: [Ambiguous question type]
+        fallback: Multi-hypothesis routing under bounded budget.
+        dependencies: [P05_M30]
+        next_modules: [P05_M32]
+        group: G05_QA
+        geometry: {x: 2920, y: 100, width: 380, height: 340}
+      - <<: *node_defaults
+        id: P05_M32
+        number: M32
+        title: Q&A Answer Extractor
+        subtitle: Extract by evidence type
+        layer: output
+        status: OPTIONAL
+        owner: TRI
+        responsibility: [Count with detection/tracking/dedup/stability, Color on correct crop, Text via OCR, Speech via ASR, Action/location/object via clip evidence]
+        inputs: [AnswerType, Verified clip, Object/OCR/ASR evidence]
+        processing: [Run evidence-specific extraction, Normalize canonical answer, Preserve confidence and refs]
+        implementations: [Deterministic extractors where possible, Optional VLM]
+        outputs: [raw_answer, canonical_answer, answer_type, answer_confidence, supporting evidence]
+        artifacts: [answer-hypothesis]
+        metrics: [Answer accuracy, Evidence support rate]
+        failure_modes: [Double count, Wrong crop, OCR/ASR error, Unsupported VLM answer]
+        fallback: Return only evidence-supported alternatives or insufficient evidence.
+        dependencies: [P05_M31]
+        next_modules: [P05_M33]
+        group: G05_QA
+        geometry: {x: 3330, y: 100, width: 500, height: 420}
+      - <<: *node_defaults
+        id: P05_M33
+        number: M33
+        title: Answer-Evidence Consistency
+        subtitle: No answer without evidence reference
+        layer: output
+        type: decision
+        status: BASELINE
+        owner: TRI
+        inputs: [Answer hypothesis, VerifiedEvidencePacket]
+        processing: [Validate answer support, Temporal alignment and contradiction flags]
+        implementations: [Schema and evidence-reference checks]
+        outputs: [Grounded answer or rejection]
+        artifacts: [answer-evidence-check]
+        metrics: [Unsupported answer rejection rate]
+        failure_modes: [Dangling evidence ref, Answer/clip contradiction]
+        fallback: Reject unsupported answer and preserve verified event candidate.
+        dependencies: [P05_M32]
+        next_modules: [Evidence Packet]
+        group: G05_QA
+        geometry: {x: 3860, y: 100, width: 450, height: 360}
+    edges:
+      - {id: E05_01, source: P05_M27, target: P05_M28, label: refined interval, flow_type: data}
+      - {id: E05_02, source: P05_M28, target: P05_M29, label: dense raw frames, flow_type: evidence}
+      - {id: E05_03, source: P05_M29, target: P05_M30, label: moment hypotheses, flow_type: evidence}
+      - {id: E05_04, source: P05_M30, target: P05_M31, label: Q&A route when required, flow_type: optional}
+      - {id: E05_05, source: P05_M31, target: P05_M32, label: answer type and required evidence, flow_type: control}
+      - {id: E05_06, source: P05_M32, target: P05_M33, label: answer with evidence refs, flow_type: evidence}
+      - {id: E05_RETRY, source: P05_M30, target: P05_M27, label: expand/refine interval, flow_type: fallback}
+    notes:
+      - Raw video, not retrieval keyframe order, determines final frame ID.
+      - Evidence verification may reject a high-scoring retrieval hypothesis.
+
+  - id: PAGE_06
+    title: 06 — KIS, Q&A & TRAKE Flows
+    description: Ba swimlane task-specific từ query tới ranked answer tuples.
+    direction: LR
+    mermaid_file: 06_task_specific_flows.mmd
+    detail_level: detail
+    groups:
+      - {id: G06_KIS, title: LANE 1 — TEXTUAL KIS, layer: retrieval, geometry: {x: 20, y: 20, width: 3660, height: 500}}
+      - {id: G06_QA, title: LANE 2 — Q&A, layer: grounding, geometry: {x: 20, y: 550, width: 3660, height: 500}}
+      - {id: G06_TRAKE, title: LANE 3 — TRAKE, layer: graph, geometry: {x: 20, y: 1080, width: 4300, height: 560}}
+    nodes:
+      - <<: *node_defaults
+        id: P06_K1
+        number: KIS-1
+        title: Text Description
+        subtitle: Event description input
+        layer: retrieval
+        status: BASELINE
+        owner: TAI
+        inputs: [Natural-language event]
+        processing: [Preserve original query]
+        implementations: [KIS request schema]
+        outputs: [KIS query]
+        artifacts: [query-ledger]
+        group: G06_KIS
+        geometry: {x: 60, y: 100, width: 260, height: 260}
+      - <<: *node_defaults
+        id: P06_K2
+        number: KIS-2
+        title: Compile & Fast Probe
+        subtitle: Actor/action/object/location hints
+        layer: control
+        status: BASELINE
+        owner: TRI
+        inputs: [KIS query]
+        processing: [Compile roles, Run primary visual probe, Estimate uncertainty]
+        implementations: [Rules baseline]
+        outputs: [Compiled KIS, Probe candidates]
+        artifacts: [compiled-query]
+        group: G06_KIS
+        geometry: {x: 350, y: 100, width: 330, height: 280}
+      - <<: *node_defaults
+        id: P06_K3
+        number: KIS-3
+        title: Multimodal Retrieval & Fusion
+        subtitle: Visual/Object/OCR/Metadata + RRF
+        layer: retrieval
+        status: BASELINE
+        owner: PHUC
+        inputs: [Compiled KIS, Corpus indexes]
+        processing: [Retrieve branches, RRF, Group and deduplicate]
+        implementations: [NumPy/ANN adapters, RRF]
+        outputs: [Grouped CandidateFrame list]
+        artifacts: [retrieval-results]
+        group: G06_KIS
+        geometry: {x: 710, y: 100, width: 390, height: 300}
+      - <<: *node_defaults
+        id: P06_K4
+        number: KIS-4
+        title: Candidate Video Ranking
+        subtitle: Best frame, pooled score and agreement
+        layer: retrieval
+        status: BASELINE
+        owner: PHUC
+        inputs: [Grouped candidates]
+        processing: [Rank CandidateVideo, Assess ambiguity]
+        implementations: [Best-frame/top-k baseline]
+        outputs: [Ranked candidate videos]
+        artifacts: [candidate-video-ranking]
+        group: G06_KIS
+        geometry: {x: 1130, y: 100, width: 330, height: 280}
+      - <<: *node_defaults
+        id: P06_K5
+        number: KIS-5
+        title: Local Refinement & Verification
+        subtitle: Graph Lane only for complex/ambiguous KIS
+        layer: grounding
+        status: BASELINE
+        owner: TRI
+        inputs: [CandidateVideo, Query moment]
+        processing: [Local frame refinement, Optional graph lane, Semantic Moment localization when needed, Evidence verification]
+        implementations: [In-video search, Dense decode candidate]
+        outputs: [Verified KIS frame hypotheses]
+        artifacts: [evidence-packets]
+        group: G06_KIS
+        geometry: {x: 1490, y: 100, width: 430, height: 320}
+      - <<: *node_defaults
+        id: P06_K6
+        number: KIS-6
+        title: Ranked KIS Answers
+        subtitle: video_id, frame_id
+        layer: output
+        type: artifact
+        status: BASELINE
+        owner: TAI
+        inputs: [Verified KIS hypotheses]
+        processing: [Rank best frame, nearby meaningful alternative and alternative video]
+        implementations: [Ranked Answer List Constructor]
+        outputs: [Up to 100 KIS tuples]
+        artifacts: [kis-submission]
+        group: G06_KIS
+        geometry: {x: 1950, y: 100, width: 330, height: 280}
+      - <<: *node_defaults
+        id: P06_Q1
+        number: QA-1
+        title: Event Description + Question
+        subtitle: Q&A request
+        layer: retrieval
+        status: BASELINE
+        owner: TAI
+        inputs: [Event description, Question]
+        processing: [Preserve query and identify expected answer schema]
+        implementations: [Q&A request contract]
+        outputs: [Q&A query]
+        artifacts: [query-ledger]
+        group: G06_QA
+        geometry: {x: 60, y: 630, width: 280, height: 260}
+      - <<: *node_defaults
+        id: P06_Q2
+        number: QA-2
+        title: Event Retrieval & Video Ranking
+        subtitle: Find event before answering
+        layer: retrieval
+        status: BASELINE
+        owner: PHUC
+        inputs: [Q&A query, Corpus indexes]
+        processing: [Event retrieval, Fusion/grouping, Candidate Video ranking]
+        implementations: [Multimodal retrieval baseline]
+        outputs: [CandidateVideo list]
+        artifacts: [qa-candidate-videos]
+        group: G06_QA
+        geometry: {x: 370, y: 630, width: 360, height: 290}
+      - <<: *node_defaults
+        id: P06_Q3
+        number: QA-3
+        title: Event Interval & Evidence Collector
+        subtitle: Localize supporting clip first
+        layer: grounding
+        status: BASELINE
+        owner: TRI
+        inputs: [CandidateVideo, Event query]
+        processing: [In-video interval localization, Collect object/OCR/ASR/clip evidence]
+        implementations: [Local search and evidence tools]
+        outputs: [Grounded event interval and evidence]
+        artifacts: [qa-evidence-context]
+        group: G06_QA
+        geometry: {x: 760, y: 630, width: 380, height: 300}
+      - <<: *node_defaults
+        id: P06_Q4
+        number: QA-4
+        title: Answer Type & Extractor
+        subtitle: Count/color/object/person/action/location/text/speech/yes-no/temporal
+        layer: grounding
+        status: OPTIONAL
+        owner: TRI
+        inputs: [Question, Grounded evidence]
+        processing: [Route answer type, Extract raw and canonical answer]
+        implementations: [Evidence-specific extractor, Optional VLM]
+        outputs: [Answer hypothesis with evidence refs]
+        artifacts: [answer-hypothesis]
+        group: G06_QA
+        geometry: {x: 1170, y: 630, width: 440, height: 320}
+      - <<: *node_defaults
+        id: P06_Q5
+        number: QA-5
+        title: Semantic Frame & Consistency
+        subtitle: Answer and submission frame share grounded evidence
+        layer: grounding
+        status: BASELINE
+        owner: TRI
+        inputs: [Answer hypothesis, Dense event window]
+        processing: [Semantic frame localization, Answer-evidence consistency, Verification]
+        implementations: [Moment Localizer, Evidence Verifier]
+        outputs: [Verified Q&A tuples]
+        artifacts: [verified-qa-evidence-packets]
+        group: G06_QA
+        geometry: {x: 1640, y: 630, width: 400, height: 300}
+      - <<: *node_defaults
+        id: P06_Q6
+        number: QA-6
+        title: Ranked Q&A Answers
+        subtitle: video_id, frame_id, answer
+        layer: output
+        type: artifact
+        status: BASELINE
+        owner: TAI
+        inputs: [Verified Q&A tuples]
+        processing: [Rank tuple diversity; answer alternatives only under real uncertainty]
+        implementations: [Ranked Answer List Constructor]
+        outputs: [Up to 100 Q&A tuples]
+        artifacts: [qa-submission]
+        group: G06_QA
+        geometry: {x: 2070, y: 630, width: 350, height: 280}
+      - <<: *node_defaults
+        id: P06_T1
+        number: TRAKE-1
+        title: Narrative Event Sequence
+        subtitle: Ordered or structured multi-event query
+        layer: graph
+        status: BASELINE
+        owner: TAI
+        inputs: [Narrative event sequence]
+        processing: [Preserve explicit order and same-video requirement]
+        implementations: [TRAKE request schema]
+        outputs: [TRAKE query]
+        artifacts: [query-ledger]
+        group: G06_TRAKE
+        geometry: {x: 60, y: 1160, width: 280, height: 270}
+      - <<: *node_defaults
+        id: P06_T2
+        number: TRAKE-2
+        title: Query Event Graph
+        subtitle: QueryEvent nodes, relations and moment definitions
+        layer: graph
+        type: graph
+        status: BASELINE
+        owner: TRI
+        inputs: [TRAKE query]
+        processing: [Compile events, hard/soft temporal/entity constraints]
+        implementations: [Rule parser baseline, Bounded LLM candidate]
+        outputs: [Query Event Graph]
+        artifacts: [query-event-graph]
+        group: G06_TRAKE
+        geometry: {x: 370, y: 1160, width: 350, height: 300}
+      - <<: *node_defaults
+        id: P06_T3
+        number: TRAKE-3
+        title: Retrieval per Event & Aggregate by Video
+        subtitle: Correct video has highest priority
+        layer: retrieval
+        status: BASELINE
+        owner: PHUC
+        inputs: [Query Event Graph, Corpus indexes]
+        processing: [Retrieve each QueryEvent, Aggregate coverage/order feasibility by video, Rank CandidateVideo]
+        implementations: [Task-aware Candidate Video Ranker]
+        outputs: [Ranked CandidateVideo list]
+        artifacts: [trake-video-ranking]
+        group: G06_TRAKE
+        geometry: {x: 750, y: 1160, width: 420, height: 330}
+      - <<: *node_defaults
+        id: P06_T4
+        number: TRAKE-4
+        title: Candidate Graph & Event Matching
+        subtitle: Query-local graph for top videos
+        layer: graph
+        status: BASELINE
+        owner: TRI
+        inputs: [Top CandidateVideo, Query Event Graph, Local evidence]
+        processing: [Build Candidate Local Event Graph, Produce EventMatchMatrix]
+        implementations: [Typed local graph and evidence matcher]
+        outputs: [EventMatchMatrix and local graph]
+        artifacts: [candidate-graph, event-match-matrix]
+        group: G06_TRAKE
+        geometry: {x: 1200, y: 1160, width: 410, height: 330}
+      - <<: *node_defaults
+        id: P06_T5
+        number: TRAKE-5
+        title: DP/Beam Temporal Solver
+        subtitle: Top-M event chains
+        layer: graph
+        status: BASELINE
+        owner: TRI
+        inputs: [EventMatchMatrix, Temporal/entity constraints]
+        processing: [Optimize semantic match, order, coverage, compactness and penalties]
+        implementations: [Dynamic Programming, Beam Search, Monotonic Alignment]
+        outputs: [Top-M EventChain hypotheses]
+        artifacts: [event-chain-hypotheses]
+        group: G06_TRAKE
+        geometry: {x: 1640, y: 1160, width: 380, height: 320}
+      - <<: *node_defaults
+        id: P06_T6
+        number: TRAKE-6
+        title: Moment Localization per Event
+        subtitle: Exact semantics after chain alignment
+        layer: grounding
+        status: CANDIDATE
+        owner: TRI
+        inputs: [EventChain hypotheses, Raw video]
+        processing: [Dense decode each event interval, Localize semantic moments, Verify chain and evidence]
+        implementations: [Semantic Moment Localizer, Evidence Verifier]
+        outputs: [Verified event moment chains]
+        artifacts: [verified-trake-chains]
+        group: G06_TRAKE
+        geometry: {x: 2050, y: 1160, width: 420, height: 340}
+      - <<: *node_defaults
+        id: P06_T7
+        number: TRAKE-7
+        title: Ranked TRAKE Answers
+        subtitle: video_id, frame_1, ..., frame_n
+        layer: output
+        type: artifact
+        status: BASELINE
+        owner: TAI
+        inputs: [Verified event moment chains]
+        processing: [Rank top chains and bounded moment alternatives without Cartesian explosion]
+        implementations: [Ranked Answer List Constructor]
+        outputs: [Up to 100 TRAKE tuples]
+        artifacts: [trake-submission]
+        group: G06_TRAKE
+        geometry: {x: 2500, y: 1160, width: 380, height: 300}
+    edges:
+      - {id: E06_K1, source: P06_K1, target: P06_K2, label: KIS query, flow_type: data}
+      - {id: E06_K2, source: P06_K2, target: P06_K3, label: compiled query and probe, flow_type: data}
+      - {id: E06_K3, source: P06_K3, target: P06_K4, label: grouped candidates, flow_type: data}
+      - {id: E06_K4, source: P06_K4, target: P06_K5, label: candidate videos, flow_type: data}
+      - {id: E06_K5, source: P06_K5, target: P06_K6, label: verified frames, flow_type: evidence}
+      - {id: E06_Q1, source: P06_Q1, target: P06_Q2, label: Q&A query, flow_type: data}
+      - {id: E06_Q2, source: P06_Q2, target: P06_Q3, label: candidate videos, flow_type: data}
+      - {id: E06_Q3, source: P06_Q3, target: P06_Q4, label: grounded evidence, flow_type: evidence}
+      - {id: E06_Q4, source: P06_Q4, target: P06_Q5, label: answer hypothesis, flow_type: evidence}
+      - {id: E06_Q5, source: P06_Q5, target: P06_Q6, label: verified tuples, flow_type: evidence}
+      - {id: E06_T1, source: P06_T1, target: P06_T2, label: structured events, flow_type: data}
+      - {id: E06_T2, source: P06_T2, target: P06_T3, label: QueryEvents, flow_type: data}
+      - {id: E06_T3, source: P06_T3, target: P06_T4, label: top candidate videos, flow_type: data}
+      - {id: E06_T4, source: P06_T4, target: P06_T5, label: EventMatchMatrix, flow_type: data}
+      - {id: E06_T5, source: P06_T5, target: P06_T6, label: Top-M chains, flow_type: data}
+      - {id: E06_T6, source: P06_T6, target: P06_T7, label: verified semantic moments, flow_type: evidence}
+    notes:
+      - TRAKE priority is correct video, event coverage, correct order, correct moment semantics, then exact frame.
+      - Every lane produces a ranked list of at most 100 answers.
+
+  - id: PAGE_07
+    title: 07 — Agent, Output, Evaluation & Deployment
+    description: Bounded Agent control plane, deterministic fallback, evidence packets, ranked outputs, metrics và Local/GitHub/Kaggle workflow.
+    direction: LR
+    mermaid_file: 07_agent_output_evaluation_deployment.mmd
+    detail_level: detail
+    groups:
+      - {id: G07_AGENT, title: Bounded Agent Control Plane, layer: control, geometry: {x: 20, y: 20, width: 2180, height: 780}}
+      - {id: G07_OUTPUT, title: Evidence, Ranking, Submission & Evaluation, layer: output, geometry: {x: 2230, y: 20, width: 1980, height: 780}}
+      - {id: G07_ENV, title: Execution Environment, layer: storage, geometry: {x: 4240, y: 20, width: 760, height: 780}}
+    nodes:
+      - <<: *node_defaults
+        id: P07_M34
+        number: M34
+        title: Tool Registry
+        subtitle: Validated schemas and implementations
+        layer: control
+        type: store
+        status: BASELINE
+        owner: TRI
+        inputs: [Tool implementations and contracts]
+        processing: [Register names, versions, input/output schemas and availability]
+        implementations: [visual_frame_search, segment_search, object_search, OCR_search, ASR_search, caption_search, metadata_search, group_and_fuse, candidate_video_ranker, in_video_search, build_candidate_graph, event_matcher, temporal_chain_solver, entity_consistency_check, dense_frame_decoder, semantic_moment_localizer, evidence_verifier, QA_answer_extractor, answer_normalizer, ranked_answer_constructor, submission_formatter, official_metric_evaluator]
+        outputs: [Versioned ToolRegistry]
+        artifacts: [tool-registry-vX]
+        metrics: [Available tool rate, Schema compatibility]
+        failure_modes: [Missing tool, Version mismatch]
+        fallback: Mark unavailable tool and route deterministic supported subset.
+        next_modules: [P07_M35]
+        group: G07_AGENT
+        geometry: {x: 60, y: 100, width: 430, height: 470}
+      - <<: *node_defaults
+        id: P07_M35
+        number: M35
+        title: Bounded Agent Planner
+        subtitle: Understand · plan · choose · inspect · refine · verify · stop
+        layer: control
+        type: agent
+        status: CANDIDATE
+        owner: TRI
+        responsibility: [Choose tools and solvers, Inspect gaps, Refine or re-search, Verify and stop]
+        non_responsibility: [Không tạo embedding, OCR/ASR inference, tracking, score, frame ID, entity identity or causal truth]
+        inputs: [Original query, Task policy, ToolRegistry, Budget]
+        processing: [Plan, Execute, Inspect, Maximum one revise, Stop or fallback]
+        implementations: [Bounded structured planner TBD]
+        outputs: [ExecutionPlan and tool calls]
+        artifacts: [agent-plan-vX]
+        metrics: [Plan success, Revise rate, Tool efficiency]
+        failure_modes: [Invalid plan, Loop, Hallucinated tool]
+        fallback: Invoke deterministic Fallback Controller.
+        dependencies: [P07_M34]
+        next_modules: [P07_M36]
+        group: G07_AGENT
+        geometry: {x: 520, y: 100, width: 440, height: 470}
+      - <<: *node_defaults
+        id: P07_M36
+        number: M36
+        title: Plan Validator
+        subtitle: Contract, temporal order, evidence and budget guard
+        layer: control
+        type: decision
+        status: BASELINE
+        owner: TRI
+        inputs: [ExecutionPlan, ToolRegistry, TaskPolicy]
+        processing: [Check tool exists, schema compatibility, temporal solver use, video rank before TRAKE refinement, Q&A evidence before answer, VLM budget, repeated plan, Internet dependency and frame mapping]
+        implementations: [Deterministic plan rules]
+        outputs: [ValidatedPlan or rejection]
+        artifacts: [plan-validation-report]
+        metrics: [Rejected invalid plan count]
+        failure_modes: [Missed unsafe plan, False rejection]
+        fallback: Use deterministic task pipeline.
+        dependencies: [P07_M35]
+        next_modules: [P07_M37, P07_M38]
+        group: G07_AGENT
+        geometry: {x: 990, y: 100, width: 430, height: 440}
+      - <<: *node_defaults
+        id: P07_M37
+        number: M37
+        title: Budget Manager
+        subtitle: Bound query variants, branches, videos, graph, frames and model calls
+        layer: control
+        status: BASELINE
+        owner: TRI
+        inputs: [ValidatedPlan, Latency/compute policy]
+        processing: [Limit variants, retrieval branches, candidate videos, graph nodes, decoded frames, VLM calls, revise rounds and latency]
+        implementations: [Plan → execute → inspect → max one revise → stop/fallback]
+        outputs: [Execution allowance and stop reason]
+        artifacts: [budget-trace]
+        metrics: [Latency, Budget violations]
+        failure_modes: [Budget overflow, Premature stop]
+        fallback: Preserve primary retrieval and verification minimum.
+        dependencies: [P07_M36]
+        next_modules: [P07_M39]
+        group: G07_AGENT
+        geometry: {x: 1450, y: 100, width: 340, height: 400}
+      - <<: *node_defaults
+        id: P07_M38
+        number: M38
+        title: Fallback Controller
+        subtitle: Original query → visual retrieval → grouping → neighbors → local refinement → output
+        layer: control
+        type: decision
+        status: BASELINE
+        owner: TRI
+        inputs: [Original query, Failure/rejection signal]
+        processing: [Execute deterministic retrieval-first pipeline]
+        implementations: [Primary visual branch and local refinement]
+        outputs: [Fallback evidence candidates]
+        artifacts: [fallback-execution-trace]
+        metrics: [Fallback success rate]
+        failure_modes: [Empty primary retrieval]
+        fallback: Return explicit insufficient evidence rather than fabricated output.
+        dependencies: [P07_M36]
+        next_modules: [P07_M39]
+        group: G07_AGENT
+        geometry: {x: 1820, y: 100, width: 340, height: 400}
+      - <<: *node_defaults
+        id: P07_M39
+        number: M39
+        title: Evidence Packet
+        subtitle: Full grounded result and execution provenance
+        layer: output
+        type: artifact
+        status: BASELINE
+        owner: TRI
+        inputs: [Query/task/hypotheses, CandidateVideo scores, Matched events/chains/moments, Entity and multimodal evidence, Answers, Contradictions, Provenance, Verification]
+        processing: [Package schema-valid grounded result and submission candidates]
+        implementations: [EvidencePacket contract]
+        outputs: [EvidencePacket]
+        artifacts: [evidence-packet-vX]
+        metrics: [Evidence completeness, Verification status]
+        failure_modes: [Dangling evidence ref, Missing provenance]
+        fallback: Mark packet incomplete and block unsupported fields.
+        dependencies: [P07_M37, P07_M38]
+        next_modules: [P07_M40]
+        group: G07_OUTPUT
+        geometry: {x: 2270, y: 100, width: 420, height: 440}
+      - <<: *node_defaults
+        id: P07_M40
+        number: M40
+        title: Ranked Answer List Constructor
+        subtitle: Precision at top, coverage and diversity at depth
+        layer: output
+        status: BASELINE
+        owner: TAI
+        inputs: [Verified EvidencePacket list]
+        processing: [KIS meaningful frame/video alternatives, Q&A tuple diversity only under real uncertainty, TRAKE top chains and bounded moment beams, Suppress useless duplicates]
+        implementations: [Task-specific rank construction without full Cartesian explosion]
+        outputs: [Up to 100 ranked answer hypotheses]
+        artifacts: [ranked-answer-list-vX]
+        metrics: [R@1/5/20/50/100, Diversity, Duplicate rate]
+        failure_modes: [Top-rank imprecision, Duplicate flooding, Beam explosion]
+        fallback: Score-sorted verified candidates with conservative deduplication.
+        dependencies: [P07_M39]
+        next_modules: [P07_M41]
+        group: G07_OUTPUT
+        geometry: {x: 2720, y: 100, width: 430, height: 440}
+      - <<: *node_defaults
+        id: P07_M41
+        number: M41
+        title: Submission Formatter
+        subtitle: KIS, Q&A and TRAKE official tuple formats
+        layer: output
+        type: artifact
+        status: CURRENT_TEMPLATE
+        owner: TAI
+        inputs: [Ranked answer list, TaskPolicy]
+        processing: [Format KIS video/frame, Q&A video/frame/answer, TRAKE video/frame sequence]
+        implementations: [Task schema formatter]
+        outputs: [Submission records]
+        artifacts: [submission-file]
+        metrics: [Schema validity, Answer count]
+        failure_modes: [Wrong field count, Invalid frame ID]
+        fallback: Reject invalid tuple before submission.
+        dependencies: [P07_M40]
+        next_modules: [P07_M42]
+        group: G07_OUTPUT
+        geometry: {x: 3180, y: 100, width: 330, height: 360}
+      - <<: *node_defaults
+        id: P07_M42
+        number: M42
+        title: Official Metric Evaluator
+        subtitle: R@1 · R@5 · R@20 · R@50 · R@100 · Final Score
+        layer: output
+        status: CURRENT_TEMPLATE
+        owner: PHUC
+        inputs: [Submission records, Ground truth]
+        processing: [Compute task R-Score and ranked metrics, Report diagnostics]
+        implementations: [Current KIS/Q&A/TRAKE metric simulator]
+        outputs: [EvaluationReport]
+        artifacts: [evaluation-report-vX]
+        metrics: [Official ranked scores, Video Recall@K, Frame-window hit, Nearest-frame distance, Event-chain accuracy, Moment error, Answer accuracy, Latency, Artifact size]
+        failure_modes: [Rule drift, Invalid prediction count]
+        fallback: Version evaluator and flag divergence from official rules.
+        dependencies: [P07_M41]
+        next_modules: [Experiment review]
+        group: G07_OUTPUT
+        geometry: {x: 3540, y: 100, width: 620, height: 440}
+      - <<: *node_defaults
+        id: P07_M43
+        number: M43
+        title: Execution Environment
+        subtitle: Local → GitHub → Kaggle
+        layer: storage
+        type: store
+        status: CONFIRMED
+        owner: KHOA
+        responsibility: [Local code/unit/tiny debug, GitHub source/config/docs/exact commit/PR, Kaggle large data and compute]
+        non_responsibility: [Notebook không chứa business logic chính]
+        inputs: [Source code, Config, Exact commit, Attached Kaggle data]
+        processing: [Clone repo, Checkout exact commit, Install package, Attach data, Call scripts]
+        implementations: [GitHub workflow, Kaggle bootstrap notebook]
+        outputs: [Reproducible run artifacts]
+        artifacts: [RunManifest, Kaggle output bundle]
+        metrics: [Commit match, Reproducible gate pass]
+        failure_modes: [Wrong commit, Internet dependency, Missing dataset mount]
+        fallback: Package code/dependencies as Kaggle Dataset for offline execution.
+        group: G07_ENV
+        geometry: {x: 4280, y: 100, width: 680, height: 470}
+    edges:
+      - {id: E07_01, source: P07_M34, target: P07_M35, label: tool contracts, flow_type: control}
+      - {id: E07_02, source: P07_M35, target: P07_M36, label: proposed plan, flow_type: control}
+      - {id: E07_03, source: P07_M36, target: P07_M37, label: validated plan, flow_type: control}
+      - {id: E07_04, source: P07_M36, target: P07_M38, label: invalid or failed plan, flow_type: fallback}
+      - {id: E07_05, source: P07_M37, target: P07_M39, label: bounded verified execution, flow_type: evidence}
+      - {id: E07_06, source: P07_M38, target: P07_M39, label: fallback evidence, flow_type: fallback}
+      - {id: E07_07, source: P07_M39, target: P07_M40, label: evidence packets, flow_type: data}
+      - {id: E07_08, source: P07_M40, target: P07_M41, label: ranked answers, flow_type: data}
+      - {id: E07_09, source: P07_M41, target: P07_M42, label: submission records, flow_type: data}
+      - {id: E07_ENV1, source: P07_M43, target: P07_M34, label: installed tool implementations, flow_type: artifact}
+      - {id: E07_ENV2, source: P07_M42, target: P07_M43, label: run artifacts and reports, flow_type: artifact}
+    notes:
+      - Agent output is always validated against tool and record schemas.
+      - Kaggle Notebook is a bootstrap and orchestration surface, not a business-logic host.
+
+  - id: PAGE_08
+    title: 08 — Contracts, Artifacts & Ownership
+    description: Core record contracts và artifact handoff giữa Khoa, Phát, Phúc, Tri và Tài.
+    direction: LR
+    mermaid_file: 08_contracts_artifacts_and_ownership.mmd
+    detail_level: detail
+    groups:
+      - {id: G08_RECORDS, title: Core Records & Grounded Result Contracts, layer: storage, geometry: {x: 20, y: 20, width: 5740, height: 600}}
+      - {id: G08_OWNERS, title: Team Artifact Flow & Ownership, layer: output, geometry: {x: 20, y: 650, width: 4200, height: 600}}
+    nodes:
+      - <<: *node_defaults
+        id: P08_VIDEO
+        number: C1
+        title: VideoRecord
+        subtitle: video_id · path · batch · fps · frames · duration · dataset version
+        layer: data
+        type: artifact
+        status: CURRENT_TEMPLATE
+        owner: KHOA
+        inputs: [Audited video metadata]
+        processing: [Validate non-empty ID, positive FPS, non-negative frame/duration]
+        implementations: [Frozen dataclass]
+        outputs: [Canonical video contract]
+        artifacts: [video-manifest]
+        metrics: [Schema validity]
+        failure_modes: [Invalid FPS or path]
+        fallback: Reject invalid record.
+        group: G08_RECORDS
+        geometry: {x: 60, y: 100, width: 360, height: 280}
+      - <<: *node_defaults
+        id: P08_SHOT
+        number: C2
+        title: ShotRecord
+        subtitle: shot/video · frame/time interval · detector · confidence
+        layer: representation
+        type: artifact
+        status: CURRENT_TEMPLATE
+        owner: PHAT
+        inputs: [VideoRecord, Shot detection output]
+        processing: [Validate inclusive start/end frame and time]
+        implementations: [Frozen dataclass]
+        outputs: [Shot interval contract]
+        artifacts: [shot-manifest]
+        metrics: [Boundary validity]
+        failure_modes: [Reversed interval]
+        fallback: Full-video shot in template only.
+        group: G08_RECORDS
+        geometry: {x: 450, y: 100, width: 350, height: 280}
+      - <<: *node_defaults
+        id: P08_FRAME
+        number: C3
+        title: FrameRecord
+        subtitle: frame_uid · video · actual_frame_id · timestamp · policy · shot · extraction
+        layer: representation
+        type: artifact
+        status: CURRENT_TEMPLATE
+        owner: PHAT
+        inputs: [VideoRecord, ShotRecord, Selector result]
+        processing: [Preserve raw-video frame coordinate and source policy]
+        implementations: [Frozen dataclass]
+        outputs: [Retrieval frame contract]
+        artifacts: [frame-bank-manifest]
+        metrics: [Mapping validity]
+        failure_modes: [Keyframe order used as actual ID]
+        fallback: Re-map through raw video and FrameMap.
+        group: G08_RECORDS
+        geometry: {x: 830, y: 100, width: 390, height: 300}
+      - <<: *node_defaults
+        id: P08_FEATURE
+        number: C4
+        title: FeatureRecord
+        subtitle: frame · model/version · row · dimension · normalized · artifact
+        layer: representation
+        type: artifact
+        status: CURRENT_TEMPLATE
+        owner: PHAT
+        inputs: [FrameRecord, Encoder output]
+        processing: [Bind contiguous feature row and exact model metadata]
+        implementations: [JSONL manifest + NumPy matrix]
+        outputs: [Feature row contract]
+        artifacts: [feature-manifest]
+        metrics: [Row continuity, Dimension match]
+        failure_modes: [Orphan row, Wrong model version]
+        fallback: Reject inconsistent feature store.
+        group: G08_RECORDS
+        geometry: {x: 1250, y: 100, width: 390, height: 300}
+      - <<: *node_defaults
+        id: P08_CFRAME
+        number: C5
+        title: CandidateFrame
+        subtitle: video/frame/time · score · rank · source branch
+        layer: retrieval
+        type: artifact
+        status: CURRENT_TEMPLATE
+        owner: PHUC
+        inputs: [Index result, FrameRecord mapping]
+        processing: [Map index ID to actual submission coordinates]
+        implementations: [Frozen dataclass]
+        outputs: [Ranked frame candidate]
+        artifacts: [retrieval-results]
+        metrics: [Rank, Score]
+        failure_modes: [Unknown frame UID]
+        fallback: Reject orphan index result.
+        group: G08_RECORDS
+        geometry: {x: 1670, y: 100, width: 360, height: 280}
+      - <<: *node_defaults
+        id: P08_CVIDEO
+        number: C6
+        title: CandidateVideo
+        subtitle: video score · best frames · event count · branches · order feasibility
+        layer: retrieval
+        type: artifact
+        status: BASELINE
+        owner: PHUC
+        inputs: [Grouped CandidateFrame, QueryEvent coverage]
+        processing: [Aggregate evidence and order feasibility]
+        implementations: [Current score aggregate; extended task-aware contract]
+        outputs: [Ranked video candidate]
+        artifacts: [candidate-video-ranking]
+        metrics: [Video Recall@K]
+        failure_modes: [Wrong video, Missing event]
+        fallback: Best-frame plus modality agreement.
+        group: G08_RECORDS
+        geometry: {x: 2060, y: 100, width: 390, height: 300}
+      - <<: *node_defaults
+        id: P08_QEVENT
+        number: C7
+        title: QueryEvent
+        subtitle: source span · roles · moment definition · hard/soft constraints
+        layer: graph
+        type: graph
+        status: BASELINE
+        owner: TRI
+        inputs: [Compiled query]
+        processing: [Represent explicit/inferred/hypothesis semantics]
+        implementations: [Typed graph node contract]
+        outputs: [QueryEvent node]
+        artifacts: [query-event-graph]
+        metrics: [Constraint coverage]
+        failure_modes: [Ambiguous role]
+        fallback: Multiple conservative hypotheses.
+        group: G08_RECORDS
+        geometry: {x: 2480, y: 100, width: 390, height: 300}
+      - <<: *node_defaults
+        id: P08_SEVENT
+        number: C8
+        title: SegmentEvent
+        subtitle: interval · descriptions · evidence · confidence · status · provenance
+        layer: graph
+        type: graph
+        status: BASELINE
+        owner: TRI
+        inputs: [Candidate timeline and evidence refs]
+        processing: [Represent event interval hypothesis]
+        implementations: [Versioned local graph node]
+        outputs: [SegmentEvent node]
+        artifacts: [candidate-local-event-graph]
+        metrics: [Evidence coverage]
+        failure_modes: [Shot/event conflation]
+        fallback: Keep segment_hypothesis status.
+        group: G08_RECORDS
+        geometry: {x: 2900, y: 100, width: 390, height: 300}
+      - <<: *node_defaults
+        id: P08_MOMENT
+        number: C9
+        title: SemanticMomentHypothesis
+        subtitle: event · frame · moment type · scores · evidence · verification
+        layer: grounding
+        type: artifact
+        status: CANDIDATE
+        owner: TRI
+        inputs: [DenseFrameWindow, Moment definition]
+        processing: [Score exact semantic moment with before/after states]
+        implementations: [Semantic Moment Localizer contract]
+        outputs: [Moment hypothesis]
+        artifacts: [semantic-moment-hypotheses]
+        metrics: [Localization error]
+        failure_modes: [Near-miss frame]
+        fallback: Return top alternatives with uncertainty.
+        group: G08_RECORDS
+        geometry: {x: 3320, y: 100, width: 410, height: 320}
+      - <<: *node_defaults
+        id: P08_PACKET
+        number: C10
+        title: EvidencePacket
+        subtitle: Full grounded and verified result
+        layer: output
+        type: artifact
+        status: BASELINE
+        owner: TRI
+        inputs: [CandidateVideo, EventChain, Semantic moments, Evidence, Answer hypotheses, Provenance]
+        processing: [Bind result fields to evidence references and verification status]
+        implementations: [Grounded result contract]
+        outputs: [EvidencePacket]
+        artifacts: [evidence-packet]
+        metrics: [Completeness]
+        failure_modes: [Unsupported field]
+        fallback: Mark incomplete and block unsupported output.
+        group: G08_RECORDS
+        geometry: {x: 3760, y: 100, width: 400, height: 320}
+      - <<: *node_defaults
+        id: P08_RUN
+        number: C11
+        title: RunManifest
+        subtitle: run · git commit · config · data/model versions · artifact · status
+        layer: storage
+        type: artifact
+        status: CURRENT_TEMPLATE
+        owner: KHOA
+        inputs: [Execution context, Exact config and versions]
+        processing: [Record reproducibility metadata beside every artifact]
+        implementations: [JSON manifest and used_config.yaml]
+        outputs: [RunManifest]
+        artifacts: [run_manifest.json]
+        metrics: [Manifest coverage]
+        failure_modes: [Unknown commit, Missing version]
+        fallback: Record UNKNOWN explicitly; never omit field.
+        group: G08_RECORDS
+        geometry: {x: 4190, y: 100, width: 400, height: 320}
+      - <<: *node_defaults
+        id: P08_KHOA
+        number: OWN-1
+        title: Khoa — Data & Kaggle
+        subtitle: Nguyễn Đăng Khoa
+        layer: data
+        status: CONFIRMED
+        owner: KHOA
+        inputs: [Raw Data]
+        processing: [Audit and package environment]
+        implementations: [Data/Kaggle workflow]
+        outputs: [VideoManifest, Kaggle Dataset/Environment]
+        artifacts: [data audit, environment manifest]
+        metrics: [Data validity]
+        failure_modes: [Missing dataset]
+        fallback: Quarantine invalid records.
+        group: G08_OWNERS
+        geometry: {x: 60, y: 730, width: 420, height: 300}
+      - <<: *node_defaults
+        id: P08_PHAT
+        number: OWN-2
+        title: Phát — Frame Bank & Features
+        subtitle: Phát Lê
+        layer: representation
+        status: CONFIRMED
+        owner: PHAT
+        inputs: [VideoManifest]
+        processing: [Shot/frame selection and feature extraction]
+        implementations: [Frame Bank and encoder contracts]
+        outputs: [ShotRecord, FrameRecord, FeatureRecord]
+        artifacts: [frame bank, feature store]
+        metrics: [Coverage and mapping validity]
+        failure_modes: [Bad frame mapping]
+        fallback: BTC and uniform coverage.
+        group: G08_OWNERS
+        geometry: {x: 510, y: 730, width: 430, height: 320}
+      - <<: *node_defaults
+        id: P08_PHUC
+        number: OWN-3
+        title: Phúc — Retrieval, Ranking & Evaluation
+        subtitle: Hồng Phúc
+        layer: retrieval
+        status: CONFIRMED
+        owner: PHUC
+        inputs: [FeatureRecord]
+        processing: [Index, retrieve, group, rank and evaluate]
+        implementations: [VectorIndex, RRF, CandidateVideo ranker, Metrics]
+        outputs: [CandidateFrame, CandidateVideo, EvaluationReport]
+        artifacts: [indexes, retrieval results, evaluation reports]
+        metrics: [Recall and Final Score]
+        failure_modes: [Low video recall]
+        fallback: Exact visual baseline.
+        group: G08_OWNERS
+        geometry: {x: 970, y: 730, width: 460, height: 330}
+      - <<: *node_defaults
+        id: P08_TRI
+        number: OWN-4
+        title: Tri — Architecture, Graph, Agent & Integration
+        subtitle: Hữu Tri
+        layer: graph
+        status: CONFIRMED
+        owner: TRI
+        inputs: [CandidateVideo]
+        processing: [Query/Candidate graphs, EventChain, Semantic moments, Agent integration]
+        implementations: [DP/Beam baseline and bounded control plane]
+        outputs: [EventChain, Semantic moments, EvidencePacket]
+        artifacts: [graphs, chains, evidence packets]
+        metrics: [Chain and moment accuracy]
+        failure_modes: [Unsupported hypothesis]
+        fallback: Deterministic retrieval-first path.
+        group: G08_OWNERS
+        geometry: {x: 1460, y: 730, width: 480, height: 330}
+      - <<: *node_defaults
+        id: P08_TAI
+        number: OWN-5
+        title: Tài — UI, Output & Interaction
+        subtitle: Nguyễn Tài
+        layer: output
+        status: CONFIRMED
+        owner: TAI
+        inputs: [EvidencePacket]
+        processing: [Present UI/timeline, Candidate verification and submission interaction]
+        implementations: [UI research and output contracts; runtime deferred]
+        outputs: [Reviewed ranked submission]
+        artifacts: [UI/timeline designs, submission]
+        metrics: [Interaction errors]
+        failure_modes: [Lost provenance in UI]
+        fallback: Plain evidence-backed ranked list.
+        group: G08_OWNERS
+        geometry: {x: 1970, y: 730, width: 450, height: 320}
+    edges:
+      - {id: E08_C1, source: P08_VIDEO, target: P08_SHOT, label: source video, flow_type: data}
+      - {id: E08_C2, source: P08_SHOT, target: P08_FRAME, label: shot interval, flow_type: data}
+      - {id: E08_C3, source: P08_FRAME, target: P08_FEATURE, label: frame mapping, flow_type: data}
+      - {id: E08_C4, source: P08_FEATURE, target: P08_CFRAME, label: index row, flow_type: artifact}
+      - {id: E08_C5, source: P08_CFRAME, target: P08_CVIDEO, label: grouped ranking, flow_type: data}
+      - {id: E08_C6, source: P08_QEVENT, target: P08_SEVENT, label: event matching, flow_type: data}
+      - {id: E08_C7, source: P08_CVIDEO, target: P08_SEVENT, label: top video timeline, flow_type: data}
+      - {id: E08_C8, source: P08_SEVENT, target: P08_MOMENT, label: coarse interval, flow_type: data}
+      - {id: E08_C9, source: P08_MOMENT, target: P08_PACKET, label: verified moment, flow_type: evidence}
+      - {id: E08_C10, source: P08_RUN, target: P08_PACKET, label: run provenance, flow_type: artifact}
+      - {id: E08_O1, source: P08_KHOA, target: P08_PHAT, label: VideoManifest and environment, flow_type: artifact}
+      - {id: E08_O2, source: P08_PHAT, target: P08_PHUC, label: FeatureRecord and frame mapping, flow_type: artifact}
+      - {id: E08_O3, source: P08_PHUC, target: P08_TRI, label: CandidateVideo and scores, flow_type: artifact}
+      - {id: E08_O4, source: P08_TRI, target: P08_TAI, label: EvidencePacket and ranked candidates, flow_type: artifact}
+    notes:
+      - Architecture and contract ownership is review responsibility, not an exclusive coding boundary.
+      - Every artifact handoff carries exact version and RunManifest provenance.

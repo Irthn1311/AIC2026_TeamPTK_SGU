@@ -1,0 +1,957 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mxfile host="app.diagrams.net" agent="TRIAGE-EG architecture generator" version="1.0" compressed="false">
+  <diagram id="PAGE_00" name="00 — Legend &amp; Reading Guide">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="827" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="PAGE_00_G00_LEGEND" value="Architecture Reading Guide" style="swimlane;html=1;rounded=1;collapsible=0;startSize=34;horizontal=1;fillColor=#e2e8f0;strokeColor=#475569;fontStyle=1;fontSize=15;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="20" y="20" width="2240" height="500" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_00_P00_STATUS" value="&lt;b&gt;L1 — Status Legend&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CONFIRMED] CONFIRMED · CURRENT_TEMPLATE · BASELINE · CANDIDATE · OPTIONAL · DEFERRED&lt;/i&gt;" style="shape=note;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#e2e8f0;strokeColor=#475569;fontColor=#0f172a;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="60" y="100" width="300" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_00_P00_SHAPES" value="&lt;b&gt;L2 — Shape Meaning&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CONFIRMED] Process · Store · Decision · Artifact · Agent · Graph · Deferred&lt;/i&gt;" style="shape=note;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ede9fe;strokeColor=#7c3aed;fontColor=#2e1065;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="380" y="100" width="300" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_00_P00_ARROWS" value="&lt;b&gt;L3 — Arrow Meaning&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CONFIRMED] Data · Control · Optional · FALLBACK · EVIDENCE · ARTIFACT&lt;/i&gt;" style="shape=note;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#fef3c7;strokeColor=#ca8a04;fontColor=#713f12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="700" y="100" width="300" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_00_P00_LAYERS" value="&lt;b&gt;L4 — Layer Colors&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CONFIRMED] Data · Representation · Retrieval · Graph · Grounding · Control · Output · Storage&lt;/i&gt;" style="shape=note;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#dbeafe;strokeColor=#2563eb;fontColor=#172554;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1020" y="100" width="300" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_00_P00_REPRESENTATION" value="&lt;b&gt;L5 — Three Representation Levels&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CONFIRMED] Technical/Retrieval Frame → Event Interval → Semantic Moment&lt;/i&gt;" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ffe4e6;strokeColor=#e11d48;fontColor=#881337;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1340" y="100" width="300" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_00_P00_EXECUTION" value="&lt;b&gt;L6 — Offline vs Online&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CONFIRMED] Offline chạy trước query · Online chạy khi query xuất hiện&lt;/i&gt;" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#f1f5f9;strokeColor=#64748b;fontColor=#1e293b;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1660" y="100" width="260" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_00_P00_LANES" value="&lt;b&gt;L7 — Fast Lane vs Graph Lane&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Simple confident query · TRAKE/multi-event/ambiguous/complex Q&amp;amp;A&lt;/i&gt;" style="shape=rhombus;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ffedd5;strokeColor=#ea580c;fontColor=#7c2d12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1940" y="100" width="280" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_00_E00_01" value="đọc tiếp" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_00_P00_STATUS" target="PAGE_00_P00_SHAPES">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_00_E00_02" value="đọc tiếp" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_00_P00_SHAPES" target="PAGE_00_P00_ARROWS">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_00_E00_03" value="đọc tiếp" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_00_P00_ARROWS" target="PAGE_00_P00_LAYERS">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_00_E00_04" value="đọc tiếp" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_00_P00_LAYERS" target="PAGE_00_P00_REPRESENTATION">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_00_E00_05" value="execution context" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_00_P00_REPRESENTATION" target="PAGE_00_P00_EXECUTION">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_00_E00_06" value="online route" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#a16207;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_00_P00_EXECUTION" target="PAGE_00_P00_LANES">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="PAGE_01" name="01 — Complete System Overview">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="827" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="PAGE_01_G01_A" value="A — Offline Data &amp;amp; Representation" style="swimlane;html=1;rounded=1;collapsible=0;startSize=34;horizontal=1;fillColor=#dbeafe;strokeColor=#2563eb;fontStyle=1;fontSize=15;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="20" y="20" width="1800" height="650" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_G01_B" value="B — Online Query &amp;amp; Retrieval" style="swimlane;html=1;rounded=1;collapsible=0;startSize=34;horizontal=1;fillColor=#dcfce7;strokeColor=#16a34a;fontStyle=1;fontSize=15;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="1850" y="20" width="2300" height="650" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_G01_C" value="C — Reasoning" style="swimlane;html=1;rounded=1;collapsible=0;startSize=34;horizontal=1;fillColor=#ffedd5;strokeColor=#ea580c;fontStyle=1;fontSize=15;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="4180" y="20" width="1500" height="650" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_G01_D" value="D — Fine Grounding" style="swimlane;html=1;rounded=1;collapsible=0;startSize=34;horizontal=1;fillColor=#ffe4e6;strokeColor=#e11d48;fontStyle=1;fontSize=15;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="5710" y="20" width="1300" height="650" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_G01_E" value="E — Output &amp;amp; Evaluation" style="swimlane;html=1;rounded=1;collapsible=0;startSize=34;horizontal=1;fillColor=#e2e8f0;strokeColor=#475569;fontStyle=1;fontSize=15;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="7040" y="20" width="1100" height="650" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_G01_F" value="F — Agent Control Plane" style="swimlane;html=1;rounded=1;collapsible=0;startSize=34;horizontal=1;fillColor=#fef3c7;strokeColor=#ca8a04;fontStyle=1;fontSize=15;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="1850" y="700" width="5160" height="400" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_P01_A1" value="&lt;b&gt;A1 — Raw Data Sources&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CONFIRMED] Raw video là source of truth&lt;/i&gt;" style="shape=cylinder3;boundedLbl=1;backgroundOutline=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#dbeafe;strokeColor=#2563eb;fontColor=#172554;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="60" y="100" width="220" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_P01_A2" value="&lt;b&gt;A2 — Data Audit &amp;amp; Manifest&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CURRENT_TEMPLATE] Validate corpus metadata&lt;/i&gt;" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#dbeafe;strokeColor=#2563eb;fontColor=#172554;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="300" y="100" width="220" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_P01_A3" value="&lt;b&gt;A3 — Unified ID &amp;amp; Temporal Mapping&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CURRENT_TEMPLATE] actual_frame_id là canonical submission ID&lt;/i&gt;" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#dbeafe;strokeColor=#2563eb;fontColor=#172554;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="540" y="100" width="220" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_P01_A4" value="&lt;b&gt;A4 — Hybrid Frame Bank&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] BTC Auxiliary + Team Retrieval&lt;/i&gt;" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ede9fe;strokeColor=#7c3aed;fontColor=#2e1065;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="780" y="100" width="220" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_P01_A5" value="&lt;b&gt;A5 — Evidence &amp;amp; Feature Extraction&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CANDIDATE] Multimodal representations&lt;/i&gt;" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ede9fe;strokeColor=#7c3aed;fontColor=#2e1065;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1020" y="100" width="220" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_P01_A6" value="&lt;b&gt;A6 — Index &amp;amp; Storage Builder&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Corpus-scale retrieval representations&lt;/i&gt;" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#f1f5f9;strokeColor=#64748b;fontColor=#1e293b;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1260" y="100" width="220" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_P01_A7" value="&lt;b&gt;A7 — Skeleton Temporal Catalog&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Lightweight whole-corpus temporal catalog&lt;/i&gt;" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#f1f5f9;strokeColor=#64748b;fontColor=#1e293b;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1500" y="100" width="260" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_P01_B1" value="&lt;b&gt;B1 — Query Input&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] KIS · Q&amp;amp;A · TRAKE&lt;/i&gt;" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#dcfce7;strokeColor=#16a34a;fontColor=#14532d;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1890" y="100" width="220" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_P01_B2" value="&lt;b&gt;B2 — Query Ledger &amp;amp; Task Policy&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Trace hypotheses and route task&lt;/i&gt;" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#fef3c7;strokeColor=#ca8a04;fontColor=#713f12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2130" y="100" width="220" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_P01_B3" value="&lt;b&gt;B3 — Query Compiler&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Structured query hypothesis&lt;/i&gt;" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#fef3c7;strokeColor=#ca8a04;fontColor=#713f12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2370" y="100" width="220" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_P01_B4" value="&lt;b&gt;B4 — Fast Probe&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Cheap confidence probe&lt;/i&gt;" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#dcfce7;strokeColor=#16a34a;fontColor=#14532d;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2610" y="100" width="220" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_P01_B5" value="&lt;b&gt;B5 — Modality Router&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Deterministic baseline · bounded Agent candidate&lt;/i&gt;" style="shape=rhombus;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#fef3c7;strokeColor=#ca8a04;fontColor=#713f12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2850" y="100" width="220" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_P01_B6" value="&lt;b&gt;B6 — Multimodal Retrieval&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Visual · Segment · Object · OCR · ASR · Caption · Metadata&lt;/i&gt;" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#dcfce7;strokeColor=#16a34a;fontColor=#14532d;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="3090" y="100" width="240" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_P01_B7" value="&lt;b&gt;B7 — Fusion, Grouping &amp;amp; Deduplication&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CURRENT_TEMPLATE] RRF then temporal/video grouping&lt;/i&gt;" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#dcfce7;strokeColor=#16a34a;fontColor=#14532d;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="3350" y="100" width="240" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_P01_B8" value="&lt;b&gt;B8 — Candidate Video Ranker&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Correct video before deep refinement&lt;/i&gt;" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#dcfce7;strokeColor=#16a34a;fontColor=#14532d;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="3610" y="100" width="230" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_P01_B9" value="&lt;b&gt;B9 — Uncertainty Manager&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Fast Lane hoặc Graph Lane&lt;/i&gt;" style="shape=rhombus;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#fef3c7;strokeColor=#ca8a04;fontColor=#713f12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="3860" y="100" width="240" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_P01_C1" value="&lt;b&gt;C1 — Fast Lane&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Direct local refinement for simple confident query&lt;/i&gt;" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ffedd5;strokeColor=#ea580c;fontColor=#7c2d12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="4220" y="100" width="220" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_P01_C2" value="&lt;b&gt;C2 — Query Event Graph&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Structured query events and relations&lt;/i&gt;" style="ellipse;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ffedd5;strokeColor=#ea580c;fontColor=#7c2d12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="4460" y="100" width="220" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_P01_C3" value="&lt;b&gt;C3 — Candidate Local Event Graph&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Query-local graph for top videos only&lt;/i&gt;" style="ellipse;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ffedd5;strokeColor=#ea580c;fontColor=#7c2d12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="4700" y="100" width="240" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_P01_C4" value="&lt;b&gt;C4 — Event Matcher&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Cross-modal query/candidate event scores&lt;/i&gt;" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ffedd5;strokeColor=#ea580c;fontColor=#7c2d12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="4960" y="100" width="220" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_P01_C5" value="&lt;b&gt;C5 — Temporal &amp;amp; Entity Solver&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] DP · Beam · constraints · no GNN baseline&lt;/i&gt;" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ffedd5;strokeColor=#ea580c;fontColor=#7c2d12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="5200" y="100" width="220" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_P01_C6" value="&lt;b&gt;C6 — Gap Detector &amp;amp; Graph Expansion&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Balanced EXPLOIT and EXPLORE&lt;/i&gt;" style="shape=rhombus;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ffedd5;strokeColor=#ea580c;fontColor=#7c2d12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="5440" y="100" width="200" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_P01_D1" value="&lt;b&gt;D1 — In-video Search&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Refine within selected video&lt;/i&gt;" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ffe4e6;strokeColor=#e11d48;fontColor=#881337;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="5750" y="100" width="220" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_P01_D2" value="&lt;b&gt;D2 — Dense Raw-video Decoder&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Preserve actual_frame_id&lt;/i&gt;" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ffe4e6;strokeColor=#e11d48;fontColor=#881337;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="5990" y="100" width="220" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_P01_D3" value="&lt;b&gt;D3 — Semantic Moment Localizer&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CANDIDATE] Select exact moment semantics&lt;/i&gt;" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ffe4e6;strokeColor=#e11d48;fontColor=#881337;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="6230" y="100" width="240" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_P01_D4" value="&lt;b&gt;D4 — Evidence Verifier&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Independent deterministic and model checks&lt;/i&gt;" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ffe4e6;strokeColor=#e11d48;fontColor=#881337;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="6490" y="100" width="220" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_P01_D5" value="&lt;b&gt;D5 — Q&amp;amp;A Answer Extractor&lt;/b&gt;&lt;br&gt;&lt;i&gt;[OPTIONAL] Evidence-specific answer extraction&lt;/i&gt;" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ffe4e6;strokeColor=#e11d48;fontColor=#881337;fontSize=11;dashed=1;dashPattern=5 3;" vertex="1" parent="1">
+          <mxGeometry x="6730" y="100" width="220" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_P01_E1" value="&lt;b&gt;E1 — Evidence Packet&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Grounded hypothesis provenance&lt;/i&gt;" style="shape=document;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#e2e8f0;strokeColor=#475569;fontColor=#0f172a;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="7080" y="100" width="220" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_P01_E2" value="&lt;b&gt;E2 — Ranked Answer List Constructor&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Precision at top · coverage at depth&lt;/i&gt;" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#e2e8f0;strokeColor=#475569;fontColor=#0f172a;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="7320" y="100" width="240" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_P01_E3" value="&lt;b&gt;E3 — KIS/Q&amp;amp;A/TRAKE Formatter&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CURRENT_TEMPLATE] Official task tuple schemas&lt;/i&gt;" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#e2e8f0;strokeColor=#475569;fontColor=#0f172a;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="7580" y="100" width="220" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_P01_E4" value="&lt;b&gt;E4 — Official Metric Evaluator&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CURRENT_TEMPLATE] R@1/5/20/50/100 and Final Score&lt;/i&gt;" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#e2e8f0;strokeColor=#475569;fontColor=#0f172a;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="7820" y="100" width="260" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_P01_F1" value="&lt;b&gt;F1 — Tool Registry&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Versioned callable contracts&lt;/i&gt;" style="shape=cylinder3;boundedLbl=1;backgroundOutline=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#fef3c7;strokeColor=#ca8a04;fontColor=#713f12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1900" y="780" width="260" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_P01_F2" value="&lt;b&gt;F2 — Bounded Planner&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CANDIDATE] Plan · execute · inspect · max one revise&lt;/i&gt;" style="shape=hexagon;perimeter=hexagonPerimeter2;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#fef3c7;strokeColor=#ca8a04;fontColor=#713f12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2180" y="780" width="260" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_P01_F3" value="&lt;b&gt;F3 — Plan Validator&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Schema, order and budget checks&lt;/i&gt;" style="shape=rhombus;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#fef3c7;strokeColor=#ca8a04;fontColor=#713f12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2460" y="780" width="260" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_P01_F4" value="&lt;b&gt;F4 — Budget Manager&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Bound variants, videos, frames and model calls&lt;/i&gt;" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#fef3c7;strokeColor=#ca8a04;fontColor=#713f12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2740" y="780" width="280" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_P01_F5" value="&lt;b&gt;F5 — Fallback Controller&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Deterministic retrieval-first path&lt;/i&gt;" style="shape=rhombus;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#fef3c7;strokeColor=#ca8a04;fontColor=#713f12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="3040" y="780" width="280" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_P01_F6" value="&lt;b&gt;F6 — Execution Trace&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Reproducible control provenance&lt;/i&gt;" style="shape=document;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#fef3c7;strokeColor=#ca8a04;fontColor=#713f12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="3340" y="780" width="280" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_A1" value="raw corpus" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_01_P01_A1" target="PAGE_01_P01_A2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_A2" value="audited manifest" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_01_P01_A2" target="PAGE_01_P01_A3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_A3" value="canonical mapping" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_01_P01_A3" target="PAGE_01_P01_A4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_A4" value="retrieval frames" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_01_P01_A4" target="PAGE_01_P01_A5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_A5" value="features and evidence" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_01_P01_A5" target="PAGE_01_P01_A6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_A6" value="ARTIFACT: indexed segments" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_01_P01_A6" target="PAGE_01_P01_A7">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_B1" value="original query" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_01_P01_B1" target="PAGE_01_P01_B2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_B2" value="task policy" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#a16207;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_01_P01_B2" target="PAGE_01_P01_B3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_B3" value="compiled query" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_01_P01_B3" target="PAGE_01_P01_B4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_B4" value="probe signals" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#a16207;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_01_P01_B4" target="PAGE_01_P01_B5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_B5" value="selected branches" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#a16207;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_01_P01_B5" target="PAGE_01_P01_B6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_AB" value="ARTIFACT: corpus indexes" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_01_P01_A6" target="PAGE_01_P01_B6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_B6" value="branch candidates" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_01_P01_B6" target="PAGE_01_P01_B7">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_B7" value="grouped frames" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_01_P01_B7" target="PAGE_01_P01_B8">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_B8" value="candidate videos" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_01_P01_B8" target="PAGE_01_P01_B9">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_FAST" value="simple and confident" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#a16207;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_01_P01_B9" target="PAGE_01_P01_C1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_GRAPH" value="complex or uncertain" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#a16207;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_01_P01_B9" target="PAGE_01_P01_C2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_C2" value="query constraints" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_01_P01_C2" target="PAGE_01_P01_C3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_AC" value="ARTIFACT: skeleton catalog" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_01_P01_A7" target="PAGE_01_P01_C3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_C3" value="local event graph" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_01_P01_C3" target="PAGE_01_P01_C4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_C4" value="EventMatchMatrix" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_01_P01_C4" target="PAGE_01_P01_C5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_C5" value="event chains and gaps" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_01_P01_C5" target="PAGE_01_P01_C6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_CD" value="bounded refinement" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#a16207;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_01_P01_C6" target="PAGE_01_P01_D1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_FD" value="direct interval" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_01_P01_C1" target="PAGE_01_P01_D1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_D1" value="refined interval" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_01_P01_D1" target="PAGE_01_P01_D2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_RAW" value="EVIDENCE: raw source of truth" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#be123c;" edge="1" parent="1" source="PAGE_01_P01_A1" target="PAGE_01_P01_D2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_D2" value="dense frames" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_01_P01_D2" target="PAGE_01_P01_D3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_D3" value="EVIDENCE: moment hypotheses" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#be123c;" edge="1" parent="1" source="PAGE_01_P01_D3" target="PAGE_01_P01_D4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_D4" value="Q&amp;amp;A when required" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#7c3aed;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_01_P01_D4" target="PAGE_01_P01_D5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_E1A" value="EVIDENCE: verified evidence" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#be123c;" edge="1" parent="1" source="PAGE_01_P01_D4" target="PAGE_01_P01_E1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_E1B" value="EVIDENCE: grounded answer" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#be123c;" edge="1" parent="1" source="PAGE_01_P01_D5" target="PAGE_01_P01_E1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_E1" value="evidence packets" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_01_P01_E1" target="PAGE_01_P01_E2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_E2" value="ranked list" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_01_P01_E2" target="PAGE_01_P01_E3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_E3" value="task submission" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_01_P01_E3" target="PAGE_01_P01_E4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_F1" value="available tools" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#a16207;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_01_P01_F1" target="PAGE_01_P01_F2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_F2" value="proposed plan" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#a16207;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_01_P01_F2" target="PAGE_01_P01_F3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_F3" value="valid plan" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#a16207;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_01_P01_F3" target="PAGE_01_P01_F4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_F4" value="bounded online execution" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#a16207;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_01_P01_F4" target="PAGE_01_P01_B3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_F5" value="graph plan" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#a16207;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_01_P01_F2" target="PAGE_01_P01_C2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_F6" value="grounding plan" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#a16207;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_01_P01_F2" target="PAGE_01_P01_D3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_FB" value="FALLBACK: primary visual retrieval" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#b91c1c;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_01_P01_F5" target="PAGE_01_P01_B6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_01_E01_TRACE" value="ARTIFACT: execution events" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_01_P01_F4" target="PAGE_01_P01_F6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="PAGE_02" name="02 — Offline Data &amp; Representation">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="827" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="PAGE_02_G02_DATA" value="Raw Data" style="swimlane;html=1;rounded=1;collapsible=0;startSize=34;horizontal=1;fillColor=#dbeafe;strokeColor=#2563eb;fontStyle=1;fontSize=15;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="20" y="20" width="1120" height="760" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_02_G02_FRAME" value="Hybrid Frame Bank" style="swimlane;html=1;rounded=1;collapsible=0;startSize=34;horizontal=1;fillColor=#ede9fe;strokeColor=#7c3aed;fontStyle=1;fontSize=15;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="1170" y="20" width="1080" height="760" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_02_G02_FEATURE" value="Feature &amp;amp; Evidence Extraction" style="swimlane;html=1;rounded=1;collapsible=0;startSize=34;horizontal=1;fillColor=#ede9fe;strokeColor=#7c3aed;fontStyle=1;fontSize=15;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="2280" y="20" width="2240" height="760" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_02_G02_STORE" value="Index" style="swimlane;html=1;rounded=1;collapsible=0;startSize=34;horizontal=1;fillColor=#f1f5f9;strokeColor=#64748b;fontStyle=1;fontSize=15;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="4550" y="20" width="800" height="760" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_02_P02_M1" value="&lt;b&gt;M1 — Raw Data Sources&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CONFIRMED] Raw video and BTC auxiliary evidence&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; KHOA&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Raw Videos → BTC keyframes → BTC CLIP features → BTC object JSON → YouTube metadata → Optional audio&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Inventory source paths and versions&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Filesystem and Kaggle Dataset mounts&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Versioned raw source inventory&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; raw-source-inventory&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Missing file → Version mismatch&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Mark missing evidence; never synthesize raw frames." style="shape=cylinder3;boundedLbl=1;backgroundOutline=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#dbeafe;strokeColor=#2563eb;fontColor=#172554;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="60" y="100" width="300" height="280" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_02_P02_M2" value="&lt;b&gt;M2 — Data Audit&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CURRENT_TEMPLATE] Metadata and compatibility validation&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; KHOA&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Raw source inventory&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Existence checks → ID uniqueness → numeric validation → compatibility counts&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Python manifest validator → ffprobe or equivalent video reader candidate&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; VideoManifest → DataAuditReport → InvalidRecordList&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; video-manifest-vX → data-audit-report-vX&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Corrupt metadata → Duplicate video ID → Incompatible BTC artifacts&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Quarantine invalid records and continue with valid subset." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#dbeafe;strokeColor=#2563eb;fontColor=#172554;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="390" y="100" width="320" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_02_P02_M3" value="&lt;b&gt;M3 — Unified ID &amp;amp; Temporal Mapping&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CURRENT_TEMPLATE] Keyframe order is never actual_frame_id&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; KHOA&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; VideoManifest → BTC mappings&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Build bidirectional frame/time/evidence references → Validate actual frame bounds&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; VideoRecord → ShotRecord → FrameRecord → SegmentRecord → FrameMap&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Canonical records and FrameMap&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; temporal-mapping-store-vX&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Wrong FPS → Off-by-one frame → Orphan feature row&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Reject ambiguous mapping and require raw-video verification." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#dbeafe;strokeColor=#2563eb;fontColor=#172554;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="740" y="100" width="350" height="320" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_02_P02_M4" value="&lt;b&gt;M4 — Hybrid Frame Bank Router&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] BTC Auxiliary + Team Retrieval&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; PHAT&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Raw Video → BTC artifacts → FrameMap&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Route confirmed BTC evidence and team-selected retrieval frames&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Parallel frame bank branches&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Hybrid Frame Bank Manifest&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; hybrid-frame-bank-vX&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Branch unavailable → Mapping divergence&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Use BTC branch plus uniform raw-video fallback." style="shape=rhombus;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ede9fe;strokeColor=#7c3aed;fontColor=#2e1065;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1210" y="100" width="300" height="260" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_02_P02_M41" value="&lt;b&gt;M4.1 — BTC Auxiliary Frame Bank&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CONFIRMED] Baseline, fallback, debugging and object evidence&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; PHAT&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; BTC keyframes → BTC CLIP features → BTC object JSON&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Validate counts → Bind keyframes to actual frame mapping&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Confirmed BTC artifacts&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; BTC FrameRecord and evidence references&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; btc-aux-frame-bank-vX&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Missing keyframe → Feature count mismatch → Object reference mismatch&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Retain available BTC modalities and mark missing evidence." style="shape=cylinder3;boundedLbl=1;backgroundOutline=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ede9fe;strokeColor=#7c3aed;fontColor=#2e1065;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1540" y="100" width="320" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_02_P02_M42" value="&lt;b&gt;M4.2 — Team Retrieval Frame Bank&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] BASELINE + CANDIDATE&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; PHAT&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Raw Video → VideoRecord&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Shot detect → Duration analysis → Shot-center/adaptive selection → Long-shot fallback → Quality filter → Temporal/visual deduplication → Frame mapping&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Current template dummy full-video shot and shot center → Candidate TransNetV2 → Candidate adaptive multi-frame → Candidate visual diversity&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; ShotRecord list → FrameRecord list → Frame Bank Manifest&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; team-frame-bank-vX&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Missed cut → Long shot → Duplicate frames → Blur/black/transition frame → Decode error → Wrong mapping&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Maximum temporal gap with uniform frame insertion." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ede9fe;strokeColor=#7c3aed;fontColor=#2e1065;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1890" y="100" width="320" height="400" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_02_P02_M51" value="&lt;b&gt;M5.1 — BTC Visual Feature Loader&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CONFIRMED] Confirmed CLIP ViT-B/32 features&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; PHAT&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; BTC feature files → BTC FrameRecord&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Validate row count → normalization and mapping&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; CLIP ViT-B/32 loader&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; BTC FeatureRecord list&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; btc-feature-manifest-vX&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Wrong row alignment&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Disable invalid BTC feature rows." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ede9fe;strokeColor=#7c3aed;fontColor=#2e1065;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2320" y="100" width="280" height="260" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_02_P02_M52" value="&lt;b&gt;M5.2 — Team Visual Encoder&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CANDIDATE] Model final TBD after benchmark&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; PHAT&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Team FrameRecord → Text query contract&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Preprocess → Encode frame/text → Normalize → Record model metadata&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Current deterministic dummy contract → Candidate CLIP/OpenCLIP compatible encoder&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Team FeatureRecord list&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; team-frame-features-vX&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Model drift → Preprocessing mismatch → OOM&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Deterministic dummy only for contract tests; BTC features for retrieval fallback." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ede9fe;strokeColor=#7c3aed;fontColor=#2e1065;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2620" y="100" width="300" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_02_P02_M53" value="&lt;b&gt;M5.3 — Segment/Clip Representation&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CANDIDATE] Representative sets or pooled clip encoding&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; PHAT&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Frame features → Segment intervals&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Representative-vector set → Pooling → Optional clip/video encoding&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; TBD after benchmark&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Segment representations&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; segment-features-vX&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Over-pooling → Lost short action&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Keep representative frame set without pooling." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ede9fe;strokeColor=#7c3aed;fontColor=#2e1065;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2940" y="100" width="280" height="280" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_02_P02_M54" value="&lt;b&gt;M5.4 — Object Evidence&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CONFIRMED] BTC confirmed · team extension optional&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; PHAT&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; BTC Object JSON → Optional team frames&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Bind detections to frame/time → Preserve boxes and confidence&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; BTC Faster R-CNN Inception-ResNet-v2 on Open Images V4 → Optional team detector TBD&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Object evidence references&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; object-evidence-vX&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Class mismatch → Bad box mapping&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Treat object result as evidence, never identity truth." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ede9fe;strokeColor=#7c3aed;fontColor=#2e1065;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="3240" y="100" width="310" height="320" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_02_P02_M55" value="&lt;b&gt;M5.5 — OCR Evidence&lt;/b&gt;&lt;br&gt;&lt;i&gt;[OPTIONAL] Optional lexical evidence&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; PHAT&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Frames or crops&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Extract text → box → confidence and timestamp&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; OCR model TBD after benchmark&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; OCR spans&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; ocr-evidence-vX&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Blurred text → Wrong script&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Skip OCR branch and preserve uncertainty." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ede9fe;strokeColor=#7c3aed;fontColor=#2e1065;fontSize=11;dashed=1;dashPattern=5 3;" vertex="1" parent="1">
+          <mxGeometry x="3570" y="100" width="280" height="280" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_02_P02_M56" value="&lt;b&gt;M5.6 — ASR Evidence&lt;/b&gt;&lt;br&gt;&lt;i&gt;[OPTIONAL] Optional speech evidence&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; PHAT&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Optional audio&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Transcribe with start/end time and confidence&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; ASR model TBD after benchmark&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; ASR spans&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; asr-evidence-vX&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; No audio → Noise → Language mismatch&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Mark speech evidence unavailable." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ede9fe;strokeColor=#7c3aed;fontColor=#2e1065;fontSize=11;dashed=1;dashPattern=5 3;" vertex="1" parent="1">
+          <mxGeometry x="3870" y="100" width="280" height="280" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_02_P02_M57" value="&lt;b&gt;M5.7 — Caption/Event Description&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CANDIDATE] Caption is evidence, not ground truth&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; PHAT&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Frames → Segments → Optional evidence&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Generate coarse description and role hints with supporting refs&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Caption model and prompt TBD&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Versioned coarse descriptions&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; caption-evidence-vX&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Hallucination → Unsupported role&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Use visual/object evidence without caption." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ede9fe;strokeColor=#7c3aed;fontColor=#2e1065;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="4170" y="100" width="300" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_02_P02_M6" value="&lt;b&gt;M6 — Index &amp;amp; Storage Builder&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Multimodal corpus indexes&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; PHUC&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Frame/segment features → Object/OCR/ASR/Caption/Metadata → FrameMap&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Build vector → lexical → inverted → metadata and temporal stores&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Current NumPy flat cosine → Target FAISS or compatible ANN → Parquet → DuckDB or SQLite; no graph database baseline&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; BTC/Team/Segment indexes → Lexical indexes → Metadata index → Temporal Mapping Store&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; multimodal-index-bundle-vX&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Stale mapping → Dimension mismatch → Partial index&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Rebuild affected branch; exact NumPy search for small validation sets." style="shape=cylinder3;boundedLbl=1;backgroundOutline=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#f1f5f9;strokeColor=#64748b;fontColor=#1e293b;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="4590" y="100" width="340" height="380" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_02_P02_M7" value="&lt;b&gt;M7 — Skeleton Temporal Catalog&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Lightweight whole-corpus catalog, not rich Event Graph&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TRI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Segments → Representative frames → Embeddings → Evidence refs → Coarse descriptions&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Create SegmentEventHypothesis → Add CONTAINS/PRECEDES/FOLLOWS/OVERLAPS/ADJACENT&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Deterministic temporal catalog&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Versioned skeleton catalog with confidence → status and provenance&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; skeleton-temporal-catalog-vX&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Boundary uncertainty → Missing evidence refs&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Keep minimal interval nodes and deterministic adjacency only." style="ellipse;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#f1f5f9;strokeColor=#64748b;fontColor=#1e293b;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="4960" y="100" width="340" height="400" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_02_E02_01" value="source inventory" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_02_P02_M1" target="PAGE_02_P02_M2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_02_E02_02" value="audited manifest" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_02_P02_M2" target="PAGE_02_P02_M3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_02_E02_03" value="canonical mapping" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_02_P02_M3" target="PAGE_02_P02_M4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_02_E02_04A" value="BTC branch" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_02_P02_M4" target="PAGE_02_P02_M41">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_02_E02_04B" value="team branch" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_02_P02_M4" target="PAGE_02_P02_M42">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_02_E02_051" value="confirmed BTC features" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_02_P02_M41" target="PAGE_02_P02_M51">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_02_E02_052" value="team frames" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_02_P02_M42" target="PAGE_02_P02_M52">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_02_E02_053" value="frame representations" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#7c3aed;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_02_P02_M52" target="PAGE_02_P02_M53">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_02_E02_054" value="EVIDENCE: object JSON" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#be123c;" edge="1" parent="1" source="PAGE_02_P02_M41" target="PAGE_02_P02_M54">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_02_E02_055" value="text crops" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#7c3aed;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_02_P02_M42" target="PAGE_02_P02_M55">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_02_E02_056" value="optional audio" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#7c3aed;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_02_P02_M1" target="PAGE_02_P02_M56">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_02_E02_057" value="segment context" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#7c3aed;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_02_P02_M53" target="PAGE_02_P02_M57">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_02_E02_06A" value="ARTIFACT: BTC FeatureRecord" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_02_P02_M51" target="PAGE_02_P02_M6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_02_E02_06B" value="ARTIFACT: Team FeatureRecord" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_02_P02_M52" target="PAGE_02_P02_M6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_02_E02_06C" value="ARTIFACT: object evidence" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_02_P02_M54" target="PAGE_02_P02_M6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_02_E02_06D" value="ARTIFACT: OCR spans" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_02_P02_M55" target="PAGE_02_P02_M6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_02_E02_06E" value="ARTIFACT: ASR spans" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_02_P02_M56" target="PAGE_02_P02_M6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_02_E02_06F" value="ARTIFACT: captions" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_02_P02_M57" target="PAGE_02_P02_M6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_02_E02_07" value="ARTIFACT: indexed segments and evidence refs" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_02_P02_M6" target="PAGE_02_P02_M7">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="PAGE_03" name="03 — Online Query &amp; Retrieval">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="827" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="PAGE_03_G03_QUERY" value="Query Understanding &amp;amp; Ledger" style="swimlane;html=1;rounded=1;collapsible=0;startSize=34;horizontal=1;fillColor=#fef3c7;strokeColor=#ca8a04;fontStyle=1;fontSize=15;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="20" y="20" width="1380" height="700" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_03_G03_RETRIEVAL" value="Retrieval" style="swimlane;html=1;rounded=1;collapsible=0;startSize=34;horizontal=1;fillColor=#dcfce7;strokeColor=#16a34a;fontStyle=1;fontSize=15;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="1430" y="20" width="2500" height="700" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_03_G03_ROUTE" value="Lane Decision" style="swimlane;html=1;rounded=1;collapsible=0;startSize=34;horizontal=1;fillColor=#fef3c7;strokeColor=#ca8a04;fontStyle=1;fontSize=15;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="3960" y="20" width="500" height="700" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_03_P03_M8" value="&lt;b&gt;M8 — Query Input&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] KIS event · Q&amp;amp;A event+question · TRAKE sequence&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TAI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Natural-language task request&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Capture exact original query and task hints&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Task input schema&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Immutable original query&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; query-request&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Missing task fields&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Reject malformed request with clear schema error." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#fef3c7;strokeColor=#ca8a04;fontColor=#713f12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="60" y="100" width="280" height="260" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_03_P03_M9" value="&lt;b&gt;M9 — Query Ledger&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Original query is never overwritten&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TRI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Original query → Runtime events&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Append-only hypothesis and execution history&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Versioned QueryLedger contract&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; QueryLedger&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; query-ledger-vX&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Lost provenance → Query overwrite&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Preserve original request and deterministic trace minimum." style="shape=document;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#fef3c7;strokeColor=#ca8a04;fontColor=#713f12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="370" y="100" width="300" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_03_P03_M10" value="&lt;b&gt;M10 — Task Policy&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Route KIS · Q&amp;amp;A · TRAKE&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TRI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Original query → Explicit task type&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Select output schema → required evidence and solver policy&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Deterministic task router&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; TaskPolicy&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; task-policy&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Ambiguous task type&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Require explicit task type; never infer output tuple silently." style="shape=rhombus;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#fef3c7;strokeColor=#ca8a04;fontColor=#713f12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="700" y="100" width="280" height="280" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_03_P03_M11" value="&lt;b&gt;M11 — Query Compiler&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Rules baseline · bounded LLM candidate&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TRI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Original query → TaskPolicy&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Rule/template parsing → Optional structured LLM output → Schema validation&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Baseline deterministic parser → Candidate bounded LLM&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; CompiledQuery → QueryEvent list → Query hypotheses&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; compiled-query-vX&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Unsupported parse → Invalid structured output → Hallucinated constraint&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Use original query plus conservative lexical/visual hypothesis." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#fef3c7;strokeColor=#ca8a04;fontColor=#713f12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1010" y="100" width="340" height="340" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_03_P03_M12" value="&lt;b&gt;M12 — Fast Probe&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Cheap retrieval confidence estimate&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; PHUC&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; CompiledQuery → Primary indexes&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Primary visual search → Optional object/OCR probe → Group by video → Compute score margin → Variant agreement → Concentration and evidence coverage&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Existing NumPy retrieval contract → Baseline grouping&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; InitialCandidates → UncertaintySignals&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; fast-probe-result&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Flat scores → Conflicting variants → Empty result&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Expand modalities and candidate budget." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#dcfce7;strokeColor=#16a34a;fontColor=#14532d;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1470" y="100" width="320" height="320" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_03_P03_M13" value="&lt;b&gt;M13 — Modality Router&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Deterministic rules baseline&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TRI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; CompiledQuery → UncertaintySignals&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Choose visual → segment → object → OCR → ASR → caption and metadata tools&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Baseline deterministic task/query rules → Candidate bounded Agent routing&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; RetrievalToolCall list&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; retrieval-plan&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Missing needed modality → Repeated tool call&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Primary visual plus object/OCR hints when explicit." style="shape=rhombus;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#fef3c7;strokeColor=#ca8a04;fontColor=#713f12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1820" y="100" width="300" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_03_P03_M14" value="&lt;b&gt;M14 — Multimodal Retrieval&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Every branch returns rank, score, source and evidence refs&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; PHUC&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; RetrievalToolCall list → Corpus indexes&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Search selected modalities independently&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; visual_frame_search → segment_search → object_search → OCR_search → ASR_search → caption_search → metadata_search&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Branch CandidateFrame/Segment lists&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; retrieval-branch-results&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Index unavailable → Dimension mismatch → Empty branch&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Continue available branches and record missing branch." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#dcfce7;strokeColor=#16a34a;fontColor=#14532d;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2150" y="100" width="340" height="340" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_03_P03_M15" value="&lt;b&gt;M15 — Fusion&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CURRENT_TEMPLATE] Reciprocal Rank Fusion baseline&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; PHUC&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Multiple ranked branch lists&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Weighted reciprocal rank aggregation&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; RRF score = sum weight / (k + rank)&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Fused CandidateFrame list&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; fusion-result&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Dominant noisy branch → Duplicate candidate&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Primary visual ranking with explicit branch provenance." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#dcfce7;strokeColor=#16a34a;fontColor=#14532d;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2520" y="100" width="300" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_03_P03_M16" value="&lt;b&gt;M16 — Grouping &amp;amp; Deduplication&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CURRENT_TEMPLATE] Frame → temporal cluster → shot → video&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; PHUC&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Fused CandidateFrame list&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Temporal clustering → Shot grouping → Duplicate suppression → Video grouping → Representative selection&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Nearby-frame deduplication and video grouping baseline&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Grouped candidates by video&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; candidate-groups&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Over-deduplication → Cluster boundary error&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Keep highest-score candidate per conservative window." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#dcfce7;strokeColor=#16a34a;fontColor=#14532d;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2850" y="100" width="320" height="320" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_03_P03_M17" value="&lt;b&gt;M17 — Candidate Video Ranker&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] KIS/Q&amp;amp;A evidence scores · TRAKE event coverage/order&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; PHUC&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Grouped candidates → QueryEvent list&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Best-frame → Top-k pooled → Modality agreement → Distinctive evidence → Event coverage → Order feasibility → Compactness and penalties&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Current best-frame/top-k mean → Candidate task-aware video ranker&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; CandidateVideo list&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; candidate-video-ranking&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Wrong video dominates → Missing event → Infeasible order&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Rank by best primary visual frame plus modality agreement." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#dcfce7;strokeColor=#16a34a;fontColor=#14532d;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="3200" y="100" width="340" height="340" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_03_P03_M18" value="&lt;b&gt;M18 — Uncertainty Manager&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Fast Lane vs Graph Lane&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TRI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; CandidateVideo list → Task → Score margin → Evidence coverage&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Fast for one clear event; Graph for TRAKE → multi-event → temporal/entity constraints → ambiguity → complex Q&amp;amp;A or missing evidence&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Deterministic uncertainty thresholds&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; LaneDecision&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; uncertainty-decision&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Premature fast route → Unnecessary graph cost&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Prefer Graph Lane when temporal constraints are explicit." style="shape=rhombus;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#fef3c7;strokeColor=#ca8a04;fontColor=#713f12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="4000" y="100" width="420" height="340" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_03_E03_01" value="immutable query" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_03_P03_M8" target="PAGE_03_P03_M9">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_03_E03_02" value="task request" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#a16207;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_03_P03_M9" target="PAGE_03_P03_M10">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_03_E03_03" value="task policy" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#a16207;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_03_P03_M10" target="PAGE_03_P03_M11">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_03_E03_04" value="compiled query" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_03_P03_M11" target="PAGE_03_P03_M12">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_03_E03_05" value="probe and uncertainty" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#a16207;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_03_P03_M12" target="PAGE_03_P03_M13">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_03_E03_06" value="tool calls" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#a16207;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_03_P03_M13" target="PAGE_03_P03_M14">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_03_E03_07" value="ranked branch lists" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_03_P03_M14" target="PAGE_03_P03_M15">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_03_E03_08" value="fused candidates" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_03_P03_M15" target="PAGE_03_P03_M16">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_03_E03_09" value="video groups" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_03_P03_M16" target="PAGE_03_P03_M17">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_03_E03_10" value="ranked candidate videos" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_03_P03_M17" target="PAGE_03_P03_M18">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_03_E03_LEDGER" value="ARTIFACT: candidates and lane decision" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_03_P03_M18" target="PAGE_03_P03_M9">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="PAGE_04" name="04 — Event Graph Internals">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="827" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="PAGE_04_G04_GRAPHS" value="Query Graph &amp;amp; Candidate Local Graph" style="swimlane;html=1;rounded=1;collapsible=0;startSize=34;horizontal=1;fillColor=#ffedd5;strokeColor=#ea580c;fontStyle=1;fontSize=15;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="20" y="20" width="1520" height="780" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_04_G04_SEMANTICS" value="Graph Semantics" style="swimlane;html=1;rounded=1;collapsible=0;startSize=34;horizontal=1;fillColor=#ffedd5;strokeColor=#ea580c;fontStyle=1;fontSize=15;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="1570" y="20" width="1060" height="780" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_04_G04_SOLVER" value="Matching" style="swimlane;html=1;rounded=1;collapsible=0;startSize=34;horizontal=1;fillColor=#ffedd5;strokeColor=#ea580c;fontStyle=1;fontSize=15;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="2660" y="20" width="1760" height="780" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_04_P04_M19" value="&lt;b&gt;M19 — Query Event Graph&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Explicit · Inferred · Hypothesis constraints&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TRI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Compiled QueryEvent list&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Create QueryEventNode → Add BEFORE/AFTER/OVERLAPS/SAME_VIDEO/POSSIBLE_SAME_ACTOR&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Typed query graph contract&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Versioned Query Event Graph&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; query-event-graph-vX&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Ambiguous span → Conflicting constraints&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Keep multiple conservative hypotheses." style="ellipse;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ffedd5;strokeColor=#ea580c;fontColor=#7c2d12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="60" y="100" width="430" height="380" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_04_P04_M20" value="&lt;b&gt;M20 — Candidate Local Event Graph Builder&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Top candidate videos only&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TRI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Top CandidateVideo → Retrieved/neighbor segments → Skeleton catalog → Evidence refs&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Create VideoNode → SegmentEventNode → EntityHypothesisNode → SemanticMomentHypothesisNode&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Directed attributed heterogeneous temporal graph with versioned query-local refinement&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Candidate Local Event Graph&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; candidate-local-event-graph-vX&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Locality bias → Missing segment → Graph explosion&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Bounded timeline with deterministic temporal edges only." style="ellipse;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ffedd5;strokeColor=#ea580c;fontColor=#7c2d12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="520" y="100" width="470" height="420" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_04_P04_M21" value="&lt;b&gt;M21 — Graph Types &amp;amp; Semantics&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Core · Soft · On-demand edges&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TRI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Candidate graph nodes → Evidence references&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Type edges and mark confidence/status/provenance&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Typed edge registry&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Semantically typed local graph&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; graph-schema-vX&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Causal hallucination → Hardening soft relation&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Downgrade uncertain relation to hypothesis or evidence reference." style="ellipse;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ffedd5;strokeColor=#ea580c;fontColor=#7c2d12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1020" y="100" width="470" height="420" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_04_P04_M22" value="&lt;b&gt;M22 — Confidence &amp;amp; Provenance&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Every hypothesis is traceable and stateful&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TRI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Graph hypotheses → Model/tool executions → Source evidence&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Attach source model/version → prompt version → frames/clip → creation time → graph version and verification method → Set hypothesis status&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; segment_hypothesis → event_hypothesis → verified_event → rejected_event → incomplete_event&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; ConfidenceComponents → ProvenanceRecord → NodeStatus&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; graph-provenance-vX&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Missing source refs → Stale version → Uncalibrated confidence&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Mark incomplete_event and block unsupported promotion." style="shape=document;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ffedd5;strokeColor=#ea580c;fontColor=#7c2d12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1610" y="100" width="470" height="440" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_04_P04_M23" value="&lt;b&gt;M23 — Event Matcher&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] QueryEvent ↔ CandidateEvent evidence scoring&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TRI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Query Event Graph → Candidate Local Event Graph → Evidence references&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Score visual → caption → object → OCR → ASR → region → motion/action and metadata support&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Weighted evidence scoring with provenance&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; EventMatchMatrix&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; event-match-matrix&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Cross-modal conflict → Missing modality&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Use available high-confidence signals and uncertainty penalty." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ffedd5;strokeColor=#ea580c;fontColor=#7c2d12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2700" y="100" width="380" height="340" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_04_P04_M24" value="&lt;b&gt;M24 — Temporal &amp;amp; Entity Solver&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] DP · Beam · Monotonic Alignment · Limited Graph Search&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TRI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; EventMatchMatrix → Temporal graph → Entity constraints&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Linear DP/Beam/Monotonic alignment → Constraint-guided beam for branch/overlap → Top-M repeated-event chains&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Dynamic Programming → Beam Search → Constraint scoring → Limited Graph Search&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Top-M EventChain hypotheses&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; event-chain-hypotheses&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Missing event → Contradiction → Combinatorial expansion&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Monotonic best-match chain with explicit missing-event penalty." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ffedd5;strokeColor=#ea580c;fontColor=#7c2d12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="3110" y="100" width="450" height="420" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_04_P04_M25" value="&lt;b&gt;M25 — Entity Consistency&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CANDIDATE] Usually a soft relation&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TRI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; EntityHypothesis nodes → Tracks and evidence&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Aggregate identity evidence conservatively&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Candidate tracking and appearance embeddings&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; same_entity → possible_same_entity → different_entity&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; entity-consistency-result&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Occlusion → Similar appearance → Track switch&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; possible_same_entity with uncertainty penalty." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ffedd5;strokeColor=#ea580c;fontColor=#7c2d12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="3590" y="100" width="380" height="360" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_04_P04_M26" value="&lt;b&gt;M26 — Gap Detector &amp;amp; Graph Expansion&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] EXPLOIT local evidence + EXPLORE alternatives&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TRI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Event chains → Confidence/Provenance → Missing evidence&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Classify gap → Balance bounded EXPLOIT and EXPLORE → Record expansion provenance&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Rule-based gap policies → Budgeted tool calls&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; GraphExpansionRequest or GlobalResearchRequest&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; gap-expansion-trace&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Locality bias → Infinite refinement → Budget overflow&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Stop with insufficient evidence or deterministic global visual re-search." style="shape=rhombus;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ffedd5;strokeColor=#ea580c;fontColor=#7c2d12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="4000" y="100" width="380" height="400" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_04_E04_QM" value="QueryEvent constraints" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_04_P04_M19" target="PAGE_04_P04_M23">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_04_E04_CG" value="local graph nodes" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_04_P04_M20" target="PAGE_04_P04_M21">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_04_E04_SP" value="typed hypotheses" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_04_P04_M21" target="PAGE_04_P04_M22">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_04_E04_CM" value="CandidateEvent nodes" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_04_P04_M20" target="PAGE_04_P04_M23">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_04_E04_EV" value="EVIDENCE: confidence and evidence refs" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#be123c;" edge="1" parent="1" source="PAGE_04_P04_M22" target="PAGE_04_P04_M23">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_04_E04_MS" value="EventMatchMatrix" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_04_P04_M23" target="PAGE_04_P04_M24">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_04_E04_SE" value="entity hypotheses" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#7c3aed;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_04_P04_M24" target="PAGE_04_P04_M25">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_04_E04_SG" value="chain gaps" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_04_P04_M24" target="PAGE_04_P04_M26">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_04_E04_EG" value="identity uncertainty" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_04_P04_M25" target="PAGE_04_P04_M26">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_04_E04_BACK" value="bounded local expansion" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#a16207;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_04_P04_M26" target="PAGE_04_P04_M20">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="PAGE_05" name="05 — Fine Grounding &amp; Verification">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="827" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="PAGE_05_G05_GROUND" value="Fine Grounding on Raw Video" style="swimlane;html=1;rounded=1;collapsible=0;startSize=34;horizontal=1;fillColor=#ffe4e6;strokeColor=#e11d48;fontStyle=1;fontSize=15;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="20" y="20" width="1900" height="760" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_05_G05_VERIFY" value="Evidence Verification" style="swimlane;html=1;rounded=1;collapsible=0;startSize=34;horizontal=1;fillColor=#ffe4e6;strokeColor=#e11d48;fontStyle=1;fontSize=15;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="1950" y="20" width="900" height="760" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_05_G05_QA" value="Q&amp;amp;A Evidence Extraction" style="swimlane;html=1;rounded=1;collapsible=0;startSize=34;horizontal=1;fillColor=#e2e8f0;strokeColor=#475569;fontStyle=1;fontSize=15;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="2880" y="20" width="1480" height="760" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_05_P05_M27" value="&lt;b&gt;M27 — In-video Search&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Search only inside selected CandidateVideo&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TRI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; CandidateVideo → QueryEvent → Coarse interval&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Retrieve neighboring frames → Search candidate timeline → Refine event interval&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Local vector/evidence search&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; RefinedEventInterval&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; refined-event-interval&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Wrong coarse interval → Missing neighboring frames&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Expand temporal margin within the same video." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ffe4e6;strokeColor=#e11d48;fontColor=#881337;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="60" y="100" width="360" height="320" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_05_P05_M28" value="&lt;b&gt;M28 — Dense Raw-video Decoder&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Preserve exact actual_frame_id and FPS mapping&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; PHAT&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Raw Video → Start/end interval → Temporal margin → FPS&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Decode frames → Preserve actual IDs → Build local before/after states&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Video reader adapter TBD; no offline motion core requirement&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; DenseFrameWindow&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; dense-frame-window&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Decode error → Variable FPS mismatch → Excessive window&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Coarser uniform sampling then focused decode around best frame." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ffe4e6;strokeColor=#e11d48;fontColor=#881337;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="450" y="100" width="380" height="340" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_05_P05_M29" value="&lt;b&gt;M29 — Semantic Moment Localizer&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CANDIDATE] Event Graph finds interval; Localizer finds exact frame&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TRI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; DenseFrameWindow → Query moment definition → Region/object/motion evidence&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Score frame → region → relation → motion difference → pose/keypoints → before/after state and optional VLM listwise comparison&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Deterministic state/transition checks baseline → Optional VLM verifier candidate&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; SemanticMomentHypothesis list with frame/time/type/window/scores/states/evidence/status&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; semantic-moment-hypotheses&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Near-miss frame → Wrong moment definition → Unstable count/relation&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Return top local alternatives with explicit uncertainty." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ffe4e6;strokeColor=#e11d48;fontColor=#881337;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="860" y="100" width="500" height="460" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_05_P05_M30" value="&lt;b&gt;M30 — Evidence Verifier&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Independent checks; no single creator/verifier model&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TRI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; SemanticMomentHypothesis → Raw frames/clip → Object/OCR/ASR evidence&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Deterministic validation → Independent model checks when configured → Contradiction detection&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Rule checks baseline → Optional independent model verifier&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; VerifiedEvidencePacket → RejectedHypothesis → InsufficientEvidence&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; verification-report&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Self-verification bias → Unsupported hypothesis&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Reject or mark insufficient evidence; retain verified mapping-only candidate if policy allows." style="shape=rhombus;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ffe4e6;strokeColor=#e11d48;fontColor=#881337;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1990" y="100" width="820" height="460" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_05_P05_M31" value="&lt;b&gt;M31 — Q&amp;amp;A Answer Type Router&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Count · Color · Object · Person · Action · Location · OCR · Speech · Yes/No · Temporal&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TRI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Question → Verified event interval&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Classify required evidence and extractor&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Rule/template answer type routing&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; AnswerType → Evidence requirement&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; answer-type-decision&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Ambiguous question type&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Multi-hypothesis routing under bounded budget." style="shape=rhombus;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#e2e8f0;strokeColor=#475569;fontColor=#0f172a;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2920" y="100" width="380" height="340" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_05_P05_M32" value="&lt;b&gt;M32 — Q&amp;amp;A Answer Extractor&lt;/b&gt;&lt;br&gt;&lt;i&gt;[OPTIONAL] Extract by evidence type&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TRI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; AnswerType → Verified clip → Object/OCR/ASR evidence&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Run evidence-specific extraction → Normalize canonical answer → Preserve confidence and refs&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Deterministic extractors where possible → Optional VLM&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; raw_answer → canonical_answer → answer_type → answer_confidence → supporting evidence&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; answer-hypothesis&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Double count → Wrong crop → OCR/ASR error → Unsupported VLM answer&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Return only evidence-supported alternatives or insufficient evidence." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#e2e8f0;strokeColor=#475569;fontColor=#0f172a;fontSize=11;dashed=1;dashPattern=5 3;" vertex="1" parent="1">
+          <mxGeometry x="3330" y="100" width="500" height="420" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_05_P05_M33" value="&lt;b&gt;M33 — Answer-Evidence Consistency&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] No answer without evidence reference&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TRI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Answer hypothesis → VerifiedEvidencePacket&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Validate answer support → Temporal alignment and contradiction flags&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Schema and evidence-reference checks&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Grounded answer or rejection&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; answer-evidence-check&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Dangling evidence ref → Answer/clip contradiction&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Reject unsupported answer and preserve verified event candidate." style="shape=rhombus;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#e2e8f0;strokeColor=#475569;fontColor=#0f172a;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="3860" y="100" width="450" height="360" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_05_E05_01" value="refined interval" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_05_P05_M27" target="PAGE_05_P05_M28">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_05_E05_02" value="EVIDENCE: dense raw frames" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#be123c;" edge="1" parent="1" source="PAGE_05_P05_M28" target="PAGE_05_P05_M29">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_05_E05_03" value="EVIDENCE: moment hypotheses" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#be123c;" edge="1" parent="1" source="PAGE_05_P05_M29" target="PAGE_05_P05_M30">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_05_E05_04" value="Q&amp;amp;A route when required" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#7c3aed;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_05_P05_M30" target="PAGE_05_P05_M31">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_05_E05_05" value="answer type and required evidence" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#a16207;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_05_P05_M31" target="PAGE_05_P05_M32">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_05_E05_06" value="EVIDENCE: answer with evidence refs" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#be123c;" edge="1" parent="1" source="PAGE_05_P05_M32" target="PAGE_05_P05_M33">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_05_E05_RETRY" value="FALLBACK: expand/refine interval" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#b91c1c;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_05_P05_M30" target="PAGE_05_P05_M27">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="PAGE_06" name="06 — KIS, Q&amp;A &amp; TRAKE Flows">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="827" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="PAGE_06_G06_KIS" value="LANE 1 — TEXTUAL KIS" style="swimlane;html=1;rounded=1;collapsible=0;startSize=34;horizontal=1;fillColor=#dcfce7;strokeColor=#16a34a;fontStyle=1;fontSize=15;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="20" y="20" width="3660" height="500" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_06_G06_QA" value="LANE 2 — Q&amp;amp;A" style="swimlane;html=1;rounded=1;collapsible=0;startSize=34;horizontal=1;fillColor=#ffe4e6;strokeColor=#e11d48;fontStyle=1;fontSize=15;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="20" y="550" width="3660" height="500" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_06_G06_TRAKE" value="LANE 3 — TRAKE" style="swimlane;html=1;rounded=1;collapsible=0;startSize=34;horizontal=1;fillColor=#ffedd5;strokeColor=#ea580c;fontStyle=1;fontSize=15;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="20" y="1080" width="4300" height="560" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_06_P06_K1" value="&lt;b&gt;KIS-1 — Text Description&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Event description input&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TAI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Natural-language event&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Preserve original query&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; KIS request schema&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; KIS query&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; query-ledger&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Deterministic fallback theo contract." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#dcfce7;strokeColor=#16a34a;fontColor=#14532d;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="60" y="100" width="260" height="260" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_06_P06_K2" value="&lt;b&gt;KIS-2 — Compile &amp;amp; Fast Probe&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Actor/action/object/location hints&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TRI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; KIS query&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Compile roles → Run primary visual probe → Estimate uncertainty&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Rules baseline&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Compiled KIS → Probe candidates&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; compiled-query&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Deterministic fallback theo contract." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#fef3c7;strokeColor=#ca8a04;fontColor=#713f12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="350" y="100" width="330" height="280" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_06_P06_K3" value="&lt;b&gt;KIS-3 — Multimodal Retrieval &amp;amp; Fusion&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Visual/Object/OCR/Metadata + RRF&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; PHUC&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Compiled KIS → Corpus indexes&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Retrieve branches → RRF → Group and deduplicate&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; NumPy/ANN adapters → RRF&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Grouped CandidateFrame list&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; retrieval-results&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Deterministic fallback theo contract." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#dcfce7;strokeColor=#16a34a;fontColor=#14532d;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="710" y="100" width="390" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_06_P06_K4" value="&lt;b&gt;KIS-4 — Candidate Video Ranking&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Best frame, pooled score and agreement&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; PHUC&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Grouped candidates&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Rank CandidateVideo → Assess ambiguity&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Best-frame/top-k baseline&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Ranked candidate videos&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; candidate-video-ranking&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Deterministic fallback theo contract." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#dcfce7;strokeColor=#16a34a;fontColor=#14532d;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1130" y="100" width="330" height="280" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_06_P06_K5" value="&lt;b&gt;KIS-5 — Local Refinement &amp;amp; Verification&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Graph Lane only for complex/ambiguous KIS&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TRI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; CandidateVideo → Query moment&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Local frame refinement → Optional graph lane → Semantic Moment localization when needed → Evidence verification&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; In-video search → Dense decode candidate&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Verified KIS frame hypotheses&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; evidence-packets&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Deterministic fallback theo contract." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ffe4e6;strokeColor=#e11d48;fontColor=#881337;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1490" y="100" width="430" height="320" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_06_P06_K6" value="&lt;b&gt;KIS-6 — Ranked KIS Answers&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] video_id, frame_id&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TAI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Verified KIS hypotheses&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Rank best frame → nearby meaningful alternative and alternative video&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Ranked Answer List Constructor&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Up to 100 KIS tuples&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; kis-submission&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Deterministic fallback theo contract." style="shape=document;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#e2e8f0;strokeColor=#475569;fontColor=#0f172a;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1950" y="100" width="330" height="280" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_06_P06_Q1" value="&lt;b&gt;QA-1 — Event Description + Question&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Q&amp;amp;A request&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TAI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Event description → Question&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Preserve query and identify expected answer schema&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Q&amp;amp;A request contract&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Q&amp;amp;A query&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; query-ledger&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Deterministic fallback theo contract." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#dcfce7;strokeColor=#16a34a;fontColor=#14532d;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="60" y="630" width="280" height="260" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_06_P06_Q2" value="&lt;b&gt;QA-2 — Event Retrieval &amp;amp; Video Ranking&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Find event before answering&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; PHUC&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Q&amp;amp;A query → Corpus indexes&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Event retrieval → Fusion/grouping → Candidate Video ranking&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Multimodal retrieval baseline&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; CandidateVideo list&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; qa-candidate-videos&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Deterministic fallback theo contract." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#dcfce7;strokeColor=#16a34a;fontColor=#14532d;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="370" y="630" width="360" height="290" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_06_P06_Q3" value="&lt;b&gt;QA-3 — Event Interval &amp;amp; Evidence Collector&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Localize supporting clip first&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TRI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; CandidateVideo → Event query&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; In-video interval localization → Collect object/OCR/ASR/clip evidence&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Local search and evidence tools&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Grounded event interval and evidence&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; qa-evidence-context&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Deterministic fallback theo contract." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ffe4e6;strokeColor=#e11d48;fontColor=#881337;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="760" y="630" width="380" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_06_P06_Q4" value="&lt;b&gt;QA-4 — Answer Type &amp;amp; Extractor&lt;/b&gt;&lt;br&gt;&lt;i&gt;[OPTIONAL] Count/color/object/person/action/location/text/speech/yes-no/temporal&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TRI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Question → Grounded evidence&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Route answer type → Extract raw and canonical answer&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Evidence-specific extractor → Optional VLM&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Answer hypothesis with evidence refs&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; answer-hypothesis&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Deterministic fallback theo contract." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ffe4e6;strokeColor=#e11d48;fontColor=#881337;fontSize=11;dashed=1;dashPattern=5 3;" vertex="1" parent="1">
+          <mxGeometry x="1170" y="630" width="440" height="320" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_06_P06_Q5" value="&lt;b&gt;QA-5 — Semantic Frame &amp;amp; Consistency&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Answer and submission frame share grounded evidence&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TRI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Answer hypothesis → Dense event window&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Semantic frame localization → Answer-evidence consistency → Verification&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Moment Localizer → Evidence Verifier&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Verified Q&amp;amp;A tuples&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; verified-qa-evidence-packets&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Deterministic fallback theo contract." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ffe4e6;strokeColor=#e11d48;fontColor=#881337;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1640" y="630" width="400" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_06_P06_Q6" value="&lt;b&gt;QA-6 — Ranked Q&amp;amp;A Answers&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] video_id, frame_id, answer&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TAI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Verified Q&amp;amp;A tuples&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Rank tuple diversity; answer alternatives only under real uncertainty&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Ranked Answer List Constructor&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Up to 100 Q&amp;amp;A tuples&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; qa-submission&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Deterministic fallback theo contract." style="shape=document;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#e2e8f0;strokeColor=#475569;fontColor=#0f172a;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2070" y="630" width="350" height="280" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_06_P06_T1" value="&lt;b&gt;TRAKE-1 — Narrative Event Sequence&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Ordered or structured multi-event query&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TAI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Narrative event sequence&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Preserve explicit order and same-video requirement&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; TRAKE request schema&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; TRAKE query&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; query-ledger&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Deterministic fallback theo contract." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ffedd5;strokeColor=#ea580c;fontColor=#7c2d12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="60" y="1160" width="280" height="270" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_06_P06_T2" value="&lt;b&gt;TRAKE-2 — Query Event Graph&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] QueryEvent nodes, relations and moment definitions&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TRI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; TRAKE query&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Compile events → hard/soft temporal/entity constraints&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Rule parser baseline → Bounded LLM candidate&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Query Event Graph&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; query-event-graph&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Deterministic fallback theo contract." style="ellipse;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ffedd5;strokeColor=#ea580c;fontColor=#7c2d12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="370" y="1160" width="350" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_06_P06_T3" value="&lt;b&gt;TRAKE-3 — Retrieval per Event &amp;amp; Aggregate by Video&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Correct video has highest priority&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; PHUC&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Query Event Graph → Corpus indexes&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Retrieve each QueryEvent → Aggregate coverage/order feasibility by video → Rank CandidateVideo&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Task-aware Candidate Video Ranker&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Ranked CandidateVideo list&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; trake-video-ranking&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Deterministic fallback theo contract." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#dcfce7;strokeColor=#16a34a;fontColor=#14532d;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="750" y="1160" width="420" height="330" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_06_P06_T4" value="&lt;b&gt;TRAKE-4 — Candidate Graph &amp;amp; Event Matching&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Query-local graph for top videos&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TRI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Top CandidateVideo → Query Event Graph → Local evidence&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Build Candidate Local Event Graph → Produce EventMatchMatrix&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Typed local graph and evidence matcher&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; EventMatchMatrix and local graph&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; candidate-graph → event-match-matrix&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Deterministic fallback theo contract." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ffedd5;strokeColor=#ea580c;fontColor=#7c2d12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1200" y="1160" width="410" height="330" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_06_P06_T5" value="&lt;b&gt;TRAKE-5 — DP/Beam Temporal Solver&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Top-M event chains&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TRI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; EventMatchMatrix → Temporal/entity constraints&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Optimize semantic match → order → coverage → compactness and penalties&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Dynamic Programming → Beam Search → Monotonic Alignment&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Top-M EventChain hypotheses&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; event-chain-hypotheses&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Deterministic fallback theo contract." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ffedd5;strokeColor=#ea580c;fontColor=#7c2d12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1640" y="1160" width="380" height="320" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_06_P06_T6" value="&lt;b&gt;TRAKE-6 — Moment Localization per Event&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CANDIDATE] Exact semantics after chain alignment&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TRI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; EventChain hypotheses → Raw video&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Dense decode each event interval → Localize semantic moments → Verify chain and evidence&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Semantic Moment Localizer → Evidence Verifier&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Verified event moment chains&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; verified-trake-chains&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Deterministic fallback theo contract." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ffe4e6;strokeColor=#e11d48;fontColor=#881337;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2050" y="1160" width="420" height="340" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_06_P06_T7" value="&lt;b&gt;TRAKE-7 — Ranked TRAKE Answers&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] video_id, frame_1, ..., frame_n&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TAI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Verified event moment chains&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Rank top chains and bounded moment alternatives without Cartesian explosion&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Ranked Answer List Constructor&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Up to 100 TRAKE tuples&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; trake-submission&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Deterministic fallback theo contract." style="shape=document;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#e2e8f0;strokeColor=#475569;fontColor=#0f172a;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2500" y="1160" width="380" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_06_E06_K1" value="KIS query" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_06_P06_K1" target="PAGE_06_P06_K2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_06_E06_K2" value="compiled query and probe" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_06_P06_K2" target="PAGE_06_P06_K3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_06_E06_K3" value="grouped candidates" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_06_P06_K3" target="PAGE_06_P06_K4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_06_E06_K4" value="candidate videos" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_06_P06_K4" target="PAGE_06_P06_K5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_06_E06_K5" value="EVIDENCE: verified frames" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#be123c;" edge="1" parent="1" source="PAGE_06_P06_K5" target="PAGE_06_P06_K6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_06_E06_Q1" value="Q&amp;amp;A query" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_06_P06_Q1" target="PAGE_06_P06_Q2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_06_E06_Q2" value="candidate videos" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_06_P06_Q2" target="PAGE_06_P06_Q3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_06_E06_Q3" value="EVIDENCE: grounded evidence" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#be123c;" edge="1" parent="1" source="PAGE_06_P06_Q3" target="PAGE_06_P06_Q4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_06_E06_Q4" value="EVIDENCE: answer hypothesis" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#be123c;" edge="1" parent="1" source="PAGE_06_P06_Q4" target="PAGE_06_P06_Q5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_06_E06_Q5" value="EVIDENCE: verified tuples" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#be123c;" edge="1" parent="1" source="PAGE_06_P06_Q5" target="PAGE_06_P06_Q6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_06_E06_T1" value="structured events" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_06_P06_T1" target="PAGE_06_P06_T2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_06_E06_T2" value="QueryEvents" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_06_P06_T2" target="PAGE_06_P06_T3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_06_E06_T3" value="top candidate videos" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_06_P06_T3" target="PAGE_06_P06_T4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_06_E06_T4" value="EventMatchMatrix" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_06_P06_T4" target="PAGE_06_P06_T5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_06_E06_T5" value="Top-M chains" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_06_P06_T5" target="PAGE_06_P06_T6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_06_E06_T6" value="EVIDENCE: verified semantic moments" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#be123c;" edge="1" parent="1" source="PAGE_06_P06_T6" target="PAGE_06_P06_T7">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="PAGE_07" name="07 — Agent, Output, Evaluation &amp; Deployment">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="827" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="PAGE_07_G07_AGENT" value="Bounded Agent Control Plane" style="swimlane;html=1;rounded=1;collapsible=0;startSize=34;horizontal=1;fillColor=#fef3c7;strokeColor=#ca8a04;fontStyle=1;fontSize=15;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="20" y="20" width="2180" height="780" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_07_G07_OUTPUT" value="Evidence" style="swimlane;html=1;rounded=1;collapsible=0;startSize=34;horizontal=1;fillColor=#e2e8f0;strokeColor=#475569;fontStyle=1;fontSize=15;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="2230" y="20" width="1980" height="780" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_07_G07_ENV" value="Execution Environment" style="swimlane;html=1;rounded=1;collapsible=0;startSize=34;horizontal=1;fillColor=#f1f5f9;strokeColor=#64748b;fontStyle=1;fontSize=15;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="4240" y="20" width="760" height="780" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_07_P07_M34" value="&lt;b&gt;M34 — Tool Registry&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Validated schemas and implementations&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TRI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Tool implementations and contracts&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Register names → versions → input/output schemas and availability&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; visual_frame_search → segment_search → object_search → OCR_search → ASR_search → caption_search → metadata_search → group_and_fuse → candidate_video_ranker → in_video_search → build_candidate_graph → event_matcher → temporal_chain_solver → entity_consistency_check → dense_frame_decoder → semantic_moment_localizer → evidence_verifier → QA_answer_extractor → answer_normalizer → ranked_answer_constructor → submission_formatter → official_metric_evaluator&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Versioned ToolRegistry&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; tool-registry-vX&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Missing tool → Version mismatch&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Mark unavailable tool and route deterministic supported subset." style="shape=cylinder3;boundedLbl=1;backgroundOutline=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#fef3c7;strokeColor=#ca8a04;fontColor=#713f12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="60" y="100" width="430" height="470" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_07_P07_M35" value="&lt;b&gt;M35 — Bounded Agent Planner&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CANDIDATE] Understand · plan · choose · inspect · refine · verify · stop&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TRI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Original query → Task policy → ToolRegistry → Budget&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Plan → Execute → Inspect → Maximum one revise → Stop or fallback&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Bounded structured planner TBD&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; ExecutionPlan and tool calls&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; agent-plan-vX&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Invalid plan → Loop → Hallucinated tool&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Invoke deterministic Fallback Controller." style="shape=hexagon;perimeter=hexagonPerimeter2;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#fef3c7;strokeColor=#ca8a04;fontColor=#713f12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="520" y="100" width="440" height="470" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_07_P07_M36" value="&lt;b&gt;M36 — Plan Validator&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Contract, temporal order, evidence and budget guard&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TRI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; ExecutionPlan → ToolRegistry → TaskPolicy&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Check tool exists → schema compatibility → temporal solver use → video rank before TRAKE refinement → Q&amp;amp;A evidence before answer → VLM budget → repeated plan → Internet dependency and frame mapping&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Deterministic plan rules&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; ValidatedPlan or rejection&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; plan-validation-report&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Missed unsafe plan → False rejection&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Use deterministic task pipeline." style="shape=rhombus;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#fef3c7;strokeColor=#ca8a04;fontColor=#713f12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="990" y="100" width="430" height="440" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_07_P07_M37" value="&lt;b&gt;M37 — Budget Manager&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Bound query variants, branches, videos, graph, frames and model calls&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TRI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; ValidatedPlan → Latency/compute policy&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Limit variants → retrieval branches → candidate videos → graph nodes → decoded frames → VLM calls → revise rounds and latency&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Plan → execute → inspect → max one revise → stop/fallback&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Execution allowance and stop reason&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; budget-trace&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Budget overflow → Premature stop&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Preserve primary retrieval and verification minimum." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#fef3c7;strokeColor=#ca8a04;fontColor=#713f12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1450" y="100" width="340" height="400" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_07_P07_M38" value="&lt;b&gt;M38 — Fallback Controller&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Original query → visual retrieval → grouping → neighbors → local refinement → output&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TRI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Original query → Failure/rejection signal&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Execute deterministic retrieval-first pipeline&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Primary visual branch and local refinement&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Fallback evidence candidates&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; fallback-execution-trace&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Empty primary retrieval&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Return explicit insufficient evidence rather than fabricated output." style="shape=rhombus;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#fef3c7;strokeColor=#ca8a04;fontColor=#713f12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1820" y="100" width="340" height="400" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_07_P07_M39" value="&lt;b&gt;M39 — Evidence Packet&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Full grounded result and execution provenance&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TRI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Query/task/hypotheses → CandidateVideo scores → Matched events/chains/moments → Entity and multimodal evidence → Answers → Contradictions → Provenance → Verification&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Package schema-valid grounded result and submission candidates&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; EvidencePacket contract&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; EvidencePacket&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; evidence-packet-vX&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Dangling evidence ref → Missing provenance&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Mark packet incomplete and block unsupported fields." style="shape=document;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#e2e8f0;strokeColor=#475569;fontColor=#0f172a;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2270" y="100" width="420" height="440" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_07_P07_M40" value="&lt;b&gt;M40 — Ranked Answer List Constructor&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Precision at top, coverage and diversity at depth&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TAI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Verified EvidencePacket list&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; KIS meaningful frame/video alternatives → Q&amp;amp;A tuple diversity only under real uncertainty → TRAKE top chains and bounded moment beams → Suppress useless duplicates&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Task-specific rank construction without full Cartesian explosion&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Up to 100 ranked answer hypotheses&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; ranked-answer-list-vX&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Top-rank imprecision → Duplicate flooding → Beam explosion&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Score-sorted verified candidates with conservative deduplication." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#e2e8f0;strokeColor=#475569;fontColor=#0f172a;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2720" y="100" width="430" height="440" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_07_P07_M41" value="&lt;b&gt;M41 — Submission Formatter&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CURRENT_TEMPLATE] KIS, Q&amp;amp;A and TRAKE official tuple formats&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TAI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Ranked answer list → TaskPolicy&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Format KIS video/frame → Q&amp;amp;A video/frame/answer → TRAKE video/frame sequence&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Task schema formatter&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Submission records&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; submission-file&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Wrong field count → Invalid frame ID&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Reject invalid tuple before submission." style="shape=document;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#e2e8f0;strokeColor=#475569;fontColor=#0f172a;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="3180" y="100" width="330" height="360" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_07_P07_M42" value="&lt;b&gt;M42 — Official Metric Evaluator&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CURRENT_TEMPLATE] R@1 · R@5 · R@20 · R@50 · R@100 · Final Score&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; PHUC&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Submission records → Ground truth&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Compute task R-Score and ranked metrics → Report diagnostics&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Current KIS/Q&amp;amp;A/TRAKE metric simulator&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; EvaluationReport&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; evaluation-report-vX&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Rule drift → Invalid prediction count&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Version evaluator and flag divergence from official rules." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#e2e8f0;strokeColor=#475569;fontColor=#0f172a;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="3540" y="100" width="620" height="440" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_07_P07_M43" value="&lt;b&gt;M43 — Execution Environment&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CONFIRMED] Local → GitHub → Kaggle&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; KHOA&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Source code → Config → Exact commit → Attached Kaggle data&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Clone repo → Checkout exact commit → Install package → Attach data → Call scripts&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; GitHub workflow → Kaggle bootstrap notebook&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Reproducible run artifacts&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; RunManifest → Kaggle output bundle&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Wrong commit → Internet dependency → Missing dataset mount&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Package code/dependencies as Kaggle Dataset for offline execution." style="shape=cylinder3;boundedLbl=1;backgroundOutline=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#f1f5f9;strokeColor=#64748b;fontColor=#1e293b;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="4280" y="100" width="680" height="470" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_07_E07_01" value="tool contracts" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#a16207;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_07_P07_M34" target="PAGE_07_P07_M35">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_07_E07_02" value="proposed plan" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#a16207;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_07_P07_M35" target="PAGE_07_P07_M36">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_07_E07_03" value="validated plan" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#a16207;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_07_P07_M36" target="PAGE_07_P07_M37">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_07_E07_04" value="FALLBACK: invalid or failed plan" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#b91c1c;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_07_P07_M36" target="PAGE_07_P07_M38">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_07_E07_05" value="EVIDENCE: bounded verified execution" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#be123c;" edge="1" parent="1" source="PAGE_07_P07_M37" target="PAGE_07_P07_M39">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_07_E07_06" value="FALLBACK: fallback evidence" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#b91c1c;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_07_P07_M38" target="PAGE_07_P07_M39">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_07_E07_07" value="evidence packets" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_07_P07_M39" target="PAGE_07_P07_M40">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_07_E07_08" value="ranked answers" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_07_P07_M40" target="PAGE_07_P07_M41">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_07_E07_09" value="submission records" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_07_P07_M41" target="PAGE_07_P07_M42">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_07_E07_ENV1" value="ARTIFACT: installed tool implementations" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_07_P07_M43" target="PAGE_07_P07_M34">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_07_E07_ENV2" value="ARTIFACT: run artifacts and reports" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_07_P07_M42" target="PAGE_07_P07_M43">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="PAGE_08" name="08 — Contracts, Artifacts &amp; Ownership">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="827" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="PAGE_08_G08_RECORDS" value="Core Records &amp;amp; Grounded Result Contracts" style="swimlane;html=1;rounded=1;collapsible=0;startSize=34;horizontal=1;fillColor=#f1f5f9;strokeColor=#64748b;fontStyle=1;fontSize=15;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="20" y="20" width="5740" height="600" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_08_G08_OWNERS" value="Team Artifact Flow &amp;amp; Ownership" style="swimlane;html=1;rounded=1;collapsible=0;startSize=34;horizontal=1;fillColor=#e2e8f0;strokeColor=#475569;fontStyle=1;fontSize=15;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="20" y="650" width="4200" height="600" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_08_P08_VIDEO" value="&lt;b&gt;C1 — VideoRecord&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CURRENT_TEMPLATE] video_id · path · batch · fps · frames · duration · dataset version&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; KHOA&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Audited video metadata&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Validate non-empty ID → positive FPS → non-negative frame/duration&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Frozen dataclass&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Canonical video contract&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; video-manifest&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Invalid FPS or path&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Reject invalid record." style="shape=document;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#dbeafe;strokeColor=#2563eb;fontColor=#172554;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="60" y="100" width="360" height="280" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_08_P08_SHOT" value="&lt;b&gt;C2 — ShotRecord&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CURRENT_TEMPLATE] shot/video · frame/time interval · detector · confidence&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; PHAT&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; VideoRecord → Shot detection output&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Validate inclusive start/end frame and time&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Frozen dataclass&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Shot interval contract&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; shot-manifest&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Reversed interval&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Full-video shot in template only." style="shape=document;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ede9fe;strokeColor=#7c3aed;fontColor=#2e1065;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="450" y="100" width="350" height="280" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_08_P08_FRAME" value="&lt;b&gt;C3 — FrameRecord&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CURRENT_TEMPLATE] frame_uid · video · actual_frame_id · timestamp · policy · shot · extraction&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; PHAT&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; VideoRecord → ShotRecord → Selector result&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Preserve raw-video frame coordinate and source policy&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Frozen dataclass&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Retrieval frame contract&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; frame-bank-manifest&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Keyframe order used as actual ID&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Re-map through raw video and FrameMap." style="shape=document;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ede9fe;strokeColor=#7c3aed;fontColor=#2e1065;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="830" y="100" width="390" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_08_P08_FEATURE" value="&lt;b&gt;C4 — FeatureRecord&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CURRENT_TEMPLATE] frame · model/version · row · dimension · normalized · artifact&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; PHAT&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; FrameRecord → Encoder output&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Bind contiguous feature row and exact model metadata&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; JSONL manifest + NumPy matrix&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Feature row contract&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; feature-manifest&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Orphan row → Wrong model version&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Reject inconsistent feature store." style="shape=document;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ede9fe;strokeColor=#7c3aed;fontColor=#2e1065;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1250" y="100" width="390" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_08_P08_CFRAME" value="&lt;b&gt;C5 — CandidateFrame&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CURRENT_TEMPLATE] video/frame/time · score · rank · source branch&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; PHUC&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Index result → FrameRecord mapping&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Map index ID to actual submission coordinates&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Frozen dataclass&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Ranked frame candidate&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; retrieval-results&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Unknown frame UID&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Reject orphan index result." style="shape=document;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#dcfce7;strokeColor=#16a34a;fontColor=#14532d;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1670" y="100" width="360" height="280" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_08_P08_CVIDEO" value="&lt;b&gt;C6 — CandidateVideo&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] video score · best frames · event count · branches · order feasibility&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; PHUC&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Grouped CandidateFrame → QueryEvent coverage&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Aggregate evidence and order feasibility&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Current score aggregate; extended task-aware contract&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Ranked video candidate&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; candidate-video-ranking&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Wrong video → Missing event&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Best-frame plus modality agreement." style="shape=document;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#dcfce7;strokeColor=#16a34a;fontColor=#14532d;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2060" y="100" width="390" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_08_P08_QEVENT" value="&lt;b&gt;C7 — QueryEvent&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] source span · roles · moment definition · hard/soft constraints&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TRI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Compiled query&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Represent explicit/inferred/hypothesis semantics&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Typed graph node contract&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; QueryEvent node&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; query-event-graph&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Ambiguous role&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Multiple conservative hypotheses." style="ellipse;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ffedd5;strokeColor=#ea580c;fontColor=#7c2d12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2480" y="100" width="390" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_08_P08_SEVENT" value="&lt;b&gt;C8 — SegmentEvent&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] interval · descriptions · evidence · confidence · status · provenance&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TRI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Candidate timeline and evidence refs&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Represent event interval hypothesis&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Versioned local graph node&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; SegmentEvent node&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; candidate-local-event-graph&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Shot/event conflation&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Keep segment_hypothesis status." style="ellipse;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ffedd5;strokeColor=#ea580c;fontColor=#7c2d12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2900" y="100" width="390" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_08_P08_MOMENT" value="&lt;b&gt;C9 — SemanticMomentHypothesis&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CANDIDATE] event · frame · moment type · scores · evidence · verification&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TRI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; DenseFrameWindow → Moment definition&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Score exact semantic moment with before/after states&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Semantic Moment Localizer contract&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Moment hypothesis&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; semantic-moment-hypotheses&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Near-miss frame&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Return top alternatives with uncertainty." style="shape=document;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ffe4e6;strokeColor=#e11d48;fontColor=#881337;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="3320" y="100" width="410" height="320" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_08_P08_PACKET" value="&lt;b&gt;C10 — EvidencePacket&lt;/b&gt;&lt;br&gt;&lt;i&gt;[BASELINE] Full grounded and verified result&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TRI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; CandidateVideo → EventChain → Semantic moments → Evidence → Answer hypotheses → Provenance&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Bind result fields to evidence references and verification status&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Grounded result contract&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; EvidencePacket&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; evidence-packet&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Unsupported field&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Mark incomplete and block unsupported output." style="shape=document;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#e2e8f0;strokeColor=#475569;fontColor=#0f172a;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="3760" y="100" width="400" height="320" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_08_P08_RUN" value="&lt;b&gt;C11 — RunManifest&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CURRENT_TEMPLATE] run · git commit · config · data/model versions · artifact · status&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; KHOA&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Execution context → Exact config and versions&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Record reproducibility metadata beside every artifact&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; JSON manifest and used_config.yaml&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; RunManifest&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; run_manifest.json&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Unknown commit → Missing version&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Record UNKNOWN explicitly; never omit field." style="shape=document;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#f1f5f9;strokeColor=#64748b;fontColor=#1e293b;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="4190" y="100" width="400" height="320" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_08_P08_KHOA" value="&lt;b&gt;OWN-1 — Khoa — Data &amp;amp; Kaggle&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CONFIRMED] Nguyễn Đăng Khoa&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; KHOA&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; Raw Data&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Audit and package environment&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Data/Kaggle workflow&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; VideoManifest → Kaggle Dataset/Environment&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; data audit → environment manifest&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Missing dataset&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Quarantine invalid records." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#dbeafe;strokeColor=#2563eb;fontColor=#172554;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="60" y="730" width="420" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_08_P08_PHAT" value="&lt;b&gt;OWN-2 — Phát — Frame Bank &amp;amp; Features&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CONFIRMED] Phát Lê&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; PHAT&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; VideoManifest&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Shot/frame selection and feature extraction&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; Frame Bank and encoder contracts&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; ShotRecord → FrameRecord → FeatureRecord&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; frame bank → feature store&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Bad frame mapping&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; BTC and uniform coverage." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ede9fe;strokeColor=#7c3aed;fontColor=#2e1065;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="510" y="730" width="430" height="320" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_08_P08_PHUC" value="&lt;b&gt;OWN-3 — Phúc — Retrieval, Ranking &amp;amp; Evaluation&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CONFIRMED] Hồng Phúc&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; PHUC&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; FeatureRecord&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Index → retrieve → group → rank and evaluate&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; VectorIndex → RRF → CandidateVideo ranker → Metrics&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; CandidateFrame → CandidateVideo → EvaluationReport&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; indexes → retrieval results → evaluation reports&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Low video recall&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Exact visual baseline." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#dcfce7;strokeColor=#16a34a;fontColor=#14532d;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="970" y="730" width="460" height="330" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_08_P08_TRI" value="&lt;b&gt;OWN-4 — Tri — Architecture, Graph, Agent &amp;amp; Integration&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CONFIRMED] Hữu Tri&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TRI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; CandidateVideo&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Query/Candidate graphs → EventChain → Semantic moments → Agent integration&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; DP/Beam baseline and bounded control plane&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; EventChain → Semantic moments → EvidencePacket&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; graphs → chains → evidence packets&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Unsupported hypothesis&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Deterministic retrieval-first path." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#ffedd5;strokeColor=#ea580c;fontColor=#7c2d12;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1460" y="730" width="480" height="330" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_08_P08_TAI" value="&lt;b&gt;OWN-5 — Tài — UI, Output &amp;amp; Interaction&lt;/b&gt;&lt;br&gt;&lt;i&gt;[CONFIRMED] Nguyễn Tài&lt;/i&gt;&lt;br&gt;&lt;b&gt;Owner:&lt;/b&gt; TAI&lt;br&gt;&lt;b&gt;Input:&lt;/b&gt; EvidencePacket&lt;br&gt;&lt;b&gt;Process:&lt;/b&gt; Present UI/timeline → Candidate verification and submission interaction&lt;br&gt;&lt;b&gt;Implementation:&lt;/b&gt; UI research and output contracts; runtime deferred&lt;br&gt;&lt;b&gt;Output:&lt;/b&gt; Reviewed ranked submission&lt;br&gt;&lt;b&gt;Artifact:&lt;/b&gt; UI/timeline designs → submission&lt;br&gt;&lt;b&gt;Failure:&lt;/b&gt; Lost provenance in UI&lt;br&gt;&lt;b&gt;Fallback:&lt;/b&gt; Plain evidence-backed ranked list." style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=8;fillColor=#e2e8f0;strokeColor=#475569;fontColor=#0f172a;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1970" y="730" width="450" height="320" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_08_E08_C1" value="source video" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_08_P08_VIDEO" target="PAGE_08_P08_SHOT">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_08_E08_C2" value="shot interval" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_08_P08_SHOT" target="PAGE_08_P08_FRAME">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_08_E08_C3" value="frame mapping" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_08_P08_FRAME" target="PAGE_08_P08_FEATURE">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_08_E08_C4" value="ARTIFACT: index row" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_08_P08_FEATURE" target="PAGE_08_P08_CFRAME">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_08_E08_C5" value="grouped ranking" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_08_P08_CFRAME" target="PAGE_08_P08_CVIDEO">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_08_E08_C6" value="event matching" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_08_P08_QEVENT" target="PAGE_08_P08_SEVENT">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_08_E08_C7" value="top video timeline" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_08_P08_CVIDEO" target="PAGE_08_P08_SEVENT">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_08_E08_C8" value="coarse interval" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#334155;" edge="1" parent="1" source="PAGE_08_P08_SEVENT" target="PAGE_08_P08_MOMENT">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_08_E08_C9" value="EVIDENCE: verified moment" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#be123c;" edge="1" parent="1" source="PAGE_08_P08_MOMENT" target="PAGE_08_P08_PACKET">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_08_E08_C10" value="ARTIFACT: run provenance" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_08_P08_RUN" target="PAGE_08_P08_PACKET">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_08_E08_O1" value="ARTIFACT: VideoManifest and environment" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_08_P08_KHOA" target="PAGE_08_P08_PHAT">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_08_E08_O2" value="ARTIFACT: FeatureRecord and frame mapping" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_08_P08_PHAT" target="PAGE_08_P08_PHUC">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_08_E08_O3" value="ARTIFACT: CandidateVideo and scores" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_08_P08_PHUC" target="PAGE_08_P08_TRI">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="PAGE_08_E08_O4" value="ARTIFACT: EvidencePacket and ranked candidates" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#475569;dashed=1;dashPattern=5 3;" edge="1" parent="1" source="PAGE_08_P08_TRI" target="PAGE_08_P08_TAI">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

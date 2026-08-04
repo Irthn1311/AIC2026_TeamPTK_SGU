@@ -1,0 +1,97 @@
+%% 04 — Event Graph Internals
+flowchart LR
+  subgraph G04_QUERY["A — Query Event Graph"]
+    Q1(("Q1 — enter room<br/>[CORE: Graph Lane] [PLANNED] [TEAM_DECISION]<br/>In: External or page-entry input for enter room on PAGE…<br/>Do: Represent enter room as a versioned query-local hypothesi…<br/>Impl: Versioned query-local attributed graph with confidence co…<br/>Out: BEFORE to put bag on table [Q2] → MATCH 0.91 to per…"))
+    Q2(("Q2 — put bag on table<br/>[CORE: Graph Lane] [PLANNED] [TEAM_DECISION]<br/>In: BEFORE from enter room [Q1]<br/>Do: Represent put bag on table as a versioned query-local hyp…<br/>Impl: Versioned query-local attributed graph with confidence co…<br/>Out: BEFORE to open box [Q3] → MATCH 0.88 to person plac…"))
+    Q3(("Q3 — open box<br/>[CORE: Graph Lane] [PLANNED] [TEAM_DECISION]<br/>In: BEFORE from put bag on table [Q2]<br/>Do: Represent open box as a versioned query-local hypothesis…<br/>Impl: Versioned query-local attributed graph with confidence co…<br/>Out: MATCH 0.86 to person opens box [E12]"))
+    Q_CONSTRAINT["Q-C — Query constraints<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>In: External or page-entry input for Query constraints…<br/>Do: Document or route the Query constraints architecture cont…<br/>Impl: Versioned query-local attributed graph with confidence co…<br/>Out: Terminal page output: QueryconstraintsArtifact"]
+    Q_HYP["Q-H — Hypothesis set H1 / H2 / H3<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>In: External or page-entry input for Hypothesis set H1…<br/>Do: Document or route the Hypothesis set H1 / H2 / H3 archite…<br/>Impl: Versioned query-local attributed graph with confidence co…<br/>Out: Terminal page output: HypothesissetH1/H2/H3Artifact"]
+  end
+  subgraph G04_CAND["B — Candidate Local Event Graph"]
+    VIDEO_A(("V1 — Video A<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>In: External or page-entry input for Video A on PAGE_04<br/>Do: Represent Video A as a versioned query-local hypothesis w…<br/>Impl: Versioned query-local attributed graph with confidence co…<br/>Out: CONTAINS to person enters room [E7] → CONTAINS to p…"))
+    E7(("E7 — person enters room<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>In: CONTAINS from Video A [VIDEO_A] → PARTICIPATES_IN f…<br/>Do: Represent person enters room as a versioned query-local h…<br/>Impl: Versioned query-local attributed graph with confidence co…<br/>Out: BEFORE to person places bag on table [E9]"))
+    E9(("E9 — person places bag on table<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>In: CONTAINS from Video A [VIDEO_A] → BEFORE from perso…<br/>Do: Represent person places bag on table as a versioned query…<br/>Impl: Versioned query-local attributed graph with confidence co…<br/>Out: BEFORE to person opens box [E12] → ANCHORS to Seman…"))
+    E12(("E12 — person opens box<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>In: CONTAINS from Video A [VIDEO_A] → BEFORE from perso…<br/>Do: Represent person opens box as a versioned query-local hyp…<br/>Impl: Versioned query-local attributed graph with confidence co…<br/>Out: Terminal page output: personopensboxArtifact"))
+    P1(("P1 — Entity P1<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>In: External or page-entry input for Entity P1 on PAGE_…<br/>Do: Represent Entity P1 as a versioned query-local hypothesis…<br/>Impl: Versioned query-local attributed graph with confidence co…<br/>Out: PARTICIPATES_IN to person enters room [E7] → POSSIB…"))
+    P2(("P2 — Entity P2<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>In: POSSIBLE_SAME_ENTITY from Entity P1 [P1]<br/>Do: Represent Entity P2 as a versioned query-local hypothesis…<br/>Impl: Versioned query-local attributed graph with confidence co…<br/>Out: PARTICIPATES_IN to person places bag on table [E9]…"))
+    P3(("P3 — Entity P3<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>In: POSSIBLE_SAME_ENTITY from Entity P2 [P2]<br/>Do: Represent Entity P3 as a versioned query-local hypothesis…<br/>Impl: Versioned query-local attributed graph with confidence co…<br/>Out: PARTICIPATES_IN to person opens box [E12]"))
+    M431(("M431 — Semantic Moment M431<br/>[CORE: TRAKE] [EXPERIMENTAL] [TEAM_DECISION]<br/>In: ANCHORS from person places bag on table [E9]<br/>Do: Represent Semantic Moment M431 as a versioned query-local…<br/>Impl: Raw-video/evidence adapter with bounded dense decoding an…<br/>Out: Terminal page output: SemanticMomentM431Artifact"))
+    GRAPH_META["G-META — Graph semantics<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>In: External or page-entry input for Graph semantics on…<br/>Do: Document or route the Graph semantics architecture contra…<br/>Impl: Versioned query-local attributed graph with confidence co…<br/>Out: Terminal page output: GraphsemanticsArtifact"]
+    GRAPH_EDGES["G-EDGE — Edge vocabulary<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>In: External or page-entry input for Edge vocabulary on…<br/>Do: Document or route the Edge vocabulary architecture contra…<br/>Impl: Versioned query-local attributed graph with confidence co…<br/>Out: Terminal page output: EdgevocabularyArtifact"]
+  end
+  subgraph G04_EVID["C — External Evidence References"]
+    FRAME_REF[/"ER1 — FrameRef_431<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>In: External or page-entry input for FrameRef_431 on PA…<br/>Do: Validate schema, version and provenance for FrameRef_431…<br/>Impl: Raw-video/evidence adapter with bounded dense decoding an…<br/>Out: SUPPORTS to person places bag on table [E9]"/]
+    OBJECT_REF[/"ER2 — ObjectRef_bag<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>In: External or page-entry input for ObjectRef_bag on P…<br/>Do: Validate schema, version and provenance for ObjectRef_bag…<br/>Impl: Raw-video/evidence adapter with bounded dense decoding an…<br/>Out: SUPPORTS to person places bag on table [E9]"/]
+    CLIP_REF[/"ER3 — ClipRef_410_450<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>In: External or page-entry input for ClipRef_410_450 on…<br/>Do: Validate schema, version and provenance for ClipRef_410_4…<br/>Impl: Raw-video/evidence adapter with bounded dense decoding an…<br/>Out: SUPPORTS to person places bag on table [E9]"/]
+    EVID_NOTE["ER-N — EvidenceRef boundary<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>In: External or page-entry input for EvidenceRef bounda…<br/>Do: Document or route the EvidenceRef boundary architecture c…<br/>Impl: Raw-video/evidence adapter with bounded dense decoding an…<br/>Out: Terminal page output: EvidenceRefboundaryArtifact"]
+  end
+  subgraph G04_SOLVE["D — Matching & Solving"]
+    MATCH_MATRIX[/"S1 — Event Match Matrix<br/>[CORE: Graph Lane] [PLANNED] [TEAM_DECISION]<br/>In: scored matches from person places bag on table [E9]<br/>Do: Validate schema, version and provenance for Event Match M…<br/>Impl: Compute query-event to candidate-event compatibility comp…<br/>Out: constraints to Temporal / Entity Solver [SOLVER]"/]
+    SOLVER("S2 — Temporal / Entity Solver<br/>[CORE: Graph Lane] [BASELINE] [TEAM_DECISION]<br/>In: constraints from Event Match Matrix [MATCH_MATRIX]<br/>Do: Transform constraints from Event Match Matrix [MATCH_MATR…<br/>Impl: Filtering, dynamic programming, monotonic alignment or co…<br/>Out: Top-M to Top-M Event Chains [TOPM]")
+    TOPM[/"S3 — Top-M Event Chains<br/>[CORE: Graph Lane] [PLANNED] [TEAM_DECISION]<br/>In: Top-M from Temporal / Entity Solver [SOLVER]<br/>Do: Validate schema, version and provenance for Top-M Event C…<br/>Impl: Versioned query-local attributed graph with confidence co…<br/>Out: uncovered event to Gap Detector [GAP]"/]
+    GAP{{"S4 — Gap Detector<br/>[CORE: Graph Lane] [PLANNED] [TEAM_DECISION]<br/>In: uncovered event from Top-M Event Chains [TOPM]<br/>Do: Apply allow-listed control for Gap Detector with budget,…<br/>Impl: Classify uncovered constraints into local exploit actions…<br/>Out: neighbor/crop/dense/OCR-ASR-VLM to EXPLOIT local ga…"}}
+    EXPLOIT("S5 — EXPLOIT local gap<br/>[CORE: Graph Lane] [PLANNED] [TEAM_DECISION]<br/>In: neighbor/crop/dense/OCR-ASR-VLM from Gap Detector […<br/>Do: Transform neighbor/crop/dense/OCR-ASR-VLM from Gap Detect…<br/>Impl: Versioned query-local attributed graph with confidence co…<br/>Out: Terminal page output: EXPLOITlocalgapArtifact")
+    EXPLORE("S6 — EXPLORE global alternatives<br/>[CORE: Graph Lane] [PLANNED] [TEAM_DECISION]<br/>In: re-search/alternative hypothesis/video from Gap Det…<br/>Do: Transform re-search/alternative hypothesis/video from Gap…<br/>Impl: Versioned query-local attributed graph with confidence co…<br/>Out: Terminal page output: EXPLOREglobalalternativesArti…")
+  end
+  Q1 -->|BEFORE| Q2
+  Q2 -->|BEFORE| Q3
+  VIDEO_A -->|CONTAINS| E7
+  VIDEO_A -->|CONTAINS| E9
+  VIDEO_A -->|CONTAINS| E12
+  E7 -->|BEFORE| E9
+  E9 -->|BEFORE| E12
+  P1 -->|PARTICIPATES_IN| E7
+  P2 -->|PARTICIPATES_IN| E9
+  P3 -->|PARTICIPATES_IN| E12
+  P1 -.->|OPTIONAL: POSSIBLE_SAME_ENTITY| P2
+  P2 -.->|OPTIONAL: POSSIBLE_SAME_ENTITY| P3
+  E9 -->|EVIDENCE: ANCHORS| M431
+  FRAME_REF -->|EVIDENCE: SUPPORTS| E9
+  OBJECT_REF -->|EVIDENCE: SUPPORTS| E9
+  CLIP_REF -->|EVIDENCE: SUPPORTS| E9
+  Q1 ==>|MATCH: MATCH 0.91| E7
+  Q2 ==>|MATCH: MATCH 0.88| E9
+  Q3 ==>|MATCH: MATCH 0.86| E12
+  E9 ==>|MATCH: scored matches| MATCH_MATRIX
+  MATCH_MATRIX -->|constraints| SOLVER
+  SOLVER -->|Top-M| TOPM
+  TOPM -.->|CONTROL: uncovered event| GAP
+  GAP -.->|CONTROL: neighbor/crop/dense/OCR-ASR-VLM| EXPLOIT
+  GAP -.->|FALLBACK: re-search/alternative hypothesis/video| EXPLORE
+  classDef layer_data fill:#dbeafe,stroke:#2563eb,color:#172554,stroke-width:1.5px;
+  classDef layer_representation fill:#ede9fe,stroke:#7c3aed,color:#2e1065,stroke-width:1.5px;
+  classDef layer_retrieval fill:#dcfce7,stroke:#16a34a,color:#14532d,stroke-width:1.5px;
+  classDef layer_graph fill:#ffedd5,stroke:#ea580c,color:#7c2d12,stroke-width:1.5px;
+  classDef layer_grounding fill:#ffe4e6,stroke:#e11d48,color:#881337,stroke-width:1.5px;
+  classDef layer_control fill:#fef3c7,stroke:#ca8a04,color:#713f12,stroke-width:1.5px;
+  classDef layer_output fill:#e2e8f0,stroke:#475569,color:#0f172a,stroke-width:1.5px;
+  classDef layer_storage fill:#f1f5f9,stroke:#64748b,color:#1e293b,stroke-width:1.5px;
+  classDef criticality_CORE stroke:#166534,stroke-width:3px;
+  classDef criticality_CONDITIONAL stroke:#7c3aed,stroke-width:2px,stroke-dasharray:5 3;
+  classDef criticality_OPTIONAL stroke:#a16207,stroke-width:2px,stroke-dasharray:5 3;
+  classDef criticality_DEFERRED stroke:#64748b,stroke-width:2px,stroke-dasharray:5 3;
+  class Q1 layer_graph,criticality_CORE;
+  class Q2 layer_graph,criticality_CORE;
+  class Q3 layer_graph,criticality_CORE;
+  class Q_CONSTRAINT layer_graph,criticality_CORE;
+  class Q_HYP layer_graph,criticality_CORE;
+  class VIDEO_A layer_graph,criticality_CORE;
+  class E7 layer_graph,criticality_CORE;
+  class E9 layer_graph,criticality_CORE;
+  class E12 layer_graph,criticality_CORE;
+  class P1 layer_graph,criticality_CORE;
+  class P2 layer_graph,criticality_CORE;
+  class P3 layer_graph,criticality_CORE;
+  class M431 layer_grounding,criticality_CORE;
+  class GRAPH_META layer_graph,criticality_CORE;
+  class GRAPH_EDGES layer_graph,criticality_CORE;
+  class FRAME_REF layer_grounding,criticality_CORE;
+  class OBJECT_REF layer_grounding,criticality_CORE;
+  class CLIP_REF layer_grounding,criticality_CORE;
+  class EVID_NOTE layer_grounding,criticality_CORE;
+  class MATCH_MATRIX layer_graph,criticality_CORE;
+  class SOLVER layer_control,criticality_CORE;
+  class TOPM layer_graph,criticality_CORE;
+  class GAP layer_control,criticality_CORE;
+  class EXPLOIT layer_graph,criticality_CORE;
+  class EXPLORE layer_graph,criticality_CORE;

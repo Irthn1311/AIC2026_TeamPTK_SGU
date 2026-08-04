@@ -1,0 +1,60 @@
+%% 05 — Fine Grounding & Verification
+flowchart LR
+  subgraph G05_MAIN["Row 1 — Fine grounding on raw video"]
+    P05_CAND[/"G1 — CandidateVideo / EventChain<br/>[CORE: Fine grounding] [BASELINE] [TEAM_DECISION]<br/>In: External or page-entry input for CandidateVideo / E…<br/>Do: Validate schema, version and provenance for CandidateVide…<br/>Impl: Raw-video/evidence adapter with bounded dense decoding an…<br/>Out: candidate to In-video Search [P05_SEARCH]"/]
+    P05_SEARCH("G2 — In-video Search<br/>[CORE: Fine grounding] [BASELINE] [TEAM_DECISION]<br/>In: candidate from CandidateVideo / EventChain [P05_CAN…<br/>Do: Transform candidate from CandidateVideo / EventChain [P05…<br/>Impl: Raw-video/evidence adapter with bounded dense decoding an…<br/>Out: search window to Refined Event Interval [P05_INTERV…")
+    P05_INTERVAL[/"G3 — Refined Event Interval<br/>[CORE: Fine grounding] [BASELINE] [TEAM_DECISION]<br/>In: search window from In-video Search [P05_SEARCH]<br/>Do: Validate schema, version and provenance for Refined Event…<br/>Impl: Raw-video/evidence adapter with bounded dense decoding an…<br/>Out: coarse interval to Dense Raw-video Decoder [P05_DEC…"/]
+    P05_DECODE("G4 — Dense Raw-video Decoder<br/>[CORE: Fine grounding] [BASELINE] [TEAM_DECISION]<br/>In: coarse interval from Refined Event Interval [P05_IN…<br/>Do: Transform coarse interval from Refined Event Interval [P0…<br/>Impl: Raw-video/evidence adapter with bounded dense decoding an…<br/>Out: dense raw frames to Semantic Moment Localizer [P05_…")
+    P05_SML("G5 — Semantic Moment Localizer<br/>[CORE: TRAKE] [EXPERIMENTAL] [TEAM_DECISION]<br/>In: dense raw frames from Dense Raw-video Decoder [P05_…<br/>Do: Transform dense raw frames from Dense Raw-video Decoder […<br/>Impl: Dense raw-video decoding inside a coarse interval followe…<br/>Out: semantic moment to Evidence Verifier [P05_VERIFY]")
+    P05_VERIFY("G6 — Evidence Verifier<br/>[CORE: Fine grounding] [BASELINE] [TEAM_DECISION]<br/>In: semantic moment from Semantic Moment Localizer [P05…<br/>Do: Transform semantic moment from Semantic Moment Localizer…<br/>Impl: Rule/evidence verifier over raw frames, clips and referen…<br/>Out: verification to Evidence sufficient? [P05_SUFFICIEN…")
+    P05_SUFFICIENT{"G7 — Evidence sufficient?<br/>[CORE: Fine grounding] [BASELINE] [TEAM_DECISION]<br/>In: verification from Evidence Verifier [P05_VERIFY]<br/>Do: Evaluate the explicit Evidence sufficient? rule and emit…<br/>Impl: Raw-video/evidence adapter with bounded dense decoding an…<br/>Out: yes to Verified Evidence Packet [P05_PACKET] → no:…"}
+    P05_PACKET[/"G8 — Verified Evidence Packet<br/>[CORE: Fine grounding] [BASELINE] [TEAM_DECISION]<br/>In: yes from Evidence sufficient? [P05_SUFFICIENT]<br/>Do: Validate schema, version and provenance for Verified Evid…<br/>Impl: EvidencePacket variant accepted only after explicit verif…<br/>Out: task evidence to Q&A Answer Extractor [P05_EXTRACT]"/]
+  end
+  subgraph G05_QA["Row 2 — Q&A evidence extraction"]
+    P05_QUESTION[/"Q1 — Question<br/>[CORE: Q&A] [PLANNED] [TEAM_DECISION]<br/>In: External or page-entry input for Question on PAGE_05<br/>Do: Validate schema, version and provenance for Question befo…<br/>Impl: Raw-video/evidence adapter with bounded dense decoding an…<br/>Out: question to Q&A Answer Type Router [P05_ATYPE]"/]
+    P05_ATYPE{{"Q2 — Q&A Answer Type Router<br/>[CORE: Q&A] [PLANNED] [TEAM_DECISION]<br/>In: question from Question [P05_QUESTION]<br/>Do: Apply allow-listed control for Q&A Answer Type Router wit…<br/>Impl: Typed deterministic routing to evidence-specific answer e…<br/>Out: answer type to Q&A Answer Extractor [P05_EXTRACT]"}}
+    P05_EXTRACT("Q3 — Q&A Answer Extractor<br/>[CORE: Q&A] [EXPERIMENTAL] [TEAM_DECISION]<br/>In: answer type from Q&A Answer Type Router [P05_ATYPE]…<br/>Do: Transform answer type from Q&A Answer Type Router [P05_AT…<br/>Impl: Evidence-bounded extractor interface; OCR, ASR, detector…<br/>Out: answer hypothesis to Answer Normalization [P05_NORM…")
+    P05_NORMAL("Q4 — Answer Normalization<br/>[CORE: Q&A] [PLANNED] [TEAM_DECISION]<br/>In: answer hypothesis from Q&A Answer Extractor [P05_EX…<br/>Do: Transform answer hypothesis from Q&A Answer Extractor [P0…<br/>Impl: Task-specific normalization that preserves the original e…<br/>Out: normalized answer to Answer-Evidence Consistency [P…")
+    P05_CONSIST("Q5 — Answer-Evidence Consistency<br/>[CORE: Q&A] [PLANNED] [TEAM_DECISION]<br/>In: normalized answer from Answer Normalization [P05_NO…<br/>Do: Transform normalized answer from Answer Normalization [P0…<br/>Impl: Check normalized answers against referenced evidence and…<br/>Out: consistent evidence to Q&A tuple [P05_TUPLE]")
+    P05_TUPLE[/"Q6 — Q&A tuple<br/>[CORE: Q&A] [PLANNED] [TEAM_DECISION]<br/>In: consistent evidence from Answer-Evidence Consistenc…<br/>Do: Validate schema, version and provenance for Q&A tuple bef…<br/>Impl: Raw-video/evidence adapter with bounded dense decoding an…<br/>Out: Terminal page output: Q&AtupleArtifact"/]
+  end
+  P05_CAND -->|EVIDENCE: candidate| P05_SEARCH
+  P05_SEARCH -->|EVIDENCE: search window| P05_INTERVAL
+  P05_INTERVAL -->|EVIDENCE: coarse interval| P05_DECODE
+  P05_DECODE -->|EVIDENCE: dense raw frames| P05_SML
+  P05_SML -->|EVIDENCE: semantic moment| P05_VERIFY
+  P05_VERIFY -->|EVIDENCE: verification| P05_SUFFICIENT
+  P05_SUFFICIENT -->|EVIDENCE: yes| P05_PACKET
+  P05_SUFFICIENT -.->|FALLBACK: no: refine / re-search / abstain| P05_SEARCH
+  P05_QUESTION -->|EVIDENCE: question| P05_ATYPE
+  P05_ATYPE -->|EVIDENCE: answer type| P05_EXTRACT
+  P05_EXTRACT -->|EVIDENCE: answer hypothesis| P05_NORMAL
+  P05_NORMAL -->|EVIDENCE: normalized answer| P05_CONSIST
+  P05_CONSIST -->|EVIDENCE: consistent evidence| P05_TUPLE
+  P05_PACKET -->|EVIDENCE: task evidence| P05_EXTRACT
+  classDef layer_data fill:#dbeafe,stroke:#2563eb,color:#172554,stroke-width:1.5px;
+  classDef layer_representation fill:#ede9fe,stroke:#7c3aed,color:#2e1065,stroke-width:1.5px;
+  classDef layer_retrieval fill:#dcfce7,stroke:#16a34a,color:#14532d,stroke-width:1.5px;
+  classDef layer_graph fill:#ffedd5,stroke:#ea580c,color:#7c2d12,stroke-width:1.5px;
+  classDef layer_grounding fill:#ffe4e6,stroke:#e11d48,color:#881337,stroke-width:1.5px;
+  classDef layer_control fill:#fef3c7,stroke:#ca8a04,color:#713f12,stroke-width:1.5px;
+  classDef layer_output fill:#e2e8f0,stroke:#475569,color:#0f172a,stroke-width:1.5px;
+  classDef layer_storage fill:#f1f5f9,stroke:#64748b,color:#1e293b,stroke-width:1.5px;
+  classDef criticality_CORE stroke:#166534,stroke-width:3px;
+  classDef criticality_CONDITIONAL stroke:#7c3aed,stroke-width:2px,stroke-dasharray:5 3;
+  classDef criticality_OPTIONAL stroke:#a16207,stroke-width:2px,stroke-dasharray:5 3;
+  classDef criticality_DEFERRED stroke:#64748b,stroke-width:2px,stroke-dasharray:5 3;
+  class P05_CAND layer_grounding,criticality_CORE;
+  class P05_SEARCH layer_grounding,criticality_CORE;
+  class P05_INTERVAL layer_grounding,criticality_CORE;
+  class P05_DECODE layer_grounding,criticality_CORE;
+  class P05_SML layer_grounding,criticality_CORE;
+  class P05_VERIFY layer_grounding,criticality_CORE;
+  class P05_SUFFICIENT layer_grounding,criticality_CORE;
+  class P05_PACKET layer_grounding,criticality_CORE;
+  class P05_QUESTION layer_grounding,criticality_CORE;
+  class P05_ATYPE layer_grounding,criticality_CORE;
+  class P05_EXTRACT layer_grounding,criticality_CORE;
+  class P05_NORMAL layer_grounding,criticality_CORE;
+  class P05_CONSIST layer_grounding,criticality_CORE;
+  class P05_TUPLE layer_grounding,criticality_CORE;

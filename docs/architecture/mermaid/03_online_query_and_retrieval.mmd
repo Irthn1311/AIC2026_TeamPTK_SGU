@@ -1,0 +1,95 @@
+%% 03 — Online Query & Retrieval
+flowchart LR
+  subgraph G03_QUERY["Row 1 — Query understanding"]
+    P03_INPUT("Q1 — Query / API Input<br/>[CORE: Core system] [BASELINE] [TEAM_DECISION]<br/>In: External or page-entry input for Query / API Input…<br/>Do: Transform External or page-entry input for Query / API In…<br/>Impl: Deterministic policy/registry/budget implementation with…<br/>Out: query to Query Ledger [P03_LEDGER]")
+    P03_LEDGER[/"Q2 — Query Ledger<br/>[CORE: Core system] [BASELINE] [TEAM_DECISION]<br/>In: query from Query / API Input [P03_INPUT]<br/>Do: Validate schema, version and provenance for Query Ledger…<br/>Impl: Immutable query/session state with task, hypotheses, feed…<br/>Out: immutable session to Task Policy [P03_POLICY]"/]
+    P03_POLICY{{"Q3 — Task Policy<br/>[CORE: Core system] [BASELINE] [TEAM_DECISION]<br/>In: immutable session from Query Ledger [P03_LEDGER]<br/>Do: Apply allow-listed control for Task Policy with budget, v…<br/>Impl: Deterministic task and modality policy; select Fast/Graph…<br/>Out: task contract to Query Compiler [P03_COMPILER]"}}
+    P03_COMPILER("Q4 — Query Compiler<br/>[CORE: Core system] [BASELINE] [TEAM_DECISION]<br/>In: task contract from Task Policy [P03_POLICY]<br/>Do: Transform task contract from Task Policy [P03_POLICY] int…<br/>Impl: Compile natural-language input into typed retrieval claus…<br/>Out: compiled query to Fast Probe [P03_PROBE]")
+    P03_PROBE("Q5 — Fast Probe<br/>[CORE: Core system] [BASELINE] [TEAM_DECISION]<br/>In: compiled query from Query Compiler [P03_COMPILER]<br/>Do: Transform compiled query from Query Compiler [P03_COMPILE…<br/>Impl: Low-cost retrieval probe that records coverage and uncert…<br/>Out: probe result to Modality Router [P03_ROUTER]")
+    P03_ROUTER{{"Q6 — Modality Router<br/>[CORE: Core system] [BASELINE] [TEAM_DECISION]<br/>In: probe result from Fast Probe [P03_PROBE]<br/>Do: Apply allow-listed control for Modality Router with budge…<br/>Impl: Dispatch only available registered retrieval branches; ea…<br/>Out: independent query to BTC visual search [P03_BTC] →…"}}
+  end
+  subgraph G03_BRANCH["Row 2A — Per-modality ranked retrieval"]
+    P03_BTC("R1 — BTC visual search<br/>[CORE: Core retrieval] [BASELINE] [BTC_CONFIRMED]<br/>In: independent query from Modality Router [P03_ROUTER]<br/>Do: Transform independent query from Modality Router [P03_ROU…<br/>Impl: Typed rank-list contracts, deterministic ranking/fusion p…<br/>Out: ranked list to RRF Fusion [P03_RRF]")
+    P03_TEAM("R2 — Team visual search<br/>[CONDITIONAL: Team visual search enabled] [EXPERIMENTAL] [TEAM_DECISION]<br/>In: independent query from Modality Router [P03_ROUTER]<br/>Do: Transform independent query from Modality Router [P03_ROU…<br/>Impl: Typed rank-list contracts, deterministic ranking/fusion p…<br/>Out: ranked list to RRF Fusion [P03_RRF]")
+    P03_SEG("R3 — Segment search<br/>[CONDITIONAL: Segment search enabled] [EXPERIMENTAL] [TEAM_DECISION]<br/>In: independent query from Modality Router [P03_ROUTER]<br/>Do: Transform independent query from Modality Router [P03_ROU…<br/>Impl: Typed rank-list contracts, deterministic ranking/fusion p…<br/>Out: ranked list to RRF Fusion [P03_RRF]")
+    P03_OBJ("R4 — Object search<br/>[CORE: Core retrieval] [BASELINE] [BTC_CONFIRMED]<br/>In: independent query from Modality Router [P03_ROUTER]<br/>Do: Transform independent query from Modality Router [P03_ROU…<br/>Impl: Typed rank-list contracts, deterministic ranking/fusion p…<br/>Out: ranked list to RRF Fusion [P03_RRF]")
+    P03_OCR("R5 — OCR search<br/>[OPTIONAL: OCR search enabled] [EXPERIMENTAL] [TEAM_DECISION]<br/>In: independent query from Modality Router [P03_ROUTER]<br/>Do: Transform independent query from Modality Router [P03_ROU…<br/>Impl: Typed rank-list contracts, deterministic ranking/fusion p…<br/>Out: ranked list to RRF Fusion [P03_RRF]")
+    P03_ASR("R6 — ASR search<br/>[OPTIONAL: ASR search enabled] [EXPERIMENTAL] [TEAM_DECISION]<br/>In: independent query from Modality Router [P03_ROUTER]<br/>Do: Transform independent query from Modality Router [P03_ROU…<br/>Impl: Typed rank-list contracts, deterministic ranking/fusion p…<br/>Out: ranked list to RRF Fusion [P03_RRF]")
+    P03_CAP("R7 — Caption search<br/>[OPTIONAL: Caption search enabled] [EXPERIMENTAL] [TEAM_DECISION]<br/>In: independent query from Modality Router [P03_ROUTER]<br/>Do: Transform independent query from Modality Router [P03_ROU…<br/>Impl: Typed rank-list contracts, deterministic ranking/fusion p…<br/>Out: ranked list to RRF Fusion [P03_RRF]")
+    P03_META("R8 — Metadata search<br/>[CORE: Core retrieval] [BASELINE] [TEAM_DECISION]<br/>In: independent query from Modality Router [P03_ROUTER]<br/>Do: Transform independent query from Modality Router [P03_ROU…<br/>Impl: Typed rank-list contracts, deterministic ranking/fusion p…<br/>Out: ranked list to RRF Fusion [P03_RRF]")
+  end
+  subgraph G03_RANK["Row 2B — Fusion, grouping & lane decision"]
+    P03_RRF("F1 — RRF Fusion<br/>[CORE: Core system] [BASELINE] [TEAM_DECISION]<br/>In: ranked list from BTC visual search [P03_BTC] → rank…<br/>Do: Transform ranked list from BTC visual search [P03_BTC] in…<br/>Impl: Reciprocal-rank fusion over independent modality rankings…<br/>Out: fused ranks to Temporal Deduplication [P03_DEDUP]")
+    P03_DEDUP("F2 — Temporal Deduplication<br/>[CORE: Core system] [BASELINE] [TEAM_DECISION]<br/>In: fused ranks from RRF Fusion [P03_RRF]<br/>Do: Transform fused ranks from RRF Fusion [P03_RRF] into dedu…<br/>Impl: Collapse temporally redundant candidates with stable repr…<br/>Out: deduplicated frames to Shot / Video Grouping [P03_G…")
+    P03_GROUP("F3 — Shot / Video Grouping<br/>[CORE: Core system] [BASELINE] [TEAM_DECISION]<br/>In: deduplicated frames from Temporal Deduplication [P0…<br/>Do: Transform deduplicated frames from Temporal Deduplication…<br/>Impl: Aggregate frame/segment candidates by canonical shot and…<br/>Out: video groups to Candidate Video Ranker [P03_VRANK]")
+    P03_VRANK("F4 — Candidate Video Ranker<br/>[CORE: Core system] [BASELINE] [TEAM_DECISION]<br/>In: video groups from Shot / Video Grouping [P03_GROUP]<br/>Do: Transform video groups from Shot / Video Grouping [P03_GR…<br/>Impl: Rank candidate videos from fused evidence and coverage co…<br/>Out: candidate videos to Uncertainty Manager [P03_UNCERT]")
+    P03_UNCERT{{"F5 — Uncertainty Manager<br/>[CORE: Core system] [BASELINE] [TEAM_DECISION]<br/>In: candidate videos from Candidate Video Ranker [P03_V…<br/>Do: Apply allow-listed control for Uncertainty Manager with b…<br/>Impl: Typed rank-list contracts, deterministic ranking/fusion p…<br/>Out: uncertainty to Fast Lane or Graph Lane? [P03_LANE]"}}
+    P03_LANE{"F6 — Fast Lane or Graph Lane?<br/>[CORE: Core system] [BASELINE] [TEAM_DECISION]<br/>In: uncertainty from Uncertainty Manager [P03_UNCERT]<br/>Do: Evaluate the explicit Fast Lane or Graph Lane? rule and e…<br/>Impl: Typed rank-list contracts, deterministic ranking/fusion p…<br/>Out: complex / multi-event to To Page 04 — Graph Lane [P…"}
+    P03_TO04[/"O1 — To Page 04 — Graph Lane<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>In: complex / multi-event from Fast Lane or Graph Lane?…<br/>Do: Document or route the To Page 04 — Graph Lane architectur…<br/>Impl: Versioned output envelope, task formatter and provenance-…<br/>Out: Terminal page output: ToPage04—GraphLaneArtifact"\]
+    P03_TO05[/"O2 — To Page 05 — Fine Grounding<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>In: candidate videos from Fast Lane or Graph Lane? [P03…<br/>Do: Document or route the To Page 05 — Fine Grounding archite…<br/>Impl: Versioned output envelope, task formatter and provenance-…<br/>Out: Terminal page output: ToPage05—FineGroundingArtifact"\]
+    P03_TO06[/"O3 — To Page 06 — Task Flows<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>In: task-specific flow from Fast Lane or Graph Lane? [P…<br/>Do: Document or route the To Page 06 — Task Flows architectur…<br/>Impl: Versioned output envelope, task formatter and provenance-…<br/>Out: Terminal page output: ToPage06—TaskFlowsArtifact"\]
+  end
+  P03_INPUT -->|query| P03_LEDGER
+  P03_LEDGER -->|immutable session| P03_POLICY
+  P03_POLICY -->|task contract| P03_COMPILER
+  P03_COMPILER -->|compiled query| P03_PROBE
+  P03_PROBE -->|probe result| P03_ROUTER
+  P03_ROUTER -.->|CONTROL: independent query| P03_BTC
+  P03_ROUTER -.->|CONTROL: independent query| P03_TEAM
+  P03_ROUTER -.->|CONTROL: independent query| P03_SEG
+  P03_ROUTER -.->|CONTROL: independent query| P03_OBJ
+  P03_ROUTER -.->|CONTROL: independent query| P03_OCR
+  P03_ROUTER -.->|CONTROL: independent query| P03_ASR
+  P03_ROUTER -.->|CONTROL: independent query| P03_CAP
+  P03_ROUTER -.->|CONTROL: independent query| P03_META
+  P03_BTC -->|ranked list| P03_RRF
+  P03_TEAM -->|ranked list| P03_RRF
+  P03_SEG -->|ranked list| P03_RRF
+  P03_OBJ -->|ranked list| P03_RRF
+  P03_OCR -->|ranked list| P03_RRF
+  P03_ASR -->|ranked list| P03_RRF
+  P03_CAP -->|ranked list| P03_RRF
+  P03_META -->|ranked list| P03_RRF
+  P03_RRF -->|fused ranks| P03_DEDUP
+  P03_DEDUP -->|deduplicated frames| P03_GROUP
+  P03_GROUP -->|video groups| P03_VRANK
+  P03_VRANK -->|candidate videos| P03_UNCERT
+  P03_UNCERT -->|uncertainty| P03_LANE
+  P03_LANE -.->|CONTROL: complex / multi-event| P03_TO04
+  P03_LANE -.->|CONTROL: candidate videos| P03_TO05
+  P03_LANE -.->|CONTROL: task-specific flow| P03_TO06
+  classDef layer_data fill:#dbeafe,stroke:#2563eb,color:#172554,stroke-width:1.5px;
+  classDef layer_representation fill:#ede9fe,stroke:#7c3aed,color:#2e1065,stroke-width:1.5px;
+  classDef layer_retrieval fill:#dcfce7,stroke:#16a34a,color:#14532d,stroke-width:1.5px;
+  classDef layer_graph fill:#ffedd5,stroke:#ea580c,color:#7c2d12,stroke-width:1.5px;
+  classDef layer_grounding fill:#ffe4e6,stroke:#e11d48,color:#881337,stroke-width:1.5px;
+  classDef layer_control fill:#fef3c7,stroke:#ca8a04,color:#713f12,stroke-width:1.5px;
+  classDef layer_output fill:#e2e8f0,stroke:#475569,color:#0f172a,stroke-width:1.5px;
+  classDef layer_storage fill:#f1f5f9,stroke:#64748b,color:#1e293b,stroke-width:1.5px;
+  classDef criticality_CORE stroke:#166534,stroke-width:3px;
+  classDef criticality_CONDITIONAL stroke:#7c3aed,stroke-width:2px,stroke-dasharray:5 3;
+  classDef criticality_OPTIONAL stroke:#a16207,stroke-width:2px,stroke-dasharray:5 3;
+  classDef criticality_DEFERRED stroke:#64748b,stroke-width:2px,stroke-dasharray:5 3;
+  class P03_INPUT layer_control,criticality_CORE;
+  class P03_LEDGER layer_control,criticality_CORE;
+  class P03_POLICY layer_control,criticality_CORE;
+  class P03_COMPILER layer_control,criticality_CORE;
+  class P03_PROBE layer_control,criticality_CORE;
+  class P03_ROUTER layer_control,criticality_CORE;
+  class P03_BTC layer_retrieval,criticality_CORE;
+  class P03_TEAM layer_retrieval,criticality_CONDITIONAL;
+  class P03_SEG layer_retrieval,criticality_CONDITIONAL;
+  class P03_OBJ layer_retrieval,criticality_CORE;
+  class P03_OCR layer_retrieval,criticality_OPTIONAL;
+  class P03_ASR layer_retrieval,criticality_OPTIONAL;
+  class P03_CAP layer_retrieval,criticality_OPTIONAL;
+  class P03_META layer_retrieval,criticality_CORE;
+  class P03_RRF layer_retrieval,criticality_CORE;
+  class P03_DEDUP layer_retrieval,criticality_CORE;
+  class P03_GROUP layer_retrieval,criticality_CORE;
+  class P03_VRANK layer_retrieval,criticality_CORE;
+  class P03_UNCERT layer_retrieval,criticality_CORE;
+  class P03_LANE layer_retrieval,criticality_CORE;
+  class P03_TO04 layer_output,criticality_CORE;
+  class P03_TO05 layer_output,criticality_CORE;
+  class P03_TO06 layer_output,criticality_CORE;

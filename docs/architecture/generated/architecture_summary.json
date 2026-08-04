@@ -1,0 +1,204 @@
+{
+  "contract_quality": {
+    "edge_aligned_interfaces": 203,
+    "placeholder_node_contracts": 0,
+    "specific_node_contracts": 203
+  },
+  "criticality_statistics": {
+    "CONDITIONAL": 17,
+    "CORE": 175,
+    "OPTIONAL": 11
+  },
+  "edge_count": 211,
+  "maturity_statistics": {
+    "BASELINE": 76,
+    "CURRENT_TEMPLATE": 18,
+    "EXPERIMENTAL": 32,
+    "PLANNED": 77
+  },
+  "models_confirmed": [
+    {
+      "id": "btc_clip",
+      "selected": "CLIP ViT-B/32",
+      "source_basis": "BTC_CONFIRMED"
+    },
+    {
+      "id": "btc_object_detector",
+      "selected": "Faster R-CNN Inception-ResNet-v2",
+      "source_basis": "BTC_CONFIRMED"
+    }
+  ],
+  "models_unselected": [
+    "ASR",
+    "GNN",
+    "OCR",
+    "VLM_verifier",
+    "caption_model",
+    "graph_solver",
+    "numpy_flat_cosine",
+    "shot_detector",
+    "team_visual_encoder",
+    "vector_index"
+  ],
+  "module_count": 120,
+  "node_count": 203,
+  "ownership_statistics": {
+    "architecture_owner": {
+      "KHOA": 11,
+      "PHAT": 20,
+      "PHUC": 28,
+      "TRI": 202
+    },
+    "implementation_owner": {
+      "KHOA": 13,
+      "PHAT": 27,
+      "PHUC": 39,
+      "TAI": 39,
+      "TRI": 88
+    },
+    "reviewers": {
+      "PHAT": 2,
+      "PHUC": 200
+    }
+  },
+  "page_count": 9,
+  "pages": [
+    {
+      "aspect_ratio": 2.865,
+      "edge_count": 5,
+      "id": "PAGE_00",
+      "mermaid_file": "00_legend_and_reading_guide.mmd",
+      "minimum_gap_warnings": [],
+      "module_count": 3,
+      "node_count": 10,
+      "overlapping_node_pairs": [],
+      "page_height": 1040,
+      "page_width": 2980,
+      "processing_node_count": 3,
+      "title": "00 — Legend & Reading Guide"
+    },
+    {
+      "aspect_ratio": 2.644,
+      "edge_count": 28,
+      "id": "PAGE_01",
+      "mermaid_file": "01_complete_system_overview.mmd",
+      "minimum_gap_warnings": [],
+      "module_count": 21,
+      "node_count": 24,
+      "overlapping_node_pairs": [],
+      "page_height": 1490,
+      "page_width": 3940,
+      "processing_node_count": 21,
+      "title": "01 — Complete System Overview"
+    },
+    {
+      "aspect_ratio": 2.284,
+      "edge_count": 27,
+      "id": "PAGE_02",
+      "mermaid_file": "02_offline_data_and_representation.mmd",
+      "minimum_gap_warnings": [],
+      "module_count": 15,
+      "node_count": 28,
+      "overlapping_node_pairs": [],
+      "page_height": 1480,
+      "page_width": 3380,
+      "processing_node_count": 15,
+      "title": "02 — Offline Data & Representation"
+    },
+    {
+      "aspect_ratio": 2.397,
+      "edge_count": 29,
+      "id": "PAGE_03",
+      "mermaid_file": "03_online_query_and_retrieval.mmd",
+      "minimum_gap_warnings": [],
+      "module_count": 19,
+      "node_count": 23,
+      "overlapping_node_pairs": [],
+      "page_height": 1410,
+      "page_width": 3380,
+      "processing_node_count": 19,
+      "title": "03 — Online Query & Retrieval"
+    },
+    {
+      "aspect_ratio": 2.471,
+      "edge_count": 25,
+      "id": "PAGE_04",
+      "mermaid_file": "04_event_graph_internals.mmd",
+      "minimum_gap_warnings": [],
+      "module_count": 4,
+      "node_count": 25,
+      "overlapping_node_pairs": [],
+      "page_height": 1360,
+      "page_width": 3360,
+      "processing_node_count": 4,
+      "title": "04 — Event Graph Internals"
+    },
+    {
+      "aspect_ratio": 2.77,
+      "edge_count": 14,
+      "id": "PAGE_05",
+      "mermaid_file": "05_fine_grounding_and_verification.mmd",
+      "minimum_gap_warnings": [],
+      "module_count": 9,
+      "node_count": 14,
+      "overlapping_node_pairs": [],
+      "page_height": 1220,
+      "page_width": 3380,
+      "processing_node_count": 9,
+      "title": "05 — Fine Grounding & Verification"
+    },
+    {
+      "aspect_ratio": 1.965,
+      "edge_count": 27,
+      "id": "PAGE_06",
+      "mermaid_file": "06_task_specific_flows.mmd",
+      "minimum_gap_warnings": [],
+      "module_count": 24,
+      "node_count": 29,
+      "overlapping_node_pairs": [],
+      "page_height": 1720,
+      "page_width": 3380,
+      "processing_node_count": 24,
+      "title": "06 — KIS, Q&A & TRAKE Flows"
+    },
+    {
+      "aspect_ratio": 2.366,
+      "edge_count": 25,
+      "id": "PAGE_07",
+      "mermaid_file": "07_agent_output_evaluation_deployment.mmd",
+      "minimum_gap_warnings": [],
+      "module_count": 15,
+      "node_count": 25,
+      "overlapping_node_pairs": [],
+      "page_height": 1420,
+      "page_width": 3360,
+      "processing_node_count": 15,
+      "title": "07 — Agent, Interaction, Output, Evaluation & Deployment"
+    },
+    {
+      "aspect_ratio": 2.299,
+      "edge_count": 31,
+      "id": "PAGE_08",
+      "mermaid_file": "08_contracts_artifacts_and_ownership.mmd",
+      "minimum_gap_warnings": [],
+      "module_count": 10,
+      "node_count": 25,
+      "overlapping_node_pairs": [],
+      "page_height": 1470,
+      "page_width": 3380,
+      "processing_node_count": 10,
+      "title": "08 — Contracts, Artifacts & Ownership"
+    }
+  ],
+  "repository": "AIC2026_TeamPTK_SGU",
+  "source_basis_statistics": {
+    "BTC_CONFIRMED": 7,
+    "SOFTWARE_TEMPLATE": 14,
+    "TEAM_DECISION": 182
+  },
+  "spec_sha256": "493454491cf4a1c201437f4af8430df5fc0ff34cfa8d065438cd3886cb20ae94",
+  "system_name": "TRIAGE-EG",
+  "validation_status": "PASS",
+  "version": "1.1",
+  "warnings": []
+}

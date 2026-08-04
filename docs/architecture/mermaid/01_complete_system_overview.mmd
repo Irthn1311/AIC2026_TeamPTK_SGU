@@ -1,0 +1,100 @@
+%% 01 — Complete System Overview
+flowchart LR
+  subgraph G01_APP["Application entry"]
+    P01_UI("A1 — Interactive UI / Operator Console<br/>[CORE: Interactive mode] [PLANNED] [TEAM_DECISION]<br/>Own the Interactive UI / Operator Console boundary and produce only its declared page…<br/>In: External or page-entry input for Interactive UI…<br/>Out: query + feedback to Application Backend / Orche…")
+    P01_BACKEND{{"A2 — Application Backend / Orchestrator<br/>[CORE: Application service] [PLANNED] [TEAM_DECISION]<br/>Own the Application Backend / Orchestrator boundary and produce only its declared pag…<br/>In: query + feedback from Interactive UI / Operator…<br/>Out: orchestrated request to Query Input & Session […"}}
+    P01_AUTO("A3 — Automatic Batch Mode<br/>[CORE: Batch evaluation] [PLANNED] [TEAM_DECISION]<br/>Own the Automatic Batch Mode boundary and produce only its declared page-local contra…<br/>In: External or page-entry input for Automatic Batc…<br/>Out: batch query to Application Backend / Orchestrat…")
+  end
+  subgraph G01_OFF["Row 1 — Offline data & representation"]
+    P01_RAW[("O1 — Raw Data<br/>[CORE: Core system] [BASELINE] [BTC_CONFIRMED]<br/>Own the Raw Data boundary and produce only its declared page-local contracts.<br/>In: External or page-entry input for Raw Data on PA…<br/>Out: audited corpus to Audit & Unified Mapping [P01_…")]
+    P01_AUDIT("O2 — Audit & Unified Mapping<br/>[CORE: Core system] [CURRENT_TEMPLATE] [TEAM_DECISION]<br/>Own the Audit & Unified Mapping boundary and produce only its declared page-local con…<br/>In: audited corpus from Raw Data [P01_RAW]<br/>Out: canonical mapping to Hybrid Frame Representatio…")
+    P01_FRAME("O3 — Hybrid Frame Representation<br/>[CORE: Core system] [EXPERIMENTAL] [TEAM_DECISION]<br/>Own the Hybrid Frame Representation boundary and produce only its declared page-local…<br/>In: canonical mapping from Audit & Unified Mapping…<br/>Out: parallel frame banks to Feature & Evidence Extr…")
+    P01_FEATURE("O4 — Feature & Evidence Extraction<br/>[CORE: Core system] [EXPERIMENTAL] [TEAM_DECISION]<br/>Own the Feature & Evidence Extraction boundary and produce only its declared page-loc…<br/>In: parallel frame banks from Hybrid Frame Represen…<br/>Out: feature/evidence to Indexes + Skeleton Catalog…")
+    P01_INDEX[("O5 — Indexes + Skeleton Catalog<br/>[CORE: Core system] [BASELINE] [TEAM_DECISION]<br/>Own the Indexes + Skeleton Catalog boundary and produce only its declared page-local…<br/>In: feature/evidence from Feature & Evidence Extrac…<br/>Out: indexes to Multimodal Retrieval [P01_RETRIEVE]")]
+  end
+  subgraph G01_ON["Row 2 — Online retrieval"]
+    P01_QUERY("Q1 — Query Input & Session<br/>[CORE: Core system] [BASELINE] [TEAM_DECISION]<br/>Own the Query Input & Session boundary and produce only its declared page-local contr…<br/>In: orchestrated request from Application Backend /…<br/>Out: session to Query Compiler & Task Policy [P01_CO…")
+    P01_COMPILE{{"Q2 — Query Compiler & Task Policy<br/>[CORE: Core system] [BASELINE] [TEAM_DECISION]<br/>Own the Query Compiler & Task Policy boundary and produce only its declared page-loca…<br/>In: session from Query Input & Session [P01_QUERY]…<br/>Out: task plan to Fast Probe & Modality Router [P01_…"}}
+    P01_PROBE{{"Q3 — Fast Probe & Modality Router<br/>[CORE: Core system] [BASELINE] [TEAM_DECISION]<br/>Own the Fast Probe & Modality Router boundary and produce only its declared page-loca…<br/>In: task plan from Query Compiler & Task Policy [P0…<br/>Out: probe route to Multimodal Retrieval [P01_RETRIE…"}}
+    P01_RETRIEVE("Q4 — Multimodal Retrieval<br/>[CORE: Core system] [BASELINE] [TEAM_DECISION]<br/>Own the Multimodal Retrieval boundary and produce only its declared page-local contra…<br/>In: probe route from Fast Probe & Modality Router […<br/>Out: ranked branches to Fusion, Grouping & Video Ran…")
+    P01_FUSION("Q5 — Fusion, Grouping & Video Ranking<br/>[CORE: Core system] [BASELINE] [TEAM_DECISION]<br/>Own the Fusion, Grouping & Video Ranking boundary and produce only its declared page-…<br/>In: ranked branches from Multimodal Retrieval [P01_…<br/>Out: fused videos to Fast Lane or Graph Lane? [P01_L…")
+    P01_LANE{"Q6 — Fast Lane or Graph Lane?<br/>[CORE: Core system] [BASELINE] [TEAM_DECISION]<br/>Own the Fast Lane or Graph Lane? boundary and produce only its declared page-local co…<br/>In: fused videos from Fusion, Grouping & Video Rank…<br/>Out: fast to Fast Lane [P01_FAST] → graph to Query E…"}
+  end
+  subgraph G01_REASON["Row 3 — Reasoning, grounding & output"]
+    P01_FAST("R1 — Fast Lane<br/>[CORE: Simple confident query] [BASELINE] [TEAM_DECISION]<br/>Own the Fast Lane boundary and produce only its declared page-local contracts.<br/>In: fast from Fast Lane or Graph Lane? [P01_LANE]<br/>Out: top videos to In-video Search & Dense Decode [P…")
+    P01_QGRAPH("R2 — Query Event Graph<br/>[CONDITIONAL: Graph Lane enabled] [PLANNED] [TEAM_DECISION]<br/>Own the Query Event Graph boundary and produce only its declared page-local contracts.<br/>In: graph from Fast Lane or Graph Lane? [P01_LANE]<br/>Out: query constraints to Candidate Local Event Grap…")
+    P01_CGRAPH("R3 — Candidate Local Event Graph<br/>[CORE: Graph Lane] [PLANNED] [TEAM_DECISION]<br/>Own the Candidate Local Event Graph boundary and produce only its declared page-local…<br/>In: query constraints from Query Event Graph [P01_Q…<br/>Out: candidate graph to Temporal / Entity Solver [P0…")
+    P01_SOLVER("R4 — Temporal / Entity Solver<br/>[CORE: Graph Lane] [BASELINE] [TEAM_DECISION]<br/>Own the Temporal / Entity Solver boundary and produce only its declared page-local co…<br/>In: candidate graph from Candidate Local Event Grap…<br/>Out: Top-M chains to In-video Search & Dense Decode…")
+    P01_DENSE("R5 — In-video Search & Dense Decode<br/>[CORE: Grounding] [BASELINE] [TEAM_DECISION]<br/>Own the In-video Search & Dense Decode boundary and produce only its declared page-lo…<br/>In: top videos from Fast Lane [P01_FAST] → Top-M ch…<br/>Out: coarse interval to Semantic Moment Localizer [P…")
+    P01_SML("R6 — Semantic Moment Localizer<br/>[CORE: TRAKE] [EXPERIMENTAL] [TEAM_DECISION]<br/>Own the Semantic Moment Localizer boundary and produce only its declared page-local c…<br/>In: coarse interval from In-video Search & Dense De…<br/>Out: semantic moments to Evidence Verifier / Q&A Ext…")
+    P01_VERIFY("R7 — Evidence Verifier / Q&A Extractor<br/>[CORE: Verification and Q&A] [BASELINE] [TEAM_DECISION]<br/>Own the Evidence Verifier / Q&A Extractor boundary and produce only its declared page…<br/>In: semantic moments from Semantic Moment Localizer…<br/>Out: grounded evidence to Evidence Packet [P01_PACKE…")
+    P01_PACKET[/"R8 — Evidence Packet<br/>[CORE: All tasks] [BASELINE] [TEAM_DECISION]<br/>Own the Evidence Packet boundary and produce only its declared page-local contracts.<br/>In: grounded evidence from Evidence Verifier / Q&A…<br/>Out: rankable evidence to Ranked Answers / Formatter…"/]
+    P01_OUTPUT("R9 — Ranked Answers / Formatter / Evaluator<br/>[CORE: All tasks] [BASELINE] [TEAM_DECISION]<br/>Own the Ranked Answers / Formatter / Evaluator boundary and produce only its declared…<br/>In: rankable evidence from Evidence Packet [P01_PAC…<br/>Out: answers/submission to Application Backend / Orc…")
+  end
+  subgraph G01_BUS["Agent Control Bus"]
+    P01_BUS{{"C1 — Agent Control Bus<br/>[OPTIONAL: Agent enabled] [EXPERIMENTAL] [TEAM_DECISION]<br/>Tool Registry · Planner · Plan Validator · Budget · Fallback · Trace<br/>In: External or page-entry input for Agent Control…<br/>Out: bounded control to Query Compiler & Task Policy…"}}
+  end
+  P01_RAW -.->|ARTIFACT: audited corpus| P01_AUDIT
+  P01_AUDIT -.->|ARTIFACT: canonical mapping| P01_FRAME
+  P01_FRAME -.->|ARTIFACT: parallel frame banks| P01_FEATURE
+  P01_FEATURE -.->|ARTIFACT: feature/evidence| P01_INDEX
+  P01_QUERY -->|session| P01_COMPILE
+  P01_COMPILE -->|task plan| P01_PROBE
+  P01_PROBE -->|probe route| P01_RETRIEVE
+  P01_RETRIEVE -->|ranked branches| P01_FUSION
+  P01_FUSION -->|fused videos| P01_LANE
+  P01_UI -->|query + feedback| P01_BACKEND
+  P01_AUTO -->|batch query| P01_BACKEND
+  P01_BACKEND -.->|CONTROL: orchestrated request| P01_QUERY
+  P01_INDEX -.->|ARTIFACT: indexes| P01_RETRIEVE
+  P01_LANE -.->|CONTROL: fast| P01_FAST
+  P01_LANE -.->|CONTROL: graph| P01_QGRAPH
+  P01_QGRAPH -->|query constraints| P01_CGRAPH
+  P01_CGRAPH -->|candidate graph| P01_SOLVER
+  P01_FAST -->|top videos| P01_DENSE
+  P01_SOLVER -->|Top-M chains| P01_DENSE
+  P01_DENSE -->|coarse interval| P01_SML
+  P01_SML -->|EVIDENCE: semantic moments| P01_VERIFY
+  P01_VERIFY -->|EVIDENCE: grounded evidence| P01_PACKET
+  P01_PACKET -->|rankable evidence| P01_OUTPUT
+  P01_OUTPUT -->|answers/submission| P01_BACKEND
+  P01_BUS -.->|CONTROL: bounded control| P01_COMPILE
+  P01_BUS -.->|CONTROL: bounded control| P01_CGRAPH
+  P01_BUS -.->|CONTROL: bounded control| P01_DENSE
+  P01_BUS -.->|CONTROL: bounded control| P01_OUTPUT
+  classDef layer_data fill:#dbeafe,stroke:#2563eb,color:#172554,stroke-width:1.5px;
+  classDef layer_representation fill:#ede9fe,stroke:#7c3aed,color:#2e1065,stroke-width:1.5px;
+  classDef layer_retrieval fill:#dcfce7,stroke:#16a34a,color:#14532d,stroke-width:1.5px;
+  classDef layer_graph fill:#ffedd5,stroke:#ea580c,color:#7c2d12,stroke-width:1.5px;
+  classDef layer_grounding fill:#ffe4e6,stroke:#e11d48,color:#881337,stroke-width:1.5px;
+  classDef layer_control fill:#fef3c7,stroke:#ca8a04,color:#713f12,stroke-width:1.5px;
+  classDef layer_output fill:#e2e8f0,stroke:#475569,color:#0f172a,stroke-width:1.5px;
+  classDef layer_storage fill:#f1f5f9,stroke:#64748b,color:#1e293b,stroke-width:1.5px;
+  classDef criticality_CORE stroke:#166534,stroke-width:3px;
+  classDef criticality_CONDITIONAL stroke:#7c3aed,stroke-width:2px,stroke-dasharray:5 3;
+  classDef criticality_OPTIONAL stroke:#a16207,stroke-width:2px,stroke-dasharray:5 3;
+  classDef criticality_DEFERRED stroke:#64748b,stroke-width:2px,stroke-dasharray:5 3;
+  class P01_UI layer_output,criticality_CORE;
+  class P01_BACKEND layer_control,criticality_CORE;
+  class P01_AUTO layer_output,criticality_CORE;
+  class P01_RAW layer_data,criticality_CORE;
+  class P01_AUDIT layer_data,criticality_CORE;
+  class P01_FRAME layer_representation,criticality_CORE;
+  class P01_FEATURE layer_representation,criticality_CORE;
+  class P01_INDEX layer_storage,criticality_CORE;
+  class P01_QUERY layer_retrieval,criticality_CORE;
+  class P01_COMPILE layer_retrieval,criticality_CORE;
+  class P01_PROBE layer_retrieval,criticality_CORE;
+  class P01_RETRIEVE layer_retrieval,criticality_CORE;
+  class P01_FUSION layer_retrieval,criticality_CORE;
+  class P01_LANE layer_retrieval,criticality_CORE;
+  class P01_FAST layer_retrieval,criticality_CORE;
+  class P01_QGRAPH layer_graph,criticality_CONDITIONAL;
+  class P01_CGRAPH layer_graph,criticality_CORE;
+  class P01_SOLVER layer_graph,criticality_CORE;
+  class P01_DENSE layer_grounding,criticality_CORE;
+  class P01_SML layer_grounding,criticality_CORE;
+  class P01_VERIFY layer_grounding,criticality_CORE;
+  class P01_PACKET layer_output,criticality_CORE;
+  class P01_OUTPUT layer_output,criticality_CORE;
+  class P01_BUS layer_control,criticality_OPTIONAL;

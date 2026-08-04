@@ -1,0 +1,101 @@
+%% 07 — Agent, Interaction, Output, Evaluation & Deployment
+flowchart LR
+  subgraph G07_APP["A — Application Backend / Orchestrator"]
+    P07_BACKEND{{"A1 — Application Backend / Orchestrator<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>In: query + feedback from Interactive UI / Operator Con…<br/>Do: Apply allow-listed control for Application Backend / Orch…<br/>Impl: Single application-service boundary for sessions, core-pi…<br/>Out: candidate/evidence/trace to Application I/O Contrac…"}}
+    P07_APPIO[/"A2 — Application I/O Contract<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>In: candidate/evidence/trace from Application Backend /…<br/>Do: Validate schema, version and provenance for Application I…<br/>Impl: Versioned output envelope, task formatter and provenance-…<br/>Out: interactive evidence to Evidence Packet [P07_PACKET]"/]
+  end
+  subgraph G07_UI["B — Interactive UI / Operator Console"]
+    P07_UI("B1 — Interactive UI / Operator Console<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>In: External or page-entry input for Interactive UI / O…<br/>Do: Transform External or page-entry input for Interactive UI…<br/>Impl: Operator UI contract for query/task input, video-grouped…<br/>Out: query + feedback to Application Backend / Orchestra…")
+    P07_ADV["B2 — Advanced Mode<br/>[OPTIONAL: Advanced UI enabled] [PLANNED] [TEAM_DECISION]<br/>In: advanced only from Execution Trace [P07_TRACE]<br/>Do: Document or route the Advanced Mode architecture contract…<br/>Impl: Versioned output envelope, task formatter and provenance-…<br/>Out: Terminal page output: AdvancedModeArtifact"]
+  end
+  subgraph G07_AUTO["C — Automatic Mode"]
+    P07_BATCH("C1 — Automatic Mode<br/>[CORE: Automatic mode] [PLANNED] [TEAM_DECISION]<br/>In: exact commit + scripts from Kaggle Notebook [P07_NO…<br/>Do: Transform exact commit + scripts from Kaggle Notebook [P0…<br/>Impl: Batch query execution through task policy, probe, optiona…<br/>Out: task to Task Policy [P07_POLICY]")
+    P07_POLICY("C2 — Task Policy<br/>[CORE: Automatic mode] [PLANNED] [TEAM_DECISION]<br/>In: task from Automatic Mode [P07_BATCH] → Query / Retr…<br/>Do: Transform task from Automatic Mode [P07_BATCH] into probe…<br/>Impl: Deterministic task and modality policy; select Fast/Graph…<br/>Out: probe to Fast Probe [P07_PROBE]")
+    P07_PROBE("C3 — Fast Probe<br/>[CORE: Automatic mode] [PLANNED] [TEAM_DECISION]<br/>In: probe from Task Policy [P07_POLICY]<br/>Do: Transform probe from Task Policy [P07_POLICY] into option…<br/>Impl: Low-cost retrieval probe that records coverage and uncert…<br/>Out: optional graph to Optional Graph Lane [P07_GRAPH]")
+    P07_GRAPH("C4 — Optional Graph Lane<br/>[CONDITIONAL: Automatic mode] [PLANNED] [TEAM_DECISION]<br/>In: optional graph from Fast Probe [P07_PROBE] → Graph…<br/>Do: Transform optional graph from Fast Probe [P07_PROBE] into…<br/>Impl: Versioned output envelope, task formatter and provenance-…<br/>Out: evidence to Verification [P07_VERIFY]")
+    P07_VERIFY("C5 — Verification<br/>[CORE: Automatic mode] [PLANNED] [TEAM_DECISION]<br/>In: evidence from Optional Graph Lane [P07_GRAPH] → Gro…<br/>Do: Transform evidence from Optional Graph Lane [P07_GRAPH] i…<br/>Impl: Versioned output envelope, task formatter and provenance-…<br/>Out: output to Formatter / Output [P07_FORMAT]")
+    P07_FORMAT("C6 — Formatter / Output<br/>[CORE: Automatic mode] [PLANNED] [TEAM_DECISION]<br/>In: output from Verification [P07_VERIFY] → Output cont…<br/>Do: Transform output from Verification [P07_VERIFY] into auto…<br/>Impl: Versioned output envelope, task formatter and provenance-…<br/>Out: automatic evidence to Evidence Packet [P07_PACKET]")
+  end
+  subgraph G07_BUS["D — Agent Control Bus"]
+    P07_TOOLS[("D1 — Tool Registry<br/>[CORE: Control bus] [BASELINE] [TEAM_DECISION]<br/>In: External or page-entry input for Tool Registry on P…<br/>Do: Persist and retrieve Tool Registry records by stable iden…<br/>Impl: Allow-listed tool contracts with typed inputs/outputs, av…<br/>Out: contracts to Bounded Agent Planner [P07_PLAN]")]
+    P07_PLAN{{"D2 — Bounded Agent Planner<br/>[OPTIONAL: Control bus] [EXPERIMENTAL] [TEAM_DECISION]<br/>In: contracts from Tool Registry [P07_TOOLS]<br/>Do: Apply allow-listed control for Bounded Agent Planner with…<br/>Impl: Optional planner constrained to registered tools, explici…<br/>Out: plan to Plan Validator [P07_PVALID] → bounded contr…"}}
+    P07_PVALID{{"D3 — Plan Validator<br/>[CORE: Agent enabled] [PLANNED] [TEAM_DECISION]<br/>In: plan from Bounded Agent Planner [P07_PLAN]<br/>Do: Apply allow-listed control for Plan Validator with budget…<br/>Impl: Reject unknown tools, schema mismatches, budget violation…<br/>Out: validated to Budget Manager [P07_BUDGET] → Query /…"}}
+    P07_BUDGET{{"D4 — Budget Manager<br/>[CORE: Control bus] [BASELINE] [TEAM_DECISION]<br/>In: validated from Plan Validator [P07_PVALID]<br/>Do: Apply allow-listed control for Budget Manager with budget…<br/>Impl: Allocate bounded latency/tool-call budgets and record exh…<br/>Out: budget to Fallback Controller [P07_FALLBACK]"}}
+    P07_FALLBACK{{"D5 — Fallback Controller<br/>[CORE: Control bus] [BASELINE] [TEAM_DECISION]<br/>In: budget from Budget Manager [P07_BUDGET]<br/>Do: Apply allow-listed control for Fallback Controller with b…<br/>Impl: Return to the deterministic retrieval/grounding path when…<br/>Out: fallback trace to Execution Trace [P07_TRACE]"}}
+    P07_TRACE[/"D6 — Execution Trace<br/>[CORE: Control bus] [BASELINE] [TEAM_DECISION]<br/>In: fallback trace from Fallback Controller [P07_FALLBA…<br/>Do: Validate schema, version and provenance for Execution Tra…<br/>Impl: Append-only structured trace of decisions, tool calls, ve…<br/>Out: advanced only to Advanced Mode [P07_ADV]"/]
+  end
+  subgraph G07_OUT["E — Output & Evaluation"]
+    P07_PACKET[/"E1 — Evidence Packet<br/>[CORE: Core system] [BASELINE] [TEAM_DECISION]<br/>In: automatic evidence from Formatter / Output [P07_FOR…<br/>Do: Validate schema, version and provenance for Evidence Pack…<br/>Impl: Versioned envelope for candidate, grounding, provenance,…<br/>Out: verified evidence to Ranked Answer List Constructor…"/]
+    P07_RANK("E2 — Ranked Answer List Constructor<br/>[CORE: Core system] [BASELINE] [TEAM_DECISION]<br/>In: verified evidence from Evidence Packet [P07_PACKET]<br/>Do: Transform verified evidence from Evidence Packet [P07_PAC…<br/>Impl: Build up to 100 task-valid candidates from verified evide…<br/>Out: ranked list to Task Formatter [P07_TASKFMT]")
+    P07_TASKFMT("E3 — Task Formatter<br/>[CORE: Core system] [CURRENT_TEMPLATE] [SOFTWARE_TEMPLATE]<br/>In: ranked list from Ranked Answer List Constructor [P0…<br/>Do: Transform ranked list from Ranked Answer List Constructor…<br/>Impl: Serialize KIS, Q&A and TRAKE candidates to their exact ou…<br/>Out: task rows to Submission [P07_SUBMIT]")
+    P07_SUBMIT[/"E4 — Submission<br/>[CORE: Core system] [BASELINE] [TEAM_DECISION]<br/>In: task rows from Task Formatter [P07_TASKFMT]<br/>Do: Validate schema, version and provenance for Submission be…<br/>Impl: Versioned output envelope, task formatter and provenance-…<br/>Out: official input to Official Evaluator [P07_EVAL]"/]
+    P07_EVAL("E5 — Official Evaluator<br/>[CORE: Core system] [CURRENT_TEMPLATE] [SOFTWARE_TEMPLATE]<br/>In: official input from Submission [P07_SUBMIT]<br/>Do: Transform official input from Submission [P07_SUBMIT] int…<br/>Impl: Offline adapter for official metric inputs/outputs; does…<br/>Out: Terminal page output: OfficialEvaluatorArtifact")
+  end
+  subgraph G07_ENV["F — Execution Environment"]
+    P07_LOCAL[("F1 — Local<br/>[CORE: Core system] [CURRENT_TEMPLATE] [SOFTWARE_TEMPLATE]<br/>In: External or page-entry input for Local on PAGE_07<br/>Do: Persist and retrieve Local records by stable identifiers…<br/>Impl: Versioned artifact/index adapter keyed by stable IDs and…<br/>Out: Terminal page output: LocalArtifact")]
+    P07_GITHUB[("F2 — GitHub<br/>[CORE: Core system] [CURRENT_TEMPLATE] [SOFTWARE_TEMPLATE]<br/>In: External or page-entry input for GitHub on PAGE_07<br/>Do: Persist and retrieve GitHub records by stable identifiers…<br/>Impl: Versioned artifact/index adapter keyed by stable IDs and…<br/>Out: Terminal page output: GitHubArtifact")]
+    P07_KAGGLE[("F3 — Kaggle<br/>[CORE: Core system] [CURRENT_TEMPLATE] [SOFTWARE_TEMPLATE]<br/>In: External or page-entry input for Kaggle on PAGE_07<br/>Do: Persist and retrieve Kaggle records by stable identifiers…<br/>Impl: Versioned artifact/index adapter keyed by stable IDs and…<br/>Out: Terminal page output: KaggleArtifact")]
+    P07_NOTEBOOK[("F4 — Kaggle Notebook<br/>[CORE: Core system] [CURRENT_TEMPLATE] [SOFTWARE_TEMPLATE]<br/>In: External or page-entry input for Kaggle Notebook on…<br/>Do: Persist and retrieve Kaggle Notebook records by stable id…<br/>Impl: Bootstrap only: clone, checkout exact commit, install, at…<br/>Out: exact commit + scripts to Automatic Mode [P07_BATCH]")]
+  end
+  P07_UI -->|query + feedback| P07_BACKEND
+  P07_BACKEND -->|candidate/evidence/trace| P07_APPIO
+  P07_TRACE -.->|OPTIONAL: advanced only| P07_ADV
+  P07_BATCH -.->|CONTROL: task| P07_POLICY
+  P07_POLICY -.->|CONTROL: probe| P07_PROBE
+  P07_PROBE -.->|CONTROL: optional graph| P07_GRAPH
+  P07_GRAPH -.->|CONTROL: evidence| P07_VERIFY
+  P07_VERIFY -.->|CONTROL: output| P07_FORMAT
+  P07_TOOLS -.->|CONTROL: contracts| P07_PLAN
+  P07_PLAN -.->|CONTROL: plan| P07_PVALID
+  P07_PVALID -.->|CONTROL: validated| P07_BUDGET
+  P07_BUDGET -.->|CONTROL: budget| P07_FALLBACK
+  P07_FALLBACK -.->|CONTROL: fallback trace| P07_TRACE
+  P07_PACKET -->|verified evidence| P07_RANK
+  P07_RANK -->|ranked list| P07_TASKFMT
+  P07_TASKFMT -->|task rows| P07_SUBMIT
+  P07_SUBMIT -->|official input| P07_EVAL
+  P07_PLAN -.->|CONTROL: bounded control| P07_BACKEND
+  P07_PVALID -.->|CONTROL: Query / Retrieval control| P07_POLICY
+  P07_PVALID -.->|CONTROL: Graph control| P07_GRAPH
+  P07_PVALID -.->|CONTROL: Grounding control| P07_VERIFY
+  P07_PVALID -.->|CONTROL: Output control| P07_FORMAT
+  P07_FORMAT -->|automatic evidence| P07_PACKET
+  P07_APPIO -->|interactive evidence| P07_PACKET
+  P07_NOTEBOOK -.->|ARTIFACT: exact commit + scripts| P07_BATCH
+  classDef layer_data fill:#dbeafe,stroke:#2563eb,color:#172554,stroke-width:1.5px;
+  classDef layer_representation fill:#ede9fe,stroke:#7c3aed,color:#2e1065,stroke-width:1.5px;
+  classDef layer_retrieval fill:#dcfce7,stroke:#16a34a,color:#14532d,stroke-width:1.5px;
+  classDef layer_graph fill:#ffedd5,stroke:#ea580c,color:#7c2d12,stroke-width:1.5px;
+  classDef layer_grounding fill:#ffe4e6,stroke:#e11d48,color:#881337,stroke-width:1.5px;
+  classDef layer_control fill:#fef3c7,stroke:#ca8a04,color:#713f12,stroke-width:1.5px;
+  classDef layer_output fill:#e2e8f0,stroke:#475569,color:#0f172a,stroke-width:1.5px;
+  classDef layer_storage fill:#f1f5f9,stroke:#64748b,color:#1e293b,stroke-width:1.5px;
+  classDef criticality_CORE stroke:#166534,stroke-width:3px;
+  classDef criticality_CONDITIONAL stroke:#7c3aed,stroke-width:2px,stroke-dasharray:5 3;
+  classDef criticality_OPTIONAL stroke:#a16207,stroke-width:2px,stroke-dasharray:5 3;
+  classDef criticality_DEFERRED stroke:#64748b,stroke-width:2px,stroke-dasharray:5 3;
+  class P07_BACKEND layer_control,criticality_CORE;
+  class P07_APPIO layer_output,criticality_CORE;
+  class P07_UI layer_output,criticality_CORE;
+  class P07_ADV layer_output,criticality_OPTIONAL;
+  class P07_BATCH layer_output,criticality_CORE;
+  class P07_POLICY layer_output,criticality_CORE;
+  class P07_PROBE layer_output,criticality_CORE;
+  class P07_GRAPH layer_output,criticality_CONDITIONAL;
+  class P07_VERIFY layer_output,criticality_CORE;
+  class P07_FORMAT layer_output,criticality_CORE;
+  class P07_TOOLS layer_control,criticality_CORE;
+  class P07_PLAN layer_control,criticality_OPTIONAL;
+  class P07_PVALID layer_control,criticality_CORE;
+  class P07_BUDGET layer_control,criticality_CORE;
+  class P07_FALLBACK layer_control,criticality_CORE;
+  class P07_TRACE layer_control,criticality_CORE;
+  class P07_PACKET layer_output,criticality_CORE;
+  class P07_RANK layer_output,criticality_CORE;
+  class P07_TASKFMT layer_output,criticality_CORE;
+  class P07_SUBMIT layer_output,criticality_CORE;
+  class P07_EVAL layer_output,criticality_CORE;
+  class P07_LOCAL layer_storage,criticality_CORE;
+  class P07_GITHUB layer_storage,criticality_CORE;
+  class P07_KAGGLE layer_storage,criticality_CORE;
+  class P07_NOTEBOOK layer_storage,criticality_CORE;

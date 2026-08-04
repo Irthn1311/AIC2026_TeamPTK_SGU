@@ -1,0 +1,101 @@
+%% 08 — Contracts, Artifacts & Ownership
+flowchart LR
+  subgraph G08_CONTRACT["A — Contract flow"]
+    P08_C1[/"C1 — VideoRecord<br/>[CORE: Core system] [CURRENT_TEMPLATE] [SOFTWARE_TEMPLATE]<br/>In: provenance from RunManifest [P08_RUN]<br/>Do: Validate schema, version and provenance for VideoRecord b…<br/>Impl: Versioned output envelope, task formatter and provenance-…<br/>Out: contract to ShotRecord [P08_C2]"/]
+    P08_C2[/"C2 — ShotRecord<br/>[CORE: Core system] [CURRENT_TEMPLATE] [SOFTWARE_TEMPLATE]<br/>In: contract from VideoRecord [P08_C1] → provenance fro…<br/>Do: Validate schema, version and provenance for ShotRecord be…<br/>Impl: Versioned output envelope, task formatter and provenance-…<br/>Out: contract to FrameRecord [P08_C3]"/]
+    P08_C3[/"C3 — FrameRecord<br/>[CORE: Core system] [CURRENT_TEMPLATE] [SOFTWARE_TEMPLATE]<br/>In: contract from ShotRecord [P08_C2] → provenance from…<br/>Do: Validate schema, version and provenance for FrameRecord b…<br/>Impl: Versioned output envelope, task formatter and provenance-…<br/>Out: contract to FeatureRecord [P08_C4]"/]
+    P08_C4[/"C4 — FeatureRecord<br/>[CORE: Core system] [CURRENT_TEMPLATE] [SOFTWARE_TEMPLATE]<br/>In: contract from FrameRecord [P08_C3] → provenance fro…<br/>Do: Validate schema, version and provenance for FeatureRecord…<br/>Impl: Versioned output envelope, task formatter and provenance-…<br/>Out: contract to CandidateFrame [P08_C5]"/]
+    P08_C5[/"C5 — CandidateFrame<br/>[CORE: Core system] [CURRENT_TEMPLATE] [SOFTWARE_TEMPLATE]<br/>In: contract from FeatureRecord [P08_C4] → provenance f…<br/>Do: Validate schema, version and provenance for CandidateFram…<br/>Impl: Versioned output envelope, task formatter and provenance-…<br/>Out: contract to CandidateVideo [P08_C6]"/]
+    P08_C6[/"C6 — CandidateVideo<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>In: contract from CandidateFrame [P08_C5] → provenance…<br/>Do: Validate schema, version and provenance for CandidateVide…<br/>Impl: Versioned output envelope, task formatter and provenance-…<br/>Out: contract to QueryEvent / SegmentEvent [P08_C7]"/]
+    P08_C7[/"C7 — QueryEvent / SegmentEvent<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>In: contract from CandidateVideo [P08_C6] → provenance…<br/>Do: Validate schema, version and provenance for QueryEvent /…<br/>Impl: Versioned output envelope, task formatter and provenance-…<br/>Out: contract to EventChain [P08_C8]"/]
+    P08_C8[/"C8 — EventChain<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>In: contract from QueryEvent / SegmentEvent [P08_C7] →…<br/>Do: Validate schema, version and provenance for EventChain be…<br/>Impl: Versioned output envelope, task formatter and provenance-…<br/>Out: contract to SemanticMomentHypothesis [P08_C9]"/]
+    P08_C9[/"C9 — SemanticMomentHypothesis<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>In: contract from EventChain [P08_C8] → provenance from…<br/>Do: Validate schema, version and provenance for SemanticMomen…<br/>Impl: Versioned output envelope, task formatter and provenance-…<br/>Out: contract to EvidencePacket [P08_C10]"/]
+    P08_C10[/"C10 — EvidencePacket<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>In: contract from SemanticMomentHypothesis [P08_C9] → p…<br/>Do: Validate schema, version and provenance for EvidencePacke…<br/>Impl: Versioned output envelope, task formatter and provenance-…<br/>Out: contract to SubmissionCandidate [P08_C11]"/]
+    P08_C11[/"C11 — SubmissionCandidate<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>In: contract from EvidencePacket [P08_C10] → provenance…<br/>Do: Validate schema, version and provenance for SubmissionCan…<br/>Impl: Versioned output envelope, task formatter and provenance-…<br/>Out: contract to EvaluationReport [P08_C12]"/]
+    P08_C12[/"C12 — EvaluationReport<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>In: contract from SubmissionCandidate [P08_C11] → prove…<br/>Do: Validate schema, version and provenance for EvaluationRep…<br/>Impl: Versioned output envelope, task formatter and provenance-…<br/>Out: Terminal page output: EvaluationReportArtifact"/]
+    P08_RUN[/"A1 — RunManifest<br/>[CORE: Core system] [CURRENT_TEMPLATE] [SOFTWARE_TEMPLATE]<br/>In: External or page-entry input for RunManifest on PAG…<br/>Do: Validate schema, version and provenance for RunManifest b…<br/>Impl: Bind every generated artifact to exact commit, config has…<br/>Out: provenance to VideoRecord [P08_C1] → provenance to…"/]
+    P08_MODEL[/"A2 — ModelRegistry<br/>[CORE: Core system] [CURRENT_TEMPLATE] [SOFTWARE_TEMPLATE]<br/>In: provenance from RunManifest [P08_RUN]<br/>Do: Validate schema, version and provenance for ModelRegistry…<br/>Impl: Versioned output envelope, task formatter and provenance-…<br/>Out: model decision to ExperimentReport [P08_EXP]"/]
+    P08_EXP[/"A3 — ExperimentReport<br/>[CORE: Core system] [CURRENT_TEMPLATE] [SOFTWARE_TEMPLATE]<br/>In: provenance from RunManifest [P08_RUN] → model decis…<br/>Do: Validate schema, version and provenance for ExperimentRep…<br/>Impl: Versioned output envelope, task formatter and provenance-…<br/>Out: evaluation evidence to EvaluationReport [P08_C12]"/]
+  end
+  subgraph G08_OWN["B — Ownership roles"]
+    P08_DATA("OWN1 — Data<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>In: External or page-entry input for Data on PAGE_08<br/>Do: Transform External or page-entry input for Data on PAGE_0…<br/>Impl: Deterministic policy/registry/budget implementation with…<br/>Out: Terminal page output: DataArtifact")
+    P08_FRAME("OWN2 — Frame Bank<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>In: External or page-entry input for Frame Bank on PAGE…<br/>Do: Transform External or page-entry input for Frame Bank on…<br/>Impl: Deterministic policy/registry/budget implementation with…<br/>Out: Terminal page output: FrameBankArtifact")
+    P08_RET("OWN3 — Retrieval<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>In: External or page-entry input for Retrieval on PAGE_…<br/>Do: Transform External or page-entry input for Retrieval on P…<br/>Impl: Deterministic policy/registry/budget implementation with…<br/>Out: Terminal page output: RetrievalArtifact")
+    P08_GRAPH("OWN4 — Graph & Integration<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>In: External or page-entry input for Graph & Integratio…<br/>Do: Transform External or page-entry input for Graph & Integr…<br/>Impl: Deterministic policy/registry/budget implementation with…<br/>Out: Terminal page output: Graph&IntegrationArtifact")
+    P08_UI("OWN5 — UI & Interaction<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>In: External or page-entry input for UI & Interaction o…<br/>Do: Transform External or page-entry input for UI & Interacti…<br/>Impl: Deterministic policy/registry/budget implementation with…<br/>Out: Terminal page output: UI&InteractionArtifact")
+  end
+  subgraph G08_TEAM["C — Team artifact flow"]
+    P08_KHOA("T1 — Khoa: Raw Data → VideoManifest → Kaggle<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>In: External or page-entry input for Khoa: Raw Data → V…<br/>Do: Transform External or page-entry input for Khoa: Raw Data…<br/>Impl: Versioned output envelope, task formatter and provenance-…<br/>Out: VideoManifest to Phát: Manifest → Shot → Frame → Fe…")
+    P08_PHAT("T2 — Phát: Manifest → Shot → Frame → Feature<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>In: VideoManifest from Khoa: Raw Data → VideoManifest →…<br/>Do: Transform VideoManifest from Khoa: Raw Data → VideoManife…<br/>Impl: Versioned output envelope, task formatter and provenance-…<br/>Out: FeatureRecord to Phúc: Feature → Index → Candidates…")
+    P08_PHUC("T3 — Phúc: Feature → Index → Candidates → Report<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>In: FeatureRecord from Phát: Manifest → Shot → Frame →…<br/>Do: Transform FeatureRecord from Phát: Manifest → Shot → Fram…<br/>Impl: Versioned output envelope, task formatter and provenance-…<br/>Out: CandidateVideo to Tri: CandidateVideo → Graph → Cha…")
+    P08_TRI("T4 — Tri: CandidateVideo → Graph → Chain → Integration<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>In: CandidateVideo from Phúc: Feature → Index → Candida…<br/>Do: Transform CandidateVideo from Phúc: Feature → Index → Can…<br/>Impl: Versioned output envelope, task formatter and provenance-…<br/>Out: EvidencePacket to Tài: Evidence → UI → Verification…")
+    P08_TAI("T5 — Tài: Evidence → UI → Verification → Submission<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>In: EvidencePacket from Tri: CandidateVideo → Graph → C…<br/>Do: Transform EvidencePacket from Tri: CandidateVideo → Graph…<br/>Impl: Versioned output envelope, task formatter and provenance-…<br/>Out: Terminal page output: Tài:Evidence→UI→Verification→…")
+  end
+  P08_C1 -.->|ARTIFACT: contract| P08_C2
+  P08_C2 -.->|ARTIFACT: contract| P08_C3
+  P08_C3 -.->|ARTIFACT: contract| P08_C4
+  P08_C4 -.->|ARTIFACT: contract| P08_C5
+  P08_C5 -.->|ARTIFACT: contract| P08_C6
+  P08_C6 -.->|ARTIFACT: contract| P08_C7
+  P08_C7 -.->|ARTIFACT: contract| P08_C8
+  P08_C8 -.->|ARTIFACT: contract| P08_C9
+  P08_C9 -.->|ARTIFACT: contract| P08_C10
+  P08_C10 -.->|ARTIFACT: contract| P08_C11
+  P08_C11 -.->|ARTIFACT: contract| P08_C12
+  P08_RUN -.->|ARTIFACT: provenance| P08_C1
+  P08_RUN -.->|ARTIFACT: provenance| P08_C2
+  P08_RUN -.->|ARTIFACT: provenance| P08_C3
+  P08_RUN -.->|ARTIFACT: provenance| P08_C4
+  P08_RUN -.->|ARTIFACT: provenance| P08_C5
+  P08_RUN -.->|ARTIFACT: provenance| P08_C6
+  P08_RUN -.->|ARTIFACT: provenance| P08_C7
+  P08_RUN -.->|ARTIFACT: provenance| P08_C8
+  P08_RUN -.->|ARTIFACT: provenance| P08_C9
+  P08_RUN -.->|ARTIFACT: provenance| P08_C10
+  P08_RUN -.->|ARTIFACT: provenance| P08_C11
+  P08_RUN -.->|ARTIFACT: provenance| P08_C12
+  P08_RUN -.->|ARTIFACT: provenance| P08_MODEL
+  P08_RUN -.->|ARTIFACT: provenance| P08_EXP
+  P08_MODEL -.->|ARTIFACT: model decision| P08_EXP
+  P08_EXP -.->|ARTIFACT: evaluation evidence| P08_C12
+  P08_KHOA -.->|ARTIFACT: VideoManifest| P08_PHAT
+  P08_PHAT -.->|ARTIFACT: FeatureRecord| P08_PHUC
+  P08_PHUC -.->|ARTIFACT: CandidateVideo| P08_TRI
+  P08_TRI -.->|ARTIFACT: EvidencePacket| P08_TAI
+  classDef layer_data fill:#dbeafe,stroke:#2563eb,color:#172554,stroke-width:1.5px;
+  classDef layer_representation fill:#ede9fe,stroke:#7c3aed,color:#2e1065,stroke-width:1.5px;
+  classDef layer_retrieval fill:#dcfce7,stroke:#16a34a,color:#14532d,stroke-width:1.5px;
+  classDef layer_graph fill:#ffedd5,stroke:#ea580c,color:#7c2d12,stroke-width:1.5px;
+  classDef layer_grounding fill:#ffe4e6,stroke:#e11d48,color:#881337,stroke-width:1.5px;
+  classDef layer_control fill:#fef3c7,stroke:#ca8a04,color:#713f12,stroke-width:1.5px;
+  classDef layer_output fill:#e2e8f0,stroke:#475569,color:#0f172a,stroke-width:1.5px;
+  classDef layer_storage fill:#f1f5f9,stroke:#64748b,color:#1e293b,stroke-width:1.5px;
+  classDef criticality_CORE stroke:#166534,stroke-width:3px;
+  classDef criticality_CONDITIONAL stroke:#7c3aed,stroke-width:2px,stroke-dasharray:5 3;
+  classDef criticality_OPTIONAL stroke:#a16207,stroke-width:2px,stroke-dasharray:5 3;
+  classDef criticality_DEFERRED stroke:#64748b,stroke-width:2px,stroke-dasharray:5 3;
+  class P08_C1 layer_output,criticality_CORE;
+  class P08_C2 layer_output,criticality_CORE;
+  class P08_C3 layer_output,criticality_CORE;
+  class P08_C4 layer_output,criticality_CORE;
+  class P08_C5 layer_output,criticality_CORE;
+  class P08_C6 layer_output,criticality_CORE;
+  class P08_C7 layer_output,criticality_CORE;
+  class P08_C8 layer_output,criticality_CORE;
+  class P08_C9 layer_output,criticality_CORE;
+  class P08_C10 layer_output,criticality_CORE;
+  class P08_C11 layer_output,criticality_CORE;
+  class P08_C12 layer_output,criticality_CORE;
+  class P08_RUN layer_output,criticality_CORE;
+  class P08_MODEL layer_output,criticality_CORE;
+  class P08_EXP layer_output,criticality_CORE;
+  class P08_DATA layer_control,criticality_CORE;
+  class P08_FRAME layer_control,criticality_CORE;
+  class P08_RET layer_control,criticality_CORE;
+  class P08_GRAPH layer_control,criticality_CORE;
+  class P08_UI layer_control,criticality_CORE;
+  class P08_KHOA layer_output,criticality_CORE;
+  class P08_PHAT layer_output,criticality_CORE;
+  class P08_PHUC layer_output,criticality_CORE;
+  class P08_TRI layer_output,criticality_CORE;
+  class P08_TAI layer_output,criticality_CORE;

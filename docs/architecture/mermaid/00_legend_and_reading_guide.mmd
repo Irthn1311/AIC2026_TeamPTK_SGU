@@ -1,0 +1,45 @@
+%% 00 — Legend & Reading Guide
+flowchart LR
+  subgraph G00_TAX["A — Three independent status axes"]
+    P00_CRIT["L1 — Criticality<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>CORE · CONDITIONAL · OPTIONAL · DEFERRED<br/>In: External or page-entry input for Criticality on…<br/>Out: independent axis to Maturity [P00_MAT]"]
+    P00_MAT["L2 — Maturity<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>CURRENT_TEMPLATE · PLANNED · BASELINE · EXPERIMENTAL · SELECTED · VALIDATED<br/>In: independent axis from Criticality [P00_CRIT]<br/>Out: independent axis to Source basis [P00_SRC]"]
+    P00_SRC["L3 — Source basis<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>BTC_CONFIRMED · TEAM_DECISION · RESEARCH_CANDIDATE · SOFTWARE_TEMPLATE<br/>In: independent axis from Maturity [P00_MAT]<br/>Out: Terminal page output: SourcebasisArtifact"]
+  end
+  subgraph G00_VIS["B — Visual grammar"]
+    P00_SHAPES["L4 — Shape Legend<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>Process · Store · Artifact · Decision · Control · Graph node · Off-page<br/>In: External or page-entry input for Shape Legend o…<br/>Out: Terminal page output: ShapeLegendArtifact"]
+    P00_EDGES["L5 — Edge Legend<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>Data · Control · Optional · Fallback · Evidence · Artifact · Match<br/>In: External or page-entry input for Edge Legend on…<br/>Out: Terminal page output: EdgeLegendArtifact"]
+    P00_OFFPAGE[/"L6 — Off-page Connector<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>Stable reference to another architecture page<br/>In: External or page-entry input for Off-page Conne…<br/>Out: Terminal page output: Off-pageConnectorArtifact"\]
+  end
+  subgraph G00_READ["C — How to read TRIAGE-EG"]
+    P00_REP("L7 — Representation Levels<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>Technical/Retrieval Frame → Event Interval → Semantic Moment<br/>In: External or page-entry input for Representation…<br/>Out: execution context to Execution Modes [P00_MODES]")
+    P00_MODES("L8 — Execution Modes<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>Offline preprocessing · Online query execution<br/>In: execution context from Representation Levels [P…<br/>Out: query route to Query Lanes [P00_LANES]")
+    P00_LANES{{"L9 — Query Lanes<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>Fast Lane · Graph Lane<br/>In: query route from Execution Modes [P00_MODES]<br/>Out: governing principles to Architectural Principle…"}}
+    P00_PRINCIPLES["L10 — Architectural Principles<br/>[CORE: Core system] [PLANNED] [TEAM_DECISION]<br/>Retrieval first · Graph local · Raw video truth · Evidence before answer · Bounded ag…<br/>In: governing principles from Query Lanes [P00_LANE…<br/>Out: Terminal page output: ArchitecturalPrinciplesAr…"]
+  end
+  P00_CRIT -.->|ARTIFACT: independent axis| P00_MAT
+  P00_MAT -.->|ARTIFACT: independent axis| P00_SRC
+  P00_REP -.->|CONTROL: execution context| P00_MODES
+  P00_MODES -.->|CONTROL: query route| P00_LANES
+  P00_LANES -.->|CONTROL: governing principles| P00_PRINCIPLES
+  classDef layer_data fill:#dbeafe,stroke:#2563eb,color:#172554,stroke-width:1.5px;
+  classDef layer_representation fill:#ede9fe,stroke:#7c3aed,color:#2e1065,stroke-width:1.5px;
+  classDef layer_retrieval fill:#dcfce7,stroke:#16a34a,color:#14532d,stroke-width:1.5px;
+  classDef layer_graph fill:#ffedd5,stroke:#ea580c,color:#7c2d12,stroke-width:1.5px;
+  classDef layer_grounding fill:#ffe4e6,stroke:#e11d48,color:#881337,stroke-width:1.5px;
+  classDef layer_control fill:#fef3c7,stroke:#ca8a04,color:#713f12,stroke-width:1.5px;
+  classDef layer_output fill:#e2e8f0,stroke:#475569,color:#0f172a,stroke-width:1.5px;
+  classDef layer_storage fill:#f1f5f9,stroke:#64748b,color:#1e293b,stroke-width:1.5px;
+  classDef criticality_CORE stroke:#166534,stroke-width:3px;
+  classDef criticality_CONDITIONAL stroke:#7c3aed,stroke-width:2px,stroke-dasharray:5 3;
+  classDef criticality_OPTIONAL stroke:#a16207,stroke-width:2px,stroke-dasharray:5 3;
+  classDef criticality_DEFERRED stroke:#64748b,stroke-width:2px,stroke-dasharray:5 3;
+  class P00_CRIT layer_output,criticality_CORE;
+  class P00_MAT layer_output,criticality_CORE;
+  class P00_SRC layer_output,criticality_CORE;
+  class P00_SHAPES layer_representation,criticality_CORE;
+  class P00_EDGES layer_control,criticality_CORE;
+  class P00_OFFPAGE layer_output,criticality_CORE;
+  class P00_REP layer_grounding,criticality_CORE;
+  class P00_MODES layer_storage,criticality_CORE;
+  class P00_LANES layer_graph,criticality_CORE;
+  class P00_PRINCIPLES layer_control,criticality_CORE;

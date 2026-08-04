@@ -1,0 +1,105 @@
+%% 06 — KIS, Q&A & TRAKE Flows
+flowchart LR
+  subgraph G06_KIS["LANE 1 — KIS"]
+    P06_K1("K-1 — Text Query<br/>[CORE: KIS] [BASELINE] [TEAM_DECISION]<br/>In: External or page-entry input for Text Query on PAGE…<br/>Do: Transform External or page-entry input for Text Query on…<br/>Impl: Typed rank-list contracts, deterministic ranking/fusion p…<br/>Out: next to Compile / Fast Probe [P06_K2]")
+    P06_K2("K-2 — Compile / Fast Probe<br/>[CORE: KIS] [BASELINE] [TEAM_DECISION]<br/>In: next from Text Query [P06_K1]<br/>Do: Transform next from Text Query [P06_K1] into next to Mult…<br/>Impl: Typed rank-list contracts, deterministic ranking/fusion p…<br/>Out: next to Multimodal Retrieval [P06_K3]")
+    P06_K3("K-3 — Multimodal Retrieval<br/>[CORE: KIS] [BASELINE] [TEAM_DECISION]<br/>In: next from Compile / Fast Probe [P06_K2]<br/>Do: Transform next from Compile / Fast Probe [P06_K2] into ne…<br/>Impl: Typed rank-list contracts, deterministic ranking/fusion p…<br/>Out: next to Fusion / Video Ranking [P06_K4]")
+    P06_K4("K-4 — Fusion / Video Ranking<br/>[CORE: KIS] [BASELINE] [TEAM_DECISION]<br/>In: next from Multimodal Retrieval [P06_K3]<br/>Do: Transform next from Multimodal Retrieval [P06_K3] into ne…<br/>Impl: Typed rank-list contracts, deterministic ranking/fusion p…<br/>Out: next to Local Refinement [P06_K5] → optional comple…")
+    P06_K5("K-5 — Local Refinement<br/>[CORE: KIS] [BASELINE] [TEAM_DECISION]<br/>In: next from Fusion / Video Ranking [P06_K4]<br/>Do: Transform next from Fusion / Video Ranking [P06_K4] into…<br/>Impl: Typed rank-list contracts, deterministic ranking/fusion p…<br/>Out: next to Verify [P06_K6]")
+    P06_K6("K-6 — Verify<br/>[CORE: KIS] [BASELINE] [TEAM_DECISION]<br/>In: next from Local Refinement [P06_K5]<br/>Do: Transform next from Local Refinement [P06_K5] into next t…<br/>Impl: Typed rank-list contracts, deterministic ranking/fusion p…<br/>Out: next to Ranked KIS Answers [P06_K7]")
+    P06_K7[/"K-7 — Ranked KIS Answers<br/>[CORE: KIS] [BASELINE] [TEAM_DECISION]<br/>In: next from Verify [P06_K6]<br/>Do: Validate schema, version and provenance for Ranked KIS An…<br/>Impl: Typed rank-list contracts, deterministic ranking/fusion p…<br/>Out: Terminal page output: RankedKISAnswersArtifact"/]
+  end
+  subgraph G06_QA["LANE 2 — Q&A"]
+    P06_Q1("Q-1 — Event + Question<br/>[CORE: Q&A] [BASELINE] [TEAM_DECISION]<br/>In: External or page-entry input for Event + Question o…<br/>Do: Transform External or page-entry input for Event + Questi…<br/>Impl: Raw-video/evidence adapter with bounded dense decoding an…<br/>Out: next to Retrieve Event [P06_Q2]")
+    P06_Q2("Q-2 — Retrieve Event<br/>[CORE: Q&A] [BASELINE] [TEAM_DECISION]<br/>In: next from Event + Question [P06_Q1]<br/>Do: Transform next from Event + Question [P06_Q1] into next t…<br/>Impl: Raw-video/evidence adapter with bounded dense decoding an…<br/>Out: next to Rank Candidate Video [P06_Q3]")
+    P06_Q3("Q-3 — Rank Candidate Video<br/>[CORE: Q&A] [BASELINE] [TEAM_DECISION]<br/>In: next from Retrieve Event [P06_Q2]<br/>Do: Transform next from Retrieve Event [P06_Q2] into next to…<br/>Impl: Raw-video/evidence adapter with bounded dense decoding an…<br/>Out: next to Localize Event Interval [P06_Q4]")
+    P06_Q4("Q-4 — Localize Event Interval<br/>[CORE: Q&A] [BASELINE] [TEAM_DECISION]<br/>In: next from Rank Candidate Video [P06_Q3]<br/>Do: Transform next from Rank Candidate Video [P06_Q3] into ne…<br/>Impl: Raw-video/evidence adapter with bounded dense decoding an…<br/>Out: next to Collect Evidence [P06_Q5]")
+    P06_Q5("Q-5 — Collect Evidence<br/>[CORE: Q&A] [BASELINE] [TEAM_DECISION]<br/>In: next from Localize Event Interval [P06_Q4]<br/>Do: Transform next from Localize Event Interval [P06_Q4] into…<br/>Impl: Raw-video/evidence adapter with bounded dense decoding an…<br/>Out: next to Answer Type Router [P06_Q6]")
+    P06_Q6("Q-6 — Answer Type Router<br/>[CORE: Q&A] [BASELINE] [TEAM_DECISION]<br/>In: next from Collect Evidence [P06_Q5]<br/>Do: Transform next from Collect Evidence [P06_Q5] into next t…<br/>Impl: Raw-video/evidence adapter with bounded dense decoding an…<br/>Out: next to Answer Extractor [P06_Q7]")
+    P06_Q7("Q-7 — Answer Extractor<br/>[CORE: Q&A] [EXPERIMENTAL] [TEAM_DECISION]<br/>In: next from Answer Type Router [P06_Q6]<br/>Do: Transform next from Answer Type Router [P06_Q6] into next…<br/>Impl: Evidence-bounded Q&A extraction after event localization…<br/>Out: next to Semantic Frame Localization [P06_Q8]")
+    P06_Q8("Q-8 — Semantic Frame Localization<br/>[CORE: Q&A] [BASELINE] [TEAM_DECISION]<br/>In: next from Answer Extractor [P06_Q7]<br/>Do: Transform next from Answer Extractor [P06_Q7] into next t…<br/>Impl: Raw-video/evidence adapter with bounded dense decoding an…<br/>Out: next to Answer-Evidence Verification [P06_Q9]")
+    P06_Q9("Q-9 — Answer-Evidence Verification<br/>[CORE: Q&A] [BASELINE] [TEAM_DECISION]<br/>In: next from Semantic Frame Localization [P06_Q8]<br/>Do: Transform next from Semantic Frame Localization [P06_Q8]…<br/>Impl: Raw-video/evidence adapter with bounded dense decoding an…<br/>Out: next to Ranked Q&A Answers [P06_Q10]")
+    P06_Q10[/"Q-10 — Ranked Q&A Answers<br/>[CORE: Q&A] [BASELINE] [TEAM_DECISION]<br/>In: next from Answer-Evidence Verification [P06_Q9]<br/>Do: Validate schema, version and provenance for Ranked Q&A An…<br/>Impl: Raw-video/evidence adapter with bounded dense decoding an…<br/>Out: Terminal page output: RankedQ&AAnswersArtifact"/]
+  end
+  subgraph G06_TRAKE["LANE 3 — TRAKE"]
+    P06_T1("T-1 — Narrative Events<br/>[CORE: TRAKE] [BASELINE] [TEAM_DECISION]<br/>In: External or page-entry input for Narrative Events o…<br/>Do: Transform External or page-entry input for Narrative Even…<br/>Impl: Versioned query-local attributed graph with confidence co…<br/>Out: next to Query Event Graph [P06_T2]")
+    P06_T2("T-2 — Query Event Graph<br/>[CORE: TRAKE] [PLANNED] [TEAM_DECISION]<br/>In: next from Narrative Events [P06_T1] → optional comp…<br/>Do: Transform next from Narrative Events [P06_T1] into next t…<br/>Impl: Build multiple versioned query-local hypotheses with expl…<br/>Out: next to Retrieval per Event [P06_T3]")
+    P06_T3("T-3 — Retrieval per Event<br/>[CORE: TRAKE] [BASELINE] [TEAM_DECISION]<br/>In: next from Query Event Graph [P06_T2]<br/>Do: Transform next from Query Event Graph [P06_T2] into next…<br/>Impl: Versioned query-local attributed graph with confidence co…<br/>Out: next to Aggregate by Video [P06_T4]")
+    P06_T4("T-4 — Aggregate by Video<br/>[CORE: TRAKE] [BASELINE] [TEAM_DECISION]<br/>In: next from Retrieval per Event [P06_T3]<br/>Do: Transform next from Retrieval per Event [P06_T3] into nex…<br/>Impl: Versioned query-local attributed graph with confidence co…<br/>Out: next to Candidate Video Ranker [P06_T5]")
+    P06_T5("T-5 — Candidate Video Ranker<br/>[CORE: TRAKE] [BASELINE] [TEAM_DECISION]<br/>In: next from Aggregate by Video [P06_T4]<br/>Do: Transform next from Aggregate by Video [P06_T4] into next…<br/>Impl: Rank candidate videos from fused evidence and coverage co…<br/>Out: next to Candidate Local Event Graph [P06_T6]")
+    P06_T6("T-6 — Candidate Local Event Graph<br/>[CORE: TRAKE] [PLANNED] [TEAM_DECISION]<br/>In: next from Candidate Video Ranker [P06_T5]<br/>Do: Transform next from Candidate Video Ranker [P06_T5] into…<br/>Impl: Materialize a versioned attributed graph only for top can…<br/>Out: next to Event Match Matrix [P06_T7]")
+    P06_T7[/"T-7 — Event Match Matrix<br/>[CORE: TRAKE] [BASELINE] [TEAM_DECISION]<br/>In: next from Candidate Local Event Graph [P06_T6]<br/>Do: Validate schema, version and provenance for Event Match M…<br/>Impl: Compute query-event to candidate-event compatibility comp…<br/>Out: next to DP / Beam Solver [P06_T8]"/]
+    P06_T8("T-8 — DP / Beam Solver<br/>[CORE: TRAKE] [BASELINE] [TEAM_DECISION]<br/>In: next from Event Match Matrix [P06_T7]<br/>Do: Transform next from Event Match Matrix [P06_T7] into next…<br/>Impl: Dynamic-programming or bounded beam-search baseline over…<br/>Out: next to Top-M Chains [P06_T9]")
+    P06_T9[/"T-9 — Top-M Chains<br/>[CORE: TRAKE] [BASELINE] [TEAM_DECISION]<br/>In: next from DP / Beam Solver [P06_T8]<br/>Do: Validate schema, version and provenance for Top-M Chains…<br/>Impl: Versioned query-local attributed graph with confidence co…<br/>Out: next to Semantic Moment Localizer per Event [P06_T1…"/]
+    P06_T10("T-10 — Semantic Moment Localizer per Event<br/>[CORE: TRAKE] [EXPERIMENTAL] [TEAM_DECISION]<br/>In: next from Top-M Chains [P06_T9]<br/>Do: Transform next from Top-M Chains [P06_T9] into next to Ch…<br/>Impl: Apply the moment-type localizer independently to each ver…<br/>Out: next to Chain Verification [P06_T11]")
+    P06_T11("T-11 — Chain Verification<br/>[CORE: TRAKE] [BASELINE] [TEAM_DECISION]<br/>In: next from Semantic Moment Localizer per Event [P06_…<br/>Do: Transform next from Semantic Moment Localizer per Event […<br/>Impl: Versioned query-local attributed graph with confidence co…<br/>Out: next to Ranked TRAKE Answers [P06_T12]")
+    P06_T12[/"T-12 — Ranked TRAKE Answers<br/>[CORE: TRAKE] [BASELINE] [TEAM_DECISION]<br/>In: next from Chain Verification [P06_T11]<br/>Do: Validate schema, version and provenance for Ranked TRAKE…<br/>Impl: Versioned query-local attributed graph with confidence co…<br/>Out: Terminal page output: RankedTRAKEAnswersArtifact"/]
+  end
+  P06_K1 -->|next| P06_K2
+  P06_K2 -->|next| P06_K3
+  P06_K3 -->|next| P06_K4
+  P06_K4 -->|next| P06_K5
+  P06_K5 -->|next| P06_K6
+  P06_K6 -->|next| P06_K7
+  P06_Q1 -->|EVIDENCE: next| P06_Q2
+  P06_Q2 -->|EVIDENCE: next| P06_Q3
+  P06_Q3 -->|EVIDENCE: next| P06_Q4
+  P06_Q4 -->|EVIDENCE: next| P06_Q5
+  P06_Q5 -->|EVIDENCE: next| P06_Q6
+  P06_Q6 -->|EVIDENCE: next| P06_Q7
+  P06_Q7 -->|EVIDENCE: next| P06_Q8
+  P06_Q8 -->|EVIDENCE: next| P06_Q9
+  P06_Q9 -->|EVIDENCE: next| P06_Q10
+  P06_T1 -->|next| P06_T2
+  P06_T2 -->|next| P06_T3
+  P06_T3 -->|next| P06_T4
+  P06_T4 -->|next| P06_T5
+  P06_T5 -->|next| P06_T6
+  P06_T6 -->|next| P06_T7
+  P06_T7 -->|next| P06_T8
+  P06_T8 -->|next| P06_T9
+  P06_T9 -->|next| P06_T10
+  P06_T10 -->|next| P06_T11
+  P06_T11 -->|next| P06_T12
+  P06_K4 -.->|OPTIONAL: optional complex KIS| P06_T2
+  classDef layer_data fill:#dbeafe,stroke:#2563eb,color:#172554,stroke-width:1.5px;
+  classDef layer_representation fill:#ede9fe,stroke:#7c3aed,color:#2e1065,stroke-width:1.5px;
+  classDef layer_retrieval fill:#dcfce7,stroke:#16a34a,color:#14532d,stroke-width:1.5px;
+  classDef layer_graph fill:#ffedd5,stroke:#ea580c,color:#7c2d12,stroke-width:1.5px;
+  classDef layer_grounding fill:#ffe4e6,stroke:#e11d48,color:#881337,stroke-width:1.5px;
+  classDef layer_control fill:#fef3c7,stroke:#ca8a04,color:#713f12,stroke-width:1.5px;
+  classDef layer_output fill:#e2e8f0,stroke:#475569,color:#0f172a,stroke-width:1.5px;
+  classDef layer_storage fill:#f1f5f9,stroke:#64748b,color:#1e293b,stroke-width:1.5px;
+  classDef criticality_CORE stroke:#166534,stroke-width:3px;
+  classDef criticality_CONDITIONAL stroke:#7c3aed,stroke-width:2px,stroke-dasharray:5 3;
+  classDef criticality_OPTIONAL stroke:#a16207,stroke-width:2px,stroke-dasharray:5 3;
+  classDef criticality_DEFERRED stroke:#64748b,stroke-width:2px,stroke-dasharray:5 3;
+  class P06_K1 layer_retrieval,criticality_CORE;
+  class P06_K2 layer_retrieval,criticality_CORE;
+  class P06_K3 layer_retrieval,criticality_CORE;
+  class P06_K4 layer_retrieval,criticality_CORE;
+  class P06_K5 layer_retrieval,criticality_CORE;
+  class P06_K6 layer_retrieval,criticality_CORE;
+  class P06_K7 layer_retrieval,criticality_CORE;
+  class P06_Q1 layer_grounding,criticality_CORE;
+  class P06_Q2 layer_grounding,criticality_CORE;
+  class P06_Q3 layer_grounding,criticality_CORE;
+  class P06_Q4 layer_grounding,criticality_CORE;
+  class P06_Q5 layer_grounding,criticality_CORE;
+  class P06_Q6 layer_grounding,criticality_CORE;
+  class P06_Q7 layer_grounding,criticality_CORE;
+  class P06_Q8 layer_grounding,criticality_CORE;
+  class P06_Q9 layer_grounding,criticality_CORE;
+  class P06_Q10 layer_grounding,criticality_CORE;
+  class P06_T1 layer_graph,criticality_CORE;
+  class P06_T2 layer_graph,criticality_CORE;
+  class P06_T3 layer_graph,criticality_CORE;
+  class P06_T4 layer_graph,criticality_CORE;
+  class P06_T5 layer_graph,criticality_CORE;
+  class P06_T6 layer_graph,criticality_CORE;
+  class P06_T7 layer_graph,criticality_CORE;
+  class P06_T8 layer_graph,criticality_CORE;
+  class P06_T9 layer_graph,criticality_CORE;
+  class P06_T10 layer_graph,criticality_CORE;
+  class P06_T11 layer_graph,criticality_CORE;
+  class P06_T12 layer_graph,criticality_CORE;

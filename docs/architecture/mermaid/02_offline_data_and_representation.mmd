@@ -1,0 +1,101 @@
+%% 02 — Offline Data & Representation
+flowchart LR
+  subgraph G02_BASE["Row 1 — Audit, mapping & parallel frame banks"]
+    P02_RAW[("D1 — Raw Data<br/>[CORE: Core system] [CURRENT_TEMPLATE] [TEAM_DECISION]<br/>In: External or page-entry input for Raw Data on PAGE_02<br/>Do: Persist and retrieve Raw Data records by stable identifie…<br/>Impl: Read-only filesystem adapter over configured video roots;…<br/>Out: inventory to Data Audit [P02_AUDIT] → audio to Opti…")]
+    P02_AUDIT("D2 — Data Audit<br/>[CORE: Core system] [CURRENT_TEMPLATE] [TEAM_DECISION]<br/>In: inventory from Raw Data [P02_RAW]<br/>Do: Transform inventory from Raw Data [P02_RAW] into audited…<br/>Impl: Schema, checksum, duplicate-ID and media-metadata checks…<br/>Out: audited manifest to Unified ID & Temporal Mapping […")
+    P02_MAP("D3 — Unified ID & Temporal Mapping<br/>[CORE: Core system] [CURRENT_TEMPLATE] [TEAM_DECISION]<br/>In: audited manifest from Data Audit [P02_AUDIT]<br/>Do: Transform audited manifest from Data Audit [P02_AUDIT] in…<br/>Impl: Deterministic mapping tables for video_id, frame_id, time…<br/>Out: parallel BTC branch to BTC Auxiliary Frame Bank [P0…")
+    P02_BTC[("B1 — BTC Auxiliary Frame Bank<br/>[CORE: BTC baseline] [BASELINE] [BTC_CONFIRMED]<br/>In: parallel BTC branch from Unified ID & Temporal Mapp…<br/>Do: Persist and retrieve BTC Auxiliary Frame Bank records by…<br/>Impl: Load BTC-provided keyframes and mappings as an immutable…<br/>Out: BTC frames to BTC Feature / Object Loader [P02_BTCL…")]
+    P02_BTCLOAD("B2 — BTC Feature / Object Loader<br/>[CORE: Core system] [BASELINE] [BTC_CONFIRMED]<br/>In: BTC frames from BTC Auxiliary Frame Bank [P02_BTC]<br/>Do: Transform BTC frames from BTC Auxiliary Frame Bank [P02_B…<br/>Impl: Adapter for BTC CLIP ViT-B/32 features and Faster R-CNN I…<br/>Out: BTC features to BTC Frame Vector Index [P02_BTCIDX]…")
+    P02_BTCIDX[("B3 — BTC Frame Vector Index<br/>[CORE: Core system] [BASELINE] [BTC_CONFIRMED]<br/>In: BTC features from BTC Feature / Object Loader [P02_…<br/>Do: Persist and retrieve BTC Frame Vector Index records by st…<br/>Impl: Versioned BTC vector-index adapter; production ANN backen…<br/>Out: Terminal page output: BTCFrameVectorIndexArtifact")]
+    P02_TEAM[("T1 — Team Retrieval Frame Bank<br/>[CONDITIONAL: Team frame branch enabled] [EXPERIMENTAL] [TEAM_DECISION]<br/>In: parallel team branch from Unified ID & Temporal Map…<br/>Do: Persist and retrieve Team Retrieval Frame Bank records by…<br/>Impl: Shot-aware team branch with independent artifacts; never…<br/>Out: raw video to Shot Detection [P02_SHOT] → clips to S…")]
+    P02_SHOT("T2 — Shot Detection<br/>[CONDITIONAL: Team Frame Bank enabled] [EXPERIMENTAL] [TEAM_DECISION]<br/>In: raw video from Team Retrieval Frame Bank [P02_TEAM]<br/>Do: Transform raw video from Team Retrieval Frame Bank [P02_T…<br/>Impl: ShotDetector interface with TransNetV2 recorded only as a…<br/>Out: shot intervals to Shot Duration Analysis [P02_DURAT…")
+    P02_DURATION("T3 — Shot Duration Analysis<br/>[CONDITIONAL: Team Frame Bank enabled] [EXPERIMENTAL] [TEAM_DECISION]<br/>In: shot intervals from Shot Detection [P02_SHOT]<br/>Do: Transform shot intervals from Shot Detection [P02_SHOT] i…<br/>Impl: Compute duration buckets from validated shot boundaries t…<br/>Out: durations to Intra-shot Frame Selector [P02_SELECT]")
+    P02_SELECT("T4 — Intra-shot Frame Selector<br/>[CONDITIONAL: Team Frame Bank enabled] [EXPERIMENTAL] [TEAM_DECISION]<br/>In: durations from Shot Duration Analysis [P02_DURATION]<br/>Do: Transform durations from Shot Duration Analysis [P02_DURA…<br/>Impl: Shot-center baseline plus benchmarkable adaptive multi-fr…<br/>Out: selected frames to Long-shot Coverage Fallback [P02…")
+    P02_LONG("T5 — Long-shot Coverage Fallback<br/>[CONDITIONAL: Team Frame Bank enabled] [EXPERIMENTAL] [TEAM_DECISION]<br/>In: selected frames from Intra-shot Frame Selector [P02…<br/>Do: Transform selected frames from Intra-shot Frame Selector…<br/>Impl: Add deterministic coverage frames for long or unreliable…<br/>Out: covered long shots to Quality Filter [P02_QUALITY]")
+    P02_QUALITY("T6 — Quality Filter<br/>[CONDITIONAL: Team Frame Bank enabled] [EXPERIMENTAL] [TEAM_DECISION]<br/>In: covered long shots from Long-shot Coverage Fallback…<br/>Do: Transform covered long shots from Long-shot Coverage Fall…<br/>Impl: Rule-based blur, corruption and decode-quality gates with…<br/>Out: quality frames to Deduplication [P02_DEDUP]")
+    P02_DEDUP("T7 — Deduplication<br/>[CONDITIONAL: Team Frame Bank enabled] [EXPERIMENTAL] [TEAM_DECISION]<br/>In: quality frames from Quality Filter [P02_QUALITY]<br/>Do: Transform quality frames from Quality Filter [P02_QUALITY…<br/>Impl: Deterministic temporal and visual-near-duplicate suppress…<br/>Out: deduplicated frames to Frame Mapping [P02_FMAP]")
+    P02_FMAP[/"T8 — Frame Mapping<br/>[CONDITIONAL: Team Frame Bank enabled] [EXPERIMENTAL] [TEAM_DECISION]<br/>In: deduplicated frames from Deduplication [P02_DEDUP]<br/>Do: Validate schema, version and provenance for Frame Mapping…<br/>Impl: Map every selected frame back to source video, frame inde…<br/>Out: mapped frames to Team Visual Encoder [P02_ENCODER]"/]
+    P02_ENCODER("T9 — Team Visual Encoder<br/>[CONDITIONAL: Team Frame Bank enabled] [EXPERIMENTAL] [TEAM_DECISION]<br/>In: mapped frames from Frame Mapping [P02_FMAP]<br/>Do: Transform mapped frames from Frame Mapping [P02_FMAP] int…<br/>Impl: MultimodalEncoder interface; encoder remains unselected u…<br/>Out: team embeddings to Team Frame Vector Index [P02_TEA…")
+    P02_TEAMIDX[("T10 — Team Frame Vector Index<br/>[CONDITIONAL: Team Frame Bank enabled] [EXPERIMENTAL] [TEAM_DECISION]<br/>In: team embeddings from Team Visual Encoder [P02_ENCOD…<br/>Do: Persist and retrieve Team Frame Vector Index records by s…<br/>Impl: Versioned Team-branch vector-index adapter kept independe…<br/>Out: Terminal page output: TeamFrameVectorIndexArtifact")]
+  end
+  subgraph G02_EVID["Row 2 — Evidence, indexes & skeleton catalog"]
+    P02_SEGREP("E1 — Segment / Clip Representation<br/>[CONDITIONAL: Evidence branch enabled] [EXPERIMENTAL] [TEAM_DECISION]<br/>In: clips from Team Retrieval Frame Bank [P02_TEAM]<br/>Do: Transform clips from Team Retrieval Frame Bank [P02_TEAM]…<br/>Impl: Pluggable representation adapter with artifact provenance…<br/>Out: segment features to Segment Vector Index [P02_SEGID…")
+    P02_OBJECT("E2 — Object Evidence<br/>[CORE: Core retrieval] [BASELINE] [BTC_CONFIRMED]<br/>In: object JSON from BTC Feature / Object Loader [P02_B…<br/>Do: Transform object JSON from BTC Feature / Object Loader [P…<br/>Impl: Pluggable representation adapter with artifact provenance…<br/>Out: object refs to Object Index [P02_OBJIDX]")
+    P02_OCR("E3 — Optional OCR<br/>[OPTIONAL: Evidence branch enabled] [EXPERIMENTAL] [TEAM_DECISION]<br/>In: frames from Team Retrieval Frame Bank [P02_TEAM]<br/>Do: Transform frames from Team Retrieval Frame Bank [P02_TEAM…<br/>Impl: Pluggable representation adapter with artifact provenance…<br/>Out: OCR spans to OCR Lexical Index [P02_OCRIDX]")
+    P02_ASR("E4 — Optional ASR<br/>[OPTIONAL: Evidence branch enabled] [EXPERIMENTAL] [TEAM_DECISION]<br/>In: audio from Raw Data [P02_RAW]<br/>Do: Transform audio from Raw Data [P02_RAW] into ASR spans to…<br/>Impl: Pluggable representation adapter with artifact provenance…<br/>Out: ASR spans to ASR Lexical Index [P02_ASRIDX]")
+    P02_CAPTION("E5 — Caption / Event Description<br/>[OPTIONAL: Evidence branch enabled] [EXPERIMENTAL] [TEAM_DECISION]<br/>In: External or page-entry input for Caption / Event De…<br/>Do: Transform External or page-entry input for Caption / Even…<br/>Impl: Pluggable representation adapter with artifact provenance…<br/>Out: event hints to Skeleton Temporal Catalog [P02_SKEL]")
+    P02_SEGIDX[("S1 — Segment Vector Index<br/>[CONDITIONAL: Evidence branch enabled] [EXPERIMENTAL] [TEAM_DECISION]<br/>In: segment features from Segment / Clip Representation…<br/>Do: Persist and retrieve Segment Vector Index records by stab…<br/>Impl: Versioned artifact/index adapter keyed by stable IDs and…<br/>Out: lightweight segments to Skeleton Temporal Catalog […")]
+    P02_OCRIDX[("S2 — OCR Lexical Index<br/>[OPTIONAL: Evidence branch enabled] [EXPERIMENTAL] [TEAM_DECISION]<br/>In: OCR spans from Optional OCR [P02_OCR]<br/>Do: Persist and retrieve OCR Lexical Index records by stable…<br/>Impl: Versioned artifact/index adapter keyed by stable IDs and…<br/>Out: Terminal page output: OCRLexicalIndexArtifact")]
+    P02_ASRIDX[("S3 — ASR Lexical Index<br/>[OPTIONAL: Evidence branch enabled] [EXPERIMENTAL] [TEAM_DECISION]<br/>In: ASR spans from Optional ASR [P02_ASR]<br/>Do: Persist and retrieve ASR Lexical Index records by stable…<br/>Impl: Versioned artifact/index adapter keyed by stable IDs and…<br/>Out: Terminal page output: ASRLexicalIndexArtifact")]
+    P02_OBJIDX[("S4 — Object Index<br/>[CORE: Core retrieval] [BASELINE] [TEAM_DECISION]<br/>In: object refs from Object Evidence [P02_OBJECT]<br/>Do: Persist and retrieve Object Index records by stable ident…<br/>Impl: Versioned artifact/index adapter keyed by stable IDs and…<br/>Out: Terminal page output: ObjectIndexArtifact")]
+    P02_META[("S5 — Metadata Store<br/>[CORE: Core retrieval] [BASELINE] [TEAM_DECISION]<br/>In: metadata from Unified ID & Temporal Mapping [P02_MA…<br/>Do: Persist and retrieve Metadata Store records by stable ide…<br/>Impl: Versioned artifact/index adapter keyed by stable IDs and…<br/>Out: Terminal page output: MetadataStoreArtifact")]
+    P02_TMAP[("S6 — Temporal Mapping Store<br/>[CORE: Core retrieval] [BASELINE] [TEAM_DECISION]<br/>In: frame/time mapping from Unified ID & Temporal Mappi…<br/>Do: Persist and retrieve Temporal Mapping Store records by st…<br/>Impl: Versioned artifact/index adapter keyed by stable IDs and…<br/>Out: Terminal page output: TemporalMappingStoreArtifact")]
+    P02_SKEL[("S7 — Skeleton Temporal Catalog<br/>[CONDITIONAL: Graph Lane enabled] [PLANNED] [TEAM_DECISION]<br/>In: lightweight segments from Segment Vector Index [P02…<br/>Do: Persist and retrieve Skeleton Temporal Catalog records by…<br/>Impl: Versioned artifact/index adapter keyed by stable IDs and…<br/>Out: Terminal page output: SkeletonTemporalCatalogArtifa…")]
+  end
+  P02_RAW -->|inventory| P02_AUDIT
+  P02_AUDIT -->|audited manifest| P02_MAP
+  P02_MAP -->|parallel BTC branch| P02_BTC
+  P02_BTC -->|BTC frames| P02_BTCLOAD
+  P02_BTCLOAD -.->|ARTIFACT: BTC features| P02_BTCIDX
+  P02_MAP -->|parallel team branch| P02_TEAM
+  P02_TEAM -->|raw video| P02_SHOT
+  P02_SHOT -->|shot intervals| P02_DURATION
+  P02_DURATION -->|durations| P02_SELECT
+  P02_SELECT -->|selected frames| P02_LONG
+  P02_LONG -->|covered long shots| P02_QUALITY
+  P02_QUALITY -->|quality frames| P02_DEDUP
+  P02_DEDUP -->|deduplicated frames| P02_FMAP
+  P02_FMAP -->|mapped frames| P02_ENCODER
+  P02_ENCODER -->|team embeddings| P02_TEAMIDX
+  P02_RAW -.->|OPTIONAL: audio| P02_ASR
+  P02_TEAM -.->|OPTIONAL: clips| P02_SEGREP
+  P02_TEAM -.->|OPTIONAL: frames| P02_OCR
+  P02_BTCLOAD -->|EVIDENCE: object JSON| P02_OBJECT
+  P02_SEGREP -.->|ARTIFACT: segment features| P02_SEGIDX
+  P02_OCR -.->|ARTIFACT: OCR spans| P02_OCRIDX
+  P02_ASR -.->|ARTIFACT: ASR spans| P02_ASRIDX
+  P02_OBJECT -.->|ARTIFACT: object refs| P02_OBJIDX
+  P02_MAP -.->|ARTIFACT: metadata| P02_META
+  P02_MAP -.->|ARTIFACT: frame/time mapping| P02_TMAP
+  P02_SEGIDX -.->|ARTIFACT: lightweight segments| P02_SKEL
+  P02_CAPTION -.->|OPTIONAL: event hints| P02_SKEL
+  classDef layer_data fill:#dbeafe,stroke:#2563eb,color:#172554,stroke-width:1.5px;
+  classDef layer_representation fill:#ede9fe,stroke:#7c3aed,color:#2e1065,stroke-width:1.5px;
+  classDef layer_retrieval fill:#dcfce7,stroke:#16a34a,color:#14532d,stroke-width:1.5px;
+  classDef layer_graph fill:#ffedd5,stroke:#ea580c,color:#7c2d12,stroke-width:1.5px;
+  classDef layer_grounding fill:#ffe4e6,stroke:#e11d48,color:#881337,stroke-width:1.5px;
+  classDef layer_control fill:#fef3c7,stroke:#ca8a04,color:#713f12,stroke-width:1.5px;
+  classDef layer_output fill:#e2e8f0,stroke:#475569,color:#0f172a,stroke-width:1.5px;
+  classDef layer_storage fill:#f1f5f9,stroke:#64748b,color:#1e293b,stroke-width:1.5px;
+  classDef criticality_CORE stroke:#166534,stroke-width:3px;
+  classDef criticality_CONDITIONAL stroke:#7c3aed,stroke-width:2px,stroke-dasharray:5 3;
+  classDef criticality_OPTIONAL stroke:#a16207,stroke-width:2px,stroke-dasharray:5 3;
+  classDef criticality_DEFERRED stroke:#64748b,stroke-width:2px,stroke-dasharray:5 3;
+  class P02_RAW layer_data,criticality_CORE;
+  class P02_AUDIT layer_data,criticality_CORE;
+  class P02_MAP layer_data,criticality_CORE;
+  class P02_BTC layer_representation,criticality_CORE;
+  class P02_BTCLOAD layer_representation,criticality_CORE;
+  class P02_BTCIDX layer_storage,criticality_CORE;
+  class P02_TEAM layer_representation,criticality_CONDITIONAL;
+  class P02_SHOT layer_representation,criticality_CONDITIONAL;
+  class P02_DURATION layer_representation,criticality_CONDITIONAL;
+  class P02_SELECT layer_representation,criticality_CONDITIONAL;
+  class P02_LONG layer_representation,criticality_CONDITIONAL;
+  class P02_QUALITY layer_representation,criticality_CONDITIONAL;
+  class P02_DEDUP layer_representation,criticality_CONDITIONAL;
+  class P02_FMAP layer_representation,criticality_CONDITIONAL;
+  class P02_ENCODER layer_representation,criticality_CONDITIONAL;
+  class P02_TEAMIDX layer_storage,criticality_CONDITIONAL;
+  class P02_SEGREP layer_representation,criticality_CONDITIONAL;
+  class P02_OBJECT layer_representation,criticality_CORE;
+  class P02_OCR layer_representation,criticality_OPTIONAL;
+  class P02_ASR layer_representation,criticality_OPTIONAL;
+  class P02_CAPTION layer_representation,criticality_OPTIONAL;
+  class P02_SEGIDX layer_storage,criticality_CONDITIONAL;
+  class P02_OCRIDX layer_storage,criticality_OPTIONAL;
+  class P02_ASRIDX layer_storage,criticality_OPTIONAL;
+  class P02_OBJIDX layer_storage,criticality_CORE;
+  class P02_META layer_storage,criticality_CORE;
+  class P02_TMAP layer_storage,criticality_CORE;
+  class P02_SKEL layer_storage,criticality_CONDITIONAL;
