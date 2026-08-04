@@ -5,6 +5,16 @@ deterministic compact frame catalog and one contiguous float16 CLIP matrix, then
 chunked exact cosine or dot-product search. It does not scan mapping/keyframe/Object
 directories or extract frames.
 
+Kaggle working storage is not the handoff between separate notebook runs. Save a
+successful Stage 0 notebook version, then attach that version to Stage 1 through
+**Add Input → Notebook Output**. If Stage 0 was never saved with outputs, upload the
+locally downloaded `triage_eg_stage0_audit_bundle.zip` once as a private Kaggle
+Dataset. `AIC_STAGE0_BUNDLE` can explicitly select the mounted artifact directory or
+ZIP. Notebook 06 otherwise performs bounded discovery under `/kaggle/input` while
+excluding `AIC_DATA_ROOT`. For a ZIP it materializes only the five required manifests
+into `/kaggle/working`; it never reruns Stage 0 and no generated artifact is committed
+to Git.
+
 Internal retrieval preserves every BTC ordinal, including duplicate `frame_idx`
 rows. The KIS-compatible export alone stable-deduplicates `(video_id,
 original_frame_idx)`, keeping the highest score and then the smallest global row.
