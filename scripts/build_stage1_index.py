@@ -26,6 +26,8 @@ def main() -> int:
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--reuse-index", action="store_true")
     parser.add_argument("--strict-root", action="store_true")
+    parser.add_argument("--repo-root", type=Path)
+    parser.add_argument("--build-git-commit")
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args()
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
@@ -44,6 +46,8 @@ def main() -> int:
                 overwrite=args.overwrite,
                 reuse_index=args.reuse_index,
                 strict_root=args.strict_root,
+                repo_root=args.repo_root,
+                build_git_commit=args.build_git_commit,
             )
         )
     except (
@@ -59,6 +63,11 @@ def main() -> int:
     print(result.output_root)
     print("reused:", result.reused)
     print("self_retrieval:", result.summary["self_retrieval_status"])
+    print(
+        "build_git_commit:",
+        result.index_manifest["build_git_commit"],
+        f"({result.index_manifest['build_git_commit_source']})",
+    )
     return 0
 
 

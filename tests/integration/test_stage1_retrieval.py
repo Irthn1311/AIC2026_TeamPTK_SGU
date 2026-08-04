@@ -130,6 +130,8 @@ def test_cli_build_vector_search_text_block_and_benchmark(tmp_path: Path) -> Non
             "2",
             "--self-queries",
             "3",
+            "--build-git-commit",
+            "integration-commit",
             "--overwrite",
         ],
         capture_output=True,
@@ -137,6 +139,10 @@ def test_cli_build_vector_search_text_block_and_benchmark(tmp_path: Path) -> Non
         check=False,
     )
     assert build.returncode == 0, build.stderr
+    index_manifest = json.loads((output / "index/index_manifest.json").read_text())
+    run_manifest = json.loads((output / "run_manifest.json").read_text())
+    assert index_manifest["build_git_commit"] == "integration-commit"
+    assert run_manifest["build_git_commit"] == "integration-commit"
     query = tmp_path / "query.npy"
     np.save(query, np.eye(1, 512, dtype=np.float32))
     search = subprocess.run(

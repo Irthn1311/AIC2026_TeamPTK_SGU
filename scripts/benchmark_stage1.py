@@ -50,7 +50,7 @@ def main() -> int:
         return 2
     print("self_retrieval:", self_report["status"])
     print("latency:", report["latency_seconds"])
-    return 0 if self_report["status"] == "PASS" else 1
+    return 0 if self_report["status"] in {"PASS", "PASS_WITH_WARNINGS"} else 1
 
 
 if __name__ == "__main__":

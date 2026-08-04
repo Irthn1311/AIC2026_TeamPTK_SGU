@@ -156,3 +156,180 @@ class NumPyMemmapExactIndex:
         all_scores = np.stack(best_scores)
         all_rows = np.stack(best_rows)
         return all_scores, all_rows
+
+
+def exact_cosine_self_diagnostics(
+    vectors: np.ndarray,
+    norms: np.ndarray,
+    query_rows: np.ndarray,
+    *,
+    top_k: int = 5,
+    diagnostic_top_k: int = 100,
+    tie_tolerance: float = 1e-6,
+    chunk_rows: int = 16_384,
+) -> list[dict[str, object]]:
+    """Compute tie-aware full-corpus self ranks without materializing all scores."""
+
+    if vectors.ndim != 2 or vectors.shape[0] == 0 or vectors.shape[1] == 0:
+        raise ValueError("vectors must be a non-empty 2D matrix")
+    if norms.ndim != 1:
+        raise ValueError("norms must be one-dimensional")
+    rows = np.asarray(query_rows, dtype=np.int64)
+    if rows.ndim != 1 or len(rows) == 0:
+        raise ValueError("query_rows must be a non-empty one-dimensional array")
+    if min(top_k, diagnostic_top_k, chunk_rows) <= 0 or tie_tolerance < 0:
+        raise ValueError("diagnostic limits must be positive and tolerance non-negative")
+
+    scan_size = min(len(vectors), len(norms))
+    results: list[dict[str, object]] = []
+    valid_result_indices: list[int] = []
+    valid_queries: list[np.ndarray] = []
+    direct_scores: list[float] = []
+    query_norm_values: list[float] = []
+    for query_row in rows:
+        resolvable = 0 <= query_row < len(vectors) and query_row < len(norms)
+        result: dict[str, object] = {
+            "global_row": int(query_row),
+            "query_row_resolvable": bool(resolvable),
+            "corpus_shape_valid": len(vectors) == len(norms),
+            "query_norm": None,
+            "stored_norm": None,
+            "direct_self_score": None,
+            "self_score_abs_error_from_one": None,
+            "self_score_finite": False,
+            "raw_higher_count": None,
+            "strictly_better_beyond_tolerance_count": None,
+            "tie_equivalent_count": None,
+            "exact_equal_before_count": None,
+            "actual_deterministic_rank": None,
+            "included_top_k": False,
+            "queried_row_top1": False,
+            "queried_row_present_in_diagnostic_top_k": False,
+            "non_finite_corpus_score_count": None,
+            "diagnostic_top_candidates": [],
+        }
+        results.append(result)
+        if not resolvable:
+            continue
+        query = np.asarray(vectors[int(query_row)], dtype=np.float32)
+        query_norm = float(np.linalg.norm(query))
+        stored_norm = float(norms[int(query_row)])
+        direct_score = float("nan")
+        if (
+            np.isfinite(query).all()
+            and np.isfinite(query_norm)
+            and query_norm > 0
+            and np.isfinite(stored_norm)
+            and stored_norm > 0
+        ):
+            direct_score = float(
+                np.float32(np.dot(query, query) / (query_norm * stored_norm))
+            )
+        result.update(
+            {
+                "query_norm": query_norm if np.isfinite(query_norm) else None,
+                "stored_norm": stored_norm if np.isfinite(stored_norm) else None,
+                "direct_self_score": direct_score if np.isfinite(direct_score) else None,
+                "self_score_abs_error_from_one": (
+                    abs(direct_score - 1.0) if np.isfinite(direct_score) else None
+                ),
+                "self_score_finite": bool(np.isfinite(direct_score)),
+            }
+        )
+        if not np.isfinite(direct_score):
+            continue
+        valid_result_indices.append(len(results) - 1)
+        valid_queries.append(query)
+        direct_scores.append(direct_score)
+        query_norm_values.append(query_norm)
+
+    if not valid_queries or scan_size == 0:
+        return results
+
+    queries = np.stack(valid_queries).astype(np.float32, copy=False)
+    direct = np.asarray(direct_scores, dtype=np.float32)
+    query_norms = np.asarray(query_norm_values, dtype=np.float32)
+    raw_higher = np.zeros(len(queries), dtype=np.int64)
+    strict_higher = np.zeros(len(queries), dtype=np.int64)
+    ties = np.zeros(len(queries), dtype=np.int64)
+    exact_before = np.zeros(len(queries), dtype=np.int64)
+    non_finite = np.zeros(len(queries), dtype=np.int64)
+    best_scores = [np.empty(0, dtype=np.float32) for _ in queries]
+    best_rows = [np.empty(0, dtype=np.int64) for _ in queries]
+    result_count = min(diagnostic_top_k, scan_size)
+
+    for start in range(0, scan_size, chunk_rows):
+        stop = min(start + chunk_rows, scan_size)
+        chunk = np.asarray(vectors[start:stop], dtype=np.float32)
+        with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+            scores = (chunk @ queries.T) / (norms[start:stop, None] * query_norms[None, :])
+        chunk_global_rows = np.arange(start, stop, dtype=np.int64)
+        for query_index in range(len(queries)):
+            values = scores[:, query_index].astype(np.float32, copy=False)
+            finite = np.isfinite(values)
+            non_finite[query_index] += int(np.sum(~finite))
+            finite_values = values[finite]
+            finite_rows = chunk_global_rows[finite]
+            self_score = direct[query_index]
+            raw_higher[query_index] += int(np.sum(finite_values > self_score))
+            strict_higher[query_index] += int(
+                np.sum(finite_values > self_score + tie_tolerance)
+            )
+            ties[query_index] += int(
+                np.sum(np.abs(finite_values - self_score) <= tie_tolerance)
+            )
+            query_row = rows[valid_result_indices[query_index]]
+            exact_before[query_index] += int(
+                np.sum((finite_values == self_score) & (finite_rows < query_row))
+            )
+            combined_scores = np.concatenate((best_scores[query_index], finite_values))
+            combined_rows = np.concatenate((best_rows[query_index], finite_rows))
+            best_scores[query_index], best_rows[query_index] = (
+                NumPyMemmapExactIndex._bounded_topk(
+                    combined_scores, combined_rows, result_count
+                )
+            )
+
+    for query_index, result_index in enumerate(valid_result_indices):
+        result = results[result_index]
+        query_row = int(result["global_row"])
+        selected_scores = best_scores[query_index]
+        selected_rows = best_rows[query_index]
+        requested_rows = selected_rows[: min(top_k, len(selected_rows))]
+        diagnostic_positions = np.flatnonzero(selected_rows == query_row)
+        candidates = []
+        for rank, (score, candidate_row) in enumerate(
+            zip(selected_scores, selected_rows, strict=True), start=1
+        ):
+            candidates.append(
+                {
+                    "rank": rank,
+                    "global_row": int(candidate_row),
+                    "score": float(score),
+                    "delta_from_self": float(score - direct[query_index]),
+                    "within_tie_tolerance": bool(
+                        abs(float(score - direct[query_index])) <= tie_tolerance
+                    ),
+                }
+            )
+        result.update(
+            {
+                "raw_higher_count": int(raw_higher[query_index]),
+                "strictly_better_beyond_tolerance_count": int(
+                    strict_higher[query_index]
+                ),
+                "tie_equivalent_count": int(ties[query_index]),
+                "exact_equal_before_count": int(exact_before[query_index]),
+                "actual_deterministic_rank": int(
+                    1 + raw_higher[query_index] + exact_before[query_index]
+                ),
+                "included_top_k": bool(np.any(requested_rows == query_row)),
+                "queried_row_top1": bool(len(selected_rows) and selected_rows[0] == query_row),
+                "queried_row_present_in_diagnostic_top_k": bool(
+                    len(diagnostic_positions)
+                ),
+                "non_finite_corpus_score_count": int(non_finite[query_index]),
+                "diagnostic_top_candidates": candidates,
+            }
+        )
+    return results

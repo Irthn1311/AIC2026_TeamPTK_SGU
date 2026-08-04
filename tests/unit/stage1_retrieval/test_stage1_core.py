@@ -198,13 +198,67 @@ def test_catalog_rejects_duplicate_video_n(tmp_path: Path) -> None:
 
 def test_build_memmap_offsets_norms_and_catalog(tmp_path: Path) -> None:
     stage0, data = make_fixture(tmp_path)
-    result = build_index(config(tmp_path, stage0, data, overwrite=True))
+    result = build_index(
+        config(tmp_path, stage0, data, overwrite=True, build_git_commit="test-commit")
+    )
     vectors = np.load(result.output_root / "index/clip_vectors.f16.npy", mmap_mode="r")
     norms = np.load(result.output_root / "index/vector_norms.f32.npy", mmap_mode="r")
     assert vectors.shape == (6, 512) and vectors.dtype == np.float16
     assert np.allclose(norms, 1)
     assert np.argmax(vectors, axis=1).tolist() == list(range(6))
     assert result.summary["self_retrieval_status"] == "PASS"
+    run_manifest = json.loads((result.output_root / "run_manifest.json").read_text())
+    assert result.index_manifest["build_git_commit"] == "test-commit"
+    assert result.index_manifest["build_git_commit_source"] == "CLI"
+    assert run_manifest["build_git_commit"] == result.index_manifest["build_git_commit"]
+    assert run_manifest["build_git_commit_source"] == "CLI"
+    report = json.loads(
+        (result.output_root / "benchmark/self_retrieval_report.json").read_text()
+    )
+    assert set(report["classification_counts"]) == {
+        "PASS_TOP1",
+        "PASS_TOP_K",
+        "TIE_SATURATION",
+        "NEAR_TIE_RANKED_OUT",
+        "SELF_SCORE_INVALID",
+        "STRICTLY_BETTER_VECTOR_ANOMALY",
+        "INDEX_CATALOG_ALIGNMENT_FAILURE",
+        "QUERY_ROW_NOT_FOUND",
+    }
+    assert {"video_id", "n", "original_frame_idx"} <= set(
+        report["query_diagnostics"][0]["diagnostic_top_candidates"][0]
+    )
+
+
+def test_build_maps_tie_warning_to_ready_with_tie_warnings(tmp_path: Path) -> None:
+    stage0, data = make_fixture(tmp_path)
+    for path in data.glob("clip-features/*.npy"):
+        matrix = np.load(path)
+        matrix[:] = 0
+        matrix[:, 0] = 1
+        np.save(path, matrix)
+    result = build_index(config(tmp_path, stage0, data, overwrite=True))
+    assert result.summary["self_retrieval_status"] == "PASS_WITH_WARNINGS"
+    assert result.summary["next_stage_readiness"]["corpus_index"] == (
+        "READY_WITH_TIE_WARNINGS"
+    )
+    report = json.loads(
+        (result.output_root / "benchmark/self_retrieval_report.json").read_text()
+    )
+    assert report["classification_counts"]["TIE_SATURATION"] == 1
+    assert report["issues"][0]["code"] == "SELF_RETRIEVAL_TIE_SATURATION"
+
+
+def test_catalog_array_length_mismatch_fails_self_retrieval(tmp_path: Path) -> None:
+    stage0, data = make_fixture(tmp_path)
+    result = build_index(config(tmp_path, stage0, data, overwrite=True))
+    path = result.output_root / "index/frame_n.npy"
+    np.save(path, np.load(path)[:-1])
+    from triage_eg.retrieval.stage1.benchmark import run_self_retrieval
+
+    report = run_self_retrieval(result.output_root, samples=2)
+    assert report["status"] == "FAIL"
+    assert report["classification_counts"]["INDEX_CATALOG_ALIGNMENT_FAILURE"] == 2
 
 
 @pytest.mark.parametrize(

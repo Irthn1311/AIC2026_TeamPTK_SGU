@@ -1,4 +1,4 @@
-# Stage 1 BTC Retrieval Baseline v0.1
+# Stage 1 BTC Retrieval Baseline v0.1.1
 
 Stage 1 consumes the completed Stage 0 manifests as its source of truth. It builds a
 deterministic compact frame catalog and one contiguous float16 CLIP matrix, then runs
@@ -28,7 +28,9 @@ checkpoint. The optional `open_clip` adapter accepts only an existing local
 
 Index builds use a sibling staging tree. With `--overwrite`, the previous complete
 output is swapped out only after vector copying, manifest generation, and
-self-retrieval finish; a failed build leaves the previous output intact.
+self-retrieval finish; a failed build leaves the previous output intact. Notebook 06
+defaults to a clean overwrite build. Reuse occurs only when explicitly requested with
+`AIC_STAGE1_BUILD_INDEX=0` and `AIC_STAGE1_REUSE_INDEX=1`.
 
 ```bash
 python scripts/build_stage1_index.py \
@@ -65,4 +67,8 @@ bundle excludes vector/catalog arrays; setting `AIC_ZIP_INDEX=1` creates the sep
 potentially large `triage_eg_stage1_index_bundle.zip`.
 
 Self-retrieval verifies catalog/vector alignment, not semantic retrieval quality.
+Its full-corpus, chunked diagnostic distinguishes deterministic tie saturation from
+strict score anomalies and catalog/index misalignment. A valid row ranked outside
+top-k only because its numerical-equivalence class is larger than top-k produces
+`PASS_WITH_WARNINGS` and `READY_WITH_TIE_WARNINGS`, not a semantic retrieval failure.
 Latency benchmarks intentionally do not report Recall@K without ground truth.

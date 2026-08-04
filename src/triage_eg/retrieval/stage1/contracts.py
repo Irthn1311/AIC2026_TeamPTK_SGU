@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
-STAGE1_VERSION = "0.1.0"
+STAGE1_VERSION = "0.1.1"
 
 
 @dataclass(frozen=True)

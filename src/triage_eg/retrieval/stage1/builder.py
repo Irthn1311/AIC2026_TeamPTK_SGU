@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -13,7 +14,6 @@ from typing import Any
 
 import numpy as np
 
-from triage_eg.common.run_context import current_git_commit
 from triage_eg.data.dataset_survey import KAGGLE_INPUT_ROOT, _is_within
 from triage_eg.retrieval.stage1.catalog import CatalogData, load_catalog_rows, write_compact_catalog
 from triage_eg.retrieval.stage1.contracts import STAGE1_VERSION, EncoderContract
@@ -36,6 +36,8 @@ class Stage1BuildConfig:
     overwrite: bool = False
     reuse_index: bool = False
     strict_root: bool = False
+    repo_root: Path | None = None
+    build_git_commit: str | None = None
 
     def __post_init__(self) -> None:
         if self.backend not in {"numpy_exact", "faiss_flat_ip"}:
@@ -67,6 +69,46 @@ class BuildResult:
     summary: dict[str, Any]
     index_manifest: dict[str, Any]
     reused: bool
+
+
+def resolve_git_commit(
+    repo_root: Path, explicit_commit: str | None = None
+) -> tuple[str, str]:
+    """Resolve build provenance without invoking a shell."""
+
+    explicit = (explicit_commit or "").strip()
+    if explicit:
+        return explicit, "CLI"
+    environment = os.environ.get("AIC_RESOLVED_GIT_COMMIT", "").strip()
+    if environment:
+        return environment, "ENV"
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return "UNKNOWN", "UNKNOWN"
+    commit = result.stdout.strip()
+    if result.returncode == 0 and commit:
+        return commit, "GIT_AUTO_DETECT"
+    return "UNKNOWN", "UNKNOWN"
+
+
+def corpus_readiness_for_self_status(status: str) -> str:
+    """Map the self-integrity aggregate onto corpus-index readiness."""
+
+    mapping = {
+        "PASS": "READY",
+        "PASS_WITH_WARNINGS": "READY_WITH_TIE_WARNINGS",
+        "FAIL": "BLOCKED_SELF_RETRIEVAL_FAILED",
+    }
+    try:
+        return mapping[status]
+    except KeyError as error:
+        raise ValueError(f"Unknown self-retrieval status: {status}") from error
 
 
 def _hash(value: Any) -> str:
@@ -102,7 +144,7 @@ def _source_records(bundle: Stage0Bundle, dataset_root: Path) -> tuple[list[dict
 
 def _build_fingerprint(config: Stage1BuildConfig) -> str:
     payload = asdict(config)
-    for name in ("overwrite", "reuse_index"):
+    for name in ("overwrite", "reuse_index", "repo_root", "build_git_commit"):
         payload.pop(name)
     for name in ("stage0_root", "dataset_root", "output_root"):
         payload[name] = str(Path(payload[name]).resolve(strict=False))
@@ -218,6 +260,8 @@ def _index_manifest(
     source_fingerprint: str,
     build_fingerprint: str,
     started_at: str,
+    build_git_commit: str,
+    build_git_commit_source: str,
 ) -> dict[str, Any]:
     return {
         "stage1_version": STAGE1_VERSION,
@@ -233,7 +277,8 @@ def _index_manifest(
         "backend": config.backend,
         "source_clip_files": len(bundle.clip_records),
         "source_fingerprint": source_fingerprint,
-        "build_git_commit": current_git_commit(),
+        "build_git_commit": build_git_commit,
+        "build_git_commit_source": build_git_commit_source,
         "build_config_fingerprint": build_fingerprint,
         "started_at": started_at,
         "completed_at": datetime.now(UTC).isoformat(),
@@ -262,6 +307,14 @@ def _publish_staged_output(staging: Path, output: Path, *, overwrite: bool) -> N
 
 def build_index(config: Stage1BuildConfig) -> BuildResult:
     started_at = datetime.now(UTC).isoformat()
+    repo_root = (
+        config.repo_root.expanduser().resolve(strict=False)
+        if config.repo_root is not None
+        else Path(__file__).resolve().parents[4]
+    )
+    build_git_commit, build_git_commit_source = resolve_git_commit(
+        repo_root, config.build_git_commit
+    )
     dataset, output = _validate_roots(config)
     bundle = load_stage0_bundle(config.stage0_root, require_full=config.expected_videos == 873)
     if (
@@ -306,7 +359,13 @@ def build_index(config: Stage1BuildConfig) -> BuildResult:
         catalog_manifest = write_compact_catalog(catalog, temporary_index)
         _copy_vectors(config, dataset, catalog, records, temporary_index)
         manifest = _index_manifest(
-            config, bundle, source_fingerprint, build_fingerprint, started_at
+            config,
+            bundle,
+            source_fingerprint,
+            build_fingerprint,
+            started_at,
+            build_git_commit,
+            build_git_commit_source,
         )
         (temporary_index / "index_manifest.json").write_text(
             json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
@@ -330,6 +389,8 @@ def build_index(config: Stage1BuildConfig) -> BuildResult:
             "catalog_rows": config.expected_rows,
             "videos": config.expected_videos,
             "index_status": "COMPLETE",
+            "build_git_commit": build_git_commit,
+            "build_git_commit_source": build_git_commit_source,
             "self_retrieval_status": "PENDING",
             "encoder_compatibility_status": "BLOCKED",
             "text_search_available": False,
@@ -350,10 +411,9 @@ def build_index(config: Stage1BuildConfig) -> BuildResult:
             chunk_rows=config.search_chunk_rows,
         )
         summary["self_retrieval_status"] = self_report["status"]
-        if self_report["status"] != "PASS":
-            summary["next_stage_readiness"]["corpus_index"] = (
-                "BLOCKED_SELF_RETRIEVAL_FAILED"
-            )
+        summary["next_stage_readiness"]["corpus_index"] = (
+            corpus_readiness_for_self_status(self_report["status"])
+        )
         (staging / "stage1_summary.json").write_text(
             json.dumps(summary, indent=2) + "\n", encoding="utf-8"
         )
@@ -364,6 +424,8 @@ def build_index(config: Stage1BuildConfig) -> BuildResult:
                     "status": "COMPLETE",
                     "build_config_fingerprint": build_fingerprint,
                     "index_fingerprint": index_fingerprint,
+                    "build_git_commit": build_git_commit,
+                    "build_git_commit_source": build_git_commit_source,
                     "stage0_root": str(config.stage0_root.resolve(strict=False)),
                     "dataset_root": str(dataset),
                 },
