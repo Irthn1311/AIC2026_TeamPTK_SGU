@@ -151,6 +151,13 @@ TRIAGE-EG is reference material only and must remain untouched.
 
 ## Phase 2 exact KIS baseline
 
+The smoke notebook defaults to `DEVICE="auto"`: it uses CUDA when available and CPU
+otherwise. `DEVICE="cuda"` fails clearly when CUDA is unavailable, while
+`DEVICE="cpu"` is always supported. Only the canonical OpenAI CLIP text encoder uses
+the selected device. Exact chunked NumPy cosine retrieval remains on CPU as the
+correctness baseline. GPU selection changes latency, not retrieval semantics or ranking
+quality, and the notebook does not attempt untested multi-GPU execution.
+
 Create an explicit feature manifest whose paths point to attached Kaggle inputs:
 
 ```json
@@ -174,12 +181,31 @@ python -m system_tai.kis.retrieve \
   --query "a person riding a motorcycle in heavy rain" \
   --top-k 100 \
   --output /kaggle/working/system_tai_outputs/kis_smoke/q001.jsonl \
-  --device cpu \
+  --device cuda \
   --chunk-size 4096
 ```
 
 The default exporter emits only `query_id`, `rank`, `video_id`, and `frame_id`.
 `frame_id` is copied exactly from mapping CSV `frame_idx`. Temporal suppression is
 optional and disabled by default. Use `notebooks/phase_2_kis_smoke.ipynb` for the clean
-three-video, five-query Kaggle smoke path. Official BTC submission output remains a
-separate unresolved boundary.
+three-video diagnostic smoke path. Optional display diversity uses the existing
+post-ranking suppression only for manual Top-10 visualization; canonical Top-100 JSONL
+remains unsuppressed. Official BTC submission output remains a separate unresolved
+boundary.
+
+### Real semantic smoke findings
+
+The executed Kaggle smoke passed the technical pipeline: exact retrieval completed,
+500 canonical JSONL records were written, and validation passed with zero errors. This
+is not a semantic-quality pass.
+
+- Direct Vietnamese semantic retrieval: **FAIL**.
+- English translations improved retrieval, but results were mixed.
+- `vi_03_en` was semantically strong.
+- `vi_01_en` and `vi_02_en` were only partially relevant.
+- Limited three-video corpus coverage and ambiguity between an action/state description
+  and a single still frame remain material limitations.
+
+The notebook retains the Vietnamese inputs as negative/diagnostic evidence and pairs
+them with explicit English translations. Translation is not automatically considered
+successful and does not alter the canonical exact ranking policy.

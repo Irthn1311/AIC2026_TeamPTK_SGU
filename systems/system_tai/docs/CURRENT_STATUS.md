@@ -8,8 +8,8 @@
 
 The workbook and Canva design have been reviewed. Phase 1 input auditing, Phase 1.5C
 compatibility calibration, and the Phase 2 exact NumPy KIS implementation are present.
-Real compatibility evidence covers `L21_V001`, `L21_V002`, and `L22_V001`; real
-text-query retrieval quality has not yet been evaluated.
+Real compatibility evidence covers `L21_V001`, `L21_V002`, and `L22_V001`. The first
+real semantic smoke passed the technical pipeline but did not pass semantic quality.
 
 No TRIAGE-EG source, tests, configs, documentation, or generated assets belong to
 `system_tai`. All current implementation is isolated under `systems/system_tai`.
@@ -28,14 +28,14 @@ No TRIAGE-EG source, tests, configs, documentation, or generated assets belong t
 | Mapping-rounding audit | IMPLEMENTED | Decimal-exact, binary-float-truncation, and Decimal-nearest diagnostics with regression tests | Numeric generation rule remains inferred. |
 | Raw-frame calibration | IMPLEMENTED | Three decoder agreements, 42 explained decisive samples, 3 ambiguous, 0 contradictory decisive | Dataset-wide reproduction is pending. |
 | BTC CLIP identification | IMPLEMENTED | 867 real rows across three videos identify official OpenAI ViT-B/32 and OpenCLIP QuickGELU/openai as equivalent compatible candidates | Three-video scope; exact preprocessing is not claimed BTC-official. |
-| Kaggle notebook/config | IMPLEMENTED | Notebook structure and example YAML are locally validated | Real-data cells have not run locally. |
+| Kaggle notebook/config | IMPLEMENTED | Bounded discovery and a real semantic smoke completed in Kaggle | Real-data cells cannot run locally. |
 | Compatible query encoder | IMPLEMENTED | Optional official OpenAI CLIP public-API adapter with fake-module tests | Requires dependency and cached/explicitly downloadable weights at runtime. |
-| Vector retrieval | BASELINE | Exact chunked NumPy cosine search and deterministic multi-video Top-K tests | No real text-query quality result yet; FAISS deferred. |
-| Candidate construction | IMPLEMENTED | Immutable candidates copy `frame_idx` through the physical-row mapping | Real Kaggle smoke is pending. |
+| Vector retrieval | BASELINE | Exact chunked NumPy cosine search passed the real technical smoke | Direct Vietnamese quality failed; translated-English quality is mixed; FAISS deferred. |
+| Candidate construction | IMPLEMENTED | Immutable candidates copy `frame_idx` through the physical-row mapping | Corpus coverage remains limited to three videos. |
 | Grouping and Top-100 ranking | BASELINE | Exact rank is canonical; optional suppression is tested and disabled by default | Suppression policy is not benchmarked. |
 | Checkpoint exporter | IMPLEMENTED | Core-only UTF-8 JSONL and explicit internal mode tested | Accepted schema remains proposed. |
 | Validator | IMPLEMENTED | Structured syntax/type/rank/duplicate/registry checks tested | This local validator is not yet the accepted shared validator. |
-| Phase 2 CLI/notebook | IMPLEMENTED | CLI composition and clean five-query notebook path | Notebook cells have not been executed locally or on Kaggle. |
+| Phase 2 CLI/notebook | IMPLEMENTED | Real smoke wrote 500 valid JSONL records with zero validator errors | Semantic quality did not pass. |
 | Fixture evaluator | PLANNED | Interface specified | Not an official evaluator. |
 | Official BTC exporter | DEFERRED | Separate boundary recognized | Official format is unresolved. |
 | Q&A and TRAKE | DEFERRED | Personal design reference | Outside the first slice. |
@@ -76,14 +76,16 @@ See `docs/KAGGLE_PHASE_1_5_REPORT.md` for the evidence boundary and exact comman
 
 ## Pending real Kaggle work
 
-- Run the five-query Phase 2 smoke path and manually inspect Top-10 results.
 - Build the small positive/distractor sanity benchmark and report Video Recall@K.
 - Extend compatibility checks beyond the current three videos before dataset-wide claims.
+- Investigate language handling and still-frame action/state ambiguity without changing
+  the exact baseline to fit anecdotal results.
 
 ## Unverified
 
 - BTC-official image preprocessing and dataset-wide CLIP compatibility.
-- Text-query retrieval quality on real queries.
+- Robust multilingual text-query retrieval quality: direct Vietnamese failed and the
+  first English-translated diagnostic was mixed.
 - Binary-float truncation and nearest timestamp extraction remain inferred generation
   behavior even though the current three-video evidence is consistent with them.
 
@@ -94,20 +96,23 @@ See `docs/KAGGLE_PHASE_1_5_REPORT.md` for the evidence boundary and exact comman
 
 ## Validation status
 
-Gate A and Gate B have not run. Local Phase 2 tests use deterministic synthetic fixtures
-and do not measure retrieval quality. Three-video encoder compatibility is not a
-retrieval gate or official performance evidence.
+The technical integration smoke passed: exact retrieval completed, 500 canonical JSONL
+records were written, and the validator passed with zero errors. Direct Vietnamese
+semantic retrieval failed. English-translated retrieval improved but remained mixed:
+`vi_03_en` was strong, while `vi_01_en` and `vi_02_en` were partially relevant. Gate B
+and Phase 2 semantic quality have not passed.
 
-Codex local execution cannot run the BTC smoke path because the private dataset and
-model weights are attached only inside Kaggle. The query encoder, retrieval, JSONL
-export, and local validator have test evidence; no real-query benchmark exists yet.
+Codex local execution cannot reproduce the BTC smoke because the private dataset and
+model weights are attached only inside Kaggle. Corpus coverage and ambiguity between
+action/state language and a single still frame remain important limitations.
 
 ## Remaining blockers and decisions
 
 ### Blocks evidence-backed semantic KIS readiness
 
-- Five-query manual Kaggle smoke execution.
 - Positive/distractor sanity benchmark and expected intervals.
+- Multilingual query policy supported by measured evidence.
+- Broader corpus coverage and handling of still-frame action/state ambiguity.
 
 ### Blocks final shared checkpoint compatibility
 
@@ -120,6 +125,6 @@ export, and local validator have test evidence; no real-query benchmark exists y
 
 ## Next milestone
 
-Run `notebooks/phase_2_kis_smoke.ipynb` against the three audited videos, inspect Top-10
-for five Vietnamese/English queries, export/validate Top-100, and record observations
-without calling them official performance.
+Run the paired Vietnamese/English diagnostic notebook with optional display-only
+diversity, then build a labeled positive/distractor benchmark. Keep unsuppressed exact
+Top-100 as canonical output and do not call the diagnostic findings official performance.
