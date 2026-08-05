@@ -1,0 +1,6 @@
+{"query_id":"q_en_001","text":"a person cooking in a kitchen","language":"en","type":"action"}
+{"query_id":"q_vi_001","text":"một người đang nấu ăn trong bếp","language":"vi","type":"action"}
+{"query_id":"q_en_002","text":"a red car driving on a road","language":"en","type":"object"}
+{"query_id":"q_vi_002","text":"một chiếc ô tô màu đỏ đang chạy trên đường","language":"vi","type":"object"}
+{"query_id":"q_en_003","text":"a crowded outdoor scene","language":"en","type":"scene"}
+{"query_id":"q_vi_003","text":"một cảnh ngoài trời đông người","language":"vi","type":"difficult"}

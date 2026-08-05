@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 from collections import defaultdict
 from pathlib import Path
 from time import monotonic
@@ -169,8 +170,11 @@ def write_query_outputs(
     *,
     search_latency_seconds: float,
     encoder_status: str,
+    query_directory_name: str = "queries",
 ) -> dict[str, Path]:
-    query_root = root / "queries" / config.query_id
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", query_directory_name):
+        raise ValueError("query_directory_name must be a safe path component")
+    query_root = root / query_directory_name / config.query_id
     query_root.mkdir(parents=True, exist_ok=True)
     frames_path = query_root / "ranked_frames.jsonl"
     videos_path = query_root / "ranked_videos.jsonl"

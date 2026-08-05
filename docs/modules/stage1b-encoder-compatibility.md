@@ -1,0 +1,66 @@
+# Stage 1B — CLIP Encoder Compatibility Validation v0.1
+
+Stage 1B identifies a reproducible text/image encoder contract that recreates the
+stored BTC CLIP image-vector space. It reuses the completed Stage 0 manifests and
+Stage 1A index; it does not rebuild either stage or scan the full corpus.
+
+## Decision boundary
+
+Candidates are disabled by default in
+`configs/retrieval/stage1b_encoder_candidates.yaml`. A candidate runs only when it
+is explicitly enabled, declares 512 output dimensions, has its dependency already
+installed, and resolves to a local checkpoint or model-asset directory. The code
+contains no model-download path.
+
+The configured thresholds are a `PROJECT_DEFINED_EMPIRICAL_GATE`, not a universal
+CLIP standard. `VERIFIED` requires adequate samples, finite 512-dimensional output,
+pairwise cosine and stored-row retrieval alignment above the configured thresholds,
+and complete checkpoint, tokenizer, and preprocessing provenance. Dimension or
+folder naming alone never verifies a candidate.
+
+If equivalent implementations pass, candidate-to-candidate cosine is recorded and
+the canonical adapter is chosen by the explicitly configured `runtime_priority`,
+then stable candidate ID. This verifies a model space; it does not prove which
+library originally produced BTC features.
+
+## Bounded evidence and probe
+
+Evidence collection examines a bounded set of small repository and dataset metadata
+files. It skips keyframe, object, and video trees. The deterministic probe selects at
+most 100 catalog rows across videos using early, middle, late, partition-spread, and
+seeded-random positions. Each selected JPG is encoded once per enabled candidate and
+compared with the corresponding Stage 1A vector by cosine and exact-search rank.
+
+## Text-search gate
+
+The existing Stage 1 encoder validation, exact search, compact catalog, ranking, and
+query-output writer are reused. Text smoke queries run only for a `VERIFIED`
+candidate. They validate execution, vector shape/finite/nonzero properties, mapping,
+export, and latency; they are not a retrieval-quality benchmark. In particular,
+model-space compatibility does not establish Vietnamese retrieval quality. No
+translation, multilingual projection, or query expansion is added here.
+
+## Kaggle run
+
+Provide Stage 0 and Stage 1A saved outputs plus any dependency/checkpoint as Kaggle
+inputs, edit or generate an explicit candidate config containing the mounted local
+checkpoint path, then run `notebooks/07_stage1b_encoder_compatibility.ipynb`.
+The final cell creates
+`/kaggle/working/triage_eg_stage1b_encoder_compatibility_reports.zip` containing
+report artifacts only. If no enabled asset is available, a complete `BLOCKED`
+report is the expected first-run result.
+
+The equivalent CLI is:
+
+```bash
+python scripts/run_stage1b_encoder_compatibility.py \
+  --repo-root /kaggle/working/AIC2026_TeamPTK_SGU \
+  --dataset-root /kaggle/input/datasets/nadkli/dataset-aic \
+  --stage0-root /kaggle/working/triage_eg_stage0_audit \
+  --stage1-root /kaggle/working/triage_eg_stage1_baseline \
+  --output-root /kaggle/working/triage_eg_stage1b_encoder_compatibility \
+  --candidate-config configs/retrieval/stage1b_encoder_candidates.yaml \
+  --queries configs/retrieval/stage1b_smoke_queries.jsonl \
+  --sample-size 50 --seed 2026 --strict-root --overwrite \
+  --zip-path /kaggle/working/triage_eg_stage1b_encoder_compatibility_reports.zip
+```
