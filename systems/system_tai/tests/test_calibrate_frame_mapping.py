@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 
@@ -39,6 +40,68 @@ class FrameMappingCalibrationTests(unittest.TestCase):
     @staticmethod
     def video_frames(count: int) -> dict[int, np.ndarray]:
         return {frame: np.full((4, 5, 3), frame * 20, dtype=np.uint8) for frame in range(count)}
+
+    @staticmethod
+    def comparison(offset: int, similarity: float) -> dict:
+        return {
+            "offset": offset,
+            "decoded_frame_id": offset + 10,
+            "valid": True,
+            "scores": {"similarity": similarity},
+        }
+
+    def test_verified_small_margins_are_ambiguous(self) -> None:
+        for margin in (0.000007, 0.000014, 0.000017):
+            with self.subTest(margin=margin):
+                decision = CALIBRATION.classify_visual_decision(
+                    [
+                        self.comparison(0, 0.9),
+                        self.comparison(1, 0.9 - margin),
+                        self.comparison(-1, 0.5),
+                    ],
+                    superiority_margin=0.0001,
+                )
+                self.assertEqual(decision["visual_decision_status"], "AMBIGUOUS")
+                self.assertAlmostEqual(decision["best_minus_second_margin"], margin)
+                self.assertEqual(decision["tied_offset_candidates"], [0, 1])
+
+    def test_margin_exactly_at_threshold_is_ambiguous(self) -> None:
+        decision = CALIBRATION.classify_visual_decision(
+            [self.comparison(0, 0.9), self.comparison(1, 0.8999)],
+            superiority_margin=0.0001,
+        )
+        self.assertEqual(decision["visual_decision_status"], "AMBIGUOUS")
+
+    def test_margin_clearly_above_threshold_is_decisive(self) -> None:
+        decision = CALIBRATION.classify_visual_decision(
+            [self.comparison(0, 0.9), self.comparison(1, 0.8998)],
+            superiority_margin=0.0001,
+        )
+        self.assertEqual(decision["visual_decision_status"], "DECISIVE")
+        self.assertEqual(decision["tied_offset_candidates"], [0])
+
+    def test_only_ambiguous_contradiction_is_explained_case(self) -> None:
+        frames = self.video_frames(5)
+        row = self.row(1, 2)
+
+        def fake_compare(_reference: np.ndarray, candidate: np.ndarray) -> dict[str, float]:
+            frame_id = int(candidate[0, 0, 0] // 20)
+            similarity = {1: 0.5, 2: 0.899993, 3: 0.9}[frame_id]
+            return {"similarity": similarity}
+
+        with mock.patch.object(CALIBRATION, "compare_images", side_effect=fake_compare):
+            report = CALIBRATION.evaluate_frame_offsets(
+                [row],
+                {1: frames[2]},
+                frames.__getitem__,
+                total_frames=len(frames),
+                superiority_margin=0.0001,
+            )
+        self.assertEqual(report["status"], "VISUAL_ALIGNMENT_EXPLAINED")
+        self.assertEqual(report["decisive_sample_count"], 0)
+        self.assertEqual(report["ambiguous_sample_count"], 1)
+        self.assertEqual(report["explained_decisive_ratio"], 1.0)
+        self.assertEqual(report["contradictory_decisive_sample_count"], 0)
 
     def test_sampling_always_includes_beginning_middle_and_end(self) -> None:
         rows = tuple(self.row(index + 1, index, index) for index in range(9))

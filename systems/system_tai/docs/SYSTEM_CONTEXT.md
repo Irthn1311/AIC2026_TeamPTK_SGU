@@ -53,19 +53,16 @@ Gate B checks retrieval sanity on a small positive/distractor corpus with at lea
 manually verified queries when data is available. It reports Video Recall@K and observed
 rankings, not official performance.
 
-## Phase 1.5B calibration scope
+## Phase 1.5C calibration scope
 
 The private Dataset_AIC2026 remains attached somewhere within the nested runtime layout
-under `/kaggle/input`. Phase 1.5B discovers per-video artifacts, audits Decimal timestamp
-rounding, compares binary-float truncation, validates preserved `frame_idx` bounds, and
-separately compares JPEGs with decoded `f-1/f/f+1`. The full `L21_V001` mapping has 303
-Decimal-floor matches and four valid `-1` differences; the Decimal-nearest offset is
-`0` for 233 rows and `+1` for 74. All 15 visually decoded samples match that nearest
-prediction. Binary truncation and nearest timestamp extraction remain inferred rules.
-Optional ViT-B/32 implementation comparison remains gated on three passing videos. BTC
-currently confirms only the clip-ViT-B-32 family label and feature-row order matching
-keyframe order. Exact weights, preprocessing, normalization, similarity metric, and text
-compatibility remain unverified.
+under `/kaggle/input`. Phase 1.5C preserves the mapping diagnostics and classifies visual
+decisions using a superiority margin. All three input/mapping/decoder gates pass; the
+visual aggregate is 42 explained decisive, 3 ambiguous, and 0 contradictory decisive.
+Official OpenAI, two OpenCLIP variants, and Hugging Face Transformers are separate
+implementation candidates. The initial standard OpenCLIP result is not near-exact or
+clearly superior. Exact weights, preprocessing, normalization, similarity metric, and
+text compatibility remain unverified.
 
 ## Deferred scope
 

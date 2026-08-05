@@ -7,8 +7,9 @@
 ## Summary
 
 The workbook and Canva design have been reviewed. The Phase 1 input-audit foundation
-and Phase 1.5B mapping diagnostics are implemented locally; semantic retrieval has
-not started. Real Kaggle evidence is currently limited to `L21_V001`.
+and Phase 1.5C compatibility diagnostics are implemented locally; semantic retrieval
+has not started. Real Kaggle gate evidence covers `L21_V001`, `L21_V002`, and
+`L22_V001`.
 
 No TRIAGE-EG source, tests, configs, documentation, or generated assets belong to
 `system_tai`. All current implementation is isolated under `systems/system_tai`.
@@ -20,13 +21,13 @@ No TRIAGE-EG source, tests, configs, documentation, or generated assets belong t
 | System design | PLANNED | Workbook and Canva design reviewed; implementation has not started. | Design is not runtime evidence. |
 | Shared checkpoint boundary | PLANNED | Core KIS fields resolved as `query_id`, `rank`, `video_id`, `frame_id`; UTF-8 JSONL proposed | Optional envelope/version fields remain open. |
 | Benchmark video catalog | IMPLEMENTED | `src/system_tai/data/video_catalog.py` and acceptance tests | Requires authoritative real catalog data. |
-| Frame mapping | IMPLEMENTED | `frame_idx` is preserved exactly as `actual_frame_id`; temporary-CSV tests pass locally | Zero-based bounds are verified for `L21_V001`; dataset-wide behavior is pending. |
-| BTC CLIP store | IMPLEMENTED | `src/system_tai/features/btc_clip_store.py`, temporary-NPY tests, and real `L21_V001` shape/finite/norm audit | Exact model pipeline remains unverified. |
-| Data-audit CLI | IMPLEMENTED | `scripts/audit_kis_inputs.py`, CLI tests, and real 307-row mapping/feature agreement for `L21_V001` | Multi-video reproduction is pending. |
-| Kaggle input discovery | IMPLEMENTED | Nested discovery tests and real `L21_V001` artifact resolution | `L21_V002` and `L22_V001` runs are pending. |
+| Frame mapping | IMPLEMENTED | `frame_idx` is preserved exactly; three real mapping-policy gates pass | Dataset-wide behavior beyond three videos is pending. |
+| BTC CLIP store | IMPLEMENTED | Temporary-NPY tests and real finite/shape/row audits on three videos | Exact model pipeline remains unverified. |
+| Data-audit CLI | IMPLEMENTED | CLI tests and three real valid input/feature-row audits | Broader dataset audit is pending. |
+| Kaggle input discovery | IMPLEMENTED | Nested tests and real artifact resolution for all three calibration videos | Broader dataset coverage is pending. |
 | Mapping-rounding audit | IMPLEMENTED | Decimal-exact, binary-float-truncation, and Decimal-nearest diagnostics with regression tests | Numeric generation rule remains inferred. |
-| Raw-frame calibration | IMPLEMENTED | Separate mapping, rounding, and visual statuses; real 15-sample `L21_V001` result | Multi-video reproduction is pending. |
-| BTC CLIP identification | IMPLEMENTED | Optional adapters, metrics, and multi-video gate have synthetic tests | Pipeline identity and text compatibility remain `UNVERIFIED`. |
+| Raw-frame calibration | IMPLEMENTED | Three decoder agreements, 42 explained decisive samples, 3 ambiguous, 0 contradictory decisive | Dataset-wide reproduction is pending. |
+| BTC CLIP identification | IMPLEMENTED | Public OpenAI API, Transformers 5 output handling, two OpenCLIP variants, dynamic summary | Corrected adapters require a CLIP-only Kaggle rerun; identity remains `UNVERIFIED`. |
 | Kaggle notebook/config | IMPLEMENTED | Notebook structure and example YAML are locally validated | Real-data cells have not run locally. |
 | Compatible query encoder | UNKNOWN | ViT-B/32-style compatibility is expected | Exact BTC encoder is unknown. |
 | Vector retrieval | PLANNED | Interface specified | No search implementation. |
@@ -60,21 +61,29 @@ No TRIAGE-EG source, tests, configs, documentation, or generated assets belong t
 - Only 15 rows have been visually decoded: ten align best with offset `0` and five with
   `+1`. All 15 match the Decimal-nearest prediction. This is not a global `+1` error.
 - Official/shared `actual_frame_id` remains the CSV `frame_idx` exactly.
+- `L21_V001`, `L21_V002`, and `L22_V001` all pass input, mapping-policy, and decoder
+  gates; all have binary-float-truncation ratio `1.0`.
+- Across 45 visual samples, 42 are decisive and match the Decimal-nearest prediction.
+  Three are ambiguous because margins `0.000007`, `0.000014`, and `0.000017` are below
+  `superiority_margin = 0.0001`. There is no contradictory decisive sample.
+- Initial OpenCLIP `ViT-B-32` / `openai` measurement: mean cosine `0.957185`, minimum
+  p05 `0.925354`, self-match Top-1 `1.0`, and mean rank `1.0`. This is not sufficient
+  for identification.
 
 See `docs/KAGGLE_PHASE_1_5_REPORT.md` for the evidence boundary and exact commands.
 
-## Pending real Kaggle calibration
+## Pending real Kaggle work
 
-- Reproduce discovery, input audit, mapping-rounding audit, and decoded-frame
-  calibration on at least `L21_V002` and `L22_V001`.
-- Establish whether binary-float truncation is the mapping-generation rule and nearest
-  timestamp alignment is the JPEG extraction rule. Both are inferred, not verified
-  implementations; do not generalize from `L21_V001`.
+- Rerun CLIP-only identification with the corrected public OpenAI API adapter,
+  Transformers 5 output extraction, and both OpenCLIP model variants.
+- Extend calibration beyond the current three videos before making dataset-wide claims.
 
 ## Unverified
 
 - Exact BTC-compatible CLIP implementation and image preprocessing.
 - Text-query encoder compatibility.
+- Binary-float truncation and nearest timestamp extraction remain inferred generation
+  behavior even though the current three-video evidence is consistent with them.
 
 ## Still open
 
@@ -83,9 +92,9 @@ See `docs/KAGGLE_PHASE_1_5_REPORT.md` for the evidence boundary and exact comman
 
 ## Validation status
 
-Gate A and Gate B have not run. Local Phase 1/1.5B unit and CLI tests use temporary or
-synthetic fixtures only. Real input/calibration evidence exists for `L21_V001`, but it
-is not a retrieval gate or official performance evidence.
+Gate A and Gate B have not run. Local Phase 1/1.5C unit and CLI tests use temporary or
+synthetic fixtures only. Three-video input/calibration evidence is not a retrieval gate
+or official performance evidence.
 
 Codex local execution cannot reproduce real BTC calibration because the private dataset
 is attached only inside Kaggle. No query encoder, retrieval, JSONL export, shared
@@ -96,7 +105,7 @@ validation, or fixture benchmark result currently exists for `system_tai`.
 ### Blocks a semantic KIS run
 
 - Exact BTC-compatible text encoder and preprocessing.
-- Multi-video decoded-frame calibration and dataset-wide mapping behavior.
+- Corrected multi-candidate CLIP identification rerun.
 
 ### Blocks final shared checkpoint compatibility
 
@@ -109,7 +118,7 @@ validation, or fixture benchmark result currently exists for `system_tai`.
 
 ## Next milestone
 
-Run Phase 1.5B in Kaggle for `L21_V001`, `L21_V002`, and `L22_V001`: audit mapping/NPY
-alignment, Decimal timestamp rounding, and decoded visual agreement. Do not run CLIP
-pipeline identification unless all three input/feature and mapping gates pass. Do not
-implement text retrieval until compatibility is reported from real multi-video evidence.
+Run only Phase 1.5C CLIP identification in Kaggle with official OpenAI CLIP, OpenCLIP
+`ViT-B-32`, OpenCLIP `ViT-B-32-quickgelu`, and Hugging Face CLIP as separate candidates.
+Do not implement text retrieval until a compatible pipeline is identified from real
+multi-video evidence.

@@ -1,4 +1,4 @@
-phase: "1.5B"
+phase: "1.5C"
 execution_environment: kaggle_notebook
 
 input_root: /kaggle/input
@@ -42,7 +42,8 @@ clip_identification:
   expected_dimension: null
   enabled_candidate_backends:
     - openai_clip
-    - open_clip
+    - open_clip_vit_b32_openai
+    - open_clip_vit_b32_quickgelu_openai
     - huggingface_clip
   allow_model_download: false
   minimum_identification_videos: 3

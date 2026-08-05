@@ -212,6 +212,52 @@ def compare_images(
     }
 
 
+def classify_visual_decision(
+    valid_comparisons: Sequence[dict[str, Any]], *, superiority_margin: float
+) -> dict[str, Any]:
+    if not valid_comparisons:
+        raise ValueError("at least one valid visual comparison is required")
+    if superiority_margin < 0:
+        raise ValueError("superiority_margin must be non-negative")
+    ordered = sorted(
+        valid_comparisons,
+        key=lambda item: (
+            -float(item["scores"]["similarity"]),
+            item["offset"] != 0,
+            abs(int(item["offset"])),
+            int(item["offset"]),
+        ),
+    )
+    best = ordered[0]
+    best_similarity = float(best["scores"]["similarity"])
+    second_best_similarity = (
+        float(ordered[1]["scores"]["similarity"]) if len(ordered) > 1 else None
+    )
+    best_minus_second_margin = (
+        best_similarity - second_best_similarity
+        if second_best_similarity is not None
+        else None
+    )
+    ambiguous = (
+        best_minus_second_margin is not None
+        and best_minus_second_margin <= superiority_margin
+    )
+    tied_offsets = [
+        int(item["offset"])
+        for item in ordered
+        if best_similarity - float(item["scores"]["similarity"])
+        <= superiority_margin
+    ]
+    return {
+        "best": best,
+        "visual_decision_status": "AMBIGUOUS" if ambiguous else "DECISIVE",
+        "best_similarity": best_similarity,
+        "second_best_similarity": second_best_similarity,
+        "best_minus_second_margin": best_minus_second_margin,
+        "tied_offset_candidates": tied_offsets,
+    }
+
+
 def evaluate_frame_offsets(
     rows: Sequence[CalibrationMappingRow],
     references: dict[int, NDArray[np.number]],
@@ -304,18 +350,15 @@ def evaluate_frame_offsets(
         valid = [item for item in comparisons if item["valid"]]
         if not valid:
             raise ValueError(f"no valid offset for frame {row.actual_frame_id}")
-        best = sorted(
-            valid,
-            key=lambda item: (
-                -item["scores"]["similarity"],
-                item["offset"] != 0,
-                abs(item["offset"]),
-                item["offset"],
-            ),
-        )[0]
+        decision = classify_visual_decision(
+            valid, superiority_margin=superiority_margin
+        )
+        best = decision["best"]
         rounding = timestamp_rounding_diagnostic(row)
         visual_best_offset = int(best["offset"])
         predicted_visual_offset = int(rounding["predicted_visual_offset"])
+        is_decisive = decision["visual_decision_status"] == "DECISIVE"
+        prediction_match = visual_best_offset == predicted_visual_offset
         samples.append(
             {
                 "keyframe_order": row.keyframe_order,
@@ -325,8 +368,13 @@ def evaluate_frame_offsets(
                 "comparisons": comparisons,
                 "visual_best_offset": visual_best_offset,
                 "predicted_visual_offset": predicted_visual_offset,
+                "visual_decision_status": decision["visual_decision_status"],
+                "best_similarity": decision["best_similarity"],
+                "second_best_similarity": decision["second_best_similarity"],
+                "best_minus_second_margin": decision["best_minus_second_margin"],
+                "tied_offset_candidates": decision["tied_offset_candidates"],
                 "visual_best_matches_round_half_up_prediction": (
-                    visual_best_offset == predicted_visual_offset
+                    prediction_match if is_decisive else None
                 ),
             }
         )
@@ -349,21 +397,37 @@ def evaluate_frame_offsets(
         str(offset): sum(sample["visual_best_offset"] == offset for sample in samples)
         for offset in offsets
     }
-    explained_count = sum(
-        sample["visual_best_matches_round_half_up_prediction"] for sample in samples
+    decisive_samples = [
+        sample for sample in samples if sample["visual_decision_status"] == "DECISIVE"
+    ]
+    ambiguous_samples = [
+        sample for sample in samples if sample["visual_decision_status"] == "AMBIGUOUS"
+    ]
+    explained_decisive_samples = [
+        sample
+        for sample in decisive_samples
+        if sample["visual_best_matches_round_half_up_prediction"] is True
+    ]
+    contradictory_decisive_samples = [
+        sample
+        for sample in decisive_samples
+        if sample["visual_best_matches_round_half_up_prediction"] is False
+    ]
+    decisive_count = len(decisive_samples)
+    explained_decisive_count = len(explained_decisive_samples)
+    explained_decisive_ratio = (
+        explained_decisive_count / decisive_count if decisive_count else 1.0
     )
-    explained_ratio = explained_count / len(samples)
     systematic_unexplained_offsets: list[dict[str, Any]] = []
     for offset in offsets:
         if offset == 0:
             continue
         unexplained = [
             sample
-            for sample in samples
+            for sample in contradictory_decisive_samples
             if sample["visual_best_offset"] == offset
-            and sample["predicted_visual_offset"] != offset
         ]
-        ratio = len(unexplained) / len(samples)
+        ratio = len(unexplained) / decisive_count if decisive_count else 0.0
         if ratio >= consistency_ratio:
             systematic_unexplained_offsets.append(
                 {
@@ -379,11 +443,11 @@ def evaluate_frame_offsets(
     elif systematic_unexplained_offsets:
         status = "MAPPING_POLICY_FAILED"
         reason = "a systematic visual offset is not explained by Decimal-nearest rounding"
-    elif explained_count == len(samples):
+    elif not contradictory_decisive_samples:
         status = "VISUAL_ALIGNMENT_EXPLAINED"
         reason = (
-            "all visual best offsets equal "
-            "decimal_round_half_up(pts_time * fps) - frame_idx"
+            "every decisive visual offset equals the Decimal-nearest prediction; "
+            "remaining samples are ambiguous"
         )
     else:
         status = "VISUAL_ALIGNMENT_INCONCLUSIVE"
@@ -409,10 +473,16 @@ def evaluate_frame_offsets(
                 if status in {"VISUAL_ALIGNMENT_EXPLAINED", "VISUAL_ALIGNMENT_INCONCLUSIVE"}
                 else "MAPPING_POLICY_FAILED"
             ),
-            "explained_sample_count": explained_count,
-            "explained_sample_ratio": explained_ratio,
+            "decisive_sample_count": decisive_count,
+            "ambiguous_sample_count": len(ambiguous_samples),
+            "explained_decisive_sample_count": explained_decisive_count,
+            "explained_decisive_ratio": explained_decisive_ratio,
+            "contradictory_decisive_sample_count": len(
+                contradictory_decisive_samples
+            ),
             "visual_best_offset_distribution": visual_best_counts,
             "systematic_unexplained_offsets": systematic_unexplained_offsets,
+            "superiority_margin": superiority_margin,
         },
         "decoder_agreement": {
             "status": (
@@ -434,6 +504,11 @@ def evaluate_frame_offsets(
             "automatic_offset_correction_applied": False,
         },
         "sample_count": len(samples),
+        "decisive_sample_count": decisive_count,
+        "ambiguous_sample_count": len(ambiguous_samples),
+        "explained_decisive_sample_count": explained_decisive_count,
+        "explained_decisive_ratio": explained_decisive_ratio,
+        "contradictory_decisive_sample_count": len(contradictory_decisive_samples),
         "offset_candidates": list(offsets),
         "zero_best_ratio": visual_best_counts.get("0", 0) / len(samples),
         "systematic_unexplained_offsets": systematic_unexplained_offsets,

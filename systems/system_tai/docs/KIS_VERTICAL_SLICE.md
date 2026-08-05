@@ -74,7 +74,7 @@ mapping CSV + BTC CLIP NPY
 
 No guessed encoder or dummy embedding may be substituted.
 
-## Phase 1.5B — Kaggle-native calibration
+## Phase 1.5C — Kaggle-native compatibility calibration
 
 ### Module 2A — Kaggle input discovery
 
@@ -82,8 +82,8 @@ No guessed encoder or dummy embedding may be substituted.
 - **Output:** compact JSON manifest resolving the dataset root, original video,
   map-keyframes CSV, CLIP NPY, keyframes, and optional media/object artifacts.
 - **Intended source:** `scripts/discover_kaggle_inputs.py`
-- **Status:** `IMPLEMENTED` and locally tested; real `L21_V001` discovery is verified,
-  while two additional videos remain pending.
+- **Status:** `IMPLEMENTED` and locally tested; discovery and input gates are verified
+  for all three calibration videos.
 - **Dependencies:** attached private Dataset_AIC2026 and runtime directory layout.
 - **Unit tests:** zero/one/multiple dataset roots; missing artifacts; ambiguous matches;
   optional artifacts; custom input root.
@@ -97,23 +97,29 @@ No guessed encoder or dummy embedding may be substituted.
 - **Output:** JSON report comparing mapped frame `f` against valid `f-1`, `f`, and `f+1`
   decodes with aggregate and per-sample scores.
 - **Intended source:** `scripts/calibrate_frame_mapping.py`
-- **Status:** `IMPLEMENTED` with local mechanics tests and a real 15-sample
-  `L21_V001` calibration; multi-video reproduction remains pending.
+- **Status:** `IMPLEMENTED` with local mechanics tests and real 45-sample calibration
+  across three videos.
 - **Dependencies:** original video decoder, map-keyframes CSV, keyframe images.
 - **Unit tests:** beginning/middle/end sampling; invalid offsets; deterministic pixel
   scores; exact zero-offset explanation; timestamp-explained `+1`; systematic
-  unexplained offset failure; decoder disagreement; bounds failure; batch aggregation.
+  unexplained offset failure; exact/below/above superiority-margin decisions; decoder
+  disagreement; bounds failure; batch aggregation.
 - **Acceptance:** `frame_idx` is never silently corrected; bounds and zero-based mapping
-  policy are validated separately; timestamp-explained visual offsets pass; systematic
-  unexplained offsets or material decoder disagreement fail; and at least three real
-  videos can be processed in one batch.
+  policy are validated separately; ambiguous ties are excluded from explained and
+  contradictory counts; all decisive samples must match the timestamp prediction for
+  `VISUAL_ALIGNMENT_EXPLAINED`; and material decoder disagreement still fails.
 
-Phase 1.5B revises this acceptance model: mapping-coordinate validity is independent of
+Phase 1.5B established that mapping-coordinate validity is independent of
 JPEG visual alignment. `actual_frame_id` always preserves `frame_idx`. A JPEG best match
 at `frame_idx + 1` is explained, rather than failed, when it equals
 `decimal_round_half_up(pts_time * fps)`. Numeric-generation-rule identification is
 diagnostic and cannot invalidate an in-bounds `frame_idx`. The implementation exposes
 separate mapping-policy, numeric-model, decoder-agreement, and visual-agreement results.
+Phase 1.5C adds margin-aware ambiguity. With `superiority_margin = 0.0001`, the three
+raw-best mismatches have margins
+`0.000007`, `0.000014`, and `0.000017` and are classified as ambiguous. The verified
+three-video aggregate is 42 explained decisive, 3 ambiguous, and 0 contradictory
+decisive samples.
 
 ### Module 2D — Mapping rounding audit
 
@@ -138,27 +144,35 @@ For real `L21_V001`, the 307-row audit verifies 303 Decimal-floor matches and fo
 `frame_idx - Decimal floor = -1` cases. Decimal-nearest offset is `0` for 233 rows and
 `+1` for 74. Only 15 rows have been visually decoded; all 15 visual best offsets match
 the Decimal-nearest prediction, and random/sequential decoding agrees for all 15.
-Binary-float truncation as the mapping-generation rule and nearest timestamp alignment
-as the JPEG extraction rule remain inferred until reproduced on `L21_V002` and
-`L22_V001`.
+All three calibration videos have binary-float-truncation ratio `1.0`. Binary-float
+truncation as the mapping-generation implementation and nearest timestamp alignment as
+the JPEG extraction implementation remain inferred rather than proven.
 
 ### Module 2C — BTC CLIP pipeline identification
 
-- **Input:** validated mapping/NPY alignment, sampled keyframes, and optional OpenAI
-  CLIP, OpenCLIP, or Hugging Face CLIP image encoders.
+- **Input:** validated mapping/NPY alignment, sampled keyframes, official OpenAI CLIP,
+  distinct OpenCLIP model/pretrained variants, and Hugging Face CLIP image encoders.
 - **Output:** JSON comparison report with row-wise cosine/L2/difference metrics,
   self-match statistics, norms, implementation identifiers, and preprocessing details.
 - **Intended source:** `scripts/identify_btc_clip_pipeline.py`
-- **Status:** `IMPLEMENTED` as optional adapters and metric gates with synthetic tests;
-  compatibility remains `UNVERIFIED` until reproducible multi-video Kaggle calibration
-  succeeds.
+- **Status:** `IMPLEMENTED` with public OpenAI API validation, Transformers 5
+  ModelOutput support, two separate OpenCLIP candidates, and dynamic metric summaries;
+  compatibility remains `UNVERIFIED` pending a corrected Kaggle rerun.
 - **Dependencies:** optional backend libraries and exact weights, validated feature-row
   mapping, BTC keyframes and CLIP NPY.
-- **Unit tests:** metric correctness; dimension mismatch; rank calculation; skipped
-  optional backend; multi-video identification gate.
+- **Unit tests:** metric correctness; public OpenAI module without `_MODELS`; direct
+  Tensor, pooled ModelOutput, and unsupported Hugging Face outputs; separate standard
+  and QuickGELU OpenCLIP candidates; dynamic candidate discovery; multi-video gate.
 - **Acceptance:** dimension alone never identifies a pipeline, unavailable backends are
-  reported as `SKIPPED`, and `IDENTIFIED` requires correct self-match plus strong
-  row-wise agreement reproduced across multiple videos.
+  reported as `SKIPPED`, variants remain separate, and `IDENTIFIED` requires at least
+  three unique videos, validated mapping, correct self-match, plus near-exact or clearly
+  superior row-wise agreement.
+
+The initial three-video OpenCLIP `ViT-B-32` / `openai` result has cosine `0.957185`,
+p05 `0.925354`, self-match Top-1 `1.0`, and mean rank `1.0`. It is neither near-exact
+nor clearly superior and must not be called the BTC pipeline. Previous OpenAI and
+Transformers results were invalid adapter/API measurements, not evidence against those
+implementations.
 
 ## Module 4 — Vector retrieval
 

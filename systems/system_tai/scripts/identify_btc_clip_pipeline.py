@@ -10,18 +10,60 @@ import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 import numpy as np
 import yaml
 from numpy.typing import NDArray
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
-BACKEND_NAMES = ("openai_clip", "open_clip", "huggingface_clip")
+DEFAULT_CANDIDATE_NAMES = (
+    "openai_clip",
+    "open_clip_vit_b32_openai",
+    "open_clip_vit_b32_quickgelu_openai",
+    "huggingface_clip",
+)
+CANDIDATE_DESCRIPTORS: dict[str, dict[str, str]] = {
+    "openai_clip": {
+        "implementation": "official_openai_clip",
+        "model_name": "ViT-B/32",
+    },
+    "open_clip_vit_b32_openai": {
+        "implementation": "open_clip",
+        "model_name": "ViT-B-32",
+        "pretrained_tag": "openai",
+    },
+    "open_clip_vit_b32_quickgelu_openai": {
+        "implementation": "open_clip",
+        "model_name": "ViT-B-32-quickgelu",
+        "pretrained_tag": "openai",
+    },
+    "huggingface_clip": {
+        "implementation": "transformers",
+        "model_name": "openai/clip-vit-base-patch32",
+    },
+}
+OPENAI_CLIP_MODEL_NAME = "ViT-B/32"
+OPENAI_CLIP_CACHE_FILENAME = "ViT-B-32.pt"
 
 
 class BackendUnavailable(RuntimeError):
     """An optional image-encoder backend cannot run in the current environment."""
+
+    def __init__(self, message: str, *, identifiers: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.identifiers = identifiers or {}
+
+
+def _json_safe(value: Any) -> Any:
+    try:
+        json.dumps(value)
+    except (TypeError, ValueError):
+        if isinstance(value, dict):
+            return {str(key): _json_safe(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [_json_safe(item) for item in value]
+        return repr(value)
+    return value
 
 
 def _load_mapping(path: Path) -> tuple[dict[str, Any], ...]:
@@ -202,6 +244,32 @@ def _torch_device(torch: Any) -> str:
     return "cuda" if torch.cuda.is_available() else "cpu"
 
 
+def _validate_openai_clip_public_api(clip_module: Any) -> tuple[str, ...]:
+    if not callable(getattr(clip_module, "load", None)) or not callable(
+        getattr(clip_module, "available_models", None)
+    ):
+        raise BackendUnavailable(
+            "installed 'clip' package does not expose the official public CLIP APIs",
+            identifiers={"package_path": getattr(clip_module, "__file__", "unknown")},
+        )
+    try:
+        available_models = tuple(str(name) for name in clip_module.available_models())
+    except Exception as exc:
+        raise BackendUnavailable(
+            f"OpenAI CLIP available_models() failed: {exc}",
+            identifiers={"package_path": getattr(clip_module, "__file__", "unknown")},
+        ) from exc
+    if OPENAI_CLIP_MODEL_NAME not in available_models:
+        raise BackendUnavailable(
+            f"official OpenAI CLIP does not list {OPENAI_CLIP_MODEL_NAME}",
+            identifiers={
+                "package_path": getattr(clip_module, "__file__", "unknown"),
+                "available_models": list(available_models),
+            },
+        )
+    return available_models
+
+
 def _encode_openai_clip(
     image_paths: Sequence[Path], *, allow_download: bool
 ) -> tuple[NDArray[np.number], dict[str, Any]]:
@@ -211,19 +279,31 @@ def _encode_openai_clip(
         from PIL import Image
     except ImportError as exc:
         raise BackendUnavailable(f"optional package unavailable: {exc}") from exc
-    if not hasattr(clip, "load") or not hasattr(clip, "_MODELS"):
-        raise BackendUnavailable("installed 'clip' package is not OpenAI CLIP")
-    model_url = clip._MODELS.get("ViT-B/32")
-    if not model_url:
-        raise BackendUnavailable("OpenAI CLIP does not expose the ViT-B/32 checkpoint")
+    available_models = _validate_openai_clip_public_api(clip)
     cache_root = Path.home() / ".cache" / "clip"
-    checkpoint = cache_root / Path(urlparse(model_url).path).name
+    checkpoint = cache_root / OPENAI_CLIP_CACHE_FILENAME
+    identifiers = {
+        "library": "openai-clip",
+        "library_version": getattr(clip, "__version__", "unknown"),
+        "package_path": getattr(clip, "__file__", "unknown"),
+        "available_models": list(available_models),
+        "model_name": OPENAI_CLIP_MODEL_NAME,
+        "checkpoint_cache_path": str(checkpoint),
+        "checkpoint_cached_before_load": checkpoint.is_file(),
+        "model_download_allowed": allow_download,
+    }
     if not checkpoint.is_file() and not allow_download:
-        raise BackendUnavailable(f"OpenAI CLIP weights are not cached at {checkpoint}")
+        raise BackendUnavailable(
+            f"official OpenAI CLIP validated, but weights are not cached at {checkpoint}",
+            identifiers=identifiers,
+        )
     device = _torch_device(torch)
     try:
         model, preprocess = clip.load(
-            "ViT-B/32", device=device, jit=False, download_root=str(cache_root)
+            OPENAI_CLIP_MODEL_NAME,
+            device=device,
+            jit=False,
+            download_root=str(cache_root),
         )
         batch = torch.stack(
             [preprocess(Image.open(path).convert("RGB")) for path in image_paths]
@@ -231,19 +311,25 @@ def _encode_openai_clip(
         with torch.no_grad():
             embeddings = model.encode_image(batch).float().cpu().numpy()
     except Exception as exc:
-        raise BackendUnavailable(f"OpenAI CLIP load/encode failed: {exc}") from exc
-    return embeddings, {
-        "library": "openai-clip",
-        "library_version": getattr(clip, "__version__", "unknown"),
-        "model": "ViT-B/32",
-        "checkpoint": str(checkpoint),
-        "preprocessing": repr(preprocess),
-        "device": device,
-    }
+        raise BackendUnavailable(
+            f"OpenAI CLIP load/encode failed: {exc}", identifiers=identifiers
+        ) from exc
+    identifiers.update(
+        {
+            "checkpoint_cached_after_load": checkpoint.is_file(),
+            "preprocessing": repr(preprocess),
+            "device": device,
+        }
+    )
+    return embeddings, identifiers
 
 
-def _encode_open_clip(
-    image_paths: Sequence[Path], *, allow_download: bool
+def _encode_open_clip_variant(
+    image_paths: Sequence[Path],
+    *,
+    allow_download: bool,
+    model_name: str,
+    pretrained: str,
 ) -> tuple[NDArray[np.number], dict[str, Any]]:
     try:
         import open_clip  # type: ignore[import-not-found]
@@ -258,7 +344,7 @@ def _encode_open_clip(
     device = _torch_device(torch)
     try:
         model, _, preprocess = open_clip.create_model_and_transforms(
-            "ViT-B-32", pretrained="openai", device=device
+            model_name, pretrained=pretrained, device=device
         )
         batch = torch.stack(
             [preprocess(Image.open(path).convert("RGB")) for path in image_paths]
@@ -267,14 +353,81 @@ def _encode_open_clip(
             embeddings = model.encode_image(batch).float().cpu().numpy()
     except Exception as exc:
         raise BackendUnavailable(f"OpenCLIP load/encode failed: {exc}") from exc
+    get_model_config = getattr(open_clip, "get_model_config", None)
+    resolved_config = get_model_config(model_name) if callable(get_model_config) else None
     return embeddings, {
         "library": "open_clip",
         "library_version": getattr(open_clip, "__version__", "unknown"),
-        "model": "ViT-B-32",
-        "checkpoint": "openai",
+        "package_path": getattr(open_clip, "__file__", "unknown"),
+        "model_name": model_name,
+        "activation_or_model_variant": (
+            "QuickGELU" if "quickgelu" in model_name.lower() else "model_default"
+        ),
+        "pretrained_tag": pretrained,
+        "checkpoint": pretrained,
+        "resolved_model_configuration": _json_safe(resolved_config),
         "preprocessing": repr(preprocess),
         "device": device,
     }
+
+
+def _encode_open_clip_vit_b32_openai(
+    image_paths: Sequence[Path], *, allow_download: bool
+) -> tuple[NDArray[np.number], dict[str, Any]]:
+    return _encode_open_clip_variant(
+        image_paths,
+        allow_download=allow_download,
+        model_name="ViT-B-32",
+        pretrained="openai",
+    )
+
+
+def _encode_open_clip_vit_b32_quickgelu_openai(
+    image_paths: Sequence[Path], *, allow_download: bool
+) -> tuple[NDArray[np.number], dict[str, Any]]:
+    return _encode_open_clip_variant(
+        image_paths,
+        allow_download=allow_download,
+        model_name="ViT-B-32-quickgelu",
+        pretrained="openai",
+    )
+
+
+def _type_identifier(value: Any) -> str:
+    value_type = type(value)
+    return f"{value_type.__module__}.{value_type.__qualname__}"
+
+
+def _extract_huggingface_image_embeddings(
+    output: Any, *, torch: Any
+) -> tuple[Any, str]:
+    output_type = _type_identifier(output)
+    if torch.is_tensor(output):
+        embeddings = output
+    elif hasattr(output, "pooler_output"):
+        embeddings = output.pooler_output
+    elif isinstance(output, tuple):
+        if len(output) == 1 and torch.is_tensor(output[0]):
+            embeddings = output[0]
+        elif len(output) >= 2 and torch.is_tensor(output[1]):
+            embeddings = output[1]
+        else:
+            raise BackendUnavailable(
+                "unsupported Hugging Face tuple output: expected projected pooled "
+                "features at index 1 or a single Tensor",
+                identifiers={"output_type": output_type},
+            )
+    else:
+        raise BackendUnavailable(
+            f"unsupported Hugging Face image-feature output type: {output_type}",
+            identifiers={"output_type": output_type},
+        )
+    if not torch.is_tensor(embeddings):
+        raise BackendUnavailable(
+            f"Hugging Face pooled image feature is not a Tensor: {_type_identifier(embeddings)}",
+            identifiers={"output_type": output_type},
+        )
+    return embeddings, output_type
 
 
 def _encode_huggingface_clip(
@@ -289,6 +442,15 @@ def _encode_huggingface_clip(
         raise BackendUnavailable(f"optional package unavailable: {exc}") from exc
     checkpoint = "openai/clip-vit-base-patch32"
     device = _torch_device(torch)
+    output_type = "not_produced"
+    base_identifiers = {
+        "library": "transformers",
+        "library_version": getattr(transformers, "__version__", "unknown"),
+        "package_path": getattr(transformers, "__file__", "unknown"),
+        "model_name": "CLIPModel",
+        "model_checkpoint": checkpoint,
+        "device": device,
+    }
     try:
         model = CLIPModel.from_pretrained(checkpoint, local_files_only=not allow_download)
         processor = CLIPProcessor.from_pretrained(checkpoint, local_files_only=not allow_download)
@@ -297,15 +459,29 @@ def _encode_huggingface_clip(
         pixel_values = inputs["pixel_values"].to(device)
         model = model.to(device)
         with torch.no_grad():
-            embeddings = model.get_image_features(pixel_values=pixel_values).float().cpu().numpy()
+            output = model.get_image_features(pixel_values=pixel_values)
+            embeddings, output_type = _extract_huggingface_image_embeddings(
+                output, torch=torch
+            )
+            embeddings = embeddings.float().cpu().numpy()
+    except BackendUnavailable as exc:
+        raise BackendUnavailable(
+            f"Hugging Face CLIP output compatibility failed: {exc}",
+            identifiers={**base_identifiers, **exc.identifiers},
+        ) from exc
     except Exception as exc:
-        raise BackendUnavailable(f"Hugging Face CLIP load/encode failed: {exc}") from exc
+        raise BackendUnavailable(
+            f"Hugging Face CLIP load/encode failed: {exc}",
+            identifiers={**base_identifiers, "output_type": output_type},
+        ) from exc
     return embeddings, {
-        "library": "transformers",
-        "library_version": getattr(transformers, "__version__", "unknown"),
-        "model": "CLIPModel",
-        "checkpoint": checkpoint,
+        **base_identifiers,
+        "output_type": output_type,
         "preprocessing": processor.to_json_string(),
+        "processor_type": _type_identifier(processor),
+        "image_processor_metadata": _json_safe(
+            getattr(getattr(processor, "image_processor", None), "to_dict", lambda: {})()
+        ),
         "device": device,
     }
 
@@ -320,21 +496,38 @@ def run_candidate_backend(
 ) -> dict[str, Any]:
     implementations: dict[str, Callable[..., tuple[NDArray[np.number], dict[str, Any]]]] = {
         "openai_clip": _encode_openai_clip,
-        "open_clip": _encode_open_clip,
+        "open_clip_vit_b32_openai": _encode_open_clip_vit_b32_openai,
+        "open_clip_vit_b32_quickgelu_openai": (
+            _encode_open_clip_vit_b32_quickgelu_openai
+        ),
         "huggingface_clip": _encode_huggingface_clip,
     }
     selected = encoder or implementations.get(backend)
     if selected is None:
-        return {"status": "SKIPPED", "reason": f"unknown backend: {backend}"}
+        return {
+            "status": "SKIPPED",
+            "reason": f"unknown backend: {backend}",
+            "candidate": CANDIDATE_DESCRIPTORS.get(backend, {"name": backend}),
+        }
     try:
         candidate, metadata = selected(image_paths, allow_download=allow_download)
         metrics = compute_alignment_metrics(original, candidate)
     except BackendUnavailable as exc:
-        return {"status": "SKIPPED", "reason": str(exc)}
+        return {
+            "status": "SKIPPED",
+            "reason": str(exc),
+            "candidate": CANDIDATE_DESCRIPTORS.get(backend, {"name": backend}),
+            "identifiers": exc.identifiers,
+        }
     except (OSError, RuntimeError, ValueError) as exc:
-        return {"status": "UNVERIFIED", "reason": str(exc)}
+        return {
+            "status": "UNVERIFIED",
+            "reason": str(exc),
+            "candidate": CANDIDATE_DESCRIPTORS.get(backend, {"name": backend}),
+        }
     return {
         "status": "MEASURED",
+        "candidate": CANDIDATE_DESCRIPTORS.get(backend, {"name": backend}),
         "identifiers": metadata,
         "preprocessing": metadata.get("preprocessing", "unreported"),
         "metrics": metrics,
@@ -402,8 +595,17 @@ def classify_backends(
 ) -> dict[str, Any]:
     if minimum_videos < 2:
         raise ValueError("minimum_videos must be at least two for reproduction")
+    discovered_names = {
+        str(name)
+        for case in cases
+        for name in case.get("backends", {})
+    }
+    candidate_names = [
+        name for name in DEFAULT_CANDIDATE_NAMES if name in discovered_names
+    ]
+    candidate_names.extend(sorted(discovered_names - set(candidate_names)))
     measured_means: dict[str, float] = {}
-    for backend in BACKEND_NAMES:
+    for backend in candidate_names:
         results = [
             case["backends"][backend]
             for case in cases
@@ -416,7 +618,10 @@ def classify_backends(
             )
 
     summary: dict[str, Any] = {}
-    for backend in BACKEND_NAMES:
+    measured_ranking = sorted(
+        measured_means, key=lambda name: measured_means[name], reverse=True
+    )
+    for backend in candidate_names:
         backend_results = [
             case.get("backends", {}).get(backend, {"status": "SKIPPED", "reason": "not run"})
             for case in cases
@@ -430,14 +635,37 @@ def classify_backends(
         measured = [result for _case, result in measured_pairs]
         if not measured:
             reasons = sorted({result.get("reason", "unavailable") for result in backend_results})
-            summary[backend] = {"status": "SKIPPED", "reasons": reasons}
+            summary[backend] = {
+                "status": "SKIPPED",
+                "candidate": CANDIDATE_DESCRIPTORS.get(backend, {"name": backend}),
+                "measured_unique_video_count": 0,
+                "reasons": reasons,
+                "identifiers": [
+                    result["identifiers"]
+                    for result in backend_results
+                    if result.get("identifiers")
+                ],
+            }
             continue
         mean_cosines = [item["metrics"]["row_wise_cosine"]["mean"] for item in measured]
         p05_cosines = [item["metrics"]["row_wise_cosine"]["p05"] for item in measured]
         top1_values = [item["metrics"]["self_match_top1_accuracy"] for item in measured]
         mean_ranks = [item["metrics"]["mean_self_match_rank"] for item in measured]
-        other_means = [value for name, value in measured_means.items() if name != backend]
-        margin = float(np.mean(mean_cosines)) - max(other_means) if other_means else None
+        normalized_l2_values = [
+            item["metrics"]["normalized_l2_distance"]["mean"] for item in measured
+        ]
+        backend_mean = float(np.mean(mean_cosines))
+        ranking_index = measured_ranking.index(backend)
+        next_candidate = (
+            measured_ranking[ranking_index + 1]
+            if ranking_index + 1 < len(measured_ranking)
+            else None
+        )
+        margin = (
+            backend_mean - measured_means[next_candidate]
+            if next_candidate is not None
+            else None
+        )
         unique_video_ids = {str(case.get("video_id", "")) for case, _result in measured_pairs}
         mappings_validated = all(
             case.get("feature_row_mapping_validated") is True
@@ -451,6 +679,7 @@ def classify_backends(
         )
         clearly_superior = (
             min(mean_cosines) >= superior_mean_cosine
+            and ranking_index == 0
             and margin is not None
             and margin >= superiority_margin
         )
@@ -460,20 +689,36 @@ def classify_backends(
             and correct_self_match
             and (near_exact or clearly_superior)
         )
+        identifier_map = {
+            json.dumps(_json_safe(item.get("identifiers", {})), sort_keys=True): _json_safe(
+                item.get("identifiers", {})
+            )
+            for item in measured
+        }
         summary[backend] = {
             "status": "IDENTIFIED" if identified else "UNVERIFIED",
+            "candidate": CANDIDATE_DESCRIPTORS.get(backend, {"name": backend}),
             "measured_video_count": len(measured),
             "unique_measured_video_count": len(unique_video_ids),
+            "measured_unique_video_count": len(unique_video_ids),
             "all_feature_row_mappings_validated": mappings_validated,
             "reproduction_requirement_met": reproduced,
             "correct_self_match": correct_self_match,
             "near_exact": near_exact,
             "clearly_superior": clearly_superior,
             "mean_row_wise_cosine_across_videos": float(np.mean(mean_cosines)),
+            "row_wise_cosine_mean": float(np.mean(mean_cosines)),
             "minimum_p05_cosine_across_videos": float(min(p05_cosines)),
+            "row_wise_cosine_p05": float(min(p05_cosines)),
             "minimum_self_match_top1_across_videos": float(min(top1_values)),
+            "self_match_top1": float(min(top1_values)),
             "maximum_mean_self_match_rank_across_videos": float(max(mean_ranks)),
+            "mean_self_match_rank": float(np.mean(mean_ranks)),
+            "normalized_l2": float(np.mean(normalized_l2_values)),
             "mean_cosine_margin_over_next_backend": margin,
+            "margin_over_next_measured_candidate": margin,
+            "next_measured_candidate": next_candidate,
+            "identifiers": list(identifier_map.values()),
         }
     return summary
 
@@ -499,7 +744,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--sample-count", type=int, default=9)
     parser.add_argument("--keyframe-orders", type=int, nargs="+")
     parser.add_argument("--expected-dimension", type=int)
-    parser.add_argument("--backend", action="append", choices=BACKEND_NAMES)
+    parser.add_argument("--backend", action="append", choices=DEFAULT_CANDIDATE_NAMES)
     parser.add_argument("--allow-model-download", action="store_true")
     parser.add_argument("--minimum-identification-videos", type=int, default=3)
     parser.add_argument("--output", type=Path, required=True)
@@ -521,7 +766,7 @@ def _single_case(args: argparse.Namespace) -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    enabled = args.backend or list(BACKEND_NAMES)
+    enabled = args.backend or list(DEFAULT_CANDIDATE_NAMES)
     try:
         raw_cases = (
             _load_cases(args.batch_manifest) if args.batch_manifest else [_single_case(args)]
