@@ -1,0 +1,109 @@
+schema_version: 1
+benchmark_id: system_tai_kis_draft_example
+description: >-
+  Human-editable Phase 2.5 template. Every example is a draft and contains no
+  fabricated positive frame labels. A human annotator must inspect the audited
+  source videos, add official frame_id values copied exactly from mapping CSV
+  frame_idx, and explicitly change annotation_status to verified.
+queries:
+  - query_id: rain_motorcycle_vi
+    language: vi
+    text: "một người đi xe máy dưới trời mưa lớn"
+    semantic_group_id: rain_motorcycle
+    variant_type: vietnamese_direct
+    relevant_frames: []
+    relevant_video_ids: []
+    annotation_notes: "DRAFT: no ground-truth positives have been verified."
+    annotation_status: draft
+    source_scope: &audited_scope
+      - L21_V001
+      - L21_V002
+      - L22_V001
+
+  - query_id: rain_motorcycle_en_translation
+    language: en
+    text: "a person riding a motorcycle in heavy rain"
+    semantic_group_id: rain_motorcycle
+    variant_type: english_translation
+    relevant_frames: []
+    relevant_video_ids: []
+    annotation_notes: "DRAFT translation counterpart; no verified positives."
+    annotation_status: draft
+    source_scope: *audited_scope
+
+  - query_id: rain_motorcycle_en_expansion
+    language: en
+    text: "a motorcyclist traveling on a road during heavy rainfall"
+    semantic_group_id: rain_motorcycle
+    variant_type: english_expansion
+    relevant_frames: []
+    relevant_video_ids: []
+    annotation_notes: "DRAFT expansion counterpart; no verified positives."
+    annotation_status: draft
+    source_scope: *audited_scope
+
+  - query_id: traffic_light_vi
+    language: vi
+    text: "một chiếc ô tô dừng ở đèn giao thông"
+    semantic_group_id: traffic_light
+    variant_type: vietnamese_direct
+    relevant_frames: []
+    relevant_video_ids: []
+    annotation_notes: "DRAFT: no ground-truth positives have been verified."
+    annotation_status: draft
+    source_scope: *audited_scope
+
+  - query_id: traffic_light_en_translation
+    language: en
+    text: "a car stopped at a traffic light"
+    semantic_group_id: traffic_light
+    variant_type: english_translation
+    relevant_frames: []
+    relevant_video_ids: []
+    annotation_notes: "DRAFT translation counterpart; no verified positives."
+    annotation_status: draft
+    source_scope: *audited_scope
+
+  - query_id: traffic_light_en_expansion
+    language: en
+    text: "a vehicle waiting at a red traffic signal at an intersection"
+    semantic_group_id: traffic_light
+    variant_type: english_expansion
+    relevant_frames: []
+    relevant_video_ids: []
+    annotation_notes: "DRAFT expansion counterpart; no verified positives."
+    annotation_status: draft
+    source_scope: *audited_scope
+
+  - query_id: city_pedestrians_vi
+    language: vi
+    text: "nhiều người đi bộ trên một con phố thành phố"
+    semantic_group_id: city_pedestrians
+    variant_type: vietnamese_direct
+    relevant_frames: []
+    relevant_video_ids: []
+    annotation_notes: "DRAFT: no ground-truth positives have been verified."
+    annotation_status: draft
+    source_scope: *audited_scope
+
+  - query_id: city_pedestrians_en_translation
+    language: en
+    text: "many people walking on a city street"
+    semantic_group_id: city_pedestrians
+    variant_type: english_translation
+    relevant_frames: []
+    relevant_video_ids: []
+    annotation_notes: "DRAFT translation counterpart; no verified positives."
+    annotation_status: draft
+    source_scope: *audited_scope
+
+  - query_id: city_pedestrians_en_expansion
+    language: en
+    text: "a crowd of pedestrians moving along a busy urban street"
+    semantic_group_id: city_pedestrians
+    variant_type: english_expansion
+    relevant_frames: []
+    relevant_video_ids: []
+    annotation_notes: "DRAFT expansion counterpart; no verified positives."
+    annotation_status: draft
+    source_scope: *audited_scope

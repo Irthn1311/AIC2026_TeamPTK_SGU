@@ -209,3 +209,62 @@ is not a semantic-quality pass.
 The notebook retains the Vietnamese inputs as negative/diagnostic evidence and pairs
 them with explicit English translations. Translation is not automatically considered
 successful and does not alter the canonical exact ranking policy.
+
+## Phase 2.5 ground-truth KIS benchmark
+
+Phase 2 technical retrieval is complete, but semantic quality has not passed. Phase 2.5
+adds a reproducible evaluation harness for manually verified positive frame labels. It
+does not create labels automatically, change the OpenAI CLIP ViT-B/32 baseline, or use
+display-only temporal suppression in benchmark scores.
+
+The human-editable template is `config/kis_benchmark.example.yaml`. Every checked-in
+example is deliberately `draft` with no fabricated positives. A reviewer must inspect
+the audited videos and add `(video_id, frame_id)` labels, where `frame_id` is copied
+exactly from mapping CSV `frame_idx`, before changing a query to `verified`.
+
+Validate a benchmark without loading CLIP or writing reports:
+
+```bash
+python -m system_tai.kis.benchmark \
+  --manifest /kaggle/working/system_tai_outputs/kis_benchmark/feature_manifest.json \
+  --benchmark /path/to/human_verified_benchmark.yaml \
+  --validation-only \
+  --include-draft-validation \
+  --fail-on-invalid
+```
+
+Evaluate verified queries with the canonical unsuppressed exact baseline:
+
+```bash
+python -m system_tai.kis.benchmark \
+  --manifest /kaggle/working/system_tai_outputs/kis_benchmark/feature_manifest.json \
+  --benchmark /path/to/human_verified_benchmark.yaml \
+  --output-directory /kaggle/working/system_tai_outputs/kis_benchmark \
+  --device auto \
+  --top-k 1 5 20 50 100 \
+  --fail-on-invalid
+```
+
+The command writes `kis_benchmark_report.json`, `kis_benchmark_summary.csv`, and
+`kis_benchmark_report.md`. The default destination is outside the cloned repository.
+Kaggle working storage is ephemeral, so reports that must persist must be downloaded or
+versioned externally. `notebooks/phase_2_5_kis_benchmark.ipynb` performs the same
+bounded three-video workflow and exposes a draft-only annotation helper. The helper
+retains official `frame_id`, score, diagnostic keyframe order, and an external image
+path, but never marks a candidate relevant.
+
+For one scored query, `Recall@K` is binary: `1.0` when at least one exact ground-truth
+`(video_id, frame_id)` pair occurs in canonical unsuppressed Top-K, otherwise `0.0`.
+Aggregate Recall@K is the arithmetic mean over valid verified queries only. Multi-label
+coverage is reported separately as `ground_truth_coverage_at_k`; relevant-video
+coverage is the fraction of declared relevant video IDs represented in Top-K. MRR is
+the arithmetic mean of per-query reciprocal rank, with a miss contributing zero.
+
+Drafts are excluded from scoring by default, invalid benchmarks are rejected, and a
+draft-only benchmark returns the explicit `no_verified_queries` state without loading
+the model or fabricating zero-valued quality metrics. Successful reports include
+evaluated, excluded-draft, and invalid-query counts.
+
+Real benchmark metrics remain unavailable until humans add verified labels. Current
+evidence covers only `L21_V001`, `L21_V002`, and `L22_V001`; no dataset-wide semantic
+quality or translation claim is supported.

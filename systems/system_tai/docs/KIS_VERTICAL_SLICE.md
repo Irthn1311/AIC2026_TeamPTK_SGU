@@ -295,6 +295,73 @@ compatibility evidence, not BTC-official preprocessing or dataset-wide evidence.
 - Video Recall@K and observed ranking reported;
 - no official-performance claim.
 
+## Phase 2.5 — Ground-truth KIS benchmark
+
+### Module 10 — Benchmark schema and loader
+
+- **Input:** UTF-8 YAML or JSON containing human-authored query variants and positive
+  `(video_id, frame_id)` labels.
+- **Output:** immutable benchmark/query/relevant-frame domain records.
+- **Intended source:** `src/system_tai/evaluation/benchmark_schema.py`
+- **Status:** `IMPLEMENTED` with typed immutable schemas and UTF-8 YAML/JSON loading.
+- **Dependencies:** PyYAML and the shared `frame_id = frame_idx` rule.
+- **Unit tests:** schema parsing, enums, draft/verified status, duplicate identifiers and
+  label pairs, invalid frame identifiers.
+- **Acceptance:** no CLIP row, keyframe order, filename, or physical CSV row can be used
+  as ground-truth `frame_id`; verified labels are human-authored only.
+
+### Module 11 — Registry-aware benchmark validator
+
+- **Input:** benchmark file and loaded `FeatureStoreRegistry`.
+- **Output:** typed benchmark plus structured errors and draft/verified counts.
+- **Intended source:** `src/system_tai/evaluation/benchmark_validator.py`
+- **Status:** `IMPLEMENTED` with structured registry-aware errors and warnings.
+- **Dependencies:** Module 10 and the validated feature registry.
+- **Unit tests:** unknown videos, labels absent from mapping, incomparable variants,
+  missing verified labels, and draft exclusion.
+- **Acceptance:** invalid data is reported explicitly; drafts are never scored by
+  default; every scored frame exists in the corresponding mapping CSV.
+
+### Module 12 — Exact benchmark evaluator and paired comparison
+
+- **Input:** verified benchmark queries, canonical `ExactNumpyRetriever`, and configured
+  cutoffs.
+- **Output:** binary query Recall@K, ground-truth coverage, hit/rank/MRR and
+  relevant-video coverage metrics, grouped aggregates, and Vietnamese-versus-English
+  paired comparisons.
+- **Intended source:** `src/system_tai/evaluation/kis_benchmark.py`
+- **Status:** `IMPLEMENTED` over the unchanged canonical unsuppressed exact retriever.
+- **Dependencies:** unsuppressed Phase 2 exact retrieval and Modules 10–11.
+- **Unit tests:** exact Recall@K, first relevant rank, reciprocal rank, aggregates,
+  paired win/tie/loss, missing variants, deterministic output, suppression isolation.
+- **Acceptance:** per-query Recall@K is one when any exact positive occurs in Top-K and
+  zero otherwise; aggregate Recall@K is its mean over valid verified queries;
+  multi-label coverage is separately named `ground_truth_coverage_at_k`; only verified
+  queries are scored; zero verified queries returns `no_verified_queries`; the evaluator
+  never invokes temporal suppression. Paired comparisons require exactly one verified
+  Vietnamese-direct query and one verified English variant in the same comparable
+  semantic group; deltas are English minus Vietnamese; Recall and first-rank
+  win/tie/loss use the English perspective. Missing or draft variants are reported,
+  while duplicate or otherwise invalid variants block evaluation with structured
+  validation errors. Translation claims require verified paired measurements.
+
+### Module 13 — Reports, CLI, and bounded annotation helper
+
+- **Input:** validation/evaluation results, runtime metadata, output directory, and
+  optional candidate keyframe directories.
+- **Output:** deterministic JSON/CSV/Markdown reports and unverified draft annotation
+  review records outside Git.
+- **Intended source:** `src/system_tai/evaluation/reports.py`,
+  `src/system_tai/evaluation/annotation.py`, and `src/system_tai/kis/benchmark.py`.
+- **Status:** `IMPLEMENTED`; generated artifacts default outside Git and annotation
+  candidates remain explicitly unreviewed.
+- **Dependencies:** Modules 10–12 and existing bounded Kaggle artifact layout.
+- **Unit tests:** report serialization, validation-only CLI, bounded path resolution,
+  and draft-only annotation output.
+- **Acceptance:** report defaults target `/kaggle/working/system_tai_outputs/kis_benchmark/`;
+  helper output never marks a frame relevant; no dataset image or generated report is
+  checked into Git.
+
 ## Exclusions
 
 Agent, GNN, Event Graph, VLM, OCR, ASR, Q&A, TRAKE, API server, backend, and

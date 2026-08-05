@@ -7,9 +7,11 @@
 ## Summary
 
 The workbook and Canva design have been reviewed. Phase 1 input auditing, Phase 1.5C
-compatibility calibration, and the Phase 2 exact NumPy KIS implementation are present.
-Real compatibility evidence covers `L21_V001`, `L21_V002`, and `L22_V001`. The first
-real semantic smoke passed the technical pipeline but did not pass semantic quality.
+compatibility calibration, the Phase 2 exact NumPy KIS implementation, and Phase 2.5
+ground-truth evaluation infrastructure are present. Real compatibility evidence covers
+`L21_V001`, `L21_V002`, and `L22_V001`. The first real semantic smoke passed the
+technical pipeline but did not pass semantic quality; no verified benchmark metrics
+exist yet.
 
 No TRIAGE-EG source, tests, configs, documentation, or generated assets belong to
 `system_tai`. All current implementation is isolated under `systems/system_tai`.
@@ -36,7 +38,10 @@ No TRIAGE-EG source, tests, configs, documentation, or generated assets belong t
 | Checkpoint exporter | IMPLEMENTED | Core-only UTF-8 JSONL and explicit internal mode tested | Accepted schema remains proposed. |
 | Validator | IMPLEMENTED | Structured syntax/type/rank/duplicate/registry checks tested | This local validator is not yet the accepted shared validator. |
 | Phase 2 CLI/notebook | IMPLEMENTED | Real smoke wrote 500 valid JSONL records with zero validator errors | Semantic quality did not pass. |
-| Fixture evaluator | PLANNED | Interface specified | Not an official evaluator. |
+| Phase 2.5 benchmark schema/validator | IMPLEMENTED | Typed YAML/JSON schema, registry-aware validation, structured errors, and draft exclusion tests | Checked-in examples are drafts; verified labels require human evidence. |
+| Phase 2.5 exact evaluator | IMPLEMENTED | Binary query Recall@K, ground-truth coverage, hit count, first rank, reciprocal rank/MRR, relevant-video coverage, aggregates, and paired VI/EN tests | Real quality metrics are unavailable until verified labels exist. |
+| Phase 2.5 reports/annotation notebook | IMPLEMENTED | Deterministic JSON/CSV/Markdown serialization, validation-only CLI, bounded annotation helper, and clean Kaggle notebook | Generated reports remain external and Kaggle working storage is ephemeral. |
+| Legacy interval fixture evaluator | PLANNED | Interface specified | Superseded for Phase 2.5 by the implemented exact-label evaluator; not an official evaluator. |
 | Official BTC exporter | DEFERRED | Separate boundary recognized | Official format is unresolved. |
 | Q&A and TRAKE | DEFERRED | Personal design reference | Outside the first slice. |
 | Backend and production frontend | DEFERRED | Personal design and untracked prototype | Outside the first slice. |
@@ -76,7 +81,8 @@ See `docs/KAGGLE_PHASE_1_5_REPORT.md` for the evidence boundary and exact comman
 
 ## Pending real Kaggle work
 
-- Build the small positive/distractor sanity benchmark and report Video Recall@K.
+- Human-review candidate frames, add verified positives to a benchmark outside generated
+  outputs, validate it, then report Recall@K and observed ranks with Phase 2.5.
 - Extend compatibility checks beyond the current three videos before dataset-wide claims.
 - Investigate language handling and still-frame action/state ambiguity without changing
   the exact baseline to fit anecdotal results.
@@ -106,6 +112,13 @@ Codex local execution cannot reproduce the BTC smoke because the private dataset
 model weights are attached only inside Kaggle. Corpus coverage and ambiguity between
 action/state language and a single still frame remain important limitations.
 
+Phase 2.5 evaluation infrastructure is implemented and synthetically tested. It does
+not change the Phase 2 semantic result. The checked-in benchmark template has only
+draft queries and therefore returns `no_verified_queries` without producing a quality
+metric. Real query-level Recall@K, ground-truth coverage, rank, reciprocal rank,
+relevant-video coverage, and VI/EN paired results remain unavailable until a human
+provides verified labels.
+
 ## Remaining blockers and decisions
 
 ### Blocks evidence-backed semantic KIS readiness
@@ -125,6 +138,7 @@ action/state language and a single still frame remain important limitations.
 
 ## Next milestone
 
-Run the paired Vietnamese/English diagnostic notebook with optional display-only
-diversity, then build a labeled positive/distractor benchmark. Keep unsuppressed exact
-Top-100 as canonical output and do not call the diagnostic findings official performance.
+Use the Phase 2.5 notebook to review bounded candidates, record human-verified official
+`frame_id` positives, and run the unsuppressed benchmark. Download generated reports
+from ephemeral Kaggle storage. Do not call three-video fixture metrics official or
+dataset-wide performance.
