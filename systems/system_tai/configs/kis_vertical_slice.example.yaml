@@ -1,29 +1,40 @@
 system_id: system_tai
-status: skeleton
+phase: 2_exact_kis_baseline
 
-data:
-  video_catalog: REQUIRED
-  mapping_csv: REQUIRED
-  clip_npy: REQUIRED
-  frame_index_base: PENDING_TEAM_DECISION
-  mapping_version: REQUIRED
-
+feature_manifest: REQUIRED
 features:
-  encoder_id: PENDING_BTC_CONFIRMATION
-  expected_dimension: null
+  expected_dimension: 512
+  memory_map: true
+  mapping_columns: [n, pts_time, fps, frame_idx]
+  frame_id_source: frame_idx_exact
+  clip_row_source: physical_csv_row_zero_based
+
+text_encoder:
+  backend: official_openai_clip
+  model: ViT-B/32
+  device: cpu
+  allow_model_download: false
+  cache_dir: null
+  optional_compatibility_backend: open_clip_vit_b32_quickgelu_openai
 
 retrieval:
-  backend: exact_numpy_planned
+  backend: exact_numpy_cosine
+  chunk_size: 4096
   top_k: 100
+  approximate_search: false
+
+temporal_suppression:
+  enabled: false
+  minimum_frame_gap: 0
+  maximum_candidates_per_video: null
 
 checkpoint:
-  format: jsonl
+  format: utf8_jsonl
   schema_status: proposed_not_accepted
+  core_fields: [query_id, rank, video_id, frame_id]
+  include_internal_metadata: false
   output_path: REQUIRED
 
 official_export:
   enabled: false
   reason: official_format_unresolved
-
-evaluation:
-  ground_truth_fixture: null

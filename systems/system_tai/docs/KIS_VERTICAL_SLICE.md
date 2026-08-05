@@ -64,13 +64,15 @@ mapping CSV + BTC CLIP NPY
 - **Input:** KIS text and encoder configuration.
 - **Output:** finite normalized query vector in the BTC visual-feature space.
 - **Intended source:** `src/system_tai/features/query_encoder.py`
-- **Status:** `UNKNOWN`
-- **Dependencies:** exact BTC model, weights, tokenizer, preprocessing, projection, and
-  normalization convention.
+- **Status:** `IMPLEMENTED` as the Phase 2 canonical official OpenAI CLIP ViT-B/32
+  adapter behind an optional-dependency protocol.
+- **Dependencies:** optional official OpenAI CLIP and Torch packages, locally cached or
+  explicitly downloadable weights, identified 512-dimensional compatibility.
 - **Unit tests:** determinism; expected dimension; finite values; normalization;
   empty query; model/config identity.
-- **Acceptance:** compatibility is established by authoritative metadata or a reproducible
-  sanity benchmark. Equal vector dimension alone is insufficient.
+- **Acceptance:** the public OpenAI APIs are used, the model is loaded once, output is a
+  finite non-zero normalized float32 vector of dimension 512, and no fallback model is
+  selected silently.
 
 No guessed encoder or dummy embedding may be substituted.
 
@@ -155,9 +157,8 @@ the JPEG extraction implementation remain inferred rather than proven.
 - **Output:** JSON comparison report with row-wise cosine/L2/difference metrics,
   self-match statistics, norms, implementation identifiers, and preprocessing details.
 - **Intended source:** `scripts/identify_btc_clip_pipeline.py`
-- **Status:** `IMPLEMENTED` with public OpenAI API validation, Transformers 5
-  ModelOutput support, two separate OpenCLIP candidates, and dynamic metric summaries;
-  compatibility remains `UNVERIFIED` pending a corrected Kaggle rerun.
+- **Status:** `IMPLEMENTED`; the full-corpus three-video run identifies official OpenAI
+  CLIP ViT-B/32 and OpenCLIP ViT-B-32-quickgelu/openai as compatible candidates.
 - **Dependencies:** optional backend libraries and exact weights, validated feature-row
   mapping, BTC keyframes and CLIP NPY.
 - **Unit tests:** metric correctness; public OpenAI module without `_MODELS`; direct
@@ -168,32 +169,34 @@ the JPEG extraction implementation remain inferred rather than proven.
   three unique videos, validated mapping, correct self-match, plus near-exact or clearly
   superior row-wise agreement.
 
-The initial three-video OpenCLIP `ViT-B-32` / `openai` result has cosine `0.957185`,
-p05 `0.925354`, self-match Top-1 `1.0`, and mean rank `1.0`. It is neither near-exact
-nor clearly superior and must not be called the BTC pipeline. Previous OpenAI and
-Transformers results were invalid adapter/API measurements, not evidence against those
-implementations.
+Across all 867 audited rows, official OpenAI CLIP and OpenCLIP QuickGELU/OpenAI both
+have mean cosine approximately `0.999162`, minimum p05 `0.997200`, self-match Top-1
+`1.0`, mean rank `1.0`, and dimension 512. They are numerically equivalent within
+approximately `1e-10`. Official OpenAI CLIP is canonical. This is three-video
+compatibility evidence, not BTC-official preprocessing or dataset-wide evidence.
 
 ## Module 4 — Vector retrieval
 
 - **Input:** compatible query vector and BTC visual matrix.
 - **Output:** ranked feature-row hits with scores.
 - **Intended source:** `src/system_tai/retrieval/vector_search.py`
-- **Status:** `PLANNED`
-- **Dependencies:** query encoder and feature store.
+- **Status:** `BASELINE`; exact chunked multi-video NumPy cosine retrieval is
+  implemented for Phase 2.
+- **Dependencies:** query encoder protocol, validated feature registry, NumPy.
 - **Unit tests:** known-vector ranking; ties; top-k bounds; dimension mismatch;
   non-finite vectors; deterministic ordering.
-- **Acceptance:** exact search is reproducible. NumPy exact search is sufficient before
-  adding a scalable index.
+- **Acceptance:** chunked cosine equals a non-chunked reference, global Top-K is exact,
+  and ties use score descending then video/frame/CLIP-row ascending. FAISS is deferred.
 
 ## Module 5 — Candidate construction
 
 - **Input:** retrieval hits and validated row-to-frame mapping.
-- **Output:** `CandidateFrame` records with `video_id`, `actual_frame_id`, score, rank,
-  and internal provenance.
-- **Intended source:** `src/system_tai/retrieval/candidates.py`
-- **Status:** `PLANNED`
-- **Dependencies:** retrieval, frame mapping, common schemas.
+- **Output:** immutable `CandidateFrame` records with shared `frame_id` copied from CSV
+  `frame_idx` plus internal CLIP-row/keyframe provenance.
+- **Intended source:** `src/system_tai/common/schemas.py` and
+  `src/system_tai/retrieval/vector_search.py`
+- **Status:** `IMPLEMENTED` in the exact retriever and immutable domain schemas.
+- **Dependencies:** exact retrieval and validated row-to-frame mapping.
 - **Unit tests:** correct row mapping; missing/duplicate mapping; score/rank preservation;
   prevention of row-as-frame substitution.
 - **Acceptance:** every candidate identifies an in-range original BTC frame.
@@ -201,38 +204,66 @@ implementations.
 ## Module 6 — Grouping and KIS ranking
 
 - **Input:** `CandidateFrame` records.
-- **Output:** grouped, deduplicated, deterministically ranked records, maximum 100.
+- **Output:** optionally temporally suppressed, deterministically re-ranked candidates
+  plus removal counts.
 - **Intended source:** `src/system_tai/ranking/kis_ranker.py`
-- **Status:** `PLANNED`
-- **Dependencies:** candidates and an explicit ranking/dedup policy.
+- **Status:** `BASELINE`; exact ordering is canonical and optional suppression is
+  implemented but disabled by default.
+- **Dependencies:** ranked candidates and explicit minimum-gap/per-video limits.
 - **Unit tests:** grouping; exact duplicates; ties; empty input; stable ranks;
   maximum 100; repeated-run determinism.
-- **Acceptance:** ranks start at one, remain unique and ordered, and exact
-  `(video_id, actual_frame_id)` duplicates are removed.
+- **Acceptance:** disabled mode preserves the exact baseline; enabled mode preserves
+  order and frame IDs while reporting every removal.
 
 ## Module 7 — Checkpoint exporter adapter
 
-- **Input:** ranked internal KIS records.
+- **Input:** one or more `KISResult` objects.
 - **Output:** current proposed UTF-8 JSONL checkpoint.
 - **Intended source:** `src/system_tai/checkpointing/exporter.py`
-- **Status:** `PLANNED`
+- **Status:** `IMPLEMENTED` for the current proposed checkpoint boundary.
 - **Dependencies:** accepted or proposed boundary schema.
 - **Unit tests:** UTF-8; one object per line; field mapping; deterministic order;
   no internal-field leakage.
-- **Acceptance:** exported `frame_id` equals `actual_frame_id` without numeric conversion,
-  and a future accepted schema can replace serialization without changing retrieval.
+- **Acceptance:** ranks are contiguous from one, at most 100 unique video/frame pairs
+  are emitted per query, core mode leaks no internal fields, and internal fields appear
+  only under a separate internal object when explicitly requested.
 
 ## Module 8 — Shared-output validator
 
-- **Input:** checkpoint JSONL, query set, `BenchmarkVideoCatalog`, and validated mapping.
+- **Input:** checkpoint JSONL and optional loaded feature registry.
 - **Output:** deterministic errors, warnings, and validity result.
 - **Intended source:** `src/system_tai/validation/checkpoint_validator.py`
-- **Status:** `PLANNED`
-- **Dependencies:** video catalog, mapping, shared schema, team validator boundary.
+- **Status:** `IMPLEMENTED` as the local Phase 2 proposed-boundary validator.
+- **Dependencies:** proposed core schema and optional validated feature registry.
 - **Unit tests:** malformed JSON; types; missing fields; unknown query/video;
   out-of-range frame; duplicate rank/record; unsorted ranks; more than 100 rows.
-- **Acceptance:** invalid output cannot reach evaluation; bounds are proven from the
-  authoritative catalog.
+- **Acceptance:** errors contain line, query ID, code, and message; valid files enforce
+  types, unique contiguous ranks, Top-100, unique pairs, and optional registry existence.
+
+## Module 8A — Feature-store registry
+
+- **Input:** explicit JSON manifest containing per-video mapping CSV and CLIP NPY paths.
+- **Output:** immutable store descriptors, memory-mapped matrices, and physical-row to
+  `FrameMappingRecord` mappings.
+- **Intended source:** `src/system_tai/features/btc_clip_store.py`
+- **Status:** `IMPLEMENTED` with read-only memory mapping and explicit manifests.
+- **Dependencies:** NumPy and the verified physical-row alignment rule.
+- **Unit tests:** CSV row alignment; exact `frame_idx`; missing files; duplicate videos;
+  invalid/non-finite/zero-norm matrices; row and dimension mismatch.
+- **Acceptance:** every feature row resolves to exactly one mapping record, all stores
+  share configured dimension 512, and source NPY arrays are memory-mapped read-only.
+
+## Module 8B — Phase 2 CLI
+
+- **Input:** manifest, query ID/text, Top-K, device, chunk size, and destination.
+- **Output:** proposed KIS JSONL plus a concise runtime summary.
+- **Intended source:** `src/system_tai/kis/retrieve.py`
+- **Status:** `IMPLEMENTED` for exact retrieval with official OpenAI CLIP.
+- **Dependencies:** registry, canonical encoder, exact retrieval, exporter, validator.
+- **Unit tests:** parser/config failures and fake-encoder integration through library
+  components; no network or BTC fixture dependency.
+- **Acceptance:** missing optional packages/weights fail clearly, source data remains
+  read-only, no vectors are printed, and only the requested output is written.
 
 ## Module 9 — KIS fixture evaluator
 
@@ -271,7 +302,7 @@ production frontend are excluded.
 
 ## Remaining decisions
 
-- Exact compatible BTC text encoder.
+- Dataset-wide compatibility and real text-query retrieval quality.
 - Dataset-wide raw-video confirmation of the zero-based working interpretation.
 - Optional checkpoint envelope/version fields.
 - Shared validator/evaluator interfaces.

@@ -1,5 +1,5 @@
 """Checkpoint serialization adapters."""
 
-from .exporter import CheckpointExporter
+from .exporter import CheckpointExporter, ExportSummary
 
-__all__ = ["CheckpointExporter"]
+__all__ = ["CheckpointExporter", "ExportSummary"]

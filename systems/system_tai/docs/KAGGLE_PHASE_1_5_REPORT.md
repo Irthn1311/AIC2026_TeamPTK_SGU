@@ -2,10 +2,10 @@
 
 ## Scope
 
-This report records the Phase 1.5C compatibility correction derived from real Kaggle
-runs on `L21_V001`, `L21_V002`, and `L22_V001`. It separates verified measurements
-from inferred generation behavior. It does not identify a BTC-compatible CLIP pipeline
-and is not an official retrieval benchmark.
+This report records Phase 1.5C real Kaggle evidence for `L21_V001`, `L21_V002`, and
+`L22_V001`. It separates verified measurements from inferred generation behavior.
+Compatible CLIP implementations were identified for these three videos, but this is
+not a dataset-wide claim, a BTC-official preprocessing claim, or a retrieval benchmark.
 
 ## Verified facts
 
@@ -81,21 +81,29 @@ three videos.
 
 ### CLIP identification
 
-The overall result remains `UNVERIFIED`.
+The completed full-corpus audit measured all keyframes in the three videos:
 
-- The initial OpenCLIP `ViT-B-32` / `openai` measurement covers three videos, has
-  correct self-match, Top-1 `1.0`, mean self-match rank `1.0`, mean cosine `0.957185`,
-  and minimum p05 cosine `0.925354`. It is neither near-exact nor clearly superior.
-- Official OpenAI CLIP was `SKIPPED` because the previous adapter incorrectly depended
-  on a private package attribute and therefore did not validly measure the installed
-  public API.
-- Hugging Face CLIP was `SKIPPED` under Transformers `5.0.0` because the previous
-  adapter called Tensor methods directly on a `BaseModelOutput`-style result.
+- `L21_V001`: 307 rows;
+- `L21_V002`: 262 rows;
+- `L22_V001`: 298 rows;
+- total: 867 rows, dimension 512.
 
-Phase 1.5C corrects both adapters and adds a separate OpenCLIP
-`ViT-B-32-quickgelu` / `openai` candidate. None of these code corrections is real
-measurement evidence until the CLIP-only Kaggle rerun completes. The initial OpenCLIP
-result does not prove that OpenCLIP generated the BTC features.
+Two candidates satisfy the identification gates on this audited corpus:
+
+- official OpenAI CLIP `ViT-B/32`;
+- OpenCLIP `ViT-B-32-quickgelu` with `pretrained=openai`.
+
+Both report mean cosine across videos approximately `0.999162`, minimum p05 cosine
+`0.997200`, self-match Top-1 `1.0`, and mean self-match rank `1.0`. Their measured
+outputs are numerically equivalent within approximately `1e-10`. Official OpenAI CLIP
+is the canonical text-query implementation. OpenCLIP QuickGELU/OpenAI remains an
+optional compatibility backend. Standard OpenCLIP `ViT-B-32/openai` without QuickGELU
+must not be substituted.
+
+These numbers establish implementation compatibility for the audited three-video
+corpus. They do not prove which library generated the BTC files, do not establish that
+the exposed preprocessing is BTC-official, and do not establish text-query retrieval
+quality.
 
 ## Frame-coordinate rule
 
@@ -129,18 +137,15 @@ These remain inferred behavior, not accepted dataset-wide rules.
 
 ## Pending work
 
-- Rerun CLIP identification with the corrected OpenAI, Transformers 5, and separate
-  OpenCLIP variant adapters.
-- Reproduce frame behavior beyond the current three-video calibration set before a
-  dataset-wide claim.
-- Do not implement semantic text retrieval until a compatible image/text pipeline is
-  identified.
+- Execute the Phase 2 five-query smoke test and manually inspect Top-10 results.
+- Build a positive/distractor query set before reporting non-official Video Recall@K.
+- Reproduce frame and encoder compatibility beyond the current three-video set before
+  a dataset-wide claim.
 
 ## Unresolved items
 
-- exact BTC CLIP library, checkpoint, tokenizer, preprocessing, normalization, and
-  similarity metric;
-- compatible text-query encoder;
+- exact BTC generation library and BTC-official preprocessing declaration;
+- dataset-wide text/image encoder compatibility;
 - semantic retrieval quality;
 - official BTC submission artifact;
 - optional JSONL envelope and version fields.
@@ -180,7 +185,8 @@ python systems/system_tai/scripts/identify_btc_clip_pipeline.py \
 Use `systems/system_tai/notebooks/phase_1_5_kaggle.ipynb` for the complete dynamic
 three-video workflow, including discovery, real-input audit, rounding audit, visual
 calibration, compact CSV summaries, and final status. All three input/feature-row and
-mapping gates now pass; use the final command above to rerun only CLIP identification.
+mapping gates and the full-corpus three-video compatibility run have passed. Use the
+Phase 2 smoke notebook for the next real-data step.
 
 ## Evidence boundary
 

@@ -1,5 +1,5 @@
 """KIS ranking interfaces."""
 
-from .kis_ranker import KISRanker
+from .kis_ranker import KISRanker, TemporalSuppressionConfig, TemporalSuppressionReport
 
-__all__ = ["KISRanker"]
+__all__ = ["KISRanker", "TemporalSuppressionConfig", "TemporalSuppressionReport"]

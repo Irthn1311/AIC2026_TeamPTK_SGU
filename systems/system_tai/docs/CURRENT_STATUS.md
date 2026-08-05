@@ -2,14 +2,14 @@
 
 ## Status date
 
-`2026-08-04`
+`2026-08-05`
 
 ## Summary
 
-The workbook and Canva design have been reviewed. The Phase 1 input-audit foundation
-and Phase 1.5C compatibility diagnostics are implemented locally; semantic retrieval
-has not started. Real Kaggle gate evidence covers `L21_V001`, `L21_V002`, and
-`L22_V001`.
+The workbook and Canva design have been reviewed. Phase 1 input auditing, Phase 1.5C
+compatibility calibration, and the Phase 2 exact NumPy KIS implementation are present.
+Real compatibility evidence covers `L21_V001`, `L21_V002`, and `L22_V001`; real
+text-query retrieval quality has not yet been evaluated.
 
 No TRIAGE-EG source, tests, configs, documentation, or generated assets belong to
 `system_tai`. All current implementation is isolated under `systems/system_tai`.
@@ -18,7 +18,7 @@ No TRIAGE-EG source, tests, configs, documentation, or generated assets belong t
 
 | Area | Status | Evidence | Limitation |
 |---|---|---|---|
-| System design | PLANNED | Workbook and Canva design reviewed; implementation has not started. | Design is not runtime evidence. |
+| System design | PLANNED | Workbook and Canva design reviewed; only the minimal KIS slice is implemented. | Broader design is not runtime evidence. |
 | Shared checkpoint boundary | PLANNED | Core KIS fields resolved as `query_id`, `rank`, `video_id`, `frame_id`; UTF-8 JSONL proposed | Optional envelope/version fields remain open. |
 | Benchmark video catalog | IMPLEMENTED | `src/system_tai/data/video_catalog.py` and acceptance tests | Requires authoritative real catalog data. |
 | Frame mapping | IMPLEMENTED | `frame_idx` is preserved exactly; three real mapping-policy gates pass | Dataset-wide behavior beyond three videos is pending. |
@@ -27,14 +27,15 @@ No TRIAGE-EG source, tests, configs, documentation, or generated assets belong t
 | Kaggle input discovery | IMPLEMENTED | Nested tests and real artifact resolution for all three calibration videos | Broader dataset coverage is pending. |
 | Mapping-rounding audit | IMPLEMENTED | Decimal-exact, binary-float-truncation, and Decimal-nearest diagnostics with regression tests | Numeric generation rule remains inferred. |
 | Raw-frame calibration | IMPLEMENTED | Three decoder agreements, 42 explained decisive samples, 3 ambiguous, 0 contradictory decisive | Dataset-wide reproduction is pending. |
-| BTC CLIP identification | IMPLEMENTED | Public OpenAI API, Transformers 5 output handling, two OpenCLIP variants, dynamic summary | Corrected adapters require a CLIP-only Kaggle rerun; identity remains `UNVERIFIED`. |
+| BTC CLIP identification | IMPLEMENTED | 867 real rows across three videos identify official OpenAI ViT-B/32 and OpenCLIP QuickGELU/openai as equivalent compatible candidates | Three-video scope; exact preprocessing is not claimed BTC-official. |
 | Kaggle notebook/config | IMPLEMENTED | Notebook structure and example YAML are locally validated | Real-data cells have not run locally. |
-| Compatible query encoder | UNKNOWN | ViT-B/32-style compatibility is expected | Exact BTC encoder is unknown. |
-| Vector retrieval | PLANNED | Interface specified | No search implementation. |
-| Candidate construction | PLANNED | Interface specified | No mapping implementation. |
-| Grouping and Top-100 ranking | PLANNED | Interface specified | Ranking policy is unbenchmarked. |
-| Checkpoint exporter | PLANNED | Adapter boundary specified | Accepted schema is unresolved. |
-| Validator | PLANNED | Interface specified | Shared ownership is unresolved. |
+| Compatible query encoder | IMPLEMENTED | Optional official OpenAI CLIP public-API adapter with fake-module tests | Requires dependency and cached/explicitly downloadable weights at runtime. |
+| Vector retrieval | BASELINE | Exact chunked NumPy cosine search and deterministic multi-video Top-K tests | No real text-query quality result yet; FAISS deferred. |
+| Candidate construction | IMPLEMENTED | Immutable candidates copy `frame_idx` through the physical-row mapping | Real Kaggle smoke is pending. |
+| Grouping and Top-100 ranking | BASELINE | Exact rank is canonical; optional suppression is tested and disabled by default | Suppression policy is not benchmarked. |
+| Checkpoint exporter | IMPLEMENTED | Core-only UTF-8 JSONL and explicit internal mode tested | Accepted schema remains proposed. |
+| Validator | IMPLEMENTED | Structured syntax/type/rank/duplicate/registry checks tested | This local validator is not yet the accepted shared validator. |
+| Phase 2 CLI/notebook | IMPLEMENTED | CLI composition and clean five-query notebook path | Notebook cells have not been executed locally or on Kaggle. |
 | Fixture evaluator | PLANNED | Interface specified | Not an official evaluator. |
 | Official BTC exporter | DEFERRED | Separate boundary recognized | Official format is unresolved. |
 | Q&A and TRAKE | DEFERRED | Personal design reference | Outside the first slice. |
@@ -66,22 +67,23 @@ No TRIAGE-EG source, tests, configs, documentation, or generated assets belong t
 - Across 45 visual samples, 42 are decisive and match the Decimal-nearest prediction.
   Three are ambiguous because margins `0.000007`, `0.000014`, and `0.000017` are below
   `superiority_margin = 0.0001`. There is no contradictory decisive sample.
-- Initial OpenCLIP `ViT-B-32` / `openai` measurement: mean cosine `0.957185`, minimum
-  p05 `0.925354`, self-match Top-1 `1.0`, and mean rank `1.0`. This is not sufficient
-  for identification.
+- Full-corpus compatibility covers 867 rows: 307, 262, and 298 for the three videos.
+- Official OpenAI CLIP `ViT-B/32` and OpenCLIP `ViT-B-32-quickgelu/openai` both report
+  mean cosine approximately `0.999162`, minimum p05 `0.997200`, Top-1 `1.0`, mean
+  self-match rank `1.0`, dimension 512, and numerical equivalence within about `1e-10`.
 
 See `docs/KAGGLE_PHASE_1_5_REPORT.md` for the evidence boundary and exact commands.
 
 ## Pending real Kaggle work
 
-- Rerun CLIP-only identification with the corrected public OpenAI API adapter,
-  Transformers 5 output extraction, and both OpenCLIP model variants.
-- Extend calibration beyond the current three videos before making dataset-wide claims.
+- Run the five-query Phase 2 smoke path and manually inspect Top-10 results.
+- Build the small positive/distractor sanity benchmark and report Video Recall@K.
+- Extend compatibility checks beyond the current three videos before dataset-wide claims.
 
 ## Unverified
 
-- Exact BTC-compatible CLIP implementation and image preprocessing.
-- Text-query encoder compatibility.
+- BTC-official image preprocessing and dataset-wide CLIP compatibility.
+- Text-query retrieval quality on real queries.
 - Binary-float truncation and nearest timestamp extraction remain inferred generation
   behavior even though the current three-video evidence is consistent with them.
 
@@ -92,20 +94,20 @@ See `docs/KAGGLE_PHASE_1_5_REPORT.md` for the evidence boundary and exact comman
 
 ## Validation status
 
-Gate A and Gate B have not run. Local Phase 1/1.5C unit and CLI tests use temporary or
-synthetic fixtures only. Three-video input/calibration evidence is not a retrieval gate
-or official performance evidence.
+Gate A and Gate B have not run. Local Phase 2 tests use deterministic synthetic fixtures
+and do not measure retrieval quality. Three-video encoder compatibility is not a
+retrieval gate or official performance evidence.
 
-Codex local execution cannot reproduce real BTC calibration because the private dataset
-is attached only inside Kaggle. No query encoder, retrieval, JSONL export, shared
-validation, or fixture benchmark result currently exists for `system_tai`.
+Codex local execution cannot run the BTC smoke path because the private dataset and
+model weights are attached only inside Kaggle. The query encoder, retrieval, JSONL
+export, and local validator have test evidence; no real-query benchmark exists yet.
 
 ## Remaining blockers and decisions
 
-### Blocks a semantic KIS run
+### Blocks evidence-backed semantic KIS readiness
 
-- Exact BTC-compatible text encoder and preprocessing.
-- Corrected multi-candidate CLIP identification rerun.
+- Five-query manual Kaggle smoke execution.
+- Positive/distractor sanity benchmark and expected intervals.
 
 ### Blocks final shared checkpoint compatibility
 
@@ -118,7 +120,6 @@ validation, or fixture benchmark result currently exists for `system_tai`.
 
 ## Next milestone
 
-Run only Phase 1.5C CLIP identification in Kaggle with official OpenAI CLIP, OpenCLIP
-`ViT-B-32`, OpenCLIP `ViT-B-32-quickgelu`, and Hugging Face CLIP as separate candidates.
-Do not implement text retrieval until a compatible pipeline is identified from real
-multi-video evidence.
+Run `notebooks/phase_2_kis_smoke.ipynb` against the three audited videos, inspect Top-10
+for five Vietnamese/English queries, export/validate Top-100, and record observations
+without calling them official performance.

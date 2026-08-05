@@ -54,6 +54,11 @@ Proposed required fields:
 `schema_version`, envelope shape, `system_id`, `run_id`, dataset, and mapping metadata
 remain unresolved and must not be made mandatory without team approval.
 
+The Phase 2 exporter implements this proposed core shape. Its default mode emits only
+these four fields. A separately requested internal checkpoint mode nests score,
+`clip_row`, keyframe order, source, and diagnostics under `_internal`; those fields are
+not part of the proposed shared core and must never be interpreted as frame IDs.
+
 ## Proposed validation
 
 - UTF-8, one JSON object per non-empty line.
