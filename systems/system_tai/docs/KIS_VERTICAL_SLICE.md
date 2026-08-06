@@ -420,6 +420,81 @@ translation rank 4, expansion rank 6). These three intents over three videos do 
 establish official or dataset-wide quality. The next measured milestone is opt-in
 Weighted RRF; Gate B remains incomplete.
 
+## Phase 3 — Contest-ready Textual KIS CLI MVP
+
+### Module 16 — Bounded full-corpus discovery and reusable manifest
+
+- **Input:** Kaggle input root containing one dataset root and bounded mapping, CLIP,
+  keyframe, and optional raw-video artifact families.
+- **Output:** immutable discovered-video records and deterministic
+  `feature_manifest.json` with schema/discovery versions and a SHA-256 fingerprint.
+- **Intended source:** `src/system_tai/data/corpus_discovery.py` and
+  `src/system_tai/kis/build_manifest.py`.
+- **Status:** `IMPLEMENTED`; bounded family discovery, deterministic fingerprinted
+  manifests, reuse validation, and a standalone manifest CLI are present.
+- **Dependencies:** BTC artifact naming conventions as discovery hints, NumPy header
+  loading, UTF-8-SIG mapping parsing, and the existing feature-store loader.
+- **Unit tests:** multiple videos, incomplete and ambiguous artifacts, deterministic
+  ordering/fingerprint, row-count mismatch, manifest reuse, Windows/POSIX-safe paths,
+  and proof that source artifacts are never copied.
+- **Acceptance:** discovery never recursively scans unrelated Kaggle input trees;
+  mapping rows equal NPY rows; each video has one mapping, one NPY, and one keyframe
+  source; raw video is optional; reuse revalidates the fingerprint and source paths.
+
+### Module 17 — Contest query schema
+
+- **Input:** one explicit Vietnamese query, optional caller-authored English translation
+  and expansion, positive finite variant weights, output Top-K, and optional metadata;
+  or an equivalent UTF-8 YAML/JSON batch.
+- **Output:** immutable contest-query records and explicit Phase 2.6 `QueryVariant`
+  tuples.
+- **Intended source:** `src/system_tai/kis/contest_schema.py`.
+- **Status:** `IMPLEMENTED`; single and safe UTF-8 YAML/JSON batch inputs are supported.
+- **Dependencies:** safe YAML loading and existing query-variant enums.
+- **Unit tests:** single and batch parsing, missing Vietnamese text, duplicate query IDs,
+  invalid weights/Top-K, malformed UTF-8, and metadata immutability.
+- **Acceptance:** no translation is generated; every variant is explicit; query IDs are
+  unique; output Top-K is between 1 and 100.
+
+### Module 18 — Contest runner, artifacts, and reproducibility
+
+- **Input:** corpus manifest, contest queries, official OpenAI CLIP text encoder,
+  exact-retrieval and opt-in Weighted RRF configuration, output directory, and failure
+  policy.
+- **Output:** combined and isolated core JSONL, internal CSV/candidate inspection data,
+  validation report, run manifest, timings, Markdown summaries, and an optional derived
+  low-resolution contact sheet outside Git.
+- **Intended source:** `src/system_tai/kis/contest_runner.py`,
+  `src/system_tai/inspection/candidate_report.py`, and
+  `src/system_tai/kis/contest.py`.
+- **Status:** `BASELINE`; the contest CLI, isolated/combined artifacts, validator gate,
+  failure isolation, and static inspection outputs are implemented and synthetically
+  tested. A real full-corpus Kaggle run is pending.
+- **Dependencies:** Modules 1–17, `CheckpointExporter`, `CheckpointValidator`, and
+  optional Pillow only when a contact sheet is explicitly requested.
+- **Unit tests:** single/batch execution; registry/model loaded once; RRF output used;
+  exact frame preservation; contiguous Top-100; no core-provenance leak; invalid-output
+  failure; query-error isolation; timing/run-manifest fields; deterministic result
+  artifacts; image-path resolution; and no source copying.
+- **Acceptance:** exact NumPy remains the per-variant backend; canonical Top-100 is never
+  temporally suppressed; model downloads require explicit authorization; invalid
+  checkpoints return non-zero; failed queries receive no fabricated metrics; all
+  generated files stay in the caller-selected output directory.
+
+### Module 19 — Latency evidence gate
+
+- **Input:** measured Phase 3 discovery, loading, encoding, retrieval, fusion, export,
+  validation, per-query, and batch durations plus corpus sizes.
+- **Output:** `timings.json` and the timing section of `run_summary.md`.
+- **Intended source:** `src/system_tai/kis/contest_runner.py`.
+- **Status:** `IMPLEMENTED`; all required timing fields are serialized. Real latency
+  evidence is pending a private full-corpus Kaggle execution.
+- **Dependencies:** monotonic local clock and the immutable run configuration.
+- **Unit tests:** required timing keys, non-negative values, per-variant records, corpus
+  video/row counts, and failure-path timing.
+- **Acceptance:** Phase 3 adds no FAISS; latency evidence from a real full-corpus Kaggle
+  run is required before changing the exact correctness backend.
+
 ## Exclusions
 
 Agent, GNN, Event Graph, VLM, OCR, ASR, Q&A, TRAKE, API server, backend, and

@@ -8,6 +8,7 @@ uses raw cosine scores in the fusion formula.
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -116,15 +117,49 @@ class WeightedRRFRetriever:
         if not math.isfinite(rrf_constant) or rrf_constant <= 0:
             raise ValueError("rrf_constant must be finite and positive")
 
-        by_identity: dict[tuple[str, int], list[_VariantHit]] = {}
+        rankings: dict[str, KISResult] = {}
         for variant in variants:
-            result = self.exact_retriever.retrieve(
+            rankings[variant.variant_id] = self.exact_retriever.retrieve(
                 KISQuery(
                     query_id=f"{query_id}::{variant.variant_id}",
                     text=variant.text,
                     top_k=top_k_per_variant,
                 )
             )
+        return self.fuse_rankings(
+            query_id=query_id,
+            variants=variants,
+            rankings=rankings,
+            output_top_k=output_top_k,
+            rrf_constant=rrf_constant,
+        )
+
+    def fuse_rankings(
+        self,
+        *,
+        query_id: str,
+        variants: tuple[QueryVariant, ...],
+        rankings: Mapping[str, KISResult],
+        output_top_k: int = 100,
+        rrf_constant: float = 60.0,
+    ) -> KISResult:
+        if not query_id.strip():
+            raise ValueError("query_id must not be empty")
+        if not variants:
+            raise ValueError("at least one query variant is required")
+        variant_ids = [variant.variant_id for variant in variants]
+        if len(set(variant_ids)) != len(variant_ids):
+            raise ValueError("variant_id values must be unique")
+        if set(rankings) != set(variant_ids):
+            raise ValueError("rankings must contain exactly one result per variant_id")
+        if output_top_k <= 0 or output_top_k > 100:
+            raise ValueError("output_top_k must be between 1 and 100")
+        if not math.isfinite(rrf_constant) or rrf_constant <= 0:
+            raise ValueError("rrf_constant must be finite and positive")
+
+        by_identity: dict[tuple[str, int], list[_VariantHit]] = {}
+        for variant in variants:
+            result = rankings[variant.variant_id]
             best_for_variant: dict[tuple[str, int], CandidateFrame] = {}
             for candidate in result.ranked_candidates:
                 identity = (candidate.video_id, candidate.frame_id)

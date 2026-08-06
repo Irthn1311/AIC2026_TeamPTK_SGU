@@ -1,0 +1,23 @@
+schema_version: 1
+queries:
+  - query_id: Q001
+    query_vi: một người đi xe máy trong mưa lớn
+    query_en: a person riding a motorcycle in heavy rain
+    query_en_expansion: a motorcyclist traveling on a wet road during heavy rainfall
+    weights:
+      vietnamese_direct: 1.0
+      english_translation: 1.0
+      english_expansion: 1.0
+    output_top_k: 100
+    metadata:
+      source: caller_authored_example
+
+  - query_id: Q002
+    query_vi: nhiều người đi bộ trên đường phố thành thị
+    query_en: many people walking on a city street
+    weights:
+      vietnamese_direct: 1.0
+      english_translation: 1.0
+    output_top_k: 100
+    metadata:
+      source: caller_authored_example

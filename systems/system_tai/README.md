@@ -326,3 +326,68 @@ written outside the repository as `kis_fusion_pilot_report.json`,
 `kis_fusion_pilot_summary.csv`, and `kis_fusion_pilot_report.md`. The private Kaggle
 dataset and CLIP weights are unavailable locally, so this implementation phase cannot
 claim real fused metrics.
+
+## Phase 3 contest-ready Textual KIS CLI MVP
+
+`system_tai.kis.contest` is the end-to-end delivery entry point for Textual KIS. It
+discovers complete mapping/CLIP/keyframe artifact sets with bounded family scans, builds
+or reuses a fingerprinted feature manifest, loads the registry and OpenAI CLIP encoder
+once, retrieves each explicit query variant with exact chunked NumPy cosine, applies
+opt-in Weighted RRF, exports deterministic results, and validates the core checkpoint.
+
+Single query:
+
+```bash
+python -m system_tai.kis.contest \
+  --input-root /kaggle/input \
+  --query-id Q001 \
+  --query-vi "một người đi xe máy trong mưa lớn" \
+  --query-en "a person riding a motorcycle in heavy rain" \
+  --query-en-expansion "a motorcyclist on a wet road during heavy rainfall" \
+  --output-directory /kaggle/working/system_tai_runs/Q001 \
+  --device auto \
+  --top-k-per-variant 100 \
+  --output-top-k 100 \
+  --rrf-constant 60
+```
+
+Batch input uses the safe UTF-8 YAML/JSON schema illustrated by
+`config/contest_queries.example.yaml`:
+
+```bash
+python -m system_tai.kis.contest \
+  --input-root /kaggle/input \
+  --queries systems/system_tai/config/contest_queries.example.yaml \
+  --output-directory /kaggle/working/system_tai_runs/batch_01 \
+  --device auto \
+  --top-k-per-variant 100 \
+  --output-top-k 100 \
+  --rrf-constant 60 \
+  --continue-on-query-error
+```
+
+Reuse a previously validated manifest with `--reuse-manifest <feature_manifest.json>`.
+No source video, keyframe, mapping, or NPY is copied. The CLI writes only derived run
+artifacts to the selected output directory:
+
+- `feature_manifest.json`;
+- `top100.jsonl`, the proposed shared core containing only `query_id`, `rank`,
+  `video_id`, and official `frame_id`;
+- `top100.csv`, internal convenience output and **not** official BTC format;
+- `candidates.json` and `candidate_inspection.md` with diagnostic provenance;
+- optional `candidate_contact_sheet.jpg`, a derived low-resolution inspection image;
+- `validation_report.json`, `run_manifest.json`, `timings.json`, and `run_summary.md`;
+- isolated per-query JSONL/CSV/inspection files under `queries/`.
+
+The registry and model load once per batch. `--fail-fast` is the default behavior;
+`--continue-on-query-error` records failures while continuing other queries. Failed
+queries receive no fabricated result or metric, and any failure or invalid combined
+checkpoint returns a non-zero exit code. Model weights are never downloaded unless
+`--allow-model-download` is explicitly provided.
+
+Exact NumPy remains the correctness backend. Phase 3 records discovery, manifest,
+registry, model, per-variant encoding/retrieval, fusion, export, validation, per-query,
+and total-batch timings. FAISS remains deferred until a real full-corpus latency run
+shows it is necessary. Q&A, TRAKE, UI/API work, OCR, ASR, VLM, Agent, GNN, and production
+frontend remain deferred. Official BTC export format is still unresolved, and all
+generated run artifacts must stay outside Git.
