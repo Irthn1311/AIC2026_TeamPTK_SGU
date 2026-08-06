@@ -104,23 +104,18 @@ class FrameMappingLoader:
         catalog: BenchmarkVideoCatalog,
     ) -> None:
         seen_keyframes: set[tuple[str, int | None]] = set()
-        seen_frames: set[tuple[str, int]] = set()
         seen_clip_rows: set[int] = set()
         seen_physical_rows: set[int] = set()
         for record in records:
             self._validate_against_catalog(record, catalog, None)
             keyframe_key = (record.video_id, record.keyframe_order)
-            frame_key = (record.video_id, record.actual_frame_id)
             if keyframe_key in seen_keyframes:
                 raise ValueError(f"duplicate keyframe mapping: {keyframe_key}")
-            if frame_key in seen_frames:
-                raise ValueError(f"ambiguous duplicate actual-frame mapping: {frame_key}")
             if record.clip_row in seen_clip_rows:
                 raise ValueError(f"duplicate clip_row: {record.clip_row}")
             if record.physical_row in seen_physical_rows:
                 raise ValueError(f"duplicate physical_row: {record.physical_row}")
             seen_keyframes.add(keyframe_key)
-            seen_frames.add(frame_key)
             seen_clip_rows.add(record.clip_row)
             seen_physical_rows.add(record.physical_row)
 

@@ -5,9 +5,10 @@ from __future__ import annotations
 import csv
 import json
 import math
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 import numpy as np
@@ -187,6 +188,36 @@ class LoadedVideoFeatureStore:
     descriptor: VideoFeatureStore
     matrix: NDArray[np.number]
     mappings: tuple[FrameMappingRecord, ...]
+    _frame_to_rows: Mapping[int, tuple[int, ...]] = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if len(self.mappings) != self.descriptor.row_count:
+            raise ValueError(
+                "descriptor/mapping row-count mismatch: "
+                f"descriptor={self.descriptor.row_count}, mappings={len(self.mappings)}"
+            )
+        frame_to_rows: dict[int, list[int]] = {}
+        seen_clip_rows: set[int] = set()
+        for physical_row, record in enumerate(self.mappings):
+            if record.clip_row in seen_clip_rows:
+                raise ValueError(f"duplicate mapping for clip_row {record.clip_row}")
+            if record.clip_row != physical_row:
+                raise ValueError(
+                    "ambiguous physical mapping order: "
+                    f"physical_row={physical_row}, clip_row={record.clip_row}"
+                )
+            seen_clip_rows.add(record.clip_row)
+            frame_to_rows.setdefault(record.frame_id, []).append(record.clip_row)
+        object.__setattr__(
+            self,
+            "_frame_to_rows",
+            MappingProxyType(
+                {
+                    frame_id: tuple(clip_rows)
+                    for frame_id, clip_rows in frame_to_rows.items()
+                }
+            ),
+        )
 
     def frame_for_row(self, clip_row: int) -> FrameMappingRecord:
         if not 0 <= clip_row < len(self.mappings):
@@ -194,7 +225,20 @@ class LoadedVideoFeatureStore:
         return self.mappings[clip_row]
 
     def contains_frame(self, frame_id: int) -> bool:
-        return any(record.frame_id == frame_id for record in self.mappings)
+        return frame_id in self._frame_to_rows
+
+    def rows_for_frame(self, frame_id: int) -> tuple[int, ...]:
+        """Return every physical CLIP row mapped to one original BTC frame."""
+
+        return self._frame_to_rows.get(frame_id, ())
+
+    @property
+    def unique_frame_count(self) -> int:
+        return len(self._frame_to_rows)
+
+    @property
+    def duplicate_frame_id_count(self) -> int:
+        return sum(len(rows) - 1 for rows in self._frame_to_rows.values())
 
 
 class VideoFeatureStoreLoader:
@@ -269,7 +313,6 @@ class VideoFeatureStoreLoader:
         if not path.is_file():
             raise FileNotFoundError(f"mapping CSV not found: {path}")
         records: list[FrameMappingRecord] = []
-        seen_frames: set[int] = set()
         previous_order: int | None = None
         with path.open("r", encoding="utf-8-sig", newline="") as stream:
             reader = csv.DictReader(stream)
@@ -291,10 +334,6 @@ class VideoFeatureStoreLoader:
                         "mapping keyframe order must be strictly increasing: "
                         f"line={line_number}, previous={previous_order}, current={keyframe_order}"
                     )
-                if frame_id in seen_frames:
-                    raise ValueError(
-                        f"ambiguous duplicate frame_idx at line {line_number}: {frame_id}"
-                    )
                 if not math.isfinite(pts_time) or not math.isfinite(fps):
                     raise ValueError(f"non-finite mapping value at line {line_number}")
                 record = FrameMappingRecord(
@@ -305,7 +344,6 @@ class VideoFeatureStoreLoader:
                     fps=fps,
                 )
                 records.append(record)
-                seen_frames.add(frame_id)
                 previous_order = keyframe_order
         if not records:
             raise ValueError("mapping CSV contains no records")

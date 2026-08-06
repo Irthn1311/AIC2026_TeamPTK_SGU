@@ -82,7 +82,7 @@ class ExactNumpyRetriever:
         query_unit = _normalize_vector(
             query_vector, expected_dimension=self.registry.embedding_dimension
         )
-        finalists: list[_ScoredCandidate] = []
+        best_by_identity: dict[tuple[str, int], _ScoredCandidate] = {}
         for store in self.registry.stores:
             row_count = store.descriptor.row_count
             for start in range(0, row_count, self.chunk_size):
@@ -99,18 +99,23 @@ class ExactNumpyRetriever:
                 scores = (chunk @ query_unit) / norms
                 if not np.isfinite(scores).all():
                     raise ValueError("cosine computation produced NaN or Infinity")
-                chunk_candidates = [
-                    _ScoredCandidate(
+                for local_row in range(stop - start):
+                    clip_row = start + local_row
+                    mapping = store.mappings[clip_row]
+                    candidate = _ScoredCandidate(
                         video_id=store.descriptor.video_id,
-                        frame_id=store.mappings[start + local_row].frame_id,
-                        clip_row=start + local_row,
-                        keyframe_order=store.mappings[start + local_row].keyframe_order,
+                        frame_id=mapping.frame_id,
+                        clip_row=clip_row,
+                        keyframe_order=mapping.keyframe_order,
                         score=float(scores[local_row]),
                     )
-                    for local_row in range(stop - start)
-                ]
-                finalists.extend(sorted(chunk_candidates, key=_candidate_sort_key)[:top_k])
-        ranked = sorted(finalists, key=_candidate_sort_key)[:top_k]
+                    identity = (candidate.video_id, candidate.frame_id)
+                    existing = best_by_identity.get(identity)
+                    if existing is None or _candidate_sort_key(
+                        candidate
+                    ) < _candidate_sort_key(existing):
+                        best_by_identity[identity] = candidate
+        ranked = sorted(best_by_identity.values(), key=_candidate_sort_key)[:top_k]
         candidates = tuple(
             CandidateFrame(
                 video_id=item.video_id,

@@ -71,10 +71,13 @@ def test_mapping_validation_and_registry_failures(tmp_path) -> None:
             video_id="v", mapping_csv_path=mapping, clip_npy_path=features
         )
     write_mapping(mapping, [(1, 0, 30, 4), (2, 1, 30, 4)])
-    with pytest.raises(ValueError, match="duplicate frame_idx"):
-        VideoFeatureStoreLoader().load(
-            video_id="v", mapping_csv_path=mapping, clip_npy_path=features
-        )
+    duplicate_store = VideoFeatureStoreLoader().load(
+        video_id="v", mapping_csv_path=mapping, clip_npy_path=features
+    )
+    assert duplicate_store.rows_for_frame(4) == (0, 1)
+    assert duplicate_store.contains_frame(4)
+    assert duplicate_store.unique_frame_count == 1
+    assert duplicate_store.duplicate_frame_id_count == 1
 
     a = make_store("v", np.ones((1, 3), dtype=np.float32), [1])
     with pytest.raises(ValueError, match="duplicate video_id"):

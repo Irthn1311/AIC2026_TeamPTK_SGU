@@ -135,21 +135,22 @@ class FrameMappingTests(unittest.TestCase):
                 use_physical_clip_rows=True,
             )
 
-    def test_duplicate_actual_frame_mapping_is_rejected(self) -> None:
+    def test_duplicate_actual_frame_mapping_preserves_physical_rows(self) -> None:
         path = self.write_mapping(
             [
                 {"n": 1, "pts_time": 0, "fps": 30, "frame_idx": 0},
                 {"n": 2, "pts_time": 0, "fps": 30, "frame_idx": 0},
             ]
         )
-        with self.assertRaisesRegex(ValueError, "ambiguous duplicate"):
-            FrameMappingLoader().load(
-                path,
-                self.catalog,
-                mapping_version="v1",
-                video_id="L21_V001",
-                use_physical_clip_rows=True,
-            )
+        records = FrameMappingLoader().load(
+            path,
+            self.catalog,
+            mapping_version="v1",
+            video_id="L21_V001",
+            use_physical_clip_rows=True,
+        )
+        self.assertEqual([record.actual_frame_id for record in records], [0, 0])
+        self.assertEqual([record.clip_row for record in records], [0, 1])
 
     def test_n_minus_one_is_not_enforced_as_dataset_invariant(self) -> None:
         path = self.write_mapping(
