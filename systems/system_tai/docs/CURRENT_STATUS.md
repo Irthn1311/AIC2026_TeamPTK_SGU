@@ -12,6 +12,8 @@ ground-truth evaluation, and an opt-in Phase 2.6 Weighted RRF pilot implementati
 present. Phase 3 now provides a contest-ready Textual KIS CLI MVP with bounded corpus
 discovery, manifest reuse, batch execution, inspection artifacts, validator gating, and
 latency instrumentation. Real compatibility evidence covers `L21_V001`, `L21_V002`, and `L22_V001`.
+The Phase 3 full-corpus technical acceptance also passed over 873 videos, 177,321
+feature rows, five queries, 15 explicit variants, and 500 valid output records.
 The first real semantic smoke passed the technical pipeline but did not pass semantic
 quality. A small human-verified pilot now contains three intents and nine comparable
 verified query variants; its scope and retrieval-selection bias prevent official or
@@ -46,9 +48,9 @@ No TRIAGE-EG source, tests, configs, documentation, or generated assets belong t
 | Phase 2.5 exact evaluator | IMPLEMENTED | Binary query Recall@K, ground-truth coverage, hit count, first rank, reciprocal rank/MRR, relevant-video coverage, aggregates, paired VI/EN tests, and measured pilot ranks | Only three videos and three semantic intents are represented. |
 | Phase 2.5 reports/annotation notebook | IMPLEMENTED | Deterministic JSON/CSV/Markdown serialization, validation-only CLI, bounded annotation helper, and clean Kaggle notebook | Generated reports remain external and Kaggle working storage is ephemeral. |
 | Phase 2.6 explicit variants and Weighted RRF | BASELINE | Immutable validated variants, canonical per-variant exact retrieval, deterministic weighted rank fusion, provenance isolation, evaluator, CLI, and synthetic tests | Opt-in only; real RRF metrics have not yet been executed in Kaggle. |
-| Phase 3 corpus discovery/manifest | IMPLEMENTED | Bounded artifact-family discovery, deterministic ordering/fingerprint, row alignment, ambiguity checks, reuse CLI, and synthetic multi-video tests | Full private corpus has not been discovered locally. |
-| Phase 3 contest Textual KIS CLI | BASELINE | Single/batch schema, registry/model reuse, exact per-variant retrieval, Weighted RRF, isolated/combined artifacts, validator gate, failure isolation, and synthetic end-to-end tests | Real full-corpus Kaggle acceptance and latency evidence are pending. |
-| Phase 3 inspection/reproducibility | IMPLEMENTED | Candidate JSON/Markdown, optional derived contact sheet, run manifest, timings, and summary outputs | Pillow is optional; missing keyframes produce warnings rather than fabricated images. |
+| Phase 3 corpus discovery/manifest | IMPLEMENTED | Bounded discovery passed a real 873-video, 177,321-row corpus run with a reusable fingerprinted manifest | Private corpus remains unavailable locally. |
+| Phase 3 contest Textual KIS CLI | BASELINE | The full-corpus technical run completed 5/5 queries, 15 variants, 500 records, and validator PASS with no duplicate pairs or rank errors | This is not official performance or semantic-quality proof. |
+| Phase 3.1 inspection/reproducibility | IMPLEMENTED | Explicit none/top-n/all modes, lazy per-video Path-only thumbnail indexes, isolated/combined record reuse, fast mode, detailed export timings, and run summary IDs | Phase 3.1 needs a real Kaggle retry; Pillow remains optional for contact sheets. |
 | Legacy interval fixture evaluator | PLANNED | Interface specified | Superseded for Phase 2.5 by the implemented exact-label evaluator; not an official evaluator. |
 | Official BTC exporter | DEFERRED | Separate boundary recognized | Official format is unresolved. |
 | Q&A and TRAKE | DEFERRED | Personal design reference | Outside the first slice. |
@@ -89,8 +91,8 @@ See `docs/KAGGLE_PHASE_1_5_REPORT.md` for the evidence boundary and exact comman
 
 ## Pending real Kaggle work
 
-- Run the Phase 3 CLI over the complete attached corpus, retain generated files only in
-  `/kaggle/working`, and measure full-corpus latency.
+- Retry the accepted full-corpus Phase 3 run with `--fast-contest-mode`; confirm identical
+  canonical JSONL and measure the reduced export/inspection time.
 - Run the measured Weighted RRF milestone against the checked-in three-group pilot and
   save generated reports only under Kaggle working output storage.
 - Extend compatibility checks beyond the current three videos before dataset-wide claims.
@@ -147,7 +149,7 @@ RRF measurement path; it does not change the single-query baseline.
 - A broader positive/distractor benchmark independent of retrieval-selection bias.
 - Multilingual query policy supported by measured evidence.
 - Broader corpus coverage and handling of still-frame action/state ambiguity.
-- Full-corpus Phase 3 latency evidence before deciding whether FAISS is necessary.
+- Independent semantic-quality evidence beyond the technically accepted full-corpus run.
 
 ### Blocks final shared checkpoint compatibility
 
@@ -160,7 +162,9 @@ RRF measurement path; it does not change the single-query baseline.
 
 ## Next milestone
 
-Run `system_tai.kis.contest` on the full private Kaggle corpus using an explicit batch
-query file. Confirm valid Top-100 output and inspect timings before deciding whether to
-add FAISS. Generated artifacts must remain outside Git. Do not call the three-video
-pilot official, dataset-wide, or a completed Gate B benchmark.
+Reuse the accepted 873-video manifest and rerun `system_tai.kis.contest` with
+`--fast-contest-mode`. Confirm byte-identical canonical Top-100 content, validator PASS,
+and reduced export timing. Exact NumPy retrieval is not the measured bottleneck, so do
+not add FAISS in this milestone. Generated artifacts must remain outside Git. Do not
+call the technical run official performance, semantic-quality proof, or a completed
+Gate B benchmark.

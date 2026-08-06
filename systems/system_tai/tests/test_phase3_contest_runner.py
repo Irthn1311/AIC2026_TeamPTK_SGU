@@ -183,6 +183,12 @@ def test_continue_on_query_error_isolates_failure_without_fake_metrics(tmp_path:
     failed = next(item for item in manifest_payload["queries"] if item["query_id"] == "BAD")
     assert failed["status"] == "FAILED"
     assert failed["failure_reason"]
+    assert manifest_payload["successful_query_ids"] == ["GOOD"]
+    assert manifest_payload["failed_query_ids"] == ["BAD"]
+    assert manifest_payload["successful_query_count"] == 1
+    assert manifest_payload["failed_query_count"] == 1
+    assert len(manifest_payload["queries"]) == 2
+    assert manifest_payload["failures"][0]["query_id"] == "BAD"
 
 
 class InvalidExporter(CheckpointExporter):

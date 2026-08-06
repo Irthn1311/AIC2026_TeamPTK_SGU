@@ -14,6 +14,7 @@ from system_tai.data.corpus_discovery import (
     load_corpus_manifest,
 )
 from system_tai.features.query_encoder import TextEncoderUnavailable
+from system_tai.inspection.candidate_report import InspectionMode
 from system_tai.kis.benchmark import resolve_device
 from system_tai.kis.contest_runner import ContestRunConfig, ContestRunner
 from system_tai.kis.contest_schema import ContestQuery, load_contest_queries
@@ -39,6 +40,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--rrf-constant", type=float, default=60.0)
     parser.add_argument("--chunk-size", type=int, default=4096)
     parser.add_argument("--inspection-top-n", type=int, default=50)
+    parser.add_argument(
+        "--inspection-mode",
+        choices=tuple(mode.value for mode in InspectionMode),
+        default=None,
+    )
+    parser.add_argument("--fast-contest-mode", action="store_true")
     failure = parser.add_mutually_exclusive_group()
     failure.add_argument("--fail-fast", action="store_true")
     failure.add_argument("--continue-on-query-error", action="store_true")
@@ -70,8 +77,30 @@ def _queries_from_args(args: argparse.Namespace) -> tuple[ContestQuery, ...]:
     )
 
 
+def _inspection_config_from_args(
+    args: argparse.Namespace,
+) -> tuple[InspectionMode, bool]:
+    requested = (
+        InspectionMode(args.inspection_mode)
+        if args.inspection_mode is not None
+        else InspectionMode.TOP_N
+    )
+    if args.fast_contest_mode:
+        if args.contact_sheet:
+            raise ValueError("--fast-contest-mode conflicts with --contact-sheet")
+        if args.inspection_mode is not None and requested is not InspectionMode.NONE:
+            raise ValueError(
+                "--fast-contest-mode conflicts with --inspection-mode top-n/all"
+            )
+        return InspectionMode.NONE, False
+    if requested is InspectionMode.NONE and args.contact_sheet:
+        raise ValueError("--contact-sheet conflicts with --inspection-mode none")
+    return requested, args.contact_sheet
+
+
 def run(args: argparse.Namespace, *, runner: ContestRunner | None = None) -> int:
     start = time.perf_counter()
+    inspection_mode, create_contact_sheet = _inspection_config_from_args(args)
     output = Path(args.output_directory)
     output.mkdir(parents=True, exist_ok=True)
     feature_manifest_path = output / "feature_manifest.json"
@@ -108,8 +137,10 @@ def run(args: argparse.Namespace, *, runner: ContestRunner | None = None) -> int
         rrf_constant=args.rrf_constant,
         chunk_size=args.chunk_size,
         inspection_top_n=args.inspection_top_n,
+        inspection_mode=inspection_mode,
         continue_on_query_error=args.continue_on_query_error,
-        create_contact_sheet=args.contact_sheet,
+        create_contact_sheet=create_contact_sheet,
+        fast_contest_mode=args.fast_contest_mode,
         allow_model_download=args.allow_model_download,
         clip_cache_dir=args.clip_cache_dir,
     )

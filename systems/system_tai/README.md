@@ -385,9 +385,41 @@ queries receive no fabricated result or metric, and any failure or invalid combi
 checkpoint returns a non-zero exit code. Model weights are never downloaded unless
 `--allow-model-download` is explicitly provided.
 
+Phase 3.1 adds explicit inspection modes without changing retrieval or checkpoint
+semantics:
+
+- `--inspection-mode none` writes lightweight candidate JSON/Markdown without scanning
+  keyframe directories;
+- `--inspection-mode top-n` is the backward-compatible default and resolves thumbnails
+  only through `--inspection-top-n` (default 50);
+- `--inspection-mode all` resolves thumbnails for every candidate and is opt-in.
+
+`--contact-sheet` requires `top-n` or `all`. The fast automated-contest path is:
+
+```bash
+python -m system_tai.kis.contest \
+  --reuse-manifest /kaggle/working/system_tai_runs/previous/feature_manifest.json \
+  --queries systems/system_tai/config/contest_queries.example.yaml \
+  --output-directory /kaggle/working/system_tai_runs/fast_retry \
+  --device auto \
+  --top-k-per-variant 100 \
+  --output-top-k 100 \
+  --rrf-constant 60 \
+  --fast-contest-mode
+```
+
+Fast mode is exactly inspection `none` with contact-sheet generation disabled. It does
+not change encoding, exact cosine retrieval, Weighted RRF, Top-100 ordering, core
+JSONL/CSV, or validation. Candidate inspection uses a lazy Path-only thumbnail index
+that scans each keyframe directory at most once per run; no decoded image is cached.
+
 Exact NumPy remains the correctness backend. Phase 3 records discovery, manifest,
 registry, model, per-variant encoding/retrieval, fusion, export, validation, per-query,
-and total-batch timings. FAISS remains deferred until a real full-corpus latency run
-shows it is necessary. Q&A, TRAKE, UI/API work, OCR, ASR, VLM, Agent, GNN, and production
-frontend remain deferred. Official BTC export format is still unresolved, and all
-generated run artifacts must stay outside Git.
+and total-batch timings. The real full-corpus technical run passed over 873 videos,
+177,321 feature rows, five queries, 15 variants, and 500 validated records. Exact NumPy
+took about 1.1–1.3 seconds per variant, while pre-Phase-3.1 export/inspection took about
+185.8 seconds and was the clear bottleneck. FAISS is therefore not needed for this
+milestone. These timings are operational evidence, not official BTC performance or
+semantic-quality proof. Q&A, TRAKE, UI/API work, OCR, ASR, VLM, Agent, GNN, and
+production frontend remain deferred. Official BTC export format is still unresolved,
+and all generated run artifacts must stay outside Git.

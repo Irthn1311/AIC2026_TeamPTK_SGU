@@ -19,7 +19,15 @@ from system_tai.common.schemas import KISResult, ValidationResult
 from system_tai.data.corpus_discovery import CorpusManifest
 from system_tai.features.btc_clip_store import FeatureStoreRegistry
 from system_tai.features.query_encoder import OpenAIClipTextEncoder, TextEncoder
-from system_tai.inspection.candidate_report import build_candidate_inspection
+from system_tai.inspection.candidate_report import (
+    CandidateInspectionArtifact,
+    InspectionMode,
+    PreparedCandidateInspection,
+    ThumbnailResolver,
+    combine_prepared_inspections,
+    prepare_candidate_inspection,
+    write_candidate_inspection,
+)
 from system_tai.kis.contest_schema import ContestQuery
 from system_tai.retrieval.multi_query import WeightedRRFRetriever
 from system_tai.retrieval.vector_search import ExactNumpyRetriever
@@ -34,8 +42,10 @@ class ContestRunConfig:
     rrf_constant: float = 60.0
     chunk_size: int = 4096
     inspection_top_n: int = 50
+    inspection_mode: InspectionMode = InspectionMode.TOP_N
     continue_on_query_error: bool = False
     create_contact_sheet: bool = False
+    fast_contest_mode: bool = False
     allow_model_download: bool = False
     clip_cache_dir: Path | None = None
 
@@ -50,6 +60,16 @@ class ContestRunConfig:
             raise ValueError("rrf_constant must be positive")
         if self.chunk_size <= 0 or self.inspection_top_n <= 0:
             raise ValueError("chunk_size and inspection_top_n must be positive")
+        if not isinstance(self.inspection_mode, InspectionMode):
+            raise ValueError("inspection_mode must be none, top-n, or all")
+        if self.inspection_mode is InspectionMode.NONE and self.create_contact_sheet:
+            raise ValueError("contact sheet requires inspection mode top-n or all")
+        if self.fast_contest_mode and (
+            self.inspection_mode is not InspectionMode.NONE or self.create_contact_sheet
+        ):
+            raise ValueError(
+                "fast contest mode requires inspection_mode=none and contact_sheet=false"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,6 +143,36 @@ def _write_internal_csv(results: Sequence[KISResult], path: Path) -> None:
                 )
 
 
+def _empty_export_timings() -> dict[str, float]:
+    return {
+        "core_jsonl_export_seconds": 0.0,
+        "internal_csv_export_seconds": 0.0,
+        "candidate_json_seconds": 0.0,
+        "thumbnail_index_seconds": 0.0,
+        "thumbnail_resolve_seconds": 0.0,
+        "markdown_seconds": 0.0,
+        "contact_sheet_seconds": 0.0,
+    }
+
+
+def _add_inspection_timings(
+    destination: dict[str, float],
+    artifact: CandidateInspectionArtifact,
+) -> None:
+    destination["candidate_json_seconds"] += artifact.timings.candidate_json_seconds
+    destination["thumbnail_index_seconds"] += artifact.timings.thumbnail_index_seconds
+    destination["thumbnail_resolve_seconds"] += artifact.timings.thumbnail_resolve_seconds
+    destination["markdown_seconds"] += artifact.timings.markdown_seconds
+    destination["contact_sheet_seconds"] += artifact.timings.contact_sheet_seconds
+
+
+def _merge_export_timings(
+    destination: dict[str, float], source: Mapping[str, float]
+) -> None:
+    for key in destination:
+        destination[key] += float(source.get(key, 0.0))
+
+
 class ContestRunner:
     def __init__(
         self,
@@ -178,7 +228,10 @@ class ContestRunner:
             if resolved_manifest_path.is_relative_to(resolved_output)
             else []
         )
-        total_export_time = 0.0
+        thumbnail_resolver = ThumbnailResolver(clock=self.clock)
+        prepared_inspections: list[PreparedCandidateInspection] = []
+        export_timings = _empty_export_timings()
+        total_export_seconds = 0.0
         for query in queries:
             query_start = self.clock()
             variant_timing: list[dict[str, Any]] = []
@@ -220,20 +273,38 @@ class ContestRunner:
                 isolated_dir = output / "queries" / safe_query_directory_name(query.query_id)
                 isolated_dir.mkdir(parents=True, exist_ok=True)
                 export_start = self.clock()
+                query_export_timings = _empty_export_timings()
                 isolated_jsonl = isolated_dir / "top100.jsonl"
+                core_start = self.clock()
                 self.exporter.export(result, isolated_jsonl)
+                query_export_timings["core_jsonl_export_seconds"] += (
+                    self.clock() - core_start
+                )
+                csv_start = self.clock()
                 _write_internal_csv((result,), isolated_dir / "top100.csv")
-                isolated_inspection = build_candidate_inspection(
+                query_export_timings["internal_csv_export_seconds"] += (
+                    self.clock() - csv_start
+                )
+                prepared_inspection = prepare_candidate_inspection(
                     (result,),
                     registry,
                     manifest,
-                    isolated_dir,
+                    mode=config.inspection_mode,
                     top_n=config.inspection_top_n,
+                    thumbnail_resolver=thumbnail_resolver,
+                )
+                isolated_inspection = write_candidate_inspection(
+                    prepared_inspection,
+                    isolated_dir,
                     create_contact_sheet=False,
+                    clock=self.clock,
                 )
                 export_seconds = self.clock() - export_start
-                total_export_time += export_seconds
+                _add_inspection_timings(query_export_timings, isolated_inspection)
+                _merge_export_timings(export_timings, query_export_timings)
+                total_export_seconds += export_seconds
                 results.append(result)
+                prepared_inspections.append(prepared_inspection)
                 output_files.extend(
                     [
                         isolated_jsonl,
@@ -249,6 +320,7 @@ class ContestRunner:
                         "variants": variant_timing,
                         "fusion_seconds": fusion_seconds,
                         "export_seconds": export_seconds,
+                        **query_export_timings,
                         "total_seconds": self.clock() - query_start,
                     }
                 )
@@ -270,6 +342,10 @@ class ContestRunner:
                         "variants": variant_timing,
                         "fusion_seconds": None,
                         "export_seconds": None,
+                        **{
+                            key: None
+                            for key in _empty_export_timings()
+                        },
                         "total_seconds": self.clock() - query_start,
                         "failure_reason": reason,
                     }
@@ -288,18 +364,23 @@ class ContestRunner:
         combined_jsonl = output / "top100.jsonl"
         combined_csv = output / "top100.csv"
         combined_export_start = self.clock()
+        combined_timings = _empty_export_timings()
         if results:
             ordered_results = tuple(sorted(results, key=lambda item: item.query_id))
+            core_start = self.clock()
             self.exporter.export(ordered_results, combined_jsonl)
+            combined_timings["core_jsonl_export_seconds"] += self.clock() - core_start
+            csv_start = self.clock()
             _write_internal_csv(ordered_results, combined_csv)
-            inspection = build_candidate_inspection(
-                ordered_results,
-                registry,
-                manifest,
+            combined_timings["internal_csv_export_seconds"] += self.clock() - csv_start
+            combined_prepared = combine_prepared_inspections(prepared_inspections)
+            inspection = write_candidate_inspection(
+                combined_prepared,
                 output,
-                top_n=config.inspection_top_n,
                 create_contact_sheet=config.create_contact_sheet,
+                clock=self.clock,
             )
+            _add_inspection_timings(combined_timings, inspection)
             output_files.extend(
                 [
                     combined_jsonl,
@@ -311,17 +392,33 @@ class ContestRunner:
             if inspection.contact_sheet_path is not None:
                 output_files.append(inspection.contact_sheet_path)
         else:
+            core_start = self.clock()
             combined_jsonl.write_text("", encoding="utf-8")
+            combined_timings["core_jsonl_export_seconds"] += self.clock() - core_start
+            csv_start = self.clock()
             combined_csv.write_text("", encoding="utf-8")
+            combined_timings["internal_csv_export_seconds"] += self.clock() - csv_start
+            candidate_start = self.clock()
             (output / "candidates.json").write_text(
-                json.dumps({"records": [], "warnings": ["no successful queries"]}, indent=2)
+                json.dumps(
+                    {
+                        "inspection_mode": config.inspection_mode.value,
+                        "inspection_top_n": config.inspection_top_n,
+                        "records": [],
+                        "warnings": ["no successful queries"],
+                    },
+                    indent=2,
+                )
                 + "\n",
                 encoding="utf-8",
             )
+            combined_timings["candidate_json_seconds"] += self.clock() - candidate_start
+            markdown_start = self.clock()
             (output / "candidate_inspection.md").write_text(
                 "# Candidate Inspection\n\n- No successful queries.\n",
                 encoding="utf-8",
             )
+            combined_timings["markdown_seconds"] += self.clock() - markdown_start
             output_files.extend(
                 [
                     combined_jsonl,
@@ -330,7 +427,9 @@ class ContestRunner:
                     output / "candidate_inspection.md",
                 ]
             )
-        total_export_time += self.clock() - combined_export_start
+        combined_export_seconds = self.clock() - combined_export_start
+        total_export_seconds += combined_export_seconds
+        _merge_export_timings(export_timings, combined_timings)
         validation_start = self.clock()
         validation = self.validator.validate(combined_jsonl, registry)
         validation_seconds = self.clock() - validation_start
@@ -355,7 +454,10 @@ class ContestRunner:
             "registry_load_seconds": registry_time,
             "model_load_seconds": model_time,
             "queries": query_timings,
-            "export_seconds": total_export_time,
+            **export_timings,
+            "combined_export_seconds": combined_export_seconds,
+            "total_export_seconds": total_export_seconds,
+            "export_seconds": total_export_seconds,
             "validation_seconds": validation_seconds,
             "total_batch_seconds": (
                 float((bootstrap_timings or {}).get("pre_runner_total_seconds", 0.0))
@@ -374,6 +476,8 @@ class ContestRunner:
 
         model_metadata = dict(encoder.identifiers)
         final_exit_code = 0 if validation.valid and not failures else 2
+        successful_query_ids = tuple(sorted(result.query_id for result in results))
+        failed_query_ids = tuple(query_id for query_id, _reason in failures)
         relative_outputs = tuple(
             sorted(
                 {
@@ -396,12 +500,18 @@ class ContestRunner:
             "video_count": len(manifest.videos),
             "feature_row_count": registry.total_rows,
             "queries": query_manifest,
+            "successful_query_ids": successful_query_ids,
+            "failed_query_ids": failed_query_ids,
+            "successful_query_count": len(successful_query_ids),
+            "failed_query_count": len(failed_query_ids),
             "rrf_constant": config.rrf_constant,
             "top_k_per_variant": config.top_k_per_variant,
             "output_top_k_override": config.output_top_k_override,
             "retrieval_backend": "exact_chunked_numpy_cosine",
             "fusion_strategy": "weighted_reciprocal_rank_fusion",
             "temporal_suppression": False,
+            "inspection_mode": config.inspection_mode.value,
+            "fast_contest_mode": config.fast_contest_mode,
             "exporter_mode": "proposed_shared_core_jsonl",
             "validation_result": _validation_payload(validation),
             "output_filenames": relative_outputs,
@@ -438,7 +548,7 @@ class ContestRunner:
         )
         return ContestRunOutcome(
             exit_code=final_exit_code,
-            successful_query_ids=tuple(sorted(result.query_id for result in results)),
+            successful_query_ids=successful_query_ids,
             failed_queries=tuple(failures),
             validation=validation,
             output_files=tuple(sorted(set(output_files), key=lambda path: str(path).casefold())),
@@ -486,6 +596,9 @@ class ContestRunner:
             f"- Model: `{run_manifest['model_identifier']}`",
             f"- Backend: `{run_manifest['retrieval_backend']}`",
             f"- Fusion: `{run_manifest['fusion_strategy']}`",
+            f"- Inspection mode: `{run_manifest['inspection_mode']}`",
+            f"- Successful queries: {run_manifest['successful_query_count']}",
+            f"- Failed queries: {run_manifest['failed_query_count']}",
             "- Temporal suppression: `false`",
             "- `top100.csv` is internal convenience output, not official BTC format.",
             "",
@@ -506,7 +619,15 @@ class ContestRunner:
                 f"- Manifest load/build: {timings['manifest_load_or_build_seconds']:.6f}s",
                 f"- Registry load: {timings['registry_load_seconds']:.6f}s",
                 f"- Model load: {timings['model_load_seconds']:.6f}s",
-                f"- Export: {timings['export_seconds']:.6f}s",
+                f"- Core JSONL export: {timings['core_jsonl_export_seconds']:.6f}s",
+                f"- Internal CSV export: {timings['internal_csv_export_seconds']:.6f}s",
+                f"- Candidate JSON: {timings['candidate_json_seconds']:.6f}s",
+                f"- Thumbnail index: {timings['thumbnail_index_seconds']:.6f}s",
+                f"- Thumbnail resolve: {timings['thumbnail_resolve_seconds']:.6f}s",
+                f"- Markdown: {timings['markdown_seconds']:.6f}s",
+                f"- Contact sheet: {timings['contact_sheet_seconds']:.6f}s",
+                f"- Combined export: {timings['combined_export_seconds']:.6f}s",
+                f"- Total export: {timings['total_export_seconds']:.6f}s",
                 f"- Validation: {timings['validation_seconds']:.6f}s",
                 f"- Total batch: {timings['total_batch_seconds']:.6f}s",
             ]

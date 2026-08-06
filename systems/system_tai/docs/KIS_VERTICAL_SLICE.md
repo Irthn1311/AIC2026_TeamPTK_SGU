@@ -467,9 +467,9 @@ Weighted RRF; Gate B remains incomplete.
 - **Intended source:** `src/system_tai/kis/contest_runner.py`,
   `src/system_tai/inspection/candidate_report.py`, and
   `src/system_tai/kis/contest.py`.
-- **Status:** `BASELINE`; the contest CLI, isolated/combined artifacts, validator gate,
-  failure isolation, and static inspection outputs are implemented and synthetically
-  tested. A real full-corpus Kaggle run is pending.
+- **Status:** `BASELINE`; the contest CLI passed a real full-corpus technical run over
+  873 videos, 177,321 feature rows, five queries, 15 variants, and 500 valid records.
+  This is operational evidence, not semantic-quality or official-performance proof.
 - **Dependencies:** Modules 1–17, `CheckpointExporter`, `CheckpointValidator`, and
   optional Pillow only when a contact sheet is explicitly requested.
 - **Unit tests:** single/batch execution; registry/model loaded once; RRF output used;
@@ -487,13 +487,40 @@ Weighted RRF; Gate B remains incomplete.
   validation, per-query, and batch durations plus corpus sizes.
 - **Output:** `timings.json` and the timing section of `run_summary.md`.
 - **Intended source:** `src/system_tai/kis/contest_runner.py`.
-- **Status:** `IMPLEMENTED`; all required timing fields are serialized. Real latency
-  evidence is pending a private full-corpus Kaggle execution.
+- **Status:** `IMPLEMENTED`; the private full-corpus run measured about 1.1–1.3 seconds
+  per exact retrieval, about 18 seconds across 15 variants, and about 185.8 seconds in
+  pre-Phase-3.1 export/inspection. Exact retrieval was not the bottleneck.
 - **Dependencies:** monotonic local clock and the immutable run configuration.
 - **Unit tests:** required timing keys, non-negative values, per-variant records, corpus
   video/row counts, and failure-path timing.
-- **Acceptance:** Phase 3 adds no FAISS; latency evidence from a real full-corpus Kaggle
-  run is required before changing the exact correctness backend.
+- **Acceptance:** Phase 3 adds no FAISS; the real latency evidence supports optimizing
+  inspection/export before considering a different retrieval backend.
+
+## Phase 3.1 — Fast contest export and inspection
+
+### Module 20 — Bounded thumbnail inspection and fast contest mode
+
+- **Input:** canonical ranked `KISResult` records, inspection mode `none`, `top-n`, or
+  `all`, optional contact-sheet request, and the existing corpus manifest.
+- **Output:** unchanged core JSONL/CSV plus bounded candidate JSON/Markdown, optional
+  derived contact sheet, detailed export timings, and run-manifest query summaries.
+- **Intended source:** `src/system_tai/inspection/candidate_report.py`,
+  `src/system_tai/kis/contest_runner.py`, and `src/system_tai/kis/contest.py`.
+- **Status:** `IMPLEMENTED`; local synthetic tests cover inspection call bounds, lazy
+  index reuse, fast/default JSONL equality, warning policy, timing fields, and manifest
+  summaries. A real Kaggle fast-mode retry remains pending.
+- **Dependencies:** unchanged Module 18 results, keyframe directories only when
+  inspection is enabled, and optional Pillow only for explicitly requested contact
+  sheets.
+- **Unit tests:** zero/Top-N/all resolver calls; one directory scan across candidates and
+  queries; numeric filenames; ambiguous and missing thumbnails; flag conflicts; full
+  candidates JSON in mode none; canonical JSONL provenance isolation; timing fields;
+  deterministic output; and Phase 3/duplicate-frame regressions.
+- **Acceptance:** default behavior remains `top-n`; mode `none` performs no keyframe
+  scan; mode `all` is explicit; `--fast-contest-mode` changes only inspection behavior;
+  each directory is indexed at most once per run; no decoded image is cached; isolated
+  records are reused for combined inspection; core Top-100, validation, RRF, exact
+  retrieval, and `frame_idx`-derived `frame_id` remain unchanged.
 
 ## Exclusions
 
