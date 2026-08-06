@@ -10,8 +10,11 @@ from pathlib import Path
 
 from system_tai.data.corpus_discovery import (
     CorpusDiscoveryError,
+    DiscoveryMetrics,
+    DiscoveryValidation,
     discover_corpus,
     load_corpus_manifest,
+    load_or_build_manifest_cache,
 )
 from system_tai.features.query_encoder import TextEncoderUnavailable
 from system_tai.inspection.candidate_report import InspectionMode
@@ -23,7 +26,15 @@ from system_tai.kis.contest_schema import ContestQuery, load_contest_queries
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input-root", type=Path, default=Path("/kaggle/input"))
-    parser.add_argument("--reuse-manifest", type=Path)
+    manifest_source = parser.add_mutually_exclusive_group()
+    manifest_source.add_argument("--reuse-manifest", type=Path)
+    manifest_source.add_argument("--manifest-cache", type=Path)
+    parser.add_argument("--rebuild-invalid-manifest-cache", action="store_true")
+    parser.add_argument(
+        "--discovery-validation",
+        choices=tuple(mode.value for mode in DiscoveryValidation),
+        default=DiscoveryValidation.STRICT.value,
+    )
     query_source = parser.add_mutually_exclusive_group(required=True)
     query_source.add_argument("--queries", type=Path)
     query_source.add_argument("--query-id")
@@ -89,9 +100,7 @@ def _inspection_config_from_args(
         if args.contact_sheet:
             raise ValueError("--fast-contest-mode conflicts with --contact-sheet")
         if args.inspection_mode is not None and requested is not InspectionMode.NONE:
-            raise ValueError(
-                "--fast-contest-mode conflicts with --inspection-mode top-n/all"
-            )
+            raise ValueError("--fast-contest-mode conflicts with --inspection-mode top-n/all")
         return InspectionMode.NONE, False
     if requested is InspectionMode.NONE and args.contact_sheet:
         raise ValueError("--contact-sheet conflicts with --inspection-mode none")
@@ -100,32 +109,66 @@ def _inspection_config_from_args(
 
 def run(args: argparse.Namespace, *, runner: ContestRunner | None = None) -> int:
     start = time.perf_counter()
+    if args.rebuild_invalid_manifest_cache and args.manifest_cache is None:
+        raise ValueError("--rebuild-invalid-manifest-cache requires --manifest-cache")
     inspection_mode, create_contact_sheet = _inspection_config_from_args(args)
     output = Path(args.output_directory)
     output.mkdir(parents=True, exist_ok=True)
     feature_manifest_path = output / "feature_manifest.json"
+    current_discovery_metrics = DiscoveryMetrics()
     if args.reuse_manifest is not None:
         discovery_seconds = 0.0
         manifest_start = time.perf_counter()
-        manifest = load_corpus_manifest(args.reuse_manifest)
-        manifest.write(feature_manifest_path)
+        manifest = load_corpus_manifest(
+            args.reuse_manifest,
+            input_root=args.input_root,
+            max_root_depth=args.max_root_depth,
+        )
         manifest_seconds = time.perf_counter() - manifest_start
+        write_start = time.perf_counter()
+        manifest.write(feature_manifest_path, portable=False)
+        manifest_write_seconds = time.perf_counter() - write_start
         print(f"manifest reused: {args.reuse_manifest}")
+        manifest_source_status = "REUSED"
+    elif args.manifest_cache is not None:
+        discovery_start = time.perf_counter()
+        cached = load_or_build_manifest_cache(
+            args.manifest_cache,
+            input_root=args.input_root,
+            expected_dimension=args.expected_dimension,
+            max_root_depth=args.max_root_depth,
+            rebuild_invalid=args.rebuild_invalid_manifest_cache,
+        )
+        manifest = cached.manifest
+        discovery_seconds = (
+            time.perf_counter() - discovery_start if cached.status != "CACHE_HIT" else 0.0
+        )
+        current_discovery_metrics = (
+            manifest.discovery_metrics if cached.status != "CACHE_HIT" else DiscoveryMetrics()
+        )
+        manifest_start = time.perf_counter()
+        manifest.write(feature_manifest_path, portable=False)
+        manifest_seconds = time.perf_counter() - manifest_start
+        manifest_write_seconds = manifest_seconds
+        manifest_source_status = cached.status
+        print(f"manifest cache: {cached.status} {args.manifest_cache}")
     else:
         discovery_start = time.perf_counter()
         manifest = discover_corpus(
             args.input_root,
             expected_dimension=args.expected_dimension,
             max_root_depth=args.max_root_depth,
+            validation_mode=DiscoveryValidation(args.discovery_validation),
         )
         discovery_seconds = time.perf_counter() - discovery_start
+        current_discovery_metrics = manifest.discovery_metrics
         manifest_start = time.perf_counter()
-        manifest.write(feature_manifest_path)
+        manifest.write(feature_manifest_path, portable=False)
         manifest_seconds = time.perf_counter() - manifest_start
+        manifest_write_seconds = manifest_seconds
+        manifest_source_status = "BUILT"
         print(f"dataset root resolved: {manifest.dataset_root}")
-        print(
-            f"manifest built: videos={len(manifest.videos)} rows={manifest.total_rows}"
-        )
+        print(f"manifest built: videos={len(manifest.videos)} rows={manifest.total_rows}")
     queries = _queries_from_args(args)
     device = resolve_device(args.device)
     print(f"device selected: {device}")
@@ -154,6 +197,10 @@ def run(args: argparse.Namespace, *, runner: ContestRunner | None = None) -> int
             "discovery_seconds": discovery_seconds,
             "manifest_load_or_build_seconds": manifest_seconds,
             "pre_runner_total_seconds": time.perf_counter() - start,
+            "manifest_source_status": manifest_source_status,
+            "discovery_validation_mode": manifest.validation_mode.value,
+            **current_discovery_metrics.to_payload(),
+            "manifest_write_seconds": manifest_write_seconds,
         },
     )
     print(

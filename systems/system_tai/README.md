@@ -463,3 +463,65 @@ The derived contact sheet is optional and off by default. Generated outputs stay
 outside Git. Synthetic tests prove mechanics only; private Kaggle acceptance and
 semantic review remain required. Official BTC export is unresolved. UI, Q&A, TRAKE,
 FAISS, OCR/ASR, VLM, Agent, and GNN remain deferred.
+
+## Phase 4.1 one-pass discovery and portable manifests
+
+The accepted private-corpus preflight resolves 873/873 raw videos and 177,321 feature
+rows with no copied source artifacts. Before Phase 4.1, a fresh manifest build took
+about 579.27 seconds because mapping, CLIP, video, and keyframe families were traversed
+separately and every discovered keyframe directory was scanned again for image counts.
+
+Discovery now walks each bounded artifact-family root at most once. The keyframe walk
+identifies video directories and counts `.jpg`, `.jpeg`, `.png`, and `.webp` files in
+the same pass without reading or decoding them. Exact NumPy retrieval was already about
+1.1–1.3 seconds per variant and is not this startup bottleneck; FAISS remains deferred.
+
+Build a strict portable schema-v2 manifest:
+
+```bash
+python -m system_tai.kis.build_manifest \
+  --input-root /kaggle/input \
+  --output /kaggle/working/feature_manifest.json \
+  --portable \
+  --discovery-validation strict
+```
+
+`strict` validates mapping columns/counts, memory-mapped CLIP shape/dimension,
+mapping/feature agreement, one-pass keyframe statistics, and raw-video ambiguity.
+`fast` retains mapping columns/counts, unique artifact paths, row-count/shape/dimension
+agreement, keyframe presence, and raw-video ambiguity while consuming the one-pass
+family statistics for a trusted BTC layout. It is not a skip-validation mode.
+
+Portable schema v2 stores POSIX artifact paths relative to the resolved dataset root
+and a shallow SHA-256 identity over relative artifact metadata. On reuse, `--input-root`
+resolves the current Kaggle mount, rebases paths, checks source existence/file sizes,
+and rejects identity mismatch. Existing absolute schema-v1 manifests remain supported.
+
+Use a portable manifest supplied as a persistent Kaggle input:
+
+```bash
+python -m system_tai.kis.contest \
+  --input-root /kaggle/input \
+  --reuse-manifest /kaggle/input/system-tai-manifest/feature_manifest.json \
+  --queries queries.yaml \
+  --output-directory /kaggle/working/run \
+  --fast-contest-mode
+```
+
+Or use cache-or-build behavior:
+
+```bash
+python -m system_tai.kis.contest \
+  --input-root /kaggle/input \
+  --manifest-cache /kaggle/working/cache/feature_manifest.json \
+  --queries queries.yaml \
+  --output-directory /kaggle/working/run \
+  --fast-contest-mode
+```
+
+A valid cache bypasses full discovery. A missing cache is built with strict validation.
+An invalid cache fails unless `--rebuild-invalid-manifest-cache` is explicit. Kaggle
+`/kaggle/working` is ephemeral: retain the portable manifest as notebook output, a
+private lightweight Kaggle Dataset, or an uploaded input artifact. Generated manifests
+and runs must not be committed. Phase 4 refinement and frame semantics are unchanged;
+these startup mechanics do not prove semantic quality or official BTC performance.

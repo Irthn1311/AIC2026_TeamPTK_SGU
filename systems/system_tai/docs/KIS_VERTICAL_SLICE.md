@@ -562,3 +562,32 @@ production frontend are excluded.
 Phase 4 is opt-in and never mutates Phase 3 artifacts. Synthetic mechanics do not prove
 semantic quality or official performance. Official BTC export, UI, Q&A, TRAKE, FAISS,
 and advanced model modules remain outside this slice.
+
+## Phase 4.1 — discovery/bootstrap optimization
+
+- **Input:** bounded BTC dataset root containing mapping, CLIP, keyframe, and optional
+  raw-video families.
+- **Output:** deterministic schema-v1 runtime manifest or schema-v2 portable manifest,
+  dataset identity, one-pass statistics, and discovery timing/call counts.
+- **Source:** `src/system_tai/data/corpus_discovery.py`,
+  `src/system_tai/kis/build_manifest.py`, and `src/system_tai/kis/contest.py`.
+- **Status:** `IMPLEMENTED` locally; full-corpus Kaggle timing acceptance is pending.
+- **Traversal contract:** each direct artifact-family root is walked at most once;
+  keyframe directories and supported-image counts are indexed in that same pass; no
+  image content is read, decoded, or copied.
+- **Strict gate:** mapping columns/counts, memory-mapped NPY shape/dimension, row-count
+  agreement, keyframe image presence, and raw-video ambiguity.
+- **Fast gate:** unique paths and every correctness check needed for row/feature/frame
+  compatibility remain; it consumes the same one-pass family statistics for a trusted
+  layout and is not a skip-validation mode.
+- **Portable boundary:** paths are relative to `dataset_root`, use POSIX separators, and
+  are rebased to the current resolved Kaggle root. Schema v1 remains backward compatible.
+- **Cache boundary:** hit loads/rebases without full family traversal; missing performs a
+  strict build; invalid fails unless explicit rebuild is selected.
+- **Acceptance:** instrumented walker proves one traversal per root and no per-video
+  keyframe rescan, including 873 synthetic directories; process smoke proves portable
+  rebase, contest cache hit, valid checkpoint, and retained Phase 4 raw-video path.
+
+The 579.27-second pre-optimization discovery measurement is operational evidence, not
+retrieval or semantic performance. `/kaggle/working` is ephemeral, generated manifests
+remain outside Git, and Phase 4 exact-frame refinement semantics are unchanged.

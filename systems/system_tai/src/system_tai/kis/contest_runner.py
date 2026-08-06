@@ -166,9 +166,7 @@ def _add_inspection_timings(
     destination["contact_sheet_seconds"] += artifact.timings.contact_sheet_seconds
 
 
-def _merge_export_timings(
-    destination: dict[str, float], source: Mapping[str, float]
-) -> None:
+def _merge_export_timings(destination: dict[str, float], source: Mapping[str, float]) -> None:
     for key in destination:
         destination[key] += float(source.get(key, 0.0))
 
@@ -277,14 +275,10 @@ class ContestRunner:
                 isolated_jsonl = isolated_dir / "top100.jsonl"
                 core_start = self.clock()
                 self.exporter.export(result, isolated_jsonl)
-                query_export_timings["core_jsonl_export_seconds"] += (
-                    self.clock() - core_start
-                )
+                query_export_timings["core_jsonl_export_seconds"] += self.clock() - core_start
                 csv_start = self.clock()
                 _write_internal_csv((result,), isolated_dir / "top100.csv")
-                query_export_timings["internal_csv_export_seconds"] += (
-                    self.clock() - csv_start
-                )
+                query_export_timings["internal_csv_export_seconds"] += self.clock() - csv_start
                 prepared_inspection = prepare_candidate_inspection(
                     (result,),
                     registry,
@@ -342,10 +336,7 @@ class ContestRunner:
                         "variants": variant_timing,
                         "fusion_seconds": None,
                         "export_seconds": None,
-                        **{
-                            key: None
-                            for key in _empty_export_timings()
-                        },
+                        **{key: None for key in _empty_export_timings()},
                         "total_seconds": self.clock() - query_start,
                         "failure_reason": reason,
                     }
@@ -446,6 +437,23 @@ class ContestRunner:
         )
         output_files.append(validation_path)
 
+        discovery_timing_fields = (
+            "dataset_root_resolution_seconds",
+            "family_index_seconds",
+            "mapping_validation_seconds",
+            "clip_shape_validation_seconds",
+            "keyframe_stats_seconds",
+            "raw_video_index_seconds",
+            "manifest_fingerprint_seconds",
+            "manifest_write_seconds",
+            "total_discovery_seconds",
+            "filesystem_directories_visited",
+            "filesystem_files_visited",
+            "keyframe_images_seen",
+            "mapping_files_validated",
+            "clip_files_validated",
+            "raw_video_files_seen",
+        )
         timings = {
             "discovery_seconds": float((bootstrap_timings or {}).get("discovery_seconds", 0.0)),
             "manifest_load_or_build_seconds": float(
@@ -466,6 +474,13 @@ class ContestRunner:
             ),
             "corpus_video_count": len(manifest.videos),
             "corpus_feature_row_count": registry.total_rows,
+            "manifest_source_status": (bootstrap_timings or {}).get(
+                "manifest_source_status", "UNKNOWN"
+            ),
+            "discovery_validation_mode": (bootstrap_timings or {}).get(
+                "discovery_validation_mode", "unknown"
+            ),
+            **{field: (bootstrap_timings or {}).get(field, 0) for field in discovery_timing_fields},
         }
         timings_path = output / "timings.json"
         timings_path.write_text(
@@ -480,10 +495,7 @@ class ContestRunner:
         failed_query_ids = tuple(query_id for query_id, _reason in failures)
         relative_outputs = tuple(
             sorted(
-                {
-                    str(path.relative_to(output)).replace("\\", "/")
-                    for path in output_files
-                }
+                {str(path.relative_to(output)).replace("\\", "/") for path in output_files}
                 | {"run_manifest.json", "run_summary.md"},
                 key=str.casefold,
             )
@@ -496,6 +508,8 @@ class ContestRunner:
             "model_metadata": model_metadata,
             "device": config.device,
             "manifest_fingerprint": manifest.fingerprint,
+            "manifest_source_status": timings["manifest_source_status"],
+            "discovery_validation_mode": timings["discovery_validation_mode"],
             "feature_manifest": str(Path(manifest_path)),
             "video_count": len(manifest.videos),
             "feature_row_count": registry.total_rows,
@@ -516,8 +530,7 @@ class ContestRunner:
             "validation_result": _validation_payload(validation),
             "output_filenames": relative_outputs,
             "failures": [
-                {"query_id": query_id, "failure_reason": reason}
-                for query_id, reason in failures
+                {"query_id": query_id, "failure_reason": reason} for query_id, reason in failures
             ],
             "exit_code": final_exit_code,
         }
@@ -596,6 +609,8 @@ class ContestRunner:
             f"- Model: `{run_manifest['model_identifier']}`",
             f"- Backend: `{run_manifest['retrieval_backend']}`",
             f"- Fusion: `{run_manifest['fusion_strategy']}`",
+            f"- Manifest source: `{run_manifest['manifest_source_status']}`",
+            f"- Discovery validation: `{run_manifest['discovery_validation_mode']}`",
             f"- Inspection mode: `{run_manifest['inspection_mode']}`",
             f"- Successful queries: {run_manifest['successful_query_count']}",
             f"- Failed queries: {run_manifest['failed_query_count']}",
@@ -617,6 +632,12 @@ class ContestRunner:
                 "",
                 f"- Discovery: {timings['discovery_seconds']:.6f}s",
                 f"- Manifest load/build: {timings['manifest_load_or_build_seconds']:.6f}s",
+                f"- Dataset-root resolution: {timings['dataset_root_resolution_seconds']:.6f}s",
+                f"- Family indexing: {timings['family_index_seconds']:.6f}s",
+                f"- Mapping validation: {timings['mapping_validation_seconds']:.6f}s",
+                f"- CLIP shape validation: {timings['clip_shape_validation_seconds']:.6f}s",
+                f"- Keyframe stats: {timings['keyframe_stats_seconds']:.6f}s",
+                f"- Manifest write: {timings['manifest_write_seconds']:.6f}s",
                 f"- Registry load: {timings['registry_load_seconds']:.6f}s",
                 f"- Model load: {timings['model_load_seconds']:.6f}s",
                 f"- Core JSONL export: {timings['core_jsonl_export_seconds']:.6f}s",

@@ -182,3 +182,22 @@ sample index, keyframe order, CLIP row, and filename never cross the shared boun
 Missing-video and decode-failure policies are explicit. Synthetic tests prove mechanics
 only; private Kaggle acceptance, semantic quality, and official competition performance
 remain pending. Generated refinement outputs must remain outside Git.
+
+## Phase 4.1 status
+
+One-pass corpus discovery and portable manifest reuse are `IMPLEMENTED` locally. The
+pre-optimization fresh private-corpus measurement was 579.27 seconds, caused by separate
+recursive mapping/CLIP/raw-video/keyframe scans plus one extra recursive count for every
+keyframe directory. Each bounded family root is now traversed at most once, and keyframe
+image counts are collected during its family traversal.
+
+Absolute schema-v1 manifests remain loadable. Portable schema v2 uses dataset-root-
+relative POSIX paths and shallow relative-artifact metadata identity, then rebases and
+validates artifacts against the current `--input-root`. Cache hit bypasses full family
+discovery; invalid cache replacement requires an explicit rebuild flag. `/kaggle/working`
+is not persistent, so portable manifests must be retained as notebook output, a private
+lightweight Kaggle Dataset, or a separately uploaded input artifact.
+
+The real 873-video latency improvement is pending Kaggle rerun. Phase 4 refinement,
+Exact NumPy retrieval, Weighted RRF, and `frame_id = frame_idx` semantics are unchanged.
+No semantic-quality or official-performance claim follows from this optimization.
