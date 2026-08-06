@@ -168,3 +168,17 @@ and reduced export timing. Exact NumPy retrieval is not the measured bottleneck,
 not add FAISS in this milestone. Generated artifacts must remain outside Git. Do not
 call the technical run official performance, semantic-quality proof, or a completed
 Gate B benchmark.
+
+## Phase 4 status
+
+Raw-video exact-frame refinement is now an opt-in `BASELINE`. It consumes retained
+Phase 3 artifacts, probes and decodes bounded original-video neighborhoods, uses one
+canonical CLIP text/image model for the run, and performs separate per-variant cosine
+ranking followed by local Weighted RRF. It replaces a frame while preserving Phase 3
+rank order. Phase 3 canonical JSONL and `--fast-contest-mode` are unchanged.
+
+Refined `frame_id` is the decoder-returned absolute original-video frame index. Local
+sample index, keyframe order, CLIP row, and filename never cross the shared boundary.
+Missing-video and decode-failure policies are explicit. Synthetic tests prove mechanics
+only; private Kaggle acceptance, semantic quality, and official competition performance
+remain pending. Generated refinement outputs must remain outside Git.

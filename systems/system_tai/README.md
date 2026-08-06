@@ -423,3 +423,43 @@ milestone. These timings are operational evidence, not official BTC performance 
 semantic-quality proof. Q&A, TRAKE, UI/API work, OCR, ASR, VLM, Agent, GNN, and
 production frontend remain deferred. Official BTC export format is still unresolved,
 and all generated run artifacts must stay outside Git.
+## Phase 4 opt-in raw-video exact-frame refinement
+
+Phase 4 is a separate command over completed Phase 3 artifacts. It does not rerun
+retrieval and does not change Phase 3 `top100.jsonl`, Exact NumPy retrieval, Weighted
+RRF, or `--fast-contest-mode`:
+
+```bash
+python -m system_tai.kis.refine \
+  --run-directory /kaggle/working/system_tai_runs/phase3_1_fast_city_rebuild \
+  --output-directory /kaggle/working/system_tai_runs/phase4_refined_city \
+  --top-candidates-to-refine 20 \
+  --window-before-seconds 5 \
+  --window-after-seconds 5 \
+  --coarse-stride-frames 15 \
+  --coarse-top-n 3 \
+  --fine-radius-frames 30 \
+  --fine-stride-frames 1 \
+  --image-batch-size 32 \
+  --max-decoded-frames-per-candidate 500 \
+  --output-top-k 100 \
+  --missing-raw-video-policy keep-original \
+  --candidate-failure-policy keep-original \
+  --device auto \
+  --allow-model-download
+```
+
+Raw video is the coordinate source of truth. Candidate, decoded, and refined frame IDs
+are absolute original-video positions; a local decode-list index is never a shared
+`frame_id`. Refinement uses bounded sequential decoding, one shared official OpenAI
+CLIP ViT-B/32 model, independent per-variant cosine rankings, and local Weighted RRF.
+It replaces frames while preserving Phase 3 rank order and never mixes retrieval and
+local-refinement scores.
+
+Missing-video and decode failures support explicit `keep-original`, `skip-candidate`,
+and `fail-query` policies. The command writes a core JSONL, internal CSV, bounded
+candidate/trace JSON, timings, validation, run manifest, summary, and per-query files.
+The derived contact sheet is optional and off by default. Generated outputs stay
+outside Git. Synthetic tests prove mechanics only; private Kaggle acceptance and
+semantic review remain required. Official BTC export is unresolved. UI, Q&A, TRAKE,
+FAISS, OCR/ASR, VLM, Agent, and GNN remain deferred.

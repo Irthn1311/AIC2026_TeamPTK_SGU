@@ -535,3 +535,30 @@ production frontend are excluded.
 - Shared validator/evaluator interfaces.
 - Official BTC submission format.
 - Final repository destination; this blocks merge, not isolated local implementation.
+
+## Phase 4 — opt-in exact-frame refinement
+
+- **Input:** completed Phase 3 `candidates.json`, `run_manifest.json`,
+  `feature_manifest.json`, canonical `top100.jsonl`, and original raw videos.
+- **Output:** core `refined_top100.jsonl`; internal CSV, bounded candidate/trace JSON,
+  timings, validation, run manifest, summary, and optional derived contact sheet.
+- **Source:** `src/system_tai/refinement/` and `src/system_tai/kis/refine.py`.
+- **Status:** `BASELINE`; implemented with synthetic fake-decoder/fake-model evidence.
+  Private Kaggle acceptance is pending.
+- **Coordinate contract:** candidate, decoded, refined, and exported IDs are absolute
+  original-video frame indexes. Decoder output carries the absolute ID; a local list
+  position is never exported.
+- **Algorithm:** inclusive bounded window; deterministic coarse sampling including the
+  candidate; batched image encoding; independent cosine ranking for every explicit
+  Phase 3 variant; Weighted RRF; deduplicated fine neighborhoods; repeat local fusion;
+  select the fine winner.
+- **Final ranking:** preserve Phase 3 order, apply explicit keep/skip/fail policy,
+  deduplicate `(video_id, final_frame_id)`, and assign contiguous ranks up to 100. A
+  local refinement score never reorders the original candidate list.
+- **Acceptance:** no whole-video decode, no implicit model download, model loaded once,
+  core JSONL leaks no diagnostics, validator passes, and traces contain no image bytes
+  or embedding vectors.
+
+Phase 4 is opt-in and never mutates Phase 3 artifacts. Synthetic mechanics do not prove
+semantic quality or official performance. Official BTC export, UI, Q&A, TRAKE, FAISS,
+and advanced model modules remain outside this slice.
