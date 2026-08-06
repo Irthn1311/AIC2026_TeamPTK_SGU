@@ -2,16 +2,18 @@
 
 ## Status date
 
-`2026-08-05`
+`2026-08-06`
 
 ## Summary
 
 The workbook and Canva design have been reviewed. Phase 1 input auditing, Phase 1.5C
-compatibility calibration, the Phase 2 exact NumPy KIS implementation, and Phase 2.5
-ground-truth evaluation infrastructure are present. Real compatibility evidence covers
-`L21_V001`, `L21_V002`, and `L22_V001`. The first real semantic smoke passed the
-technical pipeline but did not pass semantic quality; no verified benchmark metrics
-exist yet.
+compatibility calibration, the Phase 2 exact NumPy KIS implementation, Phase 2.5
+ground-truth evaluation, and an opt-in Phase 2.6 Weighted RRF pilot implementation are
+present. Real compatibility evidence covers `L21_V001`, `L21_V002`, and `L22_V001`.
+The first real semantic smoke passed the technical pipeline but did not pass semantic
+quality. A small human-verified pilot now contains three intents and nine comparable
+verified query variants; its scope and retrieval-selection bias prevent official or
+dataset-wide claims.
 
 No TRIAGE-EG source, tests, configs, documentation, or generated assets belong to
 `system_tai`. All current implementation is isolated under `systems/system_tai`.
@@ -24,7 +26,7 @@ No TRIAGE-EG source, tests, configs, documentation, or generated assets belong t
 | Shared checkpoint boundary | PLANNED | Core KIS fields resolved as `query_id`, `rank`, `video_id`, `frame_id`; UTF-8 JSONL proposed | Optional envelope/version fields remain open. |
 | Benchmark video catalog | IMPLEMENTED | `src/system_tai/data/video_catalog.py` and acceptance tests | Requires authoritative real catalog data. |
 | Frame mapping | IMPLEMENTED | `frame_idx` is preserved exactly; three real mapping-policy gates pass | Dataset-wide behavior beyond three videos is pending. |
-| BTC CLIP store | IMPLEMENTED | Temporary-NPY tests and real finite/shape/row audits on three videos | Exact model pipeline remains unverified. |
+| BTC CLIP store | IMPLEMENTED | Temporary-NPY tests and real finite/shape/row audits on three videos | Compatibility evidence remains limited to three videos. |
 | Data-audit CLI | IMPLEMENTED | CLI tests and three real valid input/feature-row audits | Broader dataset audit is pending. |
 | Kaggle input discovery | IMPLEMENTED | Nested tests and real artifact resolution for all three calibration videos | Broader dataset coverage is pending. |
 | Mapping-rounding audit | IMPLEMENTED | Decimal-exact, binary-float-truncation, and Decimal-nearest diagnostics with regression tests | Numeric generation rule remains inferred. |
@@ -38,9 +40,10 @@ No TRIAGE-EG source, tests, configs, documentation, or generated assets belong t
 | Checkpoint exporter | IMPLEMENTED | Core-only UTF-8 JSONL and explicit internal mode tested | Accepted schema remains proposed. |
 | Validator | IMPLEMENTED | Structured syntax/type/rank/duplicate/registry checks tested | This local validator is not yet the accepted shared validator. |
 | Phase 2 CLI/notebook | IMPLEMENTED | Real smoke wrote 500 valid JSONL records with zero validator errors | Semantic quality did not pass. |
-| Phase 2.5 benchmark schema/validator | IMPLEMENTED | Typed YAML/JSON schema, registry-aware validation, structured errors, and draft exclusion tests | Checked-in examples are drafts; verified labels require human evidence. |
-| Phase 2.5 exact evaluator | IMPLEMENTED | Binary query Recall@K, ground-truth coverage, hit count, first rank, reciprocal rank/MRR, relevant-video coverage, aggregates, and paired VI/EN tests | Real quality metrics are unavailable until verified labels exist. |
+| Phase 2.5 benchmark schema/validator | IMPLEMENTED | Typed YAML/JSON schema, registry-aware validation, structured errors, draft exclusion tests, and a human-verified three-group pilot | Pilot labels were selected after retrieval inspection and are not an official benchmark. |
+| Phase 2.5 exact evaluator | IMPLEMENTED | Binary query Recall@K, ground-truth coverage, hit count, first rank, reciprocal rank/MRR, relevant-video coverage, aggregates, paired VI/EN tests, and measured pilot ranks | Only three videos and three semantic intents are represented. |
 | Phase 2.5 reports/annotation notebook | IMPLEMENTED | Deterministic JSON/CSV/Markdown serialization, validation-only CLI, bounded annotation helper, and clean Kaggle notebook | Generated reports remain external and Kaggle working storage is ephemeral. |
+| Phase 2.6 explicit variants and Weighted RRF | BASELINE | Immutable validated variants, canonical per-variant exact retrieval, deterministic weighted rank fusion, provenance isolation, evaluator, CLI, and synthetic tests | Opt-in only; real RRF metrics have not yet been executed in Kaggle. |
 | Legacy interval fixture evaluator | PLANNED | Interface specified | Superseded for Phase 2.5 by the implemented exact-label evaluator; not an official evaluator. |
 | Official BTC exporter | DEFERRED | Separate boundary recognized | Official format is unresolved. |
 | Q&A and TRAKE | DEFERRED | Personal design reference | Outside the first slice. |
@@ -81,8 +84,8 @@ See `docs/KAGGLE_PHASE_1_5_REPORT.md` for the evidence boundary and exact comman
 
 ## Pending real Kaggle work
 
-- Human-review candidate frames, add verified positives to a benchmark outside generated
-  outputs, validate it, then report Recall@K and observed ranks with Phase 2.5.
+- Run the measured Weighted RRF milestone against the checked-in three-group pilot and
+  save generated reports only under Kaggle working output storage.
 - Extend compatibility checks beyond the current three videos before dataset-wide claims.
 - Investigate language handling and still-frame action/state ambiguity without changing
   the exact baseline to fit anecdotal results.
@@ -113,17 +116,28 @@ model weights are attached only inside Kaggle. Corpus coverage and ambiguity bet
 action/state language and a single still frame remain important limitations.
 
 Phase 2.5 evaluation infrastructure is implemented and synthetically tested. It does
-not change the Phase 2 semantic result. The checked-in benchmark template has only
-draft queries and therefore returns `no_verified_queries` without producing a quality
-metric. Real query-level Recall@K, ground-truth coverage, rank, reciprocal rank,
-relevant-video coverage, and VI/EN paired results remain unavailable until a human
-provides verified labels.
+not change the Phase 2 semantic result. The original benchmark template still contains
+only drafts and returns `no_verified_queries`. The separate pilot fixture contains
+three semantic groups, nine human-verified variants, and six drafts over the three
+audited videos. Observed canonical unsuppressed ranks are:
+
+- `city_pedestrians`: direct Vietnamese missed Top-100; English translation ranked 1;
+  English expansion ranked 3.
+- `conference_attendees`: direct Vietnamese missed Top-100; English translation and
+  expansion both ranked 14.
+- `landslide_warning_sign`: direct Vietnamese ranked 1; English translation ranked 4;
+  English expansion ranked 6.
+
+These are pilot observations, not official performance. Positives were chosen after
+retrieval inspection, so retrieval-selection bias applies. The multilingual policy is
+still open and Gate B is not fully passed. Phase 2.6 adds a separately invoked Weighted
+RRF measurement path; it does not change the single-query baseline.
 
 ## Remaining blockers and decisions
 
 ### Blocks evidence-backed semantic KIS readiness
 
-- Positive/distractor sanity benchmark and expected intervals.
+- A broader positive/distractor benchmark independent of retrieval-selection bias.
 - Multilingual query policy supported by measured evidence.
 - Broader corpus coverage and handling of still-frame action/state ambiguity.
 
@@ -138,7 +152,7 @@ provides verified labels.
 
 ## Next milestone
 
-Use the Phase 2.5 notebook to review bounded candidates, record human-verified official
-`frame_id` positives, and run the unsuppressed benchmark. Download generated reports
-from ephemeral Kaggle storage. Do not call three-video fixture metrics official or
-dataset-wide performance.
+Run the opt-in Weighted RRF evaluator on the three-group pilot, compare its metrics with
+the already measured per-variant ranks, and download generated reports from ephemeral
+Kaggle storage. Do not call this three-video pilot official, dataset-wide, or a completed
+Gate B benchmark.

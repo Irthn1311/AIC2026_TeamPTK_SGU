@@ -265,6 +265,64 @@ draft-only benchmark returns the explicit `no_verified_queries` state without lo
 the model or fabricating zero-valued quality metrics. Successful reports include
 evaluated, excluded-draft, and invalid-query counts.
 
-Real benchmark metrics remain unavailable until humans add verified labels. Current
-evidence covers only `L21_V001`, `L21_V002`, and `L22_V001`; no dataset-wide semantic
-quality or translation claim is supported.
+The draft-only example still exercises the explicit `no_verified_queries` state. A
+separate pilot fixture, `config/kis_benchmark.pilot_three_groups.yaml`, contains three
+semantic groups, nine human-verified comparable variants, and six drafts. It uses only
+the three audited videos. Its positives were selected after retrieval inspection, so
+retrieval-selection bias applies and no official or dataset-wide semantic-quality claim
+is supported.
+
+Observed canonical unsuppressed ranks in that pilot were:
+
+- city pedestrians: Vietnamese missed Top-100, translation rank 1, expansion rank 3;
+- conference attendees: Vietnamese missed Top-100, translation rank 14, expansion rank
+  14;
+- landslide warning sign: Vietnamese rank 1, translation rank 4, expansion rank 6.
+
+These observations do not settle a multilingual policy. Gate B remains incomplete.
+
+## Phase 2.6 opt-in Weighted RRF pilot
+
+Phase 2.6 adds explicit immutable query variants and deterministic Weighted Reciprocal
+Rank Fusion as a separate measurement path. Each variant is retrieved independently by
+the unchanged canonical `ExactNumpyRetriever`, with no temporal suppression. For a
+candidate present in one or more branches:
+
+```text
+fusion_score = sum(weight / (rrf_constant + one_based_rank))
+```
+
+Candidate identity is exactly `(video_id, frame_id)`. Raw cosine values, CLIP rows,
+keyframe order, per-variant ranks, and fusion provenance remain internal diagnostics.
+The default checkpoint exporter still emits only `query_id`, `rank`, `video_id`, and
+`frame_id`. Weighted RRF is opt-in and does not change the Phase 2 single-query CLI,
+Phase 2.5 evaluator, exact-retrieval tie rules, or canonical JSONL output.
+
+Validate the pilot without loading model weights:
+
+```bash
+python -m system_tai.kis.benchmark_fusion \
+  --manifest /kaggle/working/system_tai_outputs/kis_benchmark/feature_manifest.json \
+  --benchmark systems/system_tai/config/kis_benchmark.pilot_three_groups.yaml \
+  --validation-only
+```
+
+Run the real Kaggle fusion measurement:
+
+```bash
+python -m system_tai.kis.benchmark_fusion \
+  --manifest /kaggle/working/system_tai_outputs/kis_benchmark/feature_manifest.json \
+  --benchmark systems/system_tai/config/kis_benchmark.pilot_three_groups.yaml \
+  --output-directory /kaggle/working/system_tai_outputs/kis_fusion_pilot \
+  --device auto \
+  --top-k 1 5 20 50 100 \
+  --top-k-per-variant 100 \
+  --rrf-constant 60 \
+  --fail-on-invalid
+```
+
+Model downloads are disabled unless `--allow-model-download` is supplied. Reports are
+written outside the repository as `kis_fusion_pilot_report.json`,
+`kis_fusion_pilot_summary.csv`, and `kis_fusion_pilot_report.md`. The private Kaggle
+dataset and CLIP weights are unavailable locally, so this implementation phase cannot
+claim real fused metrics.

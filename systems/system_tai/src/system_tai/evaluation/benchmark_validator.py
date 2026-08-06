@@ -215,7 +215,12 @@ class BenchmarkValidator:
         variants: list[BenchmarkQuery],
         errors: list[BenchmarkIssue],
     ) -> None:
-        variant_counts = Counter(query.variant_type for query in variants)
+        verified_variants = [
+            query
+            for query in variants
+            if query.annotation_status is AnnotationStatus.VERIFIED
+        ]
+        variant_counts = Counter(query.variant_type for query in verified_variants)
         for variant_type, count in sorted(
             variant_counts.items(), key=lambda item: item[0].value
         ):
@@ -229,14 +234,16 @@ class BenchmarkValidator:
                         ),
                         next(
                             query
-                            for query in variants
+                            for query in verified_variants
                             if query.variant_type is variant_type
                         ),
                         "variant_type",
                     )
                 )
-        reference = variants[0]
-        for variant in variants[1:]:
+        if not verified_variants:
+            return
+        reference = verified_variants[0]
+        for variant in verified_variants[1:]:
             if set(variant.source_scope) != set(reference.source_scope):
                 errors.append(
                     self._issue(

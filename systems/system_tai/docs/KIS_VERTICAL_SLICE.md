@@ -362,6 +362,64 @@ compatibility evidence, not BTC-official preprocessing or dataset-wide evidence.
   helper output never marks a frame relevant; no dataset image or generated report is
   checked into Git.
 
+## Phase 2.6 — Opt-in multilingual Weighted RRF pilot
+
+### Module 14 — Explicit query variants and multi-query retrieval
+
+- **Input:** one query ID, at least one immutable explicit query variant
+  `(variant_id, text, language, variant_type, weight)`, per-variant Top-K, output Top-K,
+  and positive finite RRF constant.
+- **Output:** one deterministically ranked `KISResult` whose candidates are deduplicated
+  by exact `(video_id, frame_id)` and retain internal per-variant provenance.
+- **Intended source:** `src/system_tai/retrieval/multi_query.py`
+- **Status:** `BASELINE`; implemented as an opt-in layer without changing exact
+  single-query retrieval.
+- **Dependencies:** unchanged canonical `ExactNumpyRetriever`, `KISQuery`, `KISResult`,
+  `CandidateFrame`, and explicit caller-provided query variants.
+- **Unit tests:** validation; one/three-variant hits; duplicate frame pairs; weighted RRF
+  arithmetic with one-based ranks; deterministic tie-breaking; Top-100; contiguous
+  ranks; exact frame preservation; raw-score scale isolation; exporter provenance
+  isolation; unchanged single-query behavior.
+- **Acceptance:** fusion score is exactly
+  `sum(weight / (rrf_constant + one_based_rank))` over variants containing a candidate;
+  ordering is fusion score descending, variant-hit count descending, best individual
+  rank ascending, then video ID, frame ID, and CLIP row ascending; raw cosine scores are
+  diagnostic only; temporal suppression is absent; fusion is never an implicit default.
+
+### Module 15 — Fusion pilot evaluator, reports, and CLI
+
+- **Input:** a valid human-authored benchmark, comparable verified variants grouped by
+  `semantic_group_id`, canonical exact retriever, RRF configuration, and metric cutoffs.
+- **Output:** per-group fused rank/reciprocal-rank/Recall/hit/ground-truth-coverage
+  metrics plus deterministic JSON, CSV, and Markdown pilot reports outside Git.
+- **Intended source:** `src/system_tai/evaluation/fusion_benchmark.py`,
+  `src/system_tai/evaluation/fusion_reports.py`, and
+  `src/system_tai/kis/benchmark_fusion.py`.
+- **Status:** `BASELINE`; evaluator, deterministic reports, and a separate CLI are
+  implemented and synthetically tested. Real Kaggle fusion measurement is pending.
+- **Dependencies:** Modules 10–14, official OpenAI CLIP ViT-B/32, and the validated
+  three-video feature manifest at runtime.
+- **Unit tests:** metric correctness; missing, draft, duplicate, and incomparable groups;
+  deterministic repeated reports; validation-only/no-valid-group states; CLI parsing.
+- **Acceptance:** only comparable verified variants with identical positive labels and
+  source scope are fused; existing Phase 2.5 metric definitions do not change; no valid
+  group fails explicitly; reports identify pilot scope and retrieval-selection bias;
+  no official or dataset-wide performance claim is made.
+
+### Phase 2.6 pilot evidence boundary
+
+`config/kis_benchmark.pilot_three_groups.yaml` contains exactly three semantic groups,
+nine comparable human-verified variants, and six excluded drafts. Its positives use only
+official/shared `(video_id, frame_id)` coordinates. The labels were selected after
+retrieval inspection, so the pilot has retrieval-selection bias.
+
+Canonical unsuppressed per-variant observations are: city pedestrians (Vietnamese miss,
+translation rank 1, expansion rank 3), conference attendees (Vietnamese miss,
+translation rank 14, expansion rank 14), and landslide warning sign (Vietnamese rank 1,
+translation rank 4, expansion rank 6). These three intents over three videos do not
+establish official or dataset-wide quality. The next measured milestone is opt-in
+Weighted RRF; Gate B remains incomplete.
+
 ## Exclusions
 
 Agent, GNN, Event Graph, VLM, OCR, ASR, Q&A, TRAKE, API server, backend, and

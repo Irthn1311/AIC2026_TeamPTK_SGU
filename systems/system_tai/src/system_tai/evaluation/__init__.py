@@ -15,6 +15,13 @@ from .benchmark_schema import (
     load_benchmark,
 )
 from .benchmark_validator import BenchmarkValidationResult, BenchmarkValidator
+from .fusion_benchmark import (
+    FusionBenchmarkEvaluator,
+    FusionBenchmarkReport,
+    NoComparableFusionGroupsError,
+    select_comparable_fusion_groups,
+)
+from .fusion_reports import FusionReportPaths, write_fusion_reports
 from .kis_benchmark import (
     KISBenchmarkEvaluator,
     KISBenchmarkReport,
@@ -31,15 +38,21 @@ __all__ = [
     "BenchmarkReportPaths",
     "BenchmarkValidationResult",
     "BenchmarkValidator",
+    "FusionBenchmarkEvaluator",
+    "FusionBenchmarkReport",
+    "FusionReportPaths",
     "KISBenchmark",
     "KISBenchmarkEvaluator",
     "KISBenchmarkReport",
     "NoVerifiedQueriesResult",
+    "NoComparableFusionGroupsError",
     "KISFixtureEvaluator",
     "RelevantFrame",
     "VariantType",
     "build_annotation_candidates",
     "load_benchmark",
+    "select_comparable_fusion_groups",
     "write_benchmark_reports",
     "write_draft_annotation_review",
+    "write_fusion_reports",
 ]

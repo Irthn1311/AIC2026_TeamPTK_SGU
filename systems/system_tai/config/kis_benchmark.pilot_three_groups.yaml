@@ -1,0 +1,165 @@
+schema_version: 1
+benchmark_id: system_tai_kis_pilot_three_groups_v1
+description: >-
+  Phase 2.6 pilot over three audited videos and three semantic intents. Positive
+  labels were selected after retrieval inspection and therefore have
+  retrieval-selection bias. This is not an official or dataset-wide benchmark.
+queries:
+  - query_id: city_pedestrians_vi
+    language: vi
+    text: nhiều người đi bộ trên đường phố thành thị
+    semantic_group_id: city_pedestrians
+    variant_type: vietnamese_direct
+    relevant_frames: &city_frames
+      - {video_id: L21_V002, frame_id: 20574}
+      - {video_id: L22_V001, frame_id: 19821}
+      - {video_id: L21_V001, frame_id: 23982}
+    relevant_video_ids: &city_videos [L21_V001, L21_V002, L22_V001]
+    annotation_notes: Human-verified pilot labels supplied after retrieval inspection; retrieval-selection bias applies.
+    annotation_status: verified
+    source_scope: &pilot_scope [L21_V001, L21_V002, L22_V001]
+  - query_id: city_pedestrians_en_translation
+    language: en
+    text: many people walking on a city street
+    semantic_group_id: city_pedestrians
+    variant_type: english_translation
+    relevant_frames: *city_frames
+    relevant_video_ids: *city_videos
+    annotation_notes: Comparable English translation using the same verified positives and source scope.
+    annotation_status: verified
+    source_scope: *pilot_scope
+  - query_id: city_pedestrians_en_expansion
+    language: en
+    text: a busy urban street with a crowd of pedestrians walking along the road
+    semantic_group_id: city_pedestrians
+    variant_type: english_expansion
+    relevant_frames: *city_frames
+    relevant_video_ids: *city_videos
+    annotation_notes: Comparable English expansion using the same verified positives and source scope.
+    annotation_status: verified
+    source_scope: *pilot_scope
+  - query_id: city_pedestrians_draft_vi_alt
+    language: vi
+    text: đám đông người đi bộ trong thành phố
+    semantic_group_id: city_pedestrians
+    variant_type: vietnamese_direct
+    relevant_frames: []
+    relevant_video_ids: []
+    annotation_notes: Draft wording only; excluded from scoring and fusion.
+    annotation_status: draft
+    source_scope: *pilot_scope
+  - query_id: city_pedestrians_draft_en_alt
+    language: en
+    text: pedestrians moving through a crowded urban roadway
+    semantic_group_id: city_pedestrians
+    variant_type: english_expansion
+    relevant_frames: []
+    relevant_video_ids: []
+    annotation_notes: Draft wording only; excluded from scoring and fusion.
+    annotation_status: draft
+    source_scope: *pilot_scope
+
+  - query_id: landslide_warning_sign_vi
+    language: vi
+    text: biển cảnh báo khu vực sạt lở nguy hiểm
+    semantic_group_id: landslide_warning_sign
+    variant_type: vietnamese_direct
+    relevant_frames: &landslide_frames
+      - {video_id: L21_V001, frame_id: 2130}
+      - {video_id: L21_V001, frame_id: 2217}
+    relevant_video_ids: &landslide_videos [L21_V001]
+    annotation_notes: Human-verified pilot labels supplied after retrieval inspection; retrieval-selection bias applies.
+    annotation_status: verified
+    source_scope: *pilot_scope
+  - query_id: landslide_warning_sign_en_translation
+    language: en
+    text: a warning sign for a dangerous landslide area
+    semantic_group_id: landslide_warning_sign
+    variant_type: english_translation
+    relevant_frames: *landslide_frames
+    relevant_video_ids: *landslide_videos
+    annotation_notes: Comparable English translation using the same verified positives and source scope.
+    annotation_status: verified
+    source_scope: *pilot_scope
+  - query_id: landslide_warning_sign_en_expansion
+    language: en
+    text: roadside hazard sign warning of falling rocks or a landslide-prone area
+    semantic_group_id: landslide_warning_sign
+    variant_type: english_expansion
+    relevant_frames: *landslide_frames
+    relevant_video_ids: *landslide_videos
+    annotation_notes: Comparable English expansion using the same verified positives and source scope.
+    annotation_status: verified
+    source_scope: *pilot_scope
+  - query_id: landslide_warning_sign_draft_vi_alt
+    language: vi
+    text: bảng cảnh báo nguy cơ đất đá sạt xuống đường
+    semantic_group_id: landslide_warning_sign
+    variant_type: vietnamese_direct
+    relevant_frames: []
+    relevant_video_ids: []
+    annotation_notes: Draft wording only; excluded from scoring and fusion.
+    annotation_status: draft
+    source_scope: *pilot_scope
+  - query_id: landslide_warning_sign_draft_en_alt
+    language: en
+    text: a traffic warning about rockfall and landslide danger
+    semantic_group_id: landslide_warning_sign
+    variant_type: english_expansion
+    relevant_frames: []
+    relevant_video_ids: []
+    annotation_notes: Draft wording only; excluded from scoring and fusion.
+    annotation_status: draft
+    source_scope: *pilot_scope
+
+  - query_id: conference_attendees_vi
+    language: vi
+    text: những người tham dự đang ngồi trong hội nghị
+    semantic_group_id: conference_attendees
+    variant_type: vietnamese_direct
+    relevant_frames: &conference_frames
+      - {video_id: L21_V001, frame_id: 23163}
+    relevant_video_ids: &conference_videos [L21_V001]
+    annotation_notes: Human-verified pilot label supplied after retrieval inspection; retrieval-selection bias applies.
+    annotation_status: verified
+    source_scope: *pilot_scope
+  - query_id: conference_attendees_en_translation
+    language: en
+    text: attendees sitting in a conference
+    semantic_group_id: conference_attendees
+    variant_type: english_translation
+    relevant_frames: *conference_frames
+    relevant_video_ids: *conference_videos
+    annotation_notes: Comparable English translation using the same verified positives and source scope.
+    annotation_status: verified
+    source_scope: *pilot_scope
+  - query_id: conference_attendees_en_expansion
+    language: en
+    text: a group of conference attendees seated together at an indoor event
+    semantic_group_id: conference_attendees
+    variant_type: english_expansion
+    relevant_frames: *conference_frames
+    relevant_video_ids: *conference_videos
+    annotation_notes: Comparable English expansion using the same verified positives and source scope.
+    annotation_status: verified
+    source_scope: *pilot_scope
+  - query_id: conference_attendees_draft_vi_alt
+    language: vi
+    text: khán giả ngồi nghe tại một hội thảo
+    semantic_group_id: conference_attendees
+    variant_type: vietnamese_direct
+    relevant_frames: []
+    relevant_video_ids: []
+    annotation_notes: Draft wording only; excluded from scoring and fusion.
+    annotation_status: draft
+    source_scope: *pilot_scope
+  - query_id: conference_attendees_draft_en_alt
+    language: en
+    text: audience members seated inside a conference hall
+    semantic_group_id: conference_attendees
+    variant_type: english_expansion
+    relevant_frames: []
+    relevant_video_ids: []
+    annotation_notes: Draft wording only; excluded from scoring and fusion.
+    annotation_status: draft
+    source_scope: *pilot_scope
