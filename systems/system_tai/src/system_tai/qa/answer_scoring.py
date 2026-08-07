@@ -30,9 +30,6 @@ class CosineEvidenceAnswerScorer:
         Results are sorted by score descending, then by canonical_answer ascending.
     """
 
-    def __init__(self, default_score: float = 0.0) -> None:
-        self.default_score = float(default_score)
-
     def _validate_normalized_embedding(self, vec: np.ndarray, name: str) -> None:
         if not isinstance(vec, np.ndarray):
             raise TypeError(f"{name} must be a numpy ndarray")
@@ -60,35 +57,35 @@ class CosineEvidenceAnswerScorer:
         image_embedding: np.ndarray | None = None,
         prompt_embeddings: dict[str, np.ndarray] | None = None,
     ) -> list[tuple[AnswerHypothesis, float]]:
-        if not hypotheses:
+        if not hypotheses or image_embedding is None or not prompt_embeddings:
             return []
 
-        if image_embedding is not None:
-            self._validate_normalized_embedding(image_embedding, "image_embedding")
+        self._validate_normalized_embedding(image_embedding, "image_embedding")
 
         scored_results: list[tuple[AnswerHypothesis, float]] = []
 
         for hyp in hypotheses:
-            max_sim = self.default_score
-            if image_embedding is not None and prompt_embeddings is not None:
-                for prompt in hyp.visual_prompts:
-                    if prompt in prompt_embeddings:
-                        p_emb = prompt_embeddings[prompt]
-                        self._validate_normalized_embedding(
-                            p_emb, f"prompt_embedding['{prompt}']"
+            best_score: float | None = None
+            for prompt in hyp.visual_prompts:
+                if prompt in prompt_embeddings:
+                    p_emb = prompt_embeddings[prompt]
+                    self._validate_normalized_embedding(
+                        p_emb, f"prompt_embedding['{prompt}']"
+                    )
+                    if p_emb.shape != image_embedding.shape:
+                        msg = (
+                            f"Dimension mismatch: image shape {image_embedding.shape} "
+                            f"vs prompt shape {p_emb.shape}"
                         )
-                        if p_emb.shape != image_embedding.shape:
-                            msg = (
-                                f"Dimension mismatch: image shape {image_embedding.shape} "
-                                f"vs prompt shape {p_emb.shape}"
-                            )
-                            raise ValueError(msg)
-                        sim = float(np.dot(image_embedding, p_emb))
-                        if not np.isfinite(sim):
-                            sim = self.default_score
-                        if sim > max_sim or max_sim == self.default_score:
-                            max_sim = sim
-            scored_results.append((hyp, max_sim))
+                        raise ValueError(msg)
+                    sim = float(np.dot(image_embedding, p_emb))
+                    if not np.isfinite(sim):
+                        raise ValueError("non-finite cosine similarity")
+                    if best_score is None or sim > best_score:
+                        best_score = sim
+
+            if best_score is not None:
+                scored_results.append((hyp, best_score))
 
         scored_results.sort(key=lambda x: (-x[1], x[0].canonical_answer))
         return scored_results

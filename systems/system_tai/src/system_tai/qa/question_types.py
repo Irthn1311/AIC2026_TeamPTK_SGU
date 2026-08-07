@@ -33,12 +33,16 @@ _YES_NO_PATTERNS = [
     r"có\s+.*\s+không",
     r"có\s+phải",
     r"phải\s+không",
-    r"is\s+there",
-    r"are\s+there",
-    r"\bdoes\b",
-    r"\bdid\b",
-    r"is\s+the\b",
-    r"was\s+there",
+    r"^\s*is\s+there\b",
+    r"^\s*are\s+there\b",
+    r"^\s*is\s+",
+    r"^\s*are\s+",
+    r"^\s*was\s+",
+    r"^\s*were\s+",
+    r"^\s*does\b",
+    r"^\s*did\b",
+    r"^\s*do\b",
+    r"^\s*can\b",
 ]
 
 _DIRECTION_PATTERNS = [
@@ -68,14 +72,15 @@ def classify_question_type(question: str, question_en: str | None = None) -> Que
     if question_en:
         q_texts.append(question_en)
 
+    # Order of precedence: COUNT -> YES_NO -> DIRECTION -> COLOR -> UNSUPPORTED
     for q in q_texts:
-        if _matches_any(q, _COLOR_PATTERNS):
-            return QuestionType.COLOR
         if _matches_any(q, _COUNT_PATTERNS):
             return QuestionType.COUNT
-        if _matches_any(q, _DIRECTION_PATTERNS):
-            return QuestionType.DIRECTION
         if _matches_any(q, _YES_NO_PATTERNS):
             return QuestionType.YES_NO
+        if _matches_any(q, _DIRECTION_PATTERNS):
+            return QuestionType.DIRECTION
+        if _matches_any(q, _COLOR_PATTERNS):
+            return QuestionType.COLOR
 
     return QuestionType.UNSUPPORTED
