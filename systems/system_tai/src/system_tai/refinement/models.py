@@ -10,6 +10,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
+from system_tai.refinement.video import CoarseDecodeStrategy
 from system_tai.retrieval.multi_query import QueryVariant
 
 
@@ -51,6 +52,7 @@ class RefinementConfig:
     allow_model_download: bool = False
     clip_cache_dir: Path | None = None
     rrf_constant: float = 60.0
+    coarse_decode_strategy: CoarseDecodeStrategy = CoarseDecodeStrategy.SEQUENTIAL
 
     def __post_init__(self) -> None:
         if not 1 <= self.top_candidates_to_refine <= 100:
@@ -82,6 +84,8 @@ class RefinementConfig:
             raise ValueError("invalid candidate_failure_policy")
         if not math.isfinite(self.rrf_constant) or self.rrf_constant <= 0:
             raise ValueError("rrf_constant must be finite and positive")
+        if not isinstance(self.coarse_decode_strategy, CoarseDecodeStrategy):
+            raise ValueError("invalid coarse_decode_strategy")
 
 
 @dataclass(frozen=True, slots=True)

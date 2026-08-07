@@ -5,16 +5,9 @@ from __future__ import annotations
 import argparse
 import signal
 import sys
-import time
-from collections.abc import Sequence
 from pathlib import Path
 from typing import TextIO
 
-from system_tai.refinement.models import (
-    CandidateFailurePolicy,
-    MissingRawVideoPolicy,
-    RefinementConfig,
-)
 from system_tai.kis.benchmark import resolve_device
 from system_tai.kis.session_engine import OperationalKISRuntime
 from system_tai.kis.session_schema import (
@@ -30,6 +23,12 @@ from system_tai.kis.session_schema import (
     format_json_response,
     parse_session_request,
 )
+from system_tai.refinement.models import (
+    CandidateFailurePolicy,
+    MissingRawVideoPolicy,
+    RefinementConfig,
+)
+from system_tai.refinement.video import CoarseDecodeStrategy
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -89,6 +88,11 @@ def build_parser() -> argparse.ArgumentParser:
         choices=tuple(p.value for p in CandidateFailurePolicy),
         default=CandidateFailurePolicy.KEEP_ORIGINAL.value,
     )
+    parser.add_argument(
+        "--coarse-decode-strategy",
+        choices=("sequential", "sparse-verified"),
+        default="sequential",
+    )
     return parser
 
 
@@ -109,6 +113,7 @@ def session_config_from_args(args: argparse.Namespace) -> SessionConfig:
         candidate_failure_policy=CandidateFailurePolicy(args.candidate_failure_policy),
         allow_model_download=args.allow_model_download,
         clip_cache_dir=args.clip_cache_dir,
+        coarse_decode_strategy=CoarseDecodeStrategy(args.coarse_decode_strategy),
     )
     return SessionConfig(
         input_root=args.input_root,

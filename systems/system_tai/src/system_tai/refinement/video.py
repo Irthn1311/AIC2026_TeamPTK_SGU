@@ -7,10 +7,16 @@ import math
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, Protocol
 
 from system_tai.data.corpus_discovery import VIDEO_EXTENSIONS, CorpusManifest
+
+
+class CoarseDecodeStrategy(StrEnum):
+    SEQUENTIAL = "sequential"
+    SPARSE_VERIFIED = "sparse-verified"
 
 
 class RawVideoError(RuntimeError):
@@ -174,6 +180,7 @@ class DecodeResult:
     decode_seconds: float
     decoder_backend: str
     warnings: tuple[str, ...]
+    decode_strategy: str = "sequential_bounded"
 
 
 class VideoDecoder(Protocol):
@@ -285,4 +292,90 @@ class OpenCVVideoDecoder:
                 "bounded seek followed by sequential absolute-frame decode with "
                 "backend position verification",
             ),
+            decode_strategy="sequential_bounded",
+        )
+
+    def decode_sparse_verified(
+        self, request: DecodeRequest, *, fallback_to_sequential: bool = True
+    ) -> DecodeResult:
+        open_start = self._clock()
+        capture = self._cv2.VideoCapture(str(request.probe.raw_video_path))
+        video_open_seconds = self._clock() - open_start
+        frames: list[DecodedFrame] = []
+        decoded_count = 0
+        decode_start = self._clock()
+        failed = False
+        fail_reason = ""
+
+        try:
+            if not capture.isOpened():
+                failed = True
+                fail_reason = f"raw video is unreadable: {request.probe.raw_video_path}"
+            else:
+                for absolute_frame_id in request.frame_ids:
+                    if not capture.set(self._cv2.CAP_PROP_POS_FRAMES, absolute_frame_id):
+                        failed = True
+                        fail_reason = f"raw-video seek failed at frame {absolute_frame_id}"
+                        break
+
+                    observed_position = float(capture.get(self._cv2.CAP_PROP_POS_FRAMES))
+                    if math.isfinite(observed_position) and not math.isclose(
+                        observed_position, absolute_frame_id, abs_tol=0.5
+                    ):
+                        failed = True
+                        fail_reason = (
+                            "decoder position disagrees with requested absolute frame: "
+                            f"expected={absolute_frame_id}, observed={observed_position}"
+                        )
+                        break
+
+                    ok, image = capture.read()
+                    decoded_count += 1
+                    if not ok or image is None:
+                        failed = True
+                        fail_reason = (
+                            f"raw-video decode failed at absolute frame {absolute_frame_id}"
+                        )
+                        break
+
+                    frames.append(
+                        DecodedFrame(
+                            absolute_frame_id=absolute_frame_id,
+                            timestamp_seconds=absolute_frame_id / request.probe.fps,
+                            image=image,
+                        )
+                    )
+        finally:
+            capture.release()
+
+        if failed or tuple(frame.absolute_frame_id for frame in frames) != request.frame_ids:
+            if not failed:
+                fail_reason = "decoder did not return every requested absolute frame"
+
+            if fallback_to_sequential:
+                res = self.decode(request)
+                # Keep the same decoded_frame_count signature but add warning
+                warnings = res.warnings + (
+                    f"sparse coarse decode failed; sequential fallback used: {fail_reason}",
+                )
+                return DecodeResult(
+                    frames=res.frames,
+                    decoded_frame_count=res.decoded_frame_count + decoded_count,
+                    video_open_seconds=video_open_seconds + res.video_open_seconds,
+                    decode_seconds=(self._clock() - decode_start) + res.decode_seconds,
+                    decoder_backend=self.backend_identifier,
+                    warnings=warnings,
+                    decode_strategy="sparse_verified_fallback_sequential",
+                )
+            else:
+                raise RawVideoError(fail_reason)
+
+        return DecodeResult(
+            frames=tuple(frames),
+            decoded_frame_count=decoded_count,
+            video_open_seconds=video_open_seconds,
+            decode_seconds=self._clock() - decode_start,
+            decoder_backend=self.backend_identifier,
+            warnings=("verified sparse seek",),
+            decode_strategy="sparse_verified",
         )

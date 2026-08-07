@@ -623,4 +623,10 @@ remain outside Git, and Phase 4 exact-frame refinement semantics are unchanged.
 - **Input**: Query requests with single or multiple text variants.
 - **Output**: Single batched CLIP text forward pass per request; exact same embeddings reused for refinement.
 - **Status**: \IMPLEMENTED\ locally; private Kaggle acceptance is pending.
-- **Contract**: Reuses precomputed text embeddings in \ExactFrameRefiner\ if provided. No semantic change to retrieval ranks, RRF, exact retrieval, or refined frame selection. Canonical \	op100.jsonl\ bytes are perfectly preserved. No speedup claimed until real Kaggle verification.
+- **Contract**: Reuses precomputed text embeddings in `ExactFrameRefiner` if provided. No semantic change to retrieval ranks, RRF, exact retrieval, or refined frame selection. Canonical `top100.jsonl` bytes are perfectly preserved. No speedup claimed until real Kaggle verification.
+
+## Phase 4.3B — Verified Sparse Coarse Decode
+- **Input**: Sparse requested absolute frame IDs from coarse sampling.
+- **Output**: Verified sparse seek with single-frame physical read.
+- **Status**: [IMPLEMENTED] locally; PRIVATE KAGGLE A/B PERFORMANCE ACCEPTANCE PENDING.
+- **Contract**: Sequential fine stage unchanged. Explicit opt-in via `--coarse-decode-strategy sparse-verified`, while `sequential` remains the default. Fallback to sequential protects correctness on seek/position failures. Reduces physical `read()` calls during coarse stage without modifying canonical frame semantics or reducing search space.

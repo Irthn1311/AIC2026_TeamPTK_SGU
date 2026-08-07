@@ -206,6 +206,13 @@ def _empty_candidate_timings() -> dict[str, float]:
         "fine_score_seconds": 0.0,
         "fine_fusion_seconds": 0.0,
         "candidate_total_seconds": 0.0,
+        "coarse_sparse_request_count": 0,
+        "coarse_sparse_success_count": 0,
+        "coarse_sparse_fallback_count": 0,
+        "coarse_requested_frame_count": 0,
+        "coarse_decoded_frame_count": 0,
+        "fine_requested_frame_count": 0,
+        "fine_decoded_frame_count": 0,
     }
 
 
@@ -368,13 +375,27 @@ class ExactFrameRefiner:
             stride=config.coarse_stride_frames,
             candidate_frame_id=candidate.frame_id,
         )
-        coarse_decode = self.decoder.decode(
-            DecodeRequest(
-                probe=probe,
-                frame_ids=coarse_ids,
-                max_decoded_frames=config.max_decoded_frames_per_candidate,
-            )
+        timings["coarse_requested_frame_count"] += len(coarse_ids)
+        coarse_req = DecodeRequest(
+            probe=probe,
+            frame_ids=coarse_ids,
+            max_decoded_frames=config.max_decoded_frames_per_candidate,
         )
+        if config.coarse_decode_strategy == "sparse-verified" and hasattr(
+            self.decoder, "decode_sparse_verified"
+        ):
+            timings["coarse_sparse_request_count"] += 1
+            coarse_decode = self.decoder.decode_sparse_verified(
+                coarse_req, fallback_to_sequential=True
+            )
+            if coarse_decode.decode_strategy == "sparse_verified":
+                timings["coarse_sparse_success_count"] += 1
+            elif coarse_decode.decode_strategy == "sparse_verified_fallback_sequential":
+                timings["coarse_sparse_fallback_count"] += 1
+        else:
+            coarse_decode = self.decoder.decode(coarse_req)
+
+        timings["coarse_decoded_frame_count"] += coarse_decode.decoded_frame_count
         timings["video_open_seconds"] += coarse_decode.video_open_seconds
         timings["coarse_decode_seconds"] = coarse_decode.decode_seconds
         coarse_encode_start = self.clock()
@@ -402,6 +423,7 @@ class ExactFrameRefiner:
             radius=config.fine_radius_frames,
             stride=config.fine_stride_frames,
         )
+        timings["fine_requested_frame_count"] += len(fine_ids)
         fine_decode = self.decoder.decode(
             DecodeRequest(
                 probe=probe,
@@ -409,6 +431,7 @@ class ExactFrameRefiner:
                 max_decoded_frames=config.max_decoded_frames_per_candidate,
             )
         )
+        timings["fine_decoded_frame_count"] += fine_decode.decoded_frame_count
         timings["video_open_seconds"] += fine_decode.video_open_seconds
         timings["fine_decode_seconds"] = fine_decode.decode_seconds
         fine_encode_start = self.clock()
