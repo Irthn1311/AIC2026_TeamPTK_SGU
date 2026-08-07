@@ -248,3 +248,11 @@ Phase 4.3B proved that fewer physical frame reads do not necessarily mean lower 
 ## Phase 4.3C0 — Refinement Stage Timings
 - **Status**: [IMPLEMENTED] locally; Phase 4.3C0: instrumentation for stage-level Kaggle profiling.
 - **Decision**: No optimization claim. PRIVATE KAGGLE STAGE PROFILE PENDING.
+
+## Preliminary P0-A — Official Task Contracts
+- **Status**: [IMPLEMENTED] locally. Official published task structure and scoring implementation.
+- **Decision**:
+  - Phase 4.3C1 batch-size 32/64/128 sweep produced no material improvement. `image_batch_size=32` remains default. KIS performance optimization paused until preliminary P0 is complete.
+  - Implemented strong typed schema predictions and ground truths for Textual KIS, Q&A, TRAKE.
+  - Implemented `R-Score`, `R@1/5/20/50/100`, and Final Score calculation exactly following published preliminary rules.
+  - Q&A semantic answer matching uses deterministic configured aliases as an explicit local approximation.
