@@ -367,6 +367,13 @@ class OperationalKISRuntime:
         refinement_val_seconds = 0.0
         decoded_frame_count = 0
         encoded_image_count = 0
+        coarse_requested_frame_count = 0
+        coarse_decoded_frame_count = 0
+        fine_requested_frame_count = 0
+        fine_decoded_frame_count = 0
+        coarse_sparse_request_count = 0
+        coarse_sparse_success_count = 0
+        coarse_sparse_fallback_count = 0
 
         if refinement_requested:
             ref_start = self.clock()
@@ -431,6 +438,13 @@ class OperationalKISRuntime:
             refined_count = int(outcome.timings["refined_candidate_count"])
             decoded_frame_count = int(outcome.timings["decoded_frame_count"])
             encoded_image_count = int(outcome.timings["encoded_image_count"])
+            coarse_requested_frame_count = int(outcome.timings["coarse_requested_frame_count"])
+            coarse_decoded_frame_count = int(outcome.timings["coarse_decoded_frame_count"])
+            fine_requested_frame_count = int(outcome.timings["fine_requested_frame_count"])
+            fine_decoded_frame_count = int(outcome.timings["fine_decoded_frame_count"])
+            coarse_sparse_request_count = int(outcome.timings["coarse_sparse_request_count"])
+            coarse_sparse_success_count = int(outcome.timings["coarse_sparse_success_count"])
+            coarse_sparse_fallback_count = int(outcome.timings["coarse_sparse_fallback_count"])
 
             artifacts_dict.update(
                 {
@@ -479,6 +493,13 @@ class OperationalKISRuntime:
             "total_seconds": total_seconds,
             "decoded_frame_count": decoded_frame_count,
             "encoded_image_count": encoded_image_count,
+            "coarse_requested_frame_count": coarse_requested_frame_count,
+            "coarse_decoded_frame_count": coarse_decoded_frame_count,
+            "fine_requested_frame_count": fine_requested_frame_count,
+            "fine_decoded_frame_count": fine_decoded_frame_count,
+            "coarse_sparse_request_count": coarse_sparse_request_count,
+            "coarse_sparse_success_count": coarse_sparse_success_count,
+            "coarse_sparse_fallback_count": coarse_sparse_fallback_count,
         }
         _write_json(query_dir / "request_timings.json", timings_payload)
 

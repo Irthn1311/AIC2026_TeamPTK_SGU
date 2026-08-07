@@ -537,6 +537,13 @@ def test_51_52_refinement_response_metrics_regression(tmp_path: Path) -> None:
             "refined_candidate_count": 3,
             "decoded_frame_count": 150,
             "encoded_image_count": 100,
+            "coarse_requested_frame_count": 0,
+            "coarse_decoded_frame_count": 0,
+            "fine_requested_frame_count": 0,
+            "fine_decoded_frame_count": 0,
+            "coarse_sparse_request_count": 0,
+            "coarse_sparse_success_count": 0,
+            "coarse_sparse_fallback_count": 0,
         }
         return QueryRefinementOutcome(
             query_id=ref_query.query_id,

@@ -628,5 +628,18 @@ remain outside Git, and Phase 4 exact-frame refinement semantics are unchanged.
 ## Phase 4.3B — Verified Sparse Coarse Decode
 - **Input**: Sparse requested absolute frame IDs from coarse sampling.
 - **Output**: Verified sparse seek with single-frame physical read.
-- **Status**: [IMPLEMENTED] locally; PRIVATE KAGGLE A/B PERFORMANCE ACCEPTANCE PENDING.
+- **Status**: [IMPLEMENTED] locally; Phase 4.3B private Kaggle/T4 A/B:
+  - canonical refined records identical: PASS
+  - decoded frames: 1231 -> 448
+  - physical decode reduction: ~63.61%
+  - refinement latency: 13.104s -> 16.323s
+  - sparse refinement approximately 24.56% slower
+  - total query: 16.900s -> 19.804s
+  - performance gate: FAIL
 - **Contract**: Sequential fine stage unchanged. Explicit opt-in via `--coarse-decode-strategy sparse-verified`, while `sequential` remains the default. Fallback to sequential protects correctness on seek/position failures. Reduces physical `read()` calls during coarse stage without modifying canonical frame semantics or reducing search space.
+
+**Decision**:
+SEQUENTIAL remains contest/default strategy.
+SPARSE_VERIFIED remains experimental opt-in only.
+
+Phase 4.3B proved that fewer physical frame reads do not necessarily mean lower latency because repeated H.264/OpenCV seeks can be expensive.
