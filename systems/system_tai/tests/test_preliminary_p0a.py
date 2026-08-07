@@ -8,6 +8,7 @@ from system_tai.preliminary import (
     QAPrediction,
     TRAKEGroundTruth,
     TRAKEPrediction,
+    evaluate_dataset,
     evaluate_ranked_query,
     score_kis_prediction,
     score_qa_prediction,
@@ -130,3 +131,95 @@ def test_qa_normalization_duplicate_key():
     ]
     errors = validate_ranked_top100(preds, "qa")
     assert any("Duplicate QA key" in e.message for e in errors)
+
+
+def test_strict_integer_contract():
+    # float rank rejected
+    with pytest.raises(TypeError, match="must be an integer"):
+        KISPrediction("q1", 1.5, "vid", 10)  # type: ignore
+
+    # bool rank rejected
+    with pytest.raises(TypeError, match="must be an integer"):
+        KISPrediction("q1", True, "vid", 10)  # type: ignore
+
+    # float frame_id rejected
+    with pytest.raises(TypeError, match="must be an integer"):
+        KISPrediction("q1", 1, "vid", 500.5)  # type: ignore
+
+    # bool frame_id rejected
+    with pytest.raises(TypeError, match="must be an integer"):
+        KISPrediction("q1", 1, "vid", True)  # type: ignore
+
+    # GT interval float rejected
+    with pytest.raises(TypeError, match="must be an integer"):
+        KISGroundTruth("q1", "vid", 100.5, 200)  # type: ignore
+
+    # TRAKE frame float rejected
+    with pytest.raises(TypeError, match="must be an integer"):
+        TRAKEPrediction("q1", 1, "vid", (100, 200.5))  # type: ignore
+
+    # TRAKE frame bool rejected
+    with pytest.raises(TypeError, match="must be an integer"):
+        TRAKEPrediction("q1", 1, "vid", (100, True))  # type: ignore
+
+
+def test_query_identity_contract():
+    gt = KISGroundTruth("q1", "vid", 100, 200)
+    preds_q1 = [KISPrediction("q1", 1, "vid", 150)]
+    preds_q2 = [KISPrediction("q2", 1, "vid", 150)]
+
+    # GT q1 + evaluate query_id q1 + predictions q1 => PASS
+    report = evaluate_ranked_query("q1", "kis", preds_q1, gt, score_kis_prediction)
+    assert report.final_score == 1.0
+
+    # GT q1 + evaluate query_id q1 + predictions q2 => FAIL
+    with pytest.raises(ValueError, match="Validation failed"):
+        evaluate_ranked_query("q1", "kis", preds_q2, gt, score_kis_prediction)
+
+    # GT q2 + evaluate query_id q1 => FAIL
+    gt_q2 = KISGroundTruth("q2", "vid", 100, 200)
+    with pytest.raises(ValueError, match="Validation failed"):
+        evaluate_ranked_query("q1", "kis", preds_q1, gt_q2, score_kis_prediction)
+
+
+def test_zero_prediction_gt_query_dataset_evaluation():
+    gt1 = KISGroundTruth("q1", "vid", 100, 200)
+    gt2 = KISGroundTruth("q2", "vid", 100, 200)
+
+    preds_q1 = [KISPrediction("q1", 1, "vid", 150)]
+
+    report1 = evaluate_ranked_query("q1", "kis", preds_q1, gt1, score_kis_prediction)
+    report2 = evaluate_ranked_query("q2", "kis", [], gt2, score_kis_prediction)
+
+    assert report1.final_score == 1.0
+    assert report2.prediction_count == 0
+    assert report2.r_at_1 == 0.0
+    assert report2.r_at_5 == 0.0
+    assert report2.r_at_20 == 0.0
+    assert report2.r_at_50 == 0.0
+    assert report2.r_at_100 == 0.0
+    assert report2.final_score == 0.0
+
+    dataset_report = evaluate_dataset([report1, report2])
+    assert dataset_report.query_count == 2
+    assert dataset_report.mean_query_final_score == 0.5
+
+
+def test_safe_qa_normalization_cases():
+    matcher = NormalizedAliasAnswerMatcher(strip_punctuation=True)
+
+    # "  A   RED Bus!!! " == "a red bus"
+    assert matcher.normalize("  A   RED Bus!!! ") == "a red bus"
+    assert matcher.match("  A   RED Bus!!! ", ("a red bus",))
+
+    # "C++" != "C"
+    assert matcher.normalize("C++") == "c++"
+    assert not matcher.match("C++", ("C",))
+
+    # "100%" != "100"
+    assert matcher.normalize("100%") == "100%"
+    assert not matcher.match("100%", ("100",))
+
+    # "$5" != "5"
+    assert matcher.normalize("$5") == "$5"
+    assert not matcher.match("$5", ("5",))

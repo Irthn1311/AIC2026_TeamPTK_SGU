@@ -29,7 +29,9 @@ def evaluate_ranked_query(
     ground_truth: Any,
     scorer: Callable[[Any, Any], float],
 ) -> QueryEvaluationReport:
-    errors = validate_ranked_top100(predictions, task_type, ground_truth)
+    errors = validate_ranked_top100(
+        predictions, task_type, ground_truth, expected_query_id=query_id
+    )
     if errors:
         msg = "; ".join(e.message for e in errors)
         raise ValueError(f"Validation failed for query {query_id}: {msg}")

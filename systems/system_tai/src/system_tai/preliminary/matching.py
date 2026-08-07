@@ -1,5 +1,6 @@
-import string
 from typing import Protocol
+
+DEFAULT_HARMLESS_PUNCTUATION = ".,!?;:"
 
 
 class AnswerMatcher(Protocol):
@@ -7,20 +8,24 @@ class AnswerMatcher(Protocol):
 
 
 class NormalizedAliasAnswerMatcher:
-    def __init__(self, strip_punctuation: bool = True):
+    def __init__(
+        self,
+        strip_punctuation: bool = True,
+        harmless_punctuation: str = DEFAULT_HARMLESS_PUNCTUATION,
+    ):
         self.strip_punctuation = strip_punctuation
+        self.harmless_punctuation = harmless_punctuation
 
-    def match(self, prediction: str, accepted: tuple[str, ...]) -> bool:
-        pred_norm = self._normalize(prediction)
-        for acc in accepted:
-            if pred_norm == self._normalize(acc):
-                return True
-        return False
-
-    def _normalize(self, s: str) -> str:
+    def normalize(self, s: str) -> str:
         s = s.casefold().strip()
         s = " ".join(s.split())
         if self.strip_punctuation:
-            for p in string.punctuation:
-                s = s.rstrip(p)
+            s = s.rstrip(self.harmless_punctuation).strip()
         return s
+
+    def match(self, prediction: str, accepted: tuple[str, ...]) -> bool:
+        pred_norm = self.normalize(prediction)
+        for acc in accepted:
+            if pred_norm == self.normalize(acc):
+                return True
+        return False

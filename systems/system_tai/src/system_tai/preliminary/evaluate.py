@@ -37,6 +37,10 @@ def main() -> None:
     gts = {}
     for entry in gt_data:
         qid = entry["query_id"]
+        if qid in gts:
+            print(f"Validation failed: Duplicate ground-truth query_id '{qid}'", file=sys.stderr)
+            sys.exit(1)
+
         if args.task == "kis":
             gts[qid] = KISGroundTruth(
                 query_id=qid,
@@ -69,6 +73,14 @@ def main() -> None:
                 continue
             entry = json.loads(line)
             qid = entry["query_id"]
+            if qid not in gts:
+                print(
+                    f"Validation failed: Unknown prediction query_id '{qid}' "
+                    "absent from ground-truth",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+
             if qid not in preds_by_query:
                 preds_by_query[qid] = []
 
@@ -105,14 +117,10 @@ def main() -> None:
     reports = []
     matcher = NormalizedAliasAnswerMatcher(strip_punctuation=True)
 
-    for qid, preds in preds_by_query.items():
-        if qid not in gts:
-            print(f"Warning: predictions for {qid} without GT", file=sys.stderr)
-            continue
+    for qid, gt in gts.items():
+        preds = preds_by_query.get(qid, [])
 
-        gt = gts[qid]
-
-        errors = validate_ranked_top100(preds, args.task, gt)
+        errors = validate_ranked_top100(preds, args.task, gt, expected_query_id=qid)
         if errors:
             print(f"Validation failed for query {qid}:", file=sys.stderr)
             for err in errors:
@@ -122,8 +130,10 @@ def main() -> None:
         if args.task == "kis":
             scorer = score_kis_prediction
         elif args.task == "qa":
+
             def scorer(p, g):
                 return score_qa_prediction(p, g, matcher)
+
         elif args.task == "trake":
             scorer = score_trake_prediction
 
