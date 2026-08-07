@@ -555,3 +555,9 @@ Send JSON lines to `stdin`:
 ```
 
 Phase 4.2 is locally validated. **Private Kaggle acceptance is pending**. Semantic quality remains unproven. Official BTC submission format is unresolved. Q&A, TRAKE, and UI remain deferred.
+
+## Phase 4.3A — Batch Query Text Encoding
+- **Input**: Query requests with single or multiple text variants.
+- **Output**: Single batched CLIP text forward pass per request; exact same embeddings reused for refinement.
+- **Status**: \IMPLEMENTED\ locally; private Kaggle acceptance is pending.
+- **Contract**: Reuses precomputed text embeddings in \ExactFrameRefiner\ if provided. No semantic change to retrieval ranks, RRF, exact retrieval, or refined frame selection. Canonical \	op100.jsonl\ bytes are perfectly preserved. No speedup claimed until real Kaggle verification.

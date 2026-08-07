@@ -618,3 +618,9 @@ remain outside Git, and Phase 4 exact-frame refinement semantics are unchanged.
 - **Acceptance:** Exact 242-test pytest pass rate; subprocess smoke tests parsing JSON-line IPC;
   verifiable unchanged exact retrieval logic; single memory-loaded registry and model instances.
   Private Kaggle run pending.
+
+## Phase 4.3A — Batch Query Text Encoding
+- **Input**: Query requests with single or multiple text variants.
+- **Output**: Single batched CLIP text forward pass per request; exact same embeddings reused for refinement.
+- **Status**: \IMPLEMENTED\ locally; private Kaggle acceptance is pending.
+- **Contract**: Reuses precomputed text embeddings in \ExactFrameRefiner\ if provided. No semantic change to retrieval ranks, RRF, exact retrieval, or refined frame selection. Canonical \	op100.jsonl\ bytes are perfectly preserved. No speedup claimed until real Kaggle verification.

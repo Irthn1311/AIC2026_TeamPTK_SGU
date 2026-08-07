@@ -219,3 +219,9 @@ Requests are isolated into unique digest-based directories. A process-level prot
 test verifies exact retrieval, refinement, continue-on-error for malformed JSON, unknown request
 types, and clean decoder/model resource shutdown. Byte equality against contest retrieval JSONL
 and standalone refinement core JSONL is preserved. Private Kaggle acceptance is pending.
+
+## Phase 4.3A — Batch Query Text Encoding
+- **Input**: Query requests with single or multiple text variants.
+- **Output**: Single batched CLIP text forward pass per request; exact same embeddings reused for refinement.
+- **Status**: \IMPLEMENTED\ locally; private Kaggle acceptance is pending.
+- **Contract**: Reuses precomputed text embeddings in \ExactFrameRefiner\ if provided. No semantic change to retrieval ranks, RRF, exact retrieval, or refined frame selection. Canonical \	op100.jsonl\ bytes are perfectly preserved. No speedup claimed until real Kaggle verification.

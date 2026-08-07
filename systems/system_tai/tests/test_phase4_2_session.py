@@ -10,7 +10,6 @@ from typing import Any
 import numpy as np
 import pytest
 
-from system_tai.checkpointing.exporter import CheckpointExporter
 from system_tai.data.corpus_discovery import CorpusManifest, DiscoveredVideo, _fingerprint
 from system_tai.features.btc_clip_store import FeatureStoreRegistry
 from system_tai.kis.contest_runner import ContestRunConfig, ContestRunner
@@ -21,7 +20,6 @@ from system_tai.kis.session_schema import (
     DuplicateRequestIdError,
     HealthRequest,
     InvalidRequestError,
-    MalformedRequestError,
     QueryRequest,
     SessionConfig,
     ShutdownRequest,
@@ -185,7 +183,7 @@ def test_05_06_retrieval_requests_do_not_reload_model_or_registry(tmp_path: Path
     runtime.handle_query(q1)
     runtime.handle_query(q2)
     assert counts["model_load"] == 1
-    assert counts["text_encode"] == 2
+    assert counts.get("text_encode_batch", 0) == 2
 
 
 def test_07_refine_top_n_zero_does_not_initialize_refinement_path(tmp_path: Path) -> None:
@@ -272,15 +270,21 @@ def test_14_to_19_request_validation_errors() -> None:
 
     # 17. Invalid weights
     with pytest.raises(InvalidRequestError):
-        parse_session_request('{"type": "query", "request_id": "r1", "query_id": "q1", "query_vi": "v", "weight_vi": -1.0}')
+        parse_session_request(
+            '{"type": "query", "request_id": "r1", "query_id": "q1", "query_vi": "v", "weight_vi": -1.0}'
+        )
 
     # 18. Invalid output_top_k
     with pytest.raises(InvalidRequestError):
-        parse_session_request('{"type": "query", "request_id": "r1", "query_id": "q1", "query_vi": "v", "output_top_k": 0}')
+        parse_session_request(
+            '{"type": "query", "request_id": "r1", "query_id": "q1", "query_vi": "v", "output_top_k": 0}'
+        )
 
     # 19. Invalid refine_top_n
     with pytest.raises(InvalidRequestError):
-        parse_session_request('{"type": "query", "request_id": "r1", "query_id": "q1", "query_vi": "v", "output_top_k": 10, "refine_top_n": 20}')
+        parse_session_request(
+            '{"type": "query", "request_id": "r1", "query_id": "q1", "query_vi": "v", "output_top_k": 10, "refine_top_n": 20}'
+        )
 
 
 def test_20_duplicate_request_id_rejected(tmp_path: Path) -> None:
@@ -355,6 +359,11 @@ def test_31_32_error_isolation_and_continue_on_error(tmp_path: Path) -> None:
             if "fail" in text:
                 raise RuntimeError("simulated error")
             return super().encode(text)
+
+        def encode_texts(self, texts: list[str]) -> np.ndarray:
+            if any("fail" in text for text in texts):
+                raise RuntimeError("simulated error")
+            return super().encode_texts(texts)
 
     runtime.shared_encoder = FailingEncoder({})
     stdin = io.StringIO(
@@ -516,7 +525,9 @@ def test_51_52_refinement_response_metrics_regression(tmp_path: Path) -> None:
             self.status = status
             self.refined_frame_id = refined_frame_id
 
-    def mock_refine_query(ref_query: Any, exec_config: Any) -> QueryRefinementOutcome:
+    def mock_refine_query(
+        ref_query: Any, exec_config: Any, **kwargs: Any
+    ) -> QueryRefinementOutcome:
         candidates = []
         for i in range(10):
             status = RefinementStatus.REFINED if i < 3 else RefinementStatus.NOT_REFINED

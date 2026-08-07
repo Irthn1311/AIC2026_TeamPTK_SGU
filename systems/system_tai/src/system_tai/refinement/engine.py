@@ -228,11 +228,34 @@ class ExactFrameRefiner:
         self,
         query: RefinementQuery,
         config: RefinementConfig,
+        *,
+        precomputed_text_embeddings: NDArray[np.float32] | None = None,
     ) -> QueryRefinementOutcome:
         query_start = self.clock()
         text_start = self.clock()
-        text_embeddings = self.encoder.encode_texts([variant.text for variant in query.variants])
-        text_encode_seconds = self.clock() - text_start
+        if precomputed_text_embeddings is not None:
+            if not isinstance(precomputed_text_embeddings, np.ndarray):
+                raise ValueError("precomputed_text_embeddings must be a numpy array")
+            if precomputed_text_embeddings.dtype != np.float32:
+                raise ValueError("precomputed_text_embeddings must be float32")
+            if precomputed_text_embeddings.ndim != 2:
+                raise ValueError("precomputed_text_embeddings must be exactly 2-dimensional")
+            if precomputed_text_embeddings.shape[0] != len(query.variants):
+                raise ValueError(
+                    "precomputed_text_embeddings rows must match number of query variants"
+                )
+            if not np.isfinite(precomputed_text_embeddings).all():
+                raise ValueError(
+                    "precomputed_text_embeddings contains non-finite values (NaN/Infinity)"
+                )
+            if np.any(np.linalg.norm(precomputed_text_embeddings, axis=1) <= 0):
+                raise ValueError("precomputed_text_embeddings contains a zero-norm row")
+            text_embeddings = precomputed_text_embeddings
+            text_encode_seconds = 0.0
+        else:
+            texts = [variant.text for variant in query.variants]
+            text_embeddings = self.encoder.encode_texts(texts)
+            text_encode_seconds = self.clock() - text_start
         refined: list[RefinedCandidate] = []
         warnings: list[str] = []
         aggregate = _empty_candidate_timings()

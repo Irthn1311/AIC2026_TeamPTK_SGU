@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import dataclasses
 import csv
+import dataclasses
 import hashlib
 import json
 import re
@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from system_tai.checkpointing.exporter import CheckpointExporter
-from system_tai.common.schemas import KISResult, ValidationResult
+from system_tai.common.schemas import KISResult
 from system_tai.data.corpus_discovery import (
     CorpusManifest,
     DiscoveryMetrics,
@@ -285,9 +285,14 @@ class OperationalKISRuntime:
 
         # Text encoding
         text_encode_start = self.clock()
+        texts = [variant.text for variant in variants]
+        variant_embeddings = self.shared_encoder.encode_texts(texts)
+        if variant_embeddings.shape[0] != len(variants):
+            raise ValueError(
+                f"Batch text encode returned {variant_embeddings.shape[0]} rows for {len(variants)} variants"
+            )
         rankings: dict[str, KISResult] = {}
-        for variant in variants:
-            vector = self.shared_encoder.encode(variant.text)
+        for variant, vector in zip(variants, variant_embeddings):
             rankings[variant.variant_id] = self.exact_retriever.search_vector(
                 query_id=f"{request.query_id}::{variant.variant_id}",
                 query_vector=vector,
@@ -392,7 +397,11 @@ class OperationalKISRuntime:
                     top_candidates_to_refine=request.refine_top_n,
                 )
 
-            outcome = self.refiner.refine_query(ref_query, exec_ref_config)
+            outcome = self.refiner.refine_query(
+                ref_query,
+                exec_ref_config,
+                precomputed_text_embeddings=variant_embeddings,
+            )
             refinement_seconds = self.clock() - ref_start
 
             ref_export_start = self.clock()
