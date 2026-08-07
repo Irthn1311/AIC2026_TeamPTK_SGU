@@ -2,9 +2,17 @@
 
 ## Status date
 
-`2026-08-06`
+`2026-08-07`
 
 ## Summary
+
+PRELIMINARY P0-A (official schemas, strict int, GT contracts, evaluation) is COMPLETE.
+PRELIMINARY P0-B1 (evidence-grounded closed-set Q&A baseline core) is IMPLEMENTED:
+- Reuses existing KIS retrieval and exact-frame refiner stack.
+- Supports deterministic question families: COLOR, COUNT, YES_NO, DIRECTION.
+- Unsupported/open-ended questions return zero predictions (UNSUPPORTED).
+- Enforces evidence-first policy and preserves evidence candidate rank in output predictions.
+- No session integration yet; existing KIS runtime remains unchanged.
 
 The workbook and Canva design have been reviewed. Phase 1 input auditing, Phase 1.5C
 compatibility calibration, the Phase 2 exact NumPy KIS implementation, Phase 2.5

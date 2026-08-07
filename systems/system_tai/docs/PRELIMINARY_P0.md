@@ -26,3 +26,15 @@ This phase implements the exact preliminary task schemas and evaluation semantic
 - **Phase 4.3C1**: Batch-size 32/64/128 sweep produced no material improvement on Kaggle/T4.
 - **Decision**: `image_batch_size=32` remains the default.
 - KIS performance optimization is paused until preliminary P0 is complete.
+
+## PRELIMINARY P0-B1: Evidence-Grounded Closed-Set Q&A Baseline Core
+- Implemented closed-set baseline Q&A core in `system_tai.qa`.
+- Reuses existing KIS retrieval and exact-frame refiner stack without duplicating resources.
+- Supports deterministic question families: `COLOR`, `COUNT`, `YES_NO`, `DIRECTION`.
+- Open-ended / unsupported questions return zero predictions (`UNSUPPORTED`).
+- Enforces evidence-first policy: no evidence candidate or unsupported query produces no predictions.
+- Preserves declared evidence candidate rank in output predictions (`p.rank == cand.rank`).
+- Optional candidate metadata (`evidence_score`, `timestamp_seconds`) defaults to `None` when unknown, rather than fabricating numeric `0.0`.
+- Strict embedding validation in `CosineEvidenceAnswerScorer`: requires float32, 1D, finite, non-zero norm, L2-normalized vectors (`norm ~ 1.0`), and matching dimensions.
+- YES_NO questions are scored by baseline CLIP prompts but explicitly flagged with `confidence_level: "EXPERIMENTAL"` in result diagnostics, as pure image CLIP lacks compositional logic.
+- Scope limitations: P0-B1 is a closed-set visual QA baseline. No claim of general VideoQA readiness. No private Kaggle acceptance yet. No VLM/OCR/ASR. Existing KIS runtime and session protocol remain unchanged.
