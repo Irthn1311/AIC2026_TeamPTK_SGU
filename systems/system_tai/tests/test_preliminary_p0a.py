@@ -223,3 +223,63 @@ def test_safe_qa_normalization_cases():
     # "$5" != "5"
     assert matcher.normalize("$5") == "$5"
     assert not matcher.match("$5", ("5",))
+
+
+def test_task_and_gt_type_contracts():
+    # A. unknown task + empty predictions rejected
+    errors = validate_ranked_top100([], "invalid-task")
+    assert any("Unknown task type" in e.message for e in errors)
+    with pytest.raises(
+        ValueError, match="Validation failed for query q1: Unknown task type"
+    ):
+        evaluate_ranked_query(
+            "q1",
+            "invalid-task",
+            [],
+            KISGroundTruth("q1", "vid", 100, 200),
+            score_kis_prediction,
+        )
+
+    # B. KIS task + QAGroundTruth rejected
+    errors_b = validate_ranked_top100([], "kis", QAGroundTruth("q1", "vid", 100, 200, ("ans",)))
+    assert any("Ground truth type mismatch" in e.message for e in errors_b)
+
+    # C. QA task + KISGroundTruth rejected
+    errors_c = validate_ranked_top100([], "qa", KISGroundTruth("q1", "vid", 100, 200))
+    assert any("Ground truth type mismatch" in e.message for e in errors_c)
+
+    # D. TRAKE task + wrong GT type rejected
+    errors_d = validate_ranked_top100([], "trake", KISGroundTruth("q1", "vid", 100, 200))
+    assert any("Ground truth type mismatch" in e.message for e in errors_d)
+
+    # E. KIS task + QAPrediction rejected cleanly
+    errors_e = validate_ranked_top100(
+        [QAPrediction("q1", 1, "vid", 100, "ans")],
+        "kis",
+        KISGroundTruth("q1", "vid", 100, 200),
+        expected_query_id="q1",
+    )
+    assert any("Wrong prediction type for KIS" in e.message for e in errors_e)
+
+    # F. valid KIS empty predictions still score zero
+    rep_f = evaluate_ranked_query(
+        "q1", "kis", [], KISGroundTruth("q1", "vid", 100, 200), score_kis_prediction
+    )
+    assert rep_f.prediction_count == 0 and rep_f.final_score == 0.0
+
+    # G. valid QA empty predictions still score zero
+    matcher = NormalizedAliasAnswerMatcher(strip_punctuation=True)
+    rep_g = evaluate_ranked_query(
+        "q1",
+        "qa",
+        [],
+        QAGroundTruth("q1", "vid", 100, 200, ("ans",)),
+        lambda p, g: score_qa_prediction(p, g, matcher),
+    )
+    assert rep_g.prediction_count == 0 and rep_g.final_score == 0.0
+
+    # H. valid TRAKE empty predictions still score zero
+    rep_h = evaluate_ranked_query(
+        "q1", "trake", [], TRAKEGroundTruth("q1", "vid", ((100, 200),)), score_trake_prediction
+    )
+    assert rep_h.prediction_count == 0 and rep_h.final_score == 0.0

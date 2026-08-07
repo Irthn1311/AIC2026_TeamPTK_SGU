@@ -15,6 +15,7 @@ This phase implements the exact preliminary task schemas and evaluation semantic
 - **R@1/5/20/50/100**: The maximum R-score among the top K rank.
 - **Final Score**: The arithmetic mean of R@1, R@5, R@20, R@50, and R@100.
 - **Dataset Evaluation**: Evaluates over the full set of GT queries. GT queries with 0 predictions score 0.0 across all R@K metrics and are included in the dataset mean final score.
+- **Task and GT Type Contract**: Task type and ground-truth concrete schema must match.
 
 ### LOCAL APPROXIMATION (Evidence Boundary)
 - Structural and scoring rules follow published BTC preliminary semantics.
