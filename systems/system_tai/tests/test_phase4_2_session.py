@@ -544,6 +544,17 @@ def test_51_52_refinement_response_metrics_regression(tmp_path: Path) -> None:
             "coarse_sparse_request_count": 0,
             "coarse_sparse_success_count": 0,
             "coarse_sparse_fallback_count": 0,
+            "video_probe_seconds": 0.0,
+            "video_open_seconds": 0.0,
+            "coarse_decode_seconds": 0.0,
+            "coarse_encode_seconds": 0.0,
+            "coarse_score_seconds": 0.0,
+            "coarse_fusion_seconds": 0.0,
+            "fine_decode_seconds": 0.0,
+            "fine_encode_seconds": 0.0,
+            "fine_score_seconds": 0.0,
+            "fine_fusion_seconds": 0.0,
+            "candidate_total_seconds": 0.0,
         }
         return QueryRefinementOutcome(
             query_id=ref_query.query_id,

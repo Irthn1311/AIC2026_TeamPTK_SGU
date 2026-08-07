@@ -244,3 +244,7 @@ SEQUENTIAL remains contest/default strategy.
 SPARSE_VERIFIED remains experimental opt-in only.
 
 Phase 4.3B proved that fewer physical frame reads do not necessarily mean lower latency because repeated H.264/OpenCV seeks can be expensive.
+
+## Phase 4.3C0 — Refinement Stage Timings
+- **Status**: [IMPLEMENTED] locally; Phase 4.3C0: instrumentation for stage-level Kaggle profiling.
+- **Decision**: No optimization claim. PRIVATE KAGGLE STAGE PROFILE PENDING.

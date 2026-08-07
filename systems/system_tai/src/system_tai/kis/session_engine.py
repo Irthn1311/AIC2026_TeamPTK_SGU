@@ -374,6 +374,17 @@ class OperationalKISRuntime:
         coarse_sparse_request_count = 0
         coarse_sparse_success_count = 0
         coarse_sparse_fallback_count = 0
+        video_probe_seconds = 0.0
+        video_open_seconds = 0.0
+        coarse_decode_seconds = 0.0
+        coarse_encode_seconds = 0.0
+        coarse_score_seconds = 0.0
+        coarse_fusion_seconds = 0.0
+        fine_decode_seconds = 0.0
+        fine_encode_seconds = 0.0
+        fine_score_seconds = 0.0
+        fine_fusion_seconds = 0.0
+        candidate_total_seconds = 0.0
 
         if refinement_requested:
             ref_start = self.clock()
@@ -445,6 +456,17 @@ class OperationalKISRuntime:
             coarse_sparse_request_count = int(outcome.timings["coarse_sparse_request_count"])
             coarse_sparse_success_count = int(outcome.timings["coarse_sparse_success_count"])
             coarse_sparse_fallback_count = int(outcome.timings["coarse_sparse_fallback_count"])
+            video_probe_seconds = float(outcome.timings["video_probe_seconds"])
+            video_open_seconds = float(outcome.timings["video_open_seconds"])
+            coarse_decode_seconds = float(outcome.timings["coarse_decode_seconds"])
+            coarse_encode_seconds = float(outcome.timings["coarse_encode_seconds"])
+            coarse_score_seconds = float(outcome.timings["coarse_score_seconds"])
+            coarse_fusion_seconds = float(outcome.timings["coarse_fusion_seconds"])
+            fine_decode_seconds = float(outcome.timings["fine_decode_seconds"])
+            fine_encode_seconds = float(outcome.timings["fine_encode_seconds"])
+            fine_score_seconds = float(outcome.timings["fine_score_seconds"])
+            fine_fusion_seconds = float(outcome.timings["fine_fusion_seconds"])
+            candidate_total_seconds = float(outcome.timings["candidate_total_seconds"])
 
             artifacts_dict.update(
                 {
@@ -490,6 +512,17 @@ class OperationalKISRuntime:
             "refinement_seconds": refinement_seconds,
             "refinement_export_seconds": refinement_export_seconds,
             "refinement_validation_seconds": refinement_val_seconds,
+            "video_probe_seconds": video_probe_seconds,
+            "video_open_seconds": video_open_seconds,
+            "coarse_decode_seconds": coarse_decode_seconds,
+            "coarse_encode_seconds": coarse_encode_seconds,
+            "coarse_score_seconds": coarse_score_seconds,
+            "coarse_fusion_seconds": coarse_fusion_seconds,
+            "fine_decode_seconds": fine_decode_seconds,
+            "fine_encode_seconds": fine_encode_seconds,
+            "fine_score_seconds": fine_score_seconds,
+            "fine_fusion_seconds": fine_fusion_seconds,
+            "candidate_total_seconds": candidate_total_seconds,
             "total_seconds": total_seconds,
             "decoded_frame_count": decoded_frame_count,
             "encoded_image_count": encoded_image_count,
