@@ -360,6 +360,8 @@ class OperationalKISRuntime:
         refinement_seconds = 0.0
         refinement_export_seconds = 0.0
         refinement_val_seconds = 0.0
+        decoded_frame_count = 0
+        encoded_image_count = 0
 
         if refinement_requested:
             ref_start = self.clock()
@@ -417,7 +419,9 @@ class OperationalKISRuntime:
             )
 
             refinement_valid = ref_validation.valid
-            refined_count = len([item for item in outcome.candidates if item.refined_frame_id is not None])
+            refined_count = int(outcome.timings["refined_candidate_count"])
+            decoded_frame_count = int(outcome.timings["decoded_frame_count"])
+            encoded_image_count = int(outcome.timings["encoded_image_count"])
 
             artifacts_dict.update(
                 {
@@ -464,8 +468,8 @@ class OperationalKISRuntime:
             "refinement_export_seconds": refinement_export_seconds,
             "refinement_validation_seconds": refinement_val_seconds,
             "total_seconds": total_seconds,
-            "decoded_frame_count": self.decoder.metrics.decoded_frames if hasattr(self.decoder, "metrics") else 0,
-            "encoded_image_count": 0,
+            "decoded_frame_count": decoded_frame_count,
+            "encoded_image_count": encoded_image_count,
         }
         _write_json(query_dir / "request_timings.json", timings_payload)
 

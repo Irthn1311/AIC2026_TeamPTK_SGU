@@ -493,3 +493,72 @@ def test_50_broken_stdin_eof_clean_shutdown(tmp_path: Path) -> None:
     code = run_session(args, runtime=runtime, stdin=stdin, stdout=stdout, stderr=stderr)
     assert code == 0
     assert runtime.decoder.closed is True
+
+
+def test_51_52_refinement_response_metrics_regression(tmp_path: Path) -> None:
+    from system_tai.refinement.engine import QueryRefinementOutcome
+    from system_tai.refinement.models import RefinementStatus
+
+    runtime, _ = setup_runtime(tmp_path)
+
+    # Test retrieval-only query
+    resp_ret = runtime.handle_query(QueryRequest("req-ret", "Q-RET", "retrieval", refine_top_n=0))
+    assert resp_ret["refined_count"] == 0
+    assert resp_ret["timings"]["decoded_frame_count"] == 0
+    assert resp_ret["timings"]["encoded_image_count"] == 0
+    assert resp_ret["result_count"] == 2  # default corpus has 2
+
+    # Test refinement query with mocked outcome to simulate Kaggle bug
+    original_refine_query = runtime.refiner.refine_query
+
+    class FakeCandidate:
+        def __init__(self, status: RefinementStatus, refined_frame_id: int):
+            self.status = status
+            self.refined_frame_id = refined_frame_id
+
+    def mock_refine_query(ref_query: Any, exec_config: Any) -> QueryRefinementOutcome:
+        candidates = []
+        for i in range(10):
+            status = RefinementStatus.REFINED if i < 3 else RefinementStatus.NOT_REFINED
+            candidates.append(FakeCandidate(status, i * 10))
+
+        timings = {
+            "refined_candidate_count": 3,
+            "decoded_frame_count": 150,
+            "encoded_image_count": 100,
+        }
+        return QueryRefinementOutcome(
+            query_id=ref_query.query_id,
+            result=None,  # Not used by handle_query for metrics
+            candidates=tuple(candidates),  # type: ignore
+            timings=timings,
+            warnings=()
+        )
+
+    runtime.refiner.refine_query = mock_refine_query
+    runtime.exporter.export = lambda *args, **kwargs: None
+    import system_tai.kis.session_engine
+    original_write_csv = system_tai.kis.session_engine._write_refined_csv
+    original_write_json = system_tai.kis.session_engine._write_json
+    system_tai.kis.session_engine._write_refined_csv = lambda _, path: Path(path)
+    system_tai.kis.session_engine._write_json = lambda path, payload: Path(path)
+
+    try:
+        resp_ref = runtime.handle_query(
+            QueryRequest("req-ref", "Q-REF", "refinement", refine_top_n=3)
+        )
+
+        # Exact assertions required
+        assert resp_ref["refined_count"] == 3
+        # Should NOT be total output candidate count (which is 10)
+        assert resp_ref["refined_count"] != 10
+
+        # result_count should be the original retrieval result count
+        assert resp_ref["result_count"] == 2
+
+        assert resp_ref["timings"]["decoded_frame_count"] == 150
+        assert resp_ref["timings"]["encoded_image_count"] == 100
+    finally:
+        runtime.refiner.refine_query = original_refine_query
+        system_tai.kis.session_engine._write_refined_csv = original_write_csv
+        system_tai.kis.session_engine._write_json = original_write_json
