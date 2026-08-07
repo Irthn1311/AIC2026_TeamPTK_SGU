@@ -525,3 +525,33 @@ An invalid cache fails unless `--rebuild-invalid-manifest-cache` is explicit. Ka
 private lightweight Kaggle Dataset, or an uploaded input artifact. Generated manifests
 and runs must not be committed. Phase 4 refinement and frame semantics are unchanged;
 these startup mechanics do not prove semantic quality or official BTC performance.
+
+## Phase 4.2 long-lived contest operational session
+
+Phase 4.2 introduces a fail-closed, single-process JSON-line IPC session for unified contest operations.
+
+- **Long-Lived Process:** Runs a continuous `OperationalKISRuntime` processing `health`, `query`, and `shutdown` JSON lines via `stdin` and `stdout`.
+- **Resource Efficiency:** The feature registry and official OpenAI CLIP ViT-B/32 model are initialized exactly once per session. Text and image refinement encodings share the identical loaded model instance.
+- **Workflow:** Handles retrieval-only requests and optional refine Top-N seamlessly. Malformed requests isolate into explicit JSON error responses without crashing the session (`--continue-on-request-error`).
+- **Artifacts:** Artifacts are strictly isolated per-request in unique digest-based directories.
+
+### Example Session Execution
+
+```bash
+python -m system_tai.kis.session \
+  --input-root /kaggle/input \
+  --reuse-manifest /kaggle/input/system-tai-manifest/feature_manifest.json \
+  --output-root /kaggle/working/session_outputs \
+  --device auto \
+  --allow-model-download \
+  --continue-on-request-error
+```
+
+Send JSON lines to `stdin`:
+```json
+{"type": "health", "request_id": "req-1"}
+{"type": "query", "request_id": "req-2", "query_id": "Q1", "query_vi": "biển báo sạt lở đất", "refine_top_n": 3}
+{"type": "shutdown", "request_id": "req-3"}
+```
+
+Phase 4.2 is locally validated. **Private Kaggle acceptance is pending**. Semantic quality remains unproven. Official BTC submission format is unresolved. Q&A, TRAKE, and UI remain deferred.

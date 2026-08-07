@@ -591,3 +591,30 @@ and advanced model modules remain outside this slice.
 The 579.27-second pre-optimization discovery measurement is operational evidence, not
 retrieval or semantic performance. `/kaggle/working` is ephemeral, generated manifests
 remain outside Git, and Phase 4 exact-frame refinement semantics are unchanged.
+
+## Phase 4.2 — long-lived contest operational session
+
+- **Input:** stdin JSON-line protocol, portable corpus manifest, and a unified 
+  CLIP text/image model instance.
+- **Output:** isolated per-request directory artifacts, stdout JSON-line responses, 
+  and a session metrics manifest.
+- **Source:** `src/system_tai/kis/session_engine.py`, `src/system_tai/kis/session_schema.py`,
+  and `src/system_tai/kis/session.py`.
+- **Status:** `IMPLEMENTED` locally with process-level JSON-line IPC test evidence.
+  Private Kaggle acceptance is pending.
+- **Protocol contract:** Stdin takes `health`, `query`, or `shutdown` JSON lines. Stdout
+  emits single-line JSON responses parsed by `json.loads`. Malformed JSON or unknown
+  types generate explicit structured error responses, followed by continuation. Progress bars, 
+  tracebacks, and model download logs are absent from stdout.
+- **Shared Model Strategy:** One `SharedOpenAIClipEncoder` wraps the single loaded `Model`
+  and `preprocess`. The model is loaded exactly once upon bootstrap. Text encoding
+  and batched image refinement encoding share this exact model weight instance. If separate
+  backends are configured, it gracefully falls back to a lazy dual-load strategy.
+  However, in the canonical case, model load count remains exactly 1 across all queries.
+- **Artifact contract:** Each query targets a unique digest-based isolated folder 
+  (e.g., `requests/req-q1-abcdef12/...`). Top-100 JSONL bytes strictly equal
+  standalone Phase 3 contest baseline bytes. Refined JSONL bytes strictly equal standalone
+  Phase 4 JSONL bytes.
+- **Acceptance:** Exact 242-test pytest pass rate; subprocess smoke tests parsing JSON-line IPC;
+  verifiable unchanged exact retrieval logic; single memory-loaded registry and model instances.
+  Private Kaggle run pending.

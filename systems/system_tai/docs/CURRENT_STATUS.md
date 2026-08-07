@@ -201,3 +201,21 @@ lightweight Kaggle Dataset, or a separately uploaded input artifact.
 The real 873-video latency improvement is pending Kaggle rerun. Phase 4 refinement,
 Exact NumPy retrieval, Weighted RRF, and `frame_id = frame_idx` semantics are unchanged.
 No semantic-quality or official-performance claim follows from this optimization.
+
+## Phase 4.2 status
+
+Long-Lived Contest Operational Session Runtime is `IMPLEMENTED` locally. A fail-closed,
+single-process JSON-line IPC session processes queries via stdin/stdout without
+reloading the registry or model between requests. It handles retrieval and
+opt-in refinement within a single continuous runtime.
+
+The canonical Shared OpenAI CLIP model handles both text queries and image frames via the
+`SharedOpenAIClipEncoder`. The model instance is loaded exactly once per session. 
+A lazy fallback dual-load strategy is used if separate backends are needed, but the primary
+design is one `SharedOpenAIClipEncoder` wrapping the single loaded `Model` and `preprocess`.
+Text encodings and batched image refinement encodings share the same model weights.
+
+Requests are isolated into unique digest-based directories. A process-level protocol smoke
+test verifies exact retrieval, refinement, continue-on-error for malformed JSON, unknown request
+types, and clean decoder/model resource shutdown. Byte equality against contest retrieval JSONL
+and standalone refinement core JSONL is preserved. Private Kaggle acceptance is pending.

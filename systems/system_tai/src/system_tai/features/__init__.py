@@ -7,7 +7,12 @@ from .btc_clip_store import (
     LoadedVideoFeatureStore,
     VideoFeatureStoreLoader,
 )
-from .query_encoder import OpenAIClipTextEncoder, TextEncoder, TextEncoderUnavailable
+from .query_encoder import (
+    OpenAIClipTextEncoder,
+    SharedOpenAIClipEncoder,
+    TextEncoder,
+    TextEncoderUnavailable,
+)
 
 __all__ = [
     "BTCClipFeatureStore",
@@ -15,7 +20,9 @@ __all__ = [
     "FeatureStoreRegistry",
     "LoadedVideoFeatureStore",
     "OpenAIClipTextEncoder",
+    "SharedOpenAIClipEncoder",
     "TextEncoder",
     "TextEncoderUnavailable",
     "VideoFeatureStoreLoader",
 ]
+
