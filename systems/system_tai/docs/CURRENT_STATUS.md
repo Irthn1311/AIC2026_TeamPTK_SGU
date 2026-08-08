@@ -2,20 +2,19 @@
 
 ## Status date
 
-`2026-08-07`
+`2026-08-08`
 
 ## Summary
 
 PRELIMINARY P0-A (official schemas, strict int, GT contracts, evaluation) is COMPLETE.
 PRELIMINARY P0-B1 (evidence-grounded closed-set Q&A baseline core) is COMPLETE.
-PRELIMINARY P0-B2 (shared-runtime Q&A vertical slice) is IMPLEMENTED locally:
-- Connected Q&A baseline core to long-lived `OperationalKISRuntime` via `QARuntimePipeline`.
-- Reuses single shared instance of CLIP encoder, feature store, retriever, RRF, decoder, and refiner.
-- Strict event-only retrieval localization (question text strictly excluded from retrieval text encoding).
-- Refined absolute frame ID used as output Q&A `frame_id`. Single exact frame decode.
-- Unified single `request_id` session namespace shared across KIS, QA, Health, Shutdown.
-- Writes per-request `qa_predictions.jsonl`, `qa_evidence.json`, `qa_request_manifest.json`, `qa_timings.json`.
-- Private Kaggle acceptance NOT RUN YET. No VLM/OCR/ASR.
+PRELIMINARY P0-B2 / P0-B2.1 (shared-runtime Q&A vertical slice & compatibility hotfix) is COMPLETE.
+PRELIMINARY P0-C1 (deterministic same-video temporal-chain TRAKE core) is IMPLEMENTED locally:
+- Bounded DP / beam search planner across query events 0..N-1.
+- Strict same-video complete-path coverage and non-decreasing temporal order rule (`f_0 <= f_1 <= ... <= f_(N-1)`).
+- Deterministic rank-based additive path score `sum(1 / (rrf_constant + rank))`.
+- Outputs P0-A `TRAKEPrediction` objects gated by fail-closed `validate_ranked_top100(..., expected_task="trake")`.
+- Private Kaggle execution NOT RUN YET. No VLM/OCR/ASR.
 
 The workbook and Canva design have been reviewed. Phase 1 input auditing, Phase 1.5C
 compatibility calibration, the Phase 2 exact NumPy KIS implementation, Phase 2.5
@@ -64,7 +63,8 @@ No TRIAGE-EG source, tests, configs, documentation, or generated assets belong t
 | Phase 3.1 inspection/reproducibility | IMPLEMENTED | Explicit none/top-n/all modes, lazy per-video Path-only thumbnail indexes, isolated/combined record reuse, fast mode, detailed export timings, and run summary IDs | Phase 3.1 needs a real Kaggle retry; Pillow remains optional for contact sheets. |
 | Legacy interval fixture evaluator | PLANNED | Interface specified | Superseded for Phase 2.5 by the implemented exact-label evaluator; not an official evaluator. |
 | Official BTC exporter | DEFERRED | Separate boundary recognized | Official format is unresolved. |
-| Q&A and TRAKE | DEFERRED | Personal design reference | Outside the first slice. |
+| Q&A (P0-B1/B2) | BASELINE | `system_tai.qa` closed-set baseline & session runtime | Kaggle acceptance pending. |
+| TRAKE (P0-C1) | BASELINE | `system_tai.trake` deterministic same-video temporal-chain core | Kaggle acceptance pending. |
 | Backend and production frontend | DEFERRED | Personal design and untracked prototype | Outside the first slice. |
 | Agent/GNN/Event Graph/VLM/OCR/ASR | DEFERRED | Optional design ideas | Explicitly excluded. |
 

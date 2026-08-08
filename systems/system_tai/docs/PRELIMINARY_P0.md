@@ -49,3 +49,14 @@ This phase implements the exact preliminary task schemas and evaluation semantic
 - Unified single session `request_id` namespace shared across `health`, `query` (KIS), `qa_query` (QA), and `shutdown`.
 - Independent request directory outputs keyed by `safe_request_directory_name(request.request_id)`. Writes per-request `qa_predictions.jsonl` (EXACT task schema), `qa_evidence.json`, `qa_request_manifest.json`, and `qa_timings.json`.
 - Scope & Status: Local vertical slice complete & verified. No private Kaggle run executed yet. No VLM/OCR/ASR. No claim of official JSONL submission format.
+
+## PRELIMINARY P0-C1: Deterministic Same-Video Temporal-Chain Core (TRAKE)
+- Implemented deterministic retrieval-level TRAKE temporal-chain core in `system_tai.trake`.
+- Local retrieval-level baseline using bounded DP / beam search across events per complete video.
+- Enforces strict same-video complete-event coverage requirement: every complete path consists of frames from candidate pools of the SAME video across all query events `0..N-1`.
+- Enforces non-decreasing temporal order rule: `f_0 <= f_1 <= ... <= f_(N-1)`.
+- Uses deterministic rank-based additive path score `sum(1 / (rrf_constant + rank))` (default `rrf_constant = 60.0`). Retrieval similarity scores remain diagnostic only.
+- Global deterministic ranking tie-breaker order: `path_score` descending, `video_id` ascending, `frame_ids` lexicographically ascending, `candidate_ranks` lexicographically ascending.
+- Outputs existing P0-A `TRAKEPrediction` objects validated by `validate_ranked_top100(..., expected_task="trake")`. Fails closed if validation errors occur.
+- No raw-video refinement yet. No Kaggle execution yet. No official submission format claim.
+- Status: Local core complete & verified.
