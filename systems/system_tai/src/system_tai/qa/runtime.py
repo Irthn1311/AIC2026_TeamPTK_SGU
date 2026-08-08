@@ -18,7 +18,12 @@ from system_tai.refinement.models import (
     RefinementQuery,
     RefinementStatus,
 )
-from system_tai.refinement.video import DecodeRequest, RawVideoRegistry, VideoDecoder
+from system_tai.refinement.video import (
+    DecodeRequest,
+    RawVideoRecord,
+    RawVideoRegistry,
+    VideoDecoder,
+)
 from system_tai.retrieval.multi_query import WeightedRRFRetriever
 from system_tai.retrieval.vector_search import ExactNumpyRetriever
 
@@ -102,9 +107,11 @@ class QARuntimePipeline:
     def process_qa_query(
         self,
         request: Any,  # QAQueryRequest
-        refinement_config: RefinementConfig,
+        refinement_config: RefinementConfig | None = None,
         rrf_constant: float = 60.0,
     ) -> tuple[QAResult, QAPipelineTimings, dict[str, Any]]:
+        if refinement_config is None:
+            refinement_config = RefinementConfig()
         t_start = self.clock()
         timings = QAPipelineTimings()
         diagnostics: dict[str, Any] = {
@@ -217,7 +224,7 @@ class QARuntimePipeline:
         diagnostics["refined_candidate_count"] = len(ref_outcome.candidates)
 
         # Step 4: Filter usable candidates -> QAEvidenceCandidate
-        cands_to_decode: list[tuple[QAEvidenceCandidate, RefinedCandidate]] = []
+        cands_to_decode: list[tuple[QAEvidenceCandidate, RefinedCandidate, RawVideoRecord]] = []
         evidence_records: list[dict[str, Any]] = []
 
         for ref_cand in ref_outcome.candidates:
@@ -251,7 +258,9 @@ class QARuntimePipeline:
                 )
                 continue
 
-            if not self.raw_video_registry.has_video(ref_cand.video_id):
+            try:
+                video_record = self.raw_video_registry.get(ref_cand.video_id)
+            except KeyError:
                 warn_msg = (
                     f"Candidate rank {ref_cand.original_candidate_rank} ({ref_cand.video_id}) "
                     "raw video missing in registry."
@@ -298,7 +307,7 @@ class QARuntimePipeline:
                     "candidate_frame_id": ref_cand.candidate_frame_id,
                 },
             )
-            cands_to_decode.append((ev_cand, ref_cand))
+            cands_to_decode.append((ev_cand, ref_cand, video_record))
 
         diagnostics["evidence_candidate_count"] = len(cands_to_decode)
 
@@ -318,9 +327,8 @@ class QARuntimePipeline:
         decoded_images: list[np.ndarray] = []
         valid_evidence_cands: list[tuple[QAEvidenceCandidate, RefinedCandidate]] = []
 
-        for ev_cand, ref_cand in cands_to_decode:
+        for ev_cand, ref_cand, video_record in cands_to_decode:
             try:
-                video_record = self.raw_video_registry.get(ev_cand.video_id)
                 if (
                     video_record.raw_video_path is None
                     or not video_record.raw_video_path.is_file()
@@ -480,6 +488,8 @@ class QARuntimePipeline:
             query_id=request.query_id,
             event_description=request.event_description,
             question=request.question,
+            event_description_en=request.event_description_en,
+            question_en=request.question_en,
         )
         qa_result = self.qa_engine.answer(
             qa_query,
@@ -489,7 +499,16 @@ class QARuntimePipeline:
         )
         timings.answer_scoring_seconds = self.clock() - t_ans
 
-        validate_ranked_top100(qa_result.predictions, expected_task="qa")
+        val_errors = validate_ranked_top100(
+            qa_result.predictions,
+            expected_task="qa",
+            expected_query_id=request.query_id,
+        )
+        if val_errors:
+            err_msgs = "; ".join(e.message for e in val_errors)
+            raise ValueError(
+                f"QA prediction validation failed for request {request.query_id}: {err_msgs}"
+            )
 
         pred_map = {p.rank: p for p in qa_result.predictions}
         conf_level = qa_result.diagnostics.get("confidence_level", "BASELINE")

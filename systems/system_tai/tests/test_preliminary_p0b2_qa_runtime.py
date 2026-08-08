@@ -26,6 +26,7 @@ from system_tai.refinement.video import (
     DecodeRequest,
     DecodeResult,
     RawVideoRecord,
+    RawVideoRegistry,
     VideoProbe,
 )
 
@@ -177,9 +178,6 @@ class FakeRawVideoRegistry:
             for vid in video_ids
         )
         self.video_ids = set(video_ids)
-
-    def has_video(self, video_id: str) -> bool:
-        return video_id in self.video_ids
 
     def get(self, video_id: str) -> RawVideoRecord:
         for r in self.records:
@@ -752,3 +750,109 @@ def test_production_runtime_shared_encoder_identity(tmp_path: Path):
     assert shared_enc.encode_texts_calls[0] == ["Chiếc xe chạy"]
     assert "red" in shared_enc.encode_texts_calls[1]
     assert len(shared_enc.encode_images_calls) == 1
+
+
+def test_real_raw_video_registry_compatibility(tmp_path: Path) -> None:
+    """Verify QARuntimePipeline is fully compatible with real RawVideoRegistry class."""
+    video_file = tmp_path / "V001.mp4"
+    video_file.touch()
+
+    real_registry = RawVideoRegistry([RawVideoRecord("V001", video_file)])
+    pipeline = QARuntimePipeline(
+        raw_video_registry=real_registry,
+        shared_encoder=FakeEncoder(),
+        exact_retriever=FakeRetriever(),
+        weighted_rrf=FakeWeightedRRF(),
+        refiner=FakeRefiner(refined_frame_id=150),
+        decoder=FakeDecoder(frame_id_to_return=150),
+    )
+
+    req = QAQueryRequest("req-real-reg", "q-real-1", "Chiếc xe chạy", "Chiếc xe màu gì?")
+    res, timings, diags = pipeline.process_qa_query(req)
+
+    assert res.question_type == QuestionType.COLOR
+    assert len(res.predictions) == 1
+    assert res.predictions[0].answer == "đỏ"
+    assert res.predictions[0].frame_id == 150
+    assert res.predictions[0].video_id == "V001"
+    assert diags["evidence_candidate_count"] == 1
+    assert diags["decoded_frame_count"] == 1
+
+
+def test_question_en_fallback_classification_and_retrieval_exclusion(tmp_path: Path) -> None:
+    """Verify question_en propagates for classification and is excluded from retrieval."""
+    video_file = tmp_path / "V001.mp4"
+    video_file.touch()
+
+    shared_enc = FakeEncoder()
+    pipeline = QARuntimePipeline(
+        raw_video_registry=RawVideoRegistry([RawVideoRecord("V001", video_file)]),
+        shared_encoder=shared_enc,
+        exact_retriever=FakeRetriever(),
+        weighted_rrf=FakeWeightedRRF(),
+        refiner=FakeRefiner(refined_frame_id=150),
+        decoder=FakeDecoder(frame_id_to_return=150),
+    )
+
+    # Question in VI alone is unsupported ("Nói gì đó"); question_en is "What color is the car?"
+    req = QAQueryRequest(
+        request_id="req-q-en-fallback",
+        query_id="q-fallback-1",
+        event_description="Chiếc xe chạy trên đường",
+        question="Nói gì đó",
+        event_description_en="A car driving on the road",
+        question_en="What color is the car?",
+    )
+
+    res, timings, diags = pipeline.process_qa_query(req)
+
+    assert res.question_type == QuestionType.COLOR
+    assert len(res.predictions) == 1
+    assert res.predictions[0].answer == "đỏ"
+
+    # Verify English QUESTION was NOT passed to event retrieval encoder calls
+    assert len(shared_enc.encode_texts_calls) >= 1
+    retrieval_encoded_texts = shared_enc.encode_texts_calls[0]
+    assert "What color is the car?" not in retrieval_encoded_texts
+    assert "Chiếc xe chạy trên đường" in retrieval_encoded_texts
+
+
+def test_fail_closed_p0a_validation_error(tmp_path: Path) -> None:
+    """Verify QARuntimePipeline raises ValueError if QA engine outputs invalid predictions."""
+    class BadQAEngine:
+        def answer(
+            self, query, evidence_candidates, image_embeddings=None, prompt_embeddings=None
+        ):
+            from system_tai.preliminary.schemas import QAPrediction
+            from system_tai.qa.models import QAResult
+            # Return prediction with query_id mismatch to trigger P0-A validation error
+            bad_pred = QAPrediction(
+                query_id="WRONG_QUERY_ID",
+                rank=1,
+                video_id="V001",
+                frame_id=150,
+                answer="đỏ",
+            )
+            return QAResult(
+                query_id=query.query_id,
+                question_type=QuestionType.COLOR,
+                predictions=[bad_pred],
+                warnings=[],
+            )
+
+    video_file = tmp_path / "V001.mp4"
+    video_file.touch()
+
+    pipeline = QARuntimePipeline(
+        raw_video_registry=RawVideoRegistry([RawVideoRecord("V001", video_file)]),
+        shared_encoder=FakeEncoder(),
+        exact_retriever=FakeRetriever(),
+        weighted_rrf=FakeWeightedRRF(),
+        refiner=FakeRefiner(refined_frame_id=150),
+        decoder=FakeDecoder(frame_id_to_return=150),
+        qa_engine=BadQAEngine(),
+    )
+
+    req = QAQueryRequest("req-bad-engine", "q-bad", "Chiếc xe chạy", "Chiếc xe màu gì?")
+    with pytest.raises(ValueError, match="QA prediction validation failed"):
+        pipeline.process_qa_query(req)
