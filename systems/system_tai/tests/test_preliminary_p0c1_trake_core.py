@@ -385,32 +385,32 @@ def test_w_p0a_validator_no_error_for_valid_engine_outputs():
     assert len(errors) == 0
 
 
-# Test X: Inject invalid result boundary and prove engine fails closed on P0-A validation error
-def test_x_fail_closed_on_invalid_p0a_validation():
-    class BadTRAKEEngine(TRAKEEngine):
-        def solve_query(self, query, event_candidates, **kwargs):
-            # Artificially return a prediction with mismatched query_id
-            bad_pred = TRAKEPrediction(
-                query_id="WRONG_QUERY_ID",
-                rank=1,
-                video_id="V1",
-                frame_ids=(100, 200),
-            )
-            # Call validator directly to prove fail-closed behavior
-            val_errors = validate_ranked_top100(
-                [bad_pred],
-                expected_task="trake",
-                expected_query_id=query.query_id,
-            )
-            if val_errors:
-                raise ValueError("TRAKE prediction validation failed")
-            return None
+# Test X: Inject invalid result boundary via monkeypatch
+# and prove real TRAKEEngine fails closed on P0-A validation error
+def test_x_fail_closed_on_invalid_p0a_validation(monkeypatch):
+    def fake_plan_trake_paths(*args, **kwargs):
+        return (
+            (
+                TRAKEPrediction(
+                    query_id="WRONG_QUERY_ID",
+                    rank=1,
+                    video_id="V1",
+                    frame_ids=(100, 200),
+                ),
+            ),
+            {},
+        )
+
+    monkeypatch.setattr(
+        "system_tai.trake.engine.plan_trake_paths",
+        fake_plan_trake_paths,
+    )
 
     q = TRAKEQuery("q-test-x", (TRAKEEvent(0, "E0"), TRAKEEvent(1, "E1")))
     c0 = [TRAKEEventCandidate("q-test-x", 0, 1, "V1", 100, 0.9)]
     c1 = [TRAKEEventCandidate("q-test-x", 1, 1, "V1", 200, 0.8)]
 
-    engine = BadTRAKEEngine()
+    engine = TRAKEEngine()
     with pytest.raises(ValueError, match="TRAKE prediction validation failed"):
         engine.solve_query(q, (c0, c1))
 
@@ -442,32 +442,32 @@ def test_y_deterministic_repeat_run():
     assert res1.diagnostics == res2.diagnostics
 
 
-# Test Z1: Explicit engine event-count boundary check fails closed
-def test_z1_explicit_engine_event_count_boundary():
-    class MismatchedFrameCountPlannerEngine(TRAKEEngine):
-        def solve_query(self, query, event_candidates, **kwargs):
-            # Simulate planner yielding prediction with 1 frame for a 2-event query
-            bad_pred = TRAKEPrediction(
-                query_id=query.query_id,
-                rank=1,
-                video_id="V1",
-                frame_ids=(100,),  # 1 frame instead of 2
-            )
-            # Invoke the explicit boundary check manually as engine does
-            expected_event_count = len(query.events)
-            if len(bad_pred.frame_ids) != expected_event_count:
-                raise ValueError(
-                    f"Prediction frame_ids count ({len(bad_pred.frame_ids)}) != "
-                    f"query event count ({expected_event_count})"
-                )
-            return None
+# Test Z1: Real TRAKEEngine explicit event-count boundary check fails closed
+def test_z1_explicit_engine_event_count_boundary(monkeypatch):
+    def fake_plan_trake_paths(*args, **kwargs):
+        return (
+            (
+                TRAKEPrediction(
+                    query_id="q-test-z1",
+                    rank=1,
+                    video_id="V1",
+                    frame_ids=(100,),  # 1 frame for 2-event query
+                ),
+            ),
+            {},
+        )
+
+    monkeypatch.setattr(
+        "system_tai.trake.engine.plan_trake_paths",
+        fake_plan_trake_paths,
+    )
 
     q = TRAKEQuery("q-test-z1", (TRAKEEvent(0, "E0"), TRAKEEvent(1, "E1")))
     c0 = [TRAKEEventCandidate("q-test-z1", 0, 1, "V1", 100, 0.9)]
     c1 = [TRAKEEventCandidate("q-test-z1", 1, 1, "V1", 200, 0.8)]
 
-    engine = MismatchedFrameCountPlannerEngine()
-    with pytest.raises(ValueError, match="query event count"):
+    engine = TRAKEEngine()
+    with pytest.raises(ValueError, match="Prediction frame_ids count"):
         engine.solve_query(q, (c0, c1))
 
 
@@ -533,3 +533,41 @@ def test_z3_exact_candidate_duplicate_cases():
     ]
     with pytest.raises(ValueError, match="Duplicate candidate rank 1"):
         engine.solve_query(q, (c0_case_c,))
+
+
+# Test Z4: Validation-ordering regression cases A, B, C, D
+# (candidates validated before empty pool check)
+def test_z4_validation_ordering_cases():
+    q = TRAKEQuery(
+        "q-test-z4",
+        (TRAKEEvent(0, "E0"), TRAKEEvent(1, "E1")),
+    )
+    engine = TRAKEEngine()
+
+    # Case A: Malformed query_id in pool 0 + pool 1 is empty []
+    c0_case_a = [TRAKEEventCandidate("WRONG_QUERY", 0, 1, "V1", 100, 0.9)]
+    c1_case_a: list[TRAKEEventCandidate] = []
+    with pytest.raises(ValueError, match="Candidate query_id mismatch"):
+        engine.solve_query(q, (c0_case_a, c1_case_a))
+
+    # Case B: Event_index mismatch in pool 0 + pool 1 is empty []
+    c0_case_b = [TRAKEEventCandidate("q-test-z4", 1, 1, "V1", 100, 0.9)]  # index 1 in pool 0
+    c1_case_b: list[TRAKEEventCandidate] = []
+    with pytest.raises(ValueError, match="Candidate event_index mismatch"):
+        engine.solve_query(q, (c0_case_b, c1_case_b))
+
+    # Case C: Duplicate candidate rank in pool 0 + pool 1 is empty []
+    c0_case_c = [
+        TRAKEEventCandidate("q-test-z4", 0, 1, "V1", 100, 0.9),
+        TRAKEEventCandidate("q-test-z4", 0, 1, "V2", 100, 0.8),
+    ]
+    c1_case_c: list[TRAKEEventCandidate] = []
+    with pytest.raises(ValueError, match="Duplicate candidate rank 1"):
+        engine.solve_query(q, (c0_case_c, c1_case_c))
+
+    # Case D: Normal valid candidate in pool 0 + pool 1 is empty []
+    c0_case_d = [TRAKEEventCandidate("q-test-z4", 0, 1, "V1", 100, 0.9)]
+    c1_case_d: list[TRAKEEventCandidate] = []
+    res_d = engine.solve_query(q, (c0_case_d, c1_case_d))
+    assert res_d.predictions == ()
+    assert res_d.diagnostics["zero_output_reason"] == "empty_candidate_pool"

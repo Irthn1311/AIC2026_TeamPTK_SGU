@@ -63,8 +63,8 @@ No TRIAGE-EG source, tests, configs, documentation, or generated assets belong t
 | Phase 3.1 inspection/reproducibility | IMPLEMENTED | Explicit none/top-n/all modes, lazy per-video Path-only thumbnail indexes, isolated/combined record reuse, fast mode, detailed export timings, and run summary IDs | Phase 3.1 needs a real Kaggle retry; Pillow remains optional for contact sheets. |
 | Legacy interval fixture evaluator | PLANNED | Interface specified | Superseded for Phase 2.5 by the implemented exact-label evaluator; not an official evaluator. |
 | Official BTC exporter | DEFERRED | Separate boundary recognized | Official format is unresolved. |
-| Q&A (P0-B1/B2) | BASELINE | `system_tai.qa` closed-set baseline & session runtime | Kaggle acceptance pending. |
-| TRAKE (P0-C1) | BASELINE | `system_tai.trake` deterministic same-video temporal-chain core | Kaggle acceptance pending. |
+| Q&A (P0-B1/B2) | BASELINE | `system_tai.qa` closed-set baseline & session runtime | Kaggle/T4 technical acceptance PASS; semantic QA quality pending. |
+| TRAKE (P0-C1) | BASELINE | `system_tai.trake` deterministic same-video temporal-chain core | Kaggle acceptance pending / NOT RUN YET. |
 | Backend and production frontend | DEFERRED | Personal design and untracked prototype | Outside the first slice. |
 | Agent/GNN/Event Graph/VLM/OCR/ASR | DEFERRED | Optional design ideas | Explicitly excluded. |
 

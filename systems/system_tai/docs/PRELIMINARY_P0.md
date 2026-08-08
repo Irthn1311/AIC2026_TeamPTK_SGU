@@ -48,7 +48,7 @@ This phase implements the exact preliminary task schemas and evaluation semantic
 - Prompts embedding cache (`get_prompt_embeddings`) prevents redundant text encoding for visual prompt banks.
 - Unified single session `request_id` namespace shared across `health`, `query` (KIS), `qa_query` (QA), and `shutdown`.
 - Independent request directory outputs keyed by `safe_request_directory_name(request.request_id)`. Writes per-request `qa_predictions.jsonl` (EXACT task schema), `qa_evidence.json`, `qa_request_manifest.json`, and `qa_timings.json`.
-- Scope & Status: Local vertical slice complete & verified. No private Kaggle run executed yet. No VLM/OCR/ASR. No claim of official JSONL submission format.
+- Scope & Status: Local/runtime slice complete & verified. Kaggle/T4 production execution acceptance PASS over verified 873-video corpus (177,321 CLIP rows, 873 raw videos) with single shared OpenAI CLIP ViT-B/32 encoder, real raw-video decoding, refined absolute frame output, event-only retrieval (zero question leakage), and cold/warm prompt caching. Semantic QA accuracy NOT established. No claim of official BTC submission artifact format.
 
 ## PRELIMINARY P0-C1: Deterministic Same-Video Temporal-Chain Core (TRAKE)
 - Implemented deterministic retrieval-level TRAKE temporal-chain core in `system_tai.trake`.

@@ -60,12 +60,7 @@ def plan_trake_paths(
         "zero_output_reason": None,
     }
 
-    # 2. Check for empty pools
-    if any(cnt == 0 for cnt in event_candidate_counts):
-        diagnostics["zero_output_reason"] = "empty_candidate_pool"
-        return (), diagnostics
-
-    # 3. Validate & deduplicate input candidate pools
+    # 2. Validate & deduplicate input candidate pools
     deduped_pools: list[list[TRAKEEventCandidate]] = []
     all_candidate_videos: set[str] = set()
 
@@ -108,6 +103,11 @@ def plan_trake_paths(
 
         resolved_pool.sort(key=lambda c: (c.rank, c.video_id, c.frame_id))
         deduped_pools.append(resolved_pool)
+
+    # 3. Check for empty pools
+    if any(len(p) == 0 for p in deduped_pools):
+        diagnostics["zero_output_reason"] = "empty_candidate_pool"
+        return (), diagnostics
 
     diagnostics["candidate_video_count"] = len(all_candidate_videos)
 
