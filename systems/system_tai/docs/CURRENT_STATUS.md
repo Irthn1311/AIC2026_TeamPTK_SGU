@@ -9,12 +9,15 @@
 PRELIMINARY P0-A (official schemas, strict int, GT contracts, evaluation) is COMPLETE.
 PRELIMINARY P0-B1 (evidence-grounded closed-set Q&A baseline core) is COMPLETE.
 PRELIMINARY P0-B2 / P0-B2.1 (shared-runtime Q&A vertical slice & compatibility hotfix) is COMPLETE.
-PRELIMINARY P0-C1 (deterministic same-video temporal-chain TRAKE core) is IMPLEMENTED locally:
-- Bounded DP / beam search planner across query events 0..N-1.
-- Strict same-video complete-path coverage and non-decreasing temporal order rule (`f_0 <= f_1 <= ... <= f_(N-1)`).
-- Deterministic rank-based additive path score `sum(1 / (rrf_constant + rank))`.
-- Outputs P0-A `TRAKEPrediction` objects gated by fail-closed `validate_ranked_top100(..., expected_task="trake")`.
-- Private Kaggle execution NOT RUN YET. No VLM/OCR/ASR.
+PRELIMINARY P0-C1 (deterministic same-video temporal-chain TRAKE core) is COMPLETE.
+PRELIMINARY P0-C2 (shared-runtime TRAKE vertical slice) is IMPLEMENTED locally:
+- Connected to long-lived `OperationalKISRuntime` session engine via `TRAKERuntimePipeline`.
+- Single batched text encoding call across all event variants.
+- Unique event-node refinement across top-N paths with local contiguous candidate ranks.
+- Whole-path temporal safety fallback and rank-preserving duplicate resolution.
+- Gated by fail-closed `validate_ranked_top100(..., expected_task="trake")`.
+- Writes per-request artifacts (`trake_predictions.jsonl`, candidates, refinement, manifest, timings).
+- Local/runtime implementation only. No Kaggle TRAKE acceptance yet. No semantic TRAKE quality claim. No official BTC artifact-format claim.
 
 The workbook and Canva design have been reviewed. Phase 1 input auditing, Phase 1.5C
 compatibility calibration, the Phase 2 exact NumPy KIS implementation, Phase 2.5
@@ -64,7 +67,7 @@ No TRIAGE-EG source, tests, configs, documentation, or generated assets belong t
 | Legacy interval fixture evaluator | PLANNED | Interface specified | Superseded for Phase 2.5 by the implemented exact-label evaluator; not an official evaluator. |
 | Official BTC exporter | DEFERRED | Separate boundary recognized | Official format is unresolved. |
 | Q&A (P0-B1/B2) | BASELINE | `system_tai.qa` closed-set baseline & session runtime | Kaggle/T4 technical acceptance PASS; semantic QA quality pending. |
-| TRAKE (P0-C1) | BASELINE | `system_tai.trake` deterministic same-video temporal-chain core | Kaggle acceptance pending / NOT RUN YET. |
+| TRAKE (P0-C1/C2) | BASELINE | `system_tai.trake` deterministic temporal core & session runtime | Kaggle acceptance pending / NOT RUN YET; local runtime complete. |
 | Backend and production frontend | DEFERRED | Personal design and untracked prototype | Outside the first slice. |
 | Agent/GNN/Event Graph/VLM/OCR/ASR | DEFERRED | Optional design ideas | Explicitly excluded. |
 

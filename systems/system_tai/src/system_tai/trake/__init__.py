@@ -6,6 +6,7 @@ from .models import (
     TRAKEResult,
 )
 from .planner import TRAKEPathState, plan_trake_paths
+from .runtime import TRAKERuntimePipeline, TRAKERuntimeTimings
 
 __all__ = [
     "TRAKEEngine",
@@ -14,5 +15,7 @@ __all__ = [
     "TRAKEPathState",
     "TRAKEQuery",
     "TRAKEResult",
+    "TRAKERuntimePipeline",
+    "TRAKERuntimeTimings",
     "plan_trake_paths",
 ]

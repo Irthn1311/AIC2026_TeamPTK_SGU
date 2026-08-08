@@ -20,6 +20,7 @@ from system_tai.kis.session_schema import (
     SessionConfig,
     SessionProtocolError,
     ShutdownRequest,
+    TRAKEQueryRequest,
     UnknownRequestTypeError,
     format_json_response,
     parse_session_request,
@@ -296,6 +297,32 @@ def run_session(
                     _write_resp(resp)
                 except Exception as exc:
                     print(f"qa query execution error on {request.request_id}: {exc}", file=err_stream)
+                    resp = active_runtime.handle_error(
+                        request_id=request.request_id,
+                        error_code="QUERY_EXECUTION_FAILED",
+                        error_type=type(exc).__name__,
+                        message=f"{type(exc).__name__}: {exc}",
+                        session_continues=config.continue_on_request_error and not config.fail_fast_protocol,
+                    )
+                    _write_resp(resp)
+                    if not config.continue_on_request_error or config.fail_fast_protocol:
+                        exit_code = 1
+                        break
+            elif isinstance(request, TRAKEQueryRequest):
+                try:
+                    resp = active_runtime.handle_trake_query(request)
+                    _write_resp(resp)
+                except DuplicateRequestIdError as exc:
+                    resp = active_runtime.handle_error(
+                        request_id=request.request_id,
+                        error_code="DUPLICATE_REQUEST_ID",
+                        error_type=type(exc).__name__,
+                        message=str(exc),
+                        session_continues=True,
+                    )
+                    _write_resp(resp)
+                except Exception as exc:
+                    print(f"trake query execution error on {request.request_id}: {exc}", file=err_stream)
                     resp = active_runtime.handle_error(
                         request_id=request.request_id,
                         error_code="QUERY_EXECUTION_FAILED",

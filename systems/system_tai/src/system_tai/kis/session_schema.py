@@ -45,7 +45,9 @@ class SessionConfig:
     input_root: Path = field(default_factory=lambda: Path("/kaggle/input"))
     reuse_manifest: Path | None = None
     manifest_cache: Path | None = None
-    output_root: Path = field(default_factory=lambda: Path("/kaggle/working/system_tai_operational_session"))
+    output_root: Path = field(
+        default_factory=lambda: Path("/kaggle/working/system_tai_operational_session")
+    )
     device: str = "auto"
     allow_model_download: bool = False
     clip_cache_dir: Path | None = None
@@ -232,6 +234,57 @@ class ShutdownRequest:
             raise ValueError("request_id must be non-empty")
 
 
+@dataclass(frozen=True, slots=True)
+class TRAKEQueryRequest:
+    request_id: str
+    query_id: str
+    events: tuple[dict[str, Any], ...]
+    top_k_per_variant: int = 100
+    event_candidate_top_k: int = 100
+    output_top_k: int = 100
+    beam_width: int = 100
+    refine_top_n: int = 3
+    type: str = "trake_query"
+
+    def __post_init__(self) -> None:
+        if not self.request_id or not self.request_id.strip():
+            raise ValueError("request_id must be non-empty")
+        if not self.query_id or not self.query_id.strip():
+            raise ValueError("query_id must be non-empty")
+        if not isinstance(self.events, (tuple, list)) or len(self.events) == 0:
+            raise ValueError("events must be a non-empty list of event objects")
+
+        for idx, ev in enumerate(self.events):
+            if not isinstance(ev, dict):
+                raise ValueError(f"event at index {idx} must be an object")
+            desc = ev.get("description")
+            if not desc or not isinstance(desc, str) or not desc.strip():
+                raise ValueError(f"event at index {idx} requires non-empty string 'description'")
+            desc_en = ev.get("description_en")
+            if desc_en is not None:
+                if not isinstance(desc_en, str) or not desc_en.strip():
+                    raise ValueError(
+                        f"event at index {idx} 'description_en' must be non-empty string"
+                    )
+
+        if type(self.top_k_per_variant) is not int or not (1 <= self.top_k_per_variant <= 1000):
+            raise ValueError("top_k_per_variant must be integer in range [1, 1000]")
+        if type(self.event_candidate_top_k) is not int or not (
+            1 <= self.event_candidate_top_k <= 100
+        ):
+            raise ValueError("event_candidate_top_k must be integer in range [1, 100]")
+        if type(self.output_top_k) is not int or not (1 <= self.output_top_k <= 100):
+            raise ValueError("output_top_k must be integer in range [1, 100]")
+        if type(self.beam_width) is not int or not (1 <= self.beam_width <= 1000):
+            raise ValueError("beam_width must be integer in range [1, 1000]")
+        if (
+            type(self.refine_top_n) is not int
+            or not (0 <= self.refine_top_n <= self.output_top_k)
+            or self.refine_top_n > 100
+        ):
+            raise ValueError("refine_top_n must be integer in range [0, min(output_top_k, 100)]")
+
+
 def parse_session_request(
     line: str,
     line_number: int = 1,
@@ -239,7 +292,7 @@ def parse_session_request(
     default_top_k_per_variant: int = 100,
     default_output_top_k: int = 100,
     default_refine_top_n: int = 3,
-) -> HealthRequest | QueryRequest | QAQueryRequest | ShutdownRequest:
+) -> HealthRequest | QueryRequest | QAQueryRequest | TRAKEQueryRequest | ShutdownRequest:
     raw = line.strip()
     if not raw:
         raise MalformedRequestError(
@@ -334,6 +387,43 @@ def parse_session_request(
             )
         except (TypeError, ValueError) as exc:
             raise InvalidRequestError(f"invalid qa_query request fields: {exc}") from exc
+    if req_type_clean == "trake_query":
+        query_id = data.get("query_id")
+        events_raw = data.get("events")
+        if not query_id or not isinstance(query_id, str) or not query_id.strip():
+            raise InvalidRequestError("trake_query request requires non-empty 'query_id'")
+        if not isinstance(events_raw, list) or len(events_raw) == 0:
+            raise InvalidRequestError("trake_query request requires non-empty 'events' array")
+
+        top_k_pv_raw = data.get("top_k_per_variant", default_top_k_per_variant)
+        event_cand_k_raw = data.get("event_candidate_top_k", default_output_top_k)
+        out_k_raw = data.get("output_top_k", default_output_top_k)
+        beam_w_raw = data.get("beam_width", 100)
+        refine_n_raw = data.get("refine_top_n", default_refine_top_n)
+
+        if (
+            type(top_k_pv_raw) is not int
+            or type(event_cand_k_raw) is not int
+            or type(out_k_raw) is not int
+            or type(beam_w_raw) is not int
+            or type(refine_n_raw) is not int
+        ):
+            msg = "numeric parameters must be strict integers"
+            raise InvalidRequestError(msg)
+
+        try:
+            return TRAKEQueryRequest(
+                request_id=request_id.strip(),
+                query_id=query_id.strip(),
+                events=tuple(events_raw),
+                top_k_per_variant=top_k_pv_raw,
+                event_candidate_top_k=event_cand_k_raw,
+                output_top_k=out_k_raw,
+                beam_width=beam_w_raw,
+                refine_top_n=refine_n_raw,
+            )
+        except (TypeError, ValueError) as exc:
+            raise InvalidRequestError(f"invalid trake_query request fields: {exc}") from exc
 
     raise UnknownRequestTypeError(f"unknown request type '{req_type}'")
 

@@ -60,3 +60,14 @@ This phase implements the exact preliminary task schemas and evaluation semantic
 - Outputs existing P0-A `TRAKEPrediction` objects validated by `validate_ranked_top100(..., expected_task="trake")`. Fails closed if validation errors occur.
 - No raw-video refinement yet. No Kaggle execution yet. No official submission format claim.
 - Status: Local core complete & verified.
+
+## PRELIMINARY P0-C2: Shared-Runtime TRAKE Vertical Slice
+- Connected `system_tai.trake` deterministic core to long-lived `OperationalKISRuntime` session engine via `TRAKERuntimePipeline`.
+- Reuses existing single instance of `SharedOpenAIClipEncoder`, `ExactNumpyRetriever`, `WeightedRRFRetriever`, and `ExactFrameRefiner`.
+- Single batched text encoding call for all event variants across query events `0..N-1`.
+- Unique event-node refinement across selected top-N paths with local contiguous candidate ranks `1..M`.
+- Whole-path fallback to original C1 candidate frames upon temporal order violation or refinement failure.
+- Duplicate frame sequence resolution preserving candidate rank ordering without path renumbering.
+- Strict P0-A validation gate before emitting final predictions.
+- Writes per-request artifacts: `trake_predictions.jsonl`, `trake_event_candidates.json`, `trake_refinement.json`, `trake_request_manifest.json`, and `trake_timings.json`.
+- Scope & Status: Local/runtime implementation only. No Kaggle TRAKE acceptance yet. No semantic TRAKE quality claim. No official BTC artifact-format claim.

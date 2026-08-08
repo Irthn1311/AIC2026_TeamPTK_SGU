@@ -35,6 +35,7 @@ from system_tai.kis.session_schema import (
     QueryRequest,
     SessionConfig,
     ShutdownRequest,
+    TRAKEQueryRequest,
 )
 from system_tai.qa.runtime import QARuntimePipeline
 from system_tai.refinement.engine import ExactFrameRefiner
@@ -43,6 +44,8 @@ from system_tai.refinement.runner import _write_json, _write_refined_csv
 from system_tai.refinement.video import OpenCVVideoDecoder, RawVideoRegistry
 from system_tai.retrieval.multi_query import WeightedRRFRetriever
 from system_tai.retrieval.vector_search import ExactNumpyRetriever
+from system_tai.trake.engine import TRAKEEngine
+from system_tai.trake.runtime import TRAKERuntimePipeline
 from system_tai.validation.checkpoint_validator import CheckpointValidator
 
 
@@ -134,6 +137,16 @@ class OperationalKISRuntime:
             raw_video_registry=self.raw_video_registry,
             decoder=self.decoder,
             shared_encoder=self.shared_encoder,
+            clock=self.clock,
+        )
+
+        self.trake_engine = TRAKEEngine()
+        self.trake_pipeline = TRAKERuntimePipeline(
+            exact_retriever=self.exact_retriever,
+            weighted_rrf=self.weighted_rrf,
+            refiner=self.refiner,
+            shared_encoder=self.shared_encoder,
+            trake_engine=self.trake_engine,
             clock=self.clock,
         )
 
@@ -680,6 +693,136 @@ class OperationalKISRuntime:
                 for p in qa_result.predictions
             ],
             "warnings": qa_result.warnings,
+            "timings": timings.to_dict(),
+            "artifacts": artifacts_dict,
+        }
+
+    def handle_trake_query(self, request: TRAKEQueryRequest) -> dict[str, Any]:
+        if request.request_id in self._seen_request_ids:
+            msg = f"request_id '{request.request_id}' has already been processed"
+            raise DuplicateRequestIdError(msg)
+        self._seen_request_ids.add(request.request_id)
+        self._request_count += 1
+
+        req_dir_name = safe_request_directory_name(request.request_id)
+        query_dir = self.output_root / "requests" / req_dir_name
+        if query_dir.exists():
+            query_dir = (
+                self.output_root / "requests" / f"{req_dir_name}-{uuid.uuid4().hex[:4]}"
+            )
+        query_dir.mkdir(parents=True, exist_ok=True)
+
+        trake_result, timings, extra_diag = self.trake_pipeline.process_trake_query(
+            request,
+            refinement_config=self.config.refinement_config,
+            rrf_constant=self.config.rrf_constant,
+        )
+
+        # Artifact 1: trake_predictions.jsonl
+        predictions_jsonl = query_dir / "trake_predictions.jsonl"
+        with predictions_jsonl.open("w", encoding="utf-8", newline="") as stream:
+            for p in trake_result.predictions:
+                rec = {
+                    "query_id": p.query_id,
+                    "rank": p.rank,
+                    "video_id": p.video_id,
+                    "frame_ids": list(p.frame_ids),
+                }
+                stream.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+        # Artifact 2: trake_event_candidates.json
+        candidates_json = _write_json(
+            query_dir / "trake_event_candidates.json",
+            {
+                "query_id": request.query_id,
+                "event_candidates": [
+                    {
+                        "event_index": idx,
+                        "candidate_count": len(pool),
+                        "candidates": [
+                            {
+                                "rank": c.rank,
+                                "video_id": c.video_id,
+                                "frame_id": c.frame_id,
+                                "retrieval_score": c.retrieval_score,
+                                "provenance": c.provenance,
+                            }
+                            for c in pool
+                        ],
+                    }
+                    for idx, pool in enumerate(extra_diag["event_candidate_pools"])
+                ],
+            },
+        )
+
+        # Artifact 3: trake_refinement.json
+        refinement_json = _write_json(
+            query_dir / "trake_refinement.json",
+            {
+                "query_id": request.query_id,
+                "c1_diagnostics": extra_diag["c1_diagnostics"],
+                "refinement_requested": trake_result.diagnostics["refinement_requested"],
+                "refine_top_n": request.refine_top_n,
+                "refinement_node_records": extra_diag["refinement_node_records"],
+                "path_diagnostics": extra_diag["path_diagnostics"],
+                "warnings": list(trake_result.diagnostics.get("warnings", [])),
+            },
+        )
+
+        # Artifact 5: trake_timings.json
+        timings_json = _write_json(query_dir / "trake_timings.json", timings.to_dict())
+
+        rel_pred = str(predictions_jsonl.relative_to(self.output_root)).replace("\\", "/")
+        rel_cand = str(candidates_json.relative_to(self.output_root)).replace("\\", "/")
+        rel_ref = str(refinement_json.relative_to(self.output_root)).replace("\\", "/")
+        rel_man = str(
+            (query_dir / "trake_request_manifest.json").relative_to(self.output_root)
+        ).replace("\\", "/")
+        rel_tim = str(timings_json.relative_to(self.output_root)).replace("\\", "/")
+
+        artifacts_dict = {
+            "trake_predictions_jsonl": rel_pred,
+            "trake_event_candidates_json": rel_cand,
+            "trake_refinement_json": rel_ref,
+            "trake_request_manifest": rel_man,
+            "trake_timings": rel_tim,
+        }
+
+        # Artifact 4: trake_request_manifest.json
+        req_manifest_payload = {
+            "request_id": request.request_id,
+            "query_id": request.query_id,
+            "events": list(request.events),
+            "event_variants": extra_diag["flattened_variants"],
+            "top_k_per_variant": request.top_k_per_variant,
+            "event_candidate_top_k": request.event_candidate_top_k,
+            "output_top_k": request.output_top_k,
+            "beam_width": request.beam_width,
+            "refine_top_n": request.refine_top_n,
+            "prediction_count": len(trake_result.predictions),
+            "artifacts": artifacts_dict,
+        }
+        _write_json(query_dir / "trake_request_manifest.json", req_manifest_payload)
+
+        self._successful_query_count += 1
+
+        return {
+            "type": "trake_result",
+            "request_id": request.request_id,
+            "query_id": request.query_id,
+            "status": "SUCCESS",
+            "event_count": len(request.events),
+            "prediction_count": len(trake_result.predictions),
+            "predictions": [
+                {
+                    "query_id": p.query_id,
+                    "rank": p.rank,
+                    "video_id": p.video_id,
+                    "frame_ids": list(p.frame_ids),
+                }
+                for p in trake_result.predictions
+            ],
+            "warnings": list(trake_result.diagnostics.get("warnings", [])),
             "timings": timings.to_dict(),
             "artifacts": artifacts_dict,
         }
