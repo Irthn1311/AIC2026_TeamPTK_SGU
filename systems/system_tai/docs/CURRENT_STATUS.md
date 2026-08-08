@@ -10,14 +10,12 @@ PRELIMINARY P0-A (official schemas, strict int, GT contracts, evaluation) is COM
 PRELIMINARY P0-B1 (evidence-grounded closed-set Q&A baseline core) is COMPLETE.
 PRELIMINARY P0-B2 / P0-B2.1 (shared-runtime Q&A vertical slice & compatibility hotfix) is COMPLETE.
 PRELIMINARY P0-C1 (deterministic same-video temporal-chain TRAKE core) is COMPLETE.
-PRELIMINARY P0-C2 (shared-runtime TRAKE vertical slice) is IMPLEMENTED locally:
-- Connected to long-lived `OperationalKISRuntime` session engine via `TRAKERuntimePipeline`.
-- Single batched text encoding call across all event variants.
-- Unique event-node refinement across top-N paths with local contiguous candidate ranks.
-- Whole-path temporal safety fallback and rank-preserving duplicate resolution.
-- Gated by fail-closed `validate_ranked_top100(..., expected_task="trake")`.
-- Writes per-request artifacts (`trake_predictions.jsonl`, candidates, refinement, manifest, timings).
-- Local/runtime implementation only. No Kaggle TRAKE acceptance yet. No semantic TRAKE quality claim. No official BTC artifact-format claim.
+PRELIMINARY P0-C2 (shared-runtime TRAKE vertical slice) is COMPLETE (Kaggle/T4 technical acceptance PASS, commit `6849324769820dca27ae9b338b2bb5cfe178c436`).
+PRELIMINARY P0-OPT1 (request-scoped raw-frame CLIP image embedding reuse) is IMPLEMENTED locally:
+- Request-scoped image embedding cache keyed by `(video_id, absolute_frame_id)`.
+- Eliminates duplicate model image inference across coarse/fine stages and multiple event refinement calls within a TRAKE request.
+- Preserves 100% exact output semantics and independent per-event text scoring.
+- Local implementation complete & verified. Kaggle benchmark pending. No official BTC artifact-format claim.
 
 The workbook and Canva design have been reviewed. Phase 1 input auditing, Phase 1.5C
 compatibility calibration, the Phase 2 exact NumPy KIS implementation, Phase 2.5

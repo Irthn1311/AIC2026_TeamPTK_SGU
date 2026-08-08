@@ -216,6 +216,7 @@ class TRAKERuntimePipeline:
 
         refined_proposals: dict[tuple[int, str, int], int] = {}
         refinement_node_records: list[dict[str, Any]] = []
+        frame_embedding_cache: dict[tuple[str, int], np.ndarray] = {}
 
         if refine_count > 0:
             top_paths = c1_preds[:refine_count]
@@ -278,6 +279,7 @@ class TRAKERuntimePipeline:
                         ref_query,
                         config=exec_config,
                         precomputed_text_embeddings=e_variant_vectors,
+                        frame_embedding_cache=frame_embedding_cache,
                     )
 
                     for p3, ref_cand in zip(p3_candidates, outcome.candidates):
@@ -441,6 +443,7 @@ class TRAKERuntimePipeline:
             "refinement_node_records": refinement_node_records,
             "path_diagnostics": path_diagnostics,
             "event_candidate_pools": event_candidate_pools,
+            "frame_embedding_cache_entry_count": len(frame_embedding_cache),
             "flattened_variants": [
                 {
                     "event_index": idx,

@@ -70,4 +70,12 @@ This phase implements the exact preliminary task schemas and evaluation semantic
 - Duplicate frame sequence resolution preserving candidate rank ordering without path renumbering.
 - Strict P0-A validation gate before emitting final predictions.
 - Writes per-request artifacts: `trake_predictions.jsonl`, `trake_event_candidates.json`, `trake_refinement.json`, `trake_request_manifest.json`, and `trake_timings.json`.
-- Scope & Status: Local/runtime implementation only. No Kaggle TRAKE acceptance yet. No semantic TRAKE quality claim. No official BTC artifact-format claim.
+- Scope & Status: Kaggle/T4 technical acceptance PASS (commit `6849324769820dca27ae9b338b2bb5cfe178c436`). Corpus: 873 videos, 177,321 feature rows, 873 raw videos. Baseline no refinement ~7.77s; full refinement ~41.63s (~34.97s in refinement). Semantic TRAKE accuracy NOT established. No claim of official BTC submission artifact format.
+
+## PRELIMINARY P0-OPT1: Request-Scoped Raw-Frame CLIP Embedding Reuse
+- Implemented request-scoped raw-frame CLIP image embedding reuse in `ExactFrameRefiner` during TRAKE refinement.
+- Constructs a fresh request-scoped embedding cache `(video_id, absolute_frame_id) -> np.ndarray[float32]` per TRAKE request.
+- Shared across all per-event refinement queries in a single request. Unreachable after request completes.
+- Preserves 100% exact output semantics, coarse/fine window parameters, candidate sets, temporal rules, and independent per-event text scoring.
+- Legacy execution path (`frame_embedding_cache=None`) remains default and preserves QA behavior.
+- Status: Local implementation complete & verified. Kaggle benchmark PENDING.

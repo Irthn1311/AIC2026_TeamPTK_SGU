@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -23,6 +23,7 @@ from system_tai.refinement.models import (
     RefinementStatus,
 )
 from system_tai.refinement.video import (
+    DecodedFrame,
     DecodeRequest,
     RawVideoError,
     RawVideoRecord,
@@ -31,6 +32,59 @@ from system_tai.refinement.video import (
     VideoProbe,
 )
 from system_tai.retrieval.multi_query import QueryVariant
+
+FrameEmbeddingKey = tuple[str, int]
+FrameEmbeddingCache = MutableMapping[FrameEmbeddingKey, NDArray[np.float32]]
+
+
+def _encode_frames_with_cache(
+    *,
+    video_id: str,
+    frames: Sequence[DecodedFrame],
+    encoder: RefinementEncoder,
+    batch_size: int,
+    frame_embedding_cache: FrameEmbeddingCache | None,
+) -> NDArray[np.float32]:
+    if not frames:
+        return encoder.encode_images(
+            [],
+            batch_size=batch_size,
+        )
+
+    if frame_embedding_cache is None:
+        return encoder.encode_images(
+            [frame.image for frame in frames],
+            batch_size=batch_size,
+        )
+
+    missing_indices: list[int] = []
+    missing_keys: list[FrameEmbeddingKey] = []
+    seen_missing: set[FrameEmbeddingKey] = set()
+
+    for idx, frame in enumerate(frames):
+        key: FrameEmbeddingKey = (video_id, frame.absolute_frame_id)
+        if key not in frame_embedding_cache and key not in seen_missing:
+            seen_missing.add(key)
+            missing_indices.append(idx)
+            missing_keys.append(key)
+
+    if missing_keys:
+        missing_images = [frames[i].image for i in missing_indices]
+        encoded_misses = encoder.encode_images(
+            missing_images,
+            batch_size=batch_size,
+        )
+        if len(encoded_misses) != len(missing_keys):
+            raise ValueError("Encoded image count mismatch with missing keys")
+        for key, row in zip(missing_keys, encoded_misses):
+            frame_embedding_cache[key] = np.asarray(row, dtype=np.float32).copy()
+
+    result_rows: list[NDArray[np.float32]] = []
+    for frame in frames:
+        key = (video_id, frame.absolute_frame_id)
+        result_rows.append(frame_embedding_cache[key])
+
+    return np.vstack(result_rows).astype(np.float32)
 
 
 @dataclass(frozen=True, slots=True)
@@ -237,6 +291,7 @@ class ExactFrameRefiner:
         config: RefinementConfig,
         *,
         precomputed_text_embeddings: NDArray[np.float32] | None = None,
+        frame_embedding_cache: FrameEmbeddingCache | None = None,
     ) -> QueryRefinementOutcome:
         query_start = self.clock()
         text_start = self.clock()
@@ -279,6 +334,7 @@ class ExactFrameRefiner:
                     query.variants,
                     text_embeddings,
                     config,
+                    frame_embedding_cache=frame_embedding_cache,
                 )
             refined.append(record)
             warnings.extend(record.warnings)
@@ -329,6 +385,8 @@ class ExactFrameRefiner:
         variants: tuple[QueryVariant, ...],
         text_embeddings: NDArray[np.float32],
         config: RefinementConfig,
+        *,
+        frame_embedding_cache: FrameEmbeddingCache | None = None,
     ) -> RefinedCandidate:
         record = self.raw_videos.get(candidate.video_id)
         if record.raw_video_path is None:
@@ -340,6 +398,7 @@ class ExactFrameRefiner:
                 variants,
                 text_embeddings,
                 config,
+                frame_embedding_cache=frame_embedding_cache,
             )
         except Exception as exc:
             return self._handle_candidate_failure(
@@ -353,6 +412,8 @@ class ExactFrameRefiner:
         variants: tuple[QueryVariant, ...],
         text_embeddings: NDArray[np.float32],
         config: RefinementConfig,
+        *,
+        frame_embedding_cache: FrameEmbeddingCache | None = None,
     ) -> RefinedCandidate:
         candidate_start = self.clock()
         timings = _empty_candidate_timings()
@@ -399,9 +460,12 @@ class ExactFrameRefiner:
         timings["video_open_seconds"] += coarse_decode.video_open_seconds
         timings["coarse_decode_seconds"] = coarse_decode.decode_seconds
         coarse_encode_start = self.clock()
-        coarse_embeddings = self.encoder.encode_images(
-            [frame.image for frame in coarse_decode.frames],
+        coarse_embeddings = _encode_frames_with_cache(
+            video_id=candidate.video_id,
+            frames=coarse_decode.frames,
+            encoder=self.encoder,
             batch_size=config.image_batch_size,
+            frame_embedding_cache=frame_embedding_cache,
         )
         timings["coarse_encode_seconds"] = self.clock() - coarse_encode_start
         coarse_score_start = self.clock()
@@ -435,9 +499,12 @@ class ExactFrameRefiner:
         timings["video_open_seconds"] += fine_decode.video_open_seconds
         timings["fine_decode_seconds"] = fine_decode.decode_seconds
         fine_encode_start = self.clock()
-        fine_embeddings = self.encoder.encode_images(
-            [frame.image for frame in fine_decode.frames],
+        fine_embeddings = _encode_frames_with_cache(
+            video_id=candidate.video_id,
+            frames=fine_decode.frames,
+            encoder=self.encoder,
             batch_size=config.image_batch_size,
+            frame_embedding_cache=frame_embedding_cache,
         )
         timings["fine_encode_seconds"] = self.clock() - fine_encode_start
         fine_score_start = self.clock()

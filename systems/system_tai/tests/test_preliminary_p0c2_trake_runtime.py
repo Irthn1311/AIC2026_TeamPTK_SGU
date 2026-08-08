@@ -155,6 +155,7 @@ class FakeRefiner:
         config: RefinementConfig,
         *,
         precomputed_text_embeddings: np.ndarray | None = None,
+        frame_embedding_cache: Any | None = None,
     ):
         from system_tai.refinement.models import RefinementQuery
 
@@ -171,6 +172,7 @@ class FakeRefiner:
             "query_id": query.query_id,
             "candidate_count": len(query.candidates),
             "precomputed_text_embeddings": precomputed_text_embeddings,
+            "frame_embedding_cache": frame_embedding_cache,
         })
         refined = []
         e_idx = 0
