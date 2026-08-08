@@ -1,6 +1,4 @@
 from collections.abc import Sequence
-from dataclasses import dataclass, field
-from typing import Any
 
 import numpy as np
 
@@ -13,17 +11,8 @@ from .answer_candidates import (
     BaselineQuestionCandidateProvider,
 )
 from .answer_scoring import CosineEvidenceAnswerScorer, EvidenceAnswerScorer
-from .models import QAEvidenceCandidate, QAQuery
+from .models import QAEvidenceCandidate, QAQuery, QAResult
 from .question_types import QuestionType, classify_question_type
-
-
-@dataclass(frozen=True, slots=True)
-class QAResult:
-    query_id: str
-    question_type: QuestionType
-    predictions: list[QAPrediction]
-    unsupported_reason: str | None = None
-    diagnostics: dict[str, Any] = field(default_factory=dict)
 
 
 class QABaselineEngine:
@@ -89,6 +78,7 @@ class QABaselineEngine:
         # Process candidates
         predictions: list[QAPrediction] = []
         seen_keys: set[tuple[str, int, str]] = set()
+        scores_by_rank: dict[int, float] = {}
 
         for cand in evidence_candidates:
             img_emb = None
@@ -101,7 +91,8 @@ class QABaselineEngine:
             if not scored_hyps:
                 continue
 
-            best_hyp, _best_score = scored_hyps[0]
+            best_hyp, best_score = scored_hyps[0]
+            scores_by_rank[cand.rank] = float(best_score)
             canonical = best_hyp.canonical_answer
             norm_ans = self.matcher.normalize(canonical)
             dedup_key = (cand.video_id, cand.frame_id, norm_ans)
@@ -136,5 +127,6 @@ class QABaselineEngine:
                 "candidate_count": len(evidence_candidates),
                 "returned_count": len(predictions),
                 "confidence_level": confidence_level,
+                "scores_by_rank": scores_by_rank,
             },
         )

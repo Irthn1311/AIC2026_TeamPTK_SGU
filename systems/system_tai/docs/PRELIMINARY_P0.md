@@ -37,4 +37,15 @@ This phase implements the exact preliminary task schemas and evaluation semantic
 - Optional candidate metadata (`evidence_score`, `timestamp_seconds`) defaults to `None` when unknown, rather than fabricating numeric `0.0`.
 - Strict embedding validation in `CosineEvidenceAnswerScorer`: requires float32, 1D, finite, non-zero norm, L2-normalized vectors (`norm ~ 1.0`), and matching dimensions.
 - YES_NO questions are scored by baseline CLIP prompts but explicitly flagged with `confidence_level: "EXPERIMENTAL"` in result diagnostics, as pure image CLIP lacks compositional logic.
-- Scope limitations: P0-B1 is a closed-set visual QA baseline. No claim of general VideoQA readiness. No private Kaggle acceptance yet. No VLM/OCR/ASR. Existing KIS runtime and session protocol remain unchanged.
+- Status: COMPLETE.
+
+## PRELIMINARY P0-B2: Shared-Runtime Q&A Vertical Slice
+- Connected `system_tai.qa` baseline core to long-lived `OperationalKISRuntime` session engine via `QARuntimePipeline`.
+- Reuses existing single instance of `SharedOpenAIClipEncoder`, `FeatureStoreRegistry`, `ExactNumpyRetriever`, `WeightedRRFRetriever`, `RawVideoRegistry`, `OpenCVVideoDecoder`, and `ExactFrameRefiner`.
+- Strict **Event-Only Localization Retrieval**: retrieval generates query variants exclusively from `event_description` (and optional `event_description_en`). Question text is strictly excluded from retrieval text encoding to avoid hypothesis confirmation bias.
+- Refined absolute frame ID (`refined_frame_id`) is used directly as the output Q&A `frame_id`.
+- Single-frame exact decoding: evidence decoder requests strictly `(refined_frame_id,)` and verifies absolute decoded frame ID match.
+- Prompts embedding cache (`get_prompt_embeddings`) prevents redundant text encoding for visual prompt banks.
+- Unified single session `request_id` namespace shared across `health`, `query` (KIS), `qa_query` (QA), and `shutdown`.
+- Independent request directory outputs keyed by `safe_request_directory_name(request.request_id)`. Writes per-request `qa_predictions.jsonl` (EXACT task schema), `qa_evidence.json`, `qa_request_manifest.json`, and `qa_timings.json`.
+- Scope & Status: Local vertical slice complete & verified. No private Kaggle run executed yet. No VLM/OCR/ASR. No claim of official JSONL submission format.

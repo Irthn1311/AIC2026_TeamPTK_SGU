@@ -31,10 +31,12 @@ from system_tai.kis.contest_runner import _git_commit_hash, _validation_payload
 from system_tai.kis.session_schema import (
     DuplicateRequestIdError,
     HealthRequest,
+    QAQueryRequest,
     QueryRequest,
     SessionConfig,
     ShutdownRequest,
 )
+from system_tai.qa.runtime import QARuntimePipeline
 from system_tai.refinement.engine import ExactFrameRefiner
 from system_tai.refinement.models import Phase3Candidate, RefinementQuery
 from system_tai.refinement.runner import _write_json, _write_refined_csv
@@ -122,6 +124,16 @@ class OperationalKISRuntime:
             raw_videos=self.raw_video_registry,
             decoder=self.decoder,
             encoder=self.shared_encoder,
+            clock=self.clock,
+        )
+
+        self.qa_pipeline = QARuntimePipeline(
+            exact_retriever=self.exact_retriever,
+            weighted_rrf=self.weighted_rrf,
+            refiner=self.refiner,
+            raw_video_registry=self.raw_video_registry,
+            decoder=self.decoder,
+            shared_encoder=self.shared_encoder,
             clock=self.clock,
         )
 
@@ -275,7 +287,6 @@ class OperationalKISRuntime:
         req_start = self.clock()
         query_dir = self.output_root / "requests" / safe_request_directory_name(request.request_id)
         if query_dir.exists():
-            # If folder already exists, avoid overwriting
             query_dir = self.output_root / "requests" / f"{safe_request_directory_name(request.request_id)}-{uuid.uuid4().hex[:4]}"
         query_dir.mkdir(parents=True, exist_ok=True)
 
@@ -283,7 +294,6 @@ class OperationalKISRuntime:
         variants = request.variants()
         validation_seconds = self.clock() - validation_start
 
-        # Text encoding
         text_encode_start = self.clock()
         texts = [variant.text for variant in variants]
         variant_embeddings = self.shared_encoder.encode_texts(texts)
@@ -300,7 +310,6 @@ class OperationalKISRuntime:
             )
         text_encode_seconds = self.clock() - text_encode_start
 
-        # Retrieval & Fusion
         retrieval_start = self.clock()
         fusion_start = self.clock()
         fused_result = self.weighted_rrf.fuse_rankings(
@@ -313,13 +322,11 @@ class OperationalKISRuntime:
         fusion_seconds = self.clock() - fusion_start
         retrieval_seconds = self.clock() - retrieval_start
 
-        # Phase 3 Export & Validation
         export_start = self.clock()
         top100_jsonl = query_dir / "top100.jsonl"
         self.exporter.export(fused_result, top100_jsonl)
         _write_internal_csv((fused_result,), query_dir / "top100.csv")
 
-        # candidate details json
         candidates_json = query_dir / "candidates.json"
         candidates_data = {
             "query_id": request.query_id,
@@ -407,7 +414,6 @@ class OperationalKISRuntime:
             )
             ref_query = RefinementQuery(request.query_id, variants, phase3_candidates)
 
-            # Execution config for refinement
             exec_ref_config = self.config.refinement_config
             if exec_ref_config.top_candidates_to_refine != request.refine_top_n:
                 exec_ref_config = dataclasses.replace(
@@ -480,7 +486,6 @@ class OperationalKISRuntime:
 
         total_seconds = self.clock() - req_start
 
-        # Write request manifest & timings & summary
         req_manifest_payload = {
             "request_id": request.request_id,
             "query_id": request.query_id,
@@ -562,6 +567,121 @@ class OperationalKISRuntime:
             "refined_count": refined_count,
             "artifacts": artifacts_dict,
             "timings": timings_payload,
+        }
+
+    def handle_qa_query(self, request: QAQueryRequest) -> dict[str, Any]:
+        if request.request_id in self._seen_request_ids:
+            msg = f"request_id '{request.request_id}' has already been processed"
+            raise DuplicateRequestIdError(msg)
+        self._seen_request_ids.add(request.request_id)
+        self._request_count += 1
+
+        req_dir_name = safe_request_directory_name(request.request_id)
+        query_dir = self.output_root / "requests" / req_dir_name
+        if query_dir.exists():
+            query_dir = (
+                self.output_root / "requests" / f"{req_dir_name}-{uuid.uuid4().hex[:4]}"
+            )
+        query_dir.mkdir(parents=True, exist_ok=True)
+
+        qa_result, timings, diagnostics = self.qa_pipeline.process_qa_query(
+            request,
+            refinement_config=self.config.refinement_config,
+            rrf_constant=self.config.rrf_constant,
+        )
+
+        # Artifact 1: qa_predictions.jsonl
+        predictions_jsonl = query_dir / "qa_predictions.jsonl"
+        with predictions_jsonl.open("w", encoding="utf-8", newline="") as stream:
+            for p in qa_result.predictions:
+                rec = {
+                    "query_id": p.query_id,
+                    "rank": p.rank,
+                    "video_id": p.video_id,
+                    "frame_id": p.frame_id,
+                    "answer": p.answer,
+                }
+                stream.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+        # Artifact 2: qa_evidence.json
+        evidence_json = _write_json(query_dir / "qa_evidence.json", diagnostics)
+
+        # Artifact 3: qa_request_manifest.json
+        # Artifact 4: qa_timings.json
+        _write_json(query_dir / "qa_timings.json", timings.to_dict())
+
+        rel_pred = str(predictions_jsonl.relative_to(self.output_root)).replace("\\", "/")
+        rel_ev = str(evidence_json.relative_to(self.output_root)).replace("\\", "/")
+        rel_man = str(
+            (query_dir / "qa_request_manifest.json").relative_to(self.output_root)
+        ).replace("\\", "/")
+        rel_tim = str(
+            (query_dir / "qa_timings.json").relative_to(self.output_root)
+        ).replace("\\", "/")
+
+        artifacts_dict = {
+            "qa_predictions_jsonl": rel_pred,
+            "qa_evidence_json": rel_ev,
+            "qa_request_manifest": rel_man,
+            "qa_timings": rel_tim,
+        }
+
+        # Artifact 3: qa_request_manifest.json
+        req_manifest_payload = {
+            "request_id": request.request_id,
+            "query_id": request.query_id,
+            "event_description": request.event_description,
+            "question": request.question,
+            "event_description_en": request.event_description_en,
+            "question_en": request.question_en,
+            "question_type": qa_result.question_type.value,
+            "event_variants": [
+                {
+                    "variant_id": v.variant_id,
+                    "text": v.text,
+                    "language": (
+                        v.language.value if hasattr(v.language, "value") else str(v.language)
+                    ),
+                    "variant_type": (
+                        v.variant_type.value
+                        if hasattr(v.variant_type, "value")
+                        else str(v.variant_type)
+                    ),
+                    "weight": v.weight,
+                }
+                for v in request.variants()
+            ],
+            "top_k_per_variant": request.top_k_per_variant,
+            "output_top_k": request.output_top_k,
+            "refine_top_n": request.refine_top_n,
+            "prediction_count": len(qa_result.predictions),
+            "warnings": qa_result.warnings,
+            "artifacts": artifacts_dict,
+        }
+        _write_json(query_dir / "qa_request_manifest.json", req_manifest_payload)
+
+        self._successful_query_count += 1
+
+        return {
+            "type": "qa_result",
+            "request_id": request.request_id,
+            "query_id": request.query_id,
+            "status": "SUCCESS",
+            "question_type": qa_result.question_type.value,
+            "prediction_count": len(qa_result.predictions),
+            "predictions": [
+                {
+                    "query_id": p.query_id,
+                    "rank": p.rank,
+                    "video_id": p.video_id,
+                    "frame_id": p.frame_id,
+                    "answer": p.answer,
+                }
+                for p in qa_result.predictions
+            ],
+            "warnings": qa_result.warnings,
+            "timings": timings.to_dict(),
+            "artifacts": artifacts_dict,
         }
 
     def handle_shutdown(

@@ -4,6 +4,10 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any
 
+from system_tai.preliminary.schemas import QAPrediction
+
+from .question_types import QuestionType
+
 
 @dataclass(frozen=True, slots=True)
 class QAQuery:
@@ -93,3 +97,13 @@ class AnswerHypothesis:
             raise TypeError("visual_prompts must be a tuple")
         if any(not isinstance(vp, str) or not vp.strip() for vp in self.visual_prompts):
             raise ValueError("all visual_prompts must be non-empty strings")
+
+
+@dataclass(frozen=True, slots=True)
+class QAResult:
+    query_id: str
+    question_type: QuestionType
+    predictions: list[QAPrediction]
+    unsupported_reason: str | None = None
+    warnings: list[str] = field(default_factory=list)
+    diagnostics: dict[str, Any] = field(default_factory=dict)

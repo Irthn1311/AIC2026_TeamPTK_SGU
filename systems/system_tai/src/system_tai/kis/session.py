@@ -6,7 +6,7 @@ import argparse
 import signal
 import sys
 from pathlib import Path
-from typing import TextIO
+from typing import Any, TextIO
 
 from system_tai.kis.benchmark import resolve_device
 from system_tai.kis.session_engine import OperationalKISRuntime
@@ -15,6 +15,7 @@ from system_tai.kis.session_schema import (
     HealthRequest,
     InvalidRequestError,
     MalformedRequestError,
+    QAQueryRequest,
     QueryRequest,
     SessionConfig,
     SessionProtocolError,
@@ -168,7 +169,6 @@ def run_session(
     shutdown_received = False
     exit_code = 0
 
-    # Install best-effort signal handling
     def signal_handler(_signum: int, _frame: Any) -> None:
         nonlocal shutdown_received
         print("interrupt received, closing session...", file=err_stream)
@@ -178,13 +178,12 @@ def run_session(
     try:
         signal.signal(signal.SIGINT, signal_handler)
     except (ValueError, AttributeError):
-        pass  # standard fallback when not in main thread
+        pass
 
     try:
         while not shutdown_received:
             line = in_stream.readline()
             if not line:
-                # EOF reached
                 print("stdin EOF reached, shutting down session", file=err_stream)
                 active_runtime.close(shutdown_reason="eof")
                 break
@@ -271,6 +270,32 @@ def run_session(
                     _write_resp(resp)
                 except Exception as exc:
                     print(f"query execution error on {request.request_id}: {exc}", file=err_stream)
+                    resp = active_runtime.handle_error(
+                        request_id=request.request_id,
+                        error_code="QUERY_EXECUTION_FAILED",
+                        error_type=type(exc).__name__,
+                        message=f"{type(exc).__name__}: {exc}",
+                        session_continues=config.continue_on_request_error and not config.fail_fast_protocol,
+                    )
+                    _write_resp(resp)
+                    if not config.continue_on_request_error or config.fail_fast_protocol:
+                        exit_code = 1
+                        break
+            elif isinstance(request, QAQueryRequest):
+                try:
+                    resp = active_runtime.handle_qa_query(request)
+                    _write_resp(resp)
+                except DuplicateRequestIdError as exc:
+                    resp = active_runtime.handle_error(
+                        request_id=request.request_id,
+                        error_code="DUPLICATE_REQUEST_ID",
+                        error_type=type(exc).__name__,
+                        message=str(exc),
+                        session_continues=True,
+                    )
+                    _write_resp(resp)
+                except Exception as exc:
+                    print(f"qa query execution error on {request.request_id}: {exc}", file=err_stream)
                     resp = active_runtime.handle_error(
                         request_id=request.request_id,
                         error_code="QUERY_EXECUTION_FAILED",

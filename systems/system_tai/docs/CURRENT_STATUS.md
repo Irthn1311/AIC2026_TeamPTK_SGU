@@ -7,12 +7,15 @@
 ## Summary
 
 PRELIMINARY P0-A (official schemas, strict int, GT contracts, evaluation) is COMPLETE.
-PRELIMINARY P0-B1 (evidence-grounded closed-set Q&A baseline core) is IMPLEMENTED:
-- Reuses existing KIS retrieval and exact-frame refiner stack.
-- Supports deterministic question families: COLOR, COUNT, YES_NO, DIRECTION.
-- Unsupported/open-ended questions return zero predictions (UNSUPPORTED).
-- Enforces evidence-first policy and preserves evidence candidate rank in output predictions.
-- No session integration yet; existing KIS runtime remains unchanged.
+PRELIMINARY P0-B1 (evidence-grounded closed-set Q&A baseline core) is COMPLETE.
+PRELIMINARY P0-B2 (shared-runtime Q&A vertical slice) is IMPLEMENTED locally:
+- Connected Q&A baseline core to long-lived `OperationalKISRuntime` via `QARuntimePipeline`.
+- Reuses single shared instance of CLIP encoder, feature store, retriever, RRF, decoder, and refiner.
+- Strict event-only retrieval localization (question text strictly excluded from retrieval text encoding).
+- Refined absolute frame ID used as output Q&A `frame_id`. Single exact frame decode.
+- Unified single `request_id` session namespace shared across KIS, QA, Health, Shutdown.
+- Writes per-request `qa_predictions.jsonl`, `qa_evidence.json`, `qa_request_manifest.json`, `qa_timings.json`.
+- Private Kaggle acceptance NOT RUN YET. No VLM/OCR/ASR.
 
 The workbook and Canva design have been reviewed. Phase 1 input auditing, Phase 1.5C
 compatibility calibration, the Phase 2 exact NumPy KIS implementation, Phase 2.5

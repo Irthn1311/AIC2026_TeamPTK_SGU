@@ -160,6 +160,69 @@ class QueryRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class QAQueryRequest:
+    request_id: str
+    query_id: str
+    event_description: str
+    question: str
+    event_description_en: str | None = None
+    question_en: str | None = None
+    top_k_per_variant: int = 100
+    output_top_k: int = 100
+    refine_top_n: int = 3
+    type: str = "qa_query"
+
+    def __post_init__(self) -> None:
+        if not self.request_id or not self.request_id.strip():
+            raise ValueError("request_id must be non-empty")
+        if not self.query_id or not self.query_id.strip():
+            raise ValueError("query_id must be non-empty")
+        if not self.event_description or not self.event_description.strip():
+            raise ValueError("event_description must be non-empty")
+        if not self.question or not self.question.strip():
+            raise ValueError("question must be non-empty")
+
+        if self.event_description_en is not None:
+            if not isinstance(self.event_description_en, str) or not (
+                self.event_description_en.strip()
+            ):
+                raise ValueError("event_description_en must be a non-empty string when provided")
+
+        if self.question_en is not None:
+            if not isinstance(self.question_en, str) or not self.question_en.strip():
+                raise ValueError("question_en must be a non-empty string when provided")
+
+        if type(self.top_k_per_variant) is not int or not (1 <= self.top_k_per_variant <= 1000):
+            raise ValueError("top_k_per_variant must be integer in range [1, 1000]")
+        if type(self.output_top_k) is not int or not (1 <= self.output_top_k <= 100):
+            raise ValueError("output_top_k must be integer in range [1, 100]")
+        if type(self.refine_top_n) is not int or not (1 <= self.refine_top_n <= self.output_top_k):
+            raise ValueError("refine_top_n must be integer in range [1, output_top_k]")
+
+    def variants(self) -> tuple[QueryVariant, ...]:
+        result: list[QueryVariant] = [
+            QueryVariant(
+                variant_id=f"{self.query_id}::v1_vi",
+                text=self.event_description.strip(),
+                language=QueryLanguage.VIETNAMESE,
+                variant_type=QueryVariantType.VIETNAMESE_DIRECT,
+                weight=1.0,
+            )
+        ]
+        if self.event_description_en and self.event_description_en.strip():
+            result.append(
+                QueryVariant(
+                    variant_id=f"{self.query_id}::v2_en",
+                    text=self.event_description_en.strip(),
+                    language=QueryLanguage.ENGLISH,
+                    variant_type=QueryVariantType.ENGLISH_TRANSLATION,
+                    weight=1.0,
+                )
+            )
+        return tuple(result)
+
+
+@dataclass(frozen=True, slots=True)
 class ShutdownRequest:
     request_id: str
     type: str = "shutdown"
@@ -176,7 +239,7 @@ def parse_session_request(
     default_top_k_per_variant: int = 100,
     default_output_top_k: int = 100,
     default_refine_top_n: int = 3,
-) -> HealthRequest | QueryRequest | ShutdownRequest:
+) -> HealthRequest | QueryRequest | QAQueryRequest | ShutdownRequest:
     raw = line.strip()
     if not raw:
         raise MalformedRequestError(
@@ -234,6 +297,43 @@ def parse_session_request(
             )
         except (TypeError, ValueError) as exc:
             raise InvalidRequestError(f"invalid query request fields: {exc}") from exc
+    if req_type_clean == "qa_query":
+        query_id = data.get("query_id")
+        event_desc = data.get("event_description")
+        question = data.get("question")
+        if not query_id or not isinstance(query_id, str) or not query_id.strip():
+            raise InvalidRequestError("qa_query request requires non-empty 'query_id'")
+        if not event_desc or not isinstance(event_desc, str) or not event_desc.strip():
+            raise InvalidRequestError("qa_query request requires non-empty 'event_description'")
+        if not question or not isinstance(question, str) or not question.strip():
+            raise InvalidRequestError("qa_query request requires non-empty 'question'")
+
+        top_k_pv_raw = data.get("top_k_per_variant", default_top_k_per_variant)
+        out_k_raw = data.get("output_top_k", default_output_top_k)
+        refine_n_raw = data.get("refine_top_n", default_refine_top_n)
+
+        if (
+            type(top_k_pv_raw) is not int
+            or type(out_k_raw) is not int
+            or type(refine_n_raw) is not int
+        ):
+            msg = "top_k_per_variant, output_top_k, and refine_top_n must be strict integers"
+            raise InvalidRequestError(msg)
+
+        try:
+            return QAQueryRequest(
+                request_id=request_id.strip(),
+                query_id=query_id.strip(),
+                event_description=event_desc.strip(),
+                question=question.strip(),
+                event_description_en=data.get("event_description_en"),
+                question_en=data.get("question_en"),
+                top_k_per_variant=top_k_pv_raw,
+                output_top_k=out_k_raw,
+                refine_top_n=refine_n_raw,
+            )
+        except (TypeError, ValueError) as exc:
+            raise InvalidRequestError(f"invalid qa_query request fields: {exc}") from exc
 
     raise UnknownRequestTypeError(f"unknown request type '{req_type}'")
 
