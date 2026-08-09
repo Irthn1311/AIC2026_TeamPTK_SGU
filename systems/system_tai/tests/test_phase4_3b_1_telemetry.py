@@ -45,8 +45,6 @@ def fake_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(eng, "_write_internal_csv", lambda *a, **k: tmp_path / "out" / "mock.csv")
     monkeypatch.setattr(eng, "_write_refined_csv", lambda *a, **k: tmp_path / "out" / "mock.csv")
     monkeypatch.setattr(eng, "_validation_payload", lambda *a, **k: {})
-    monkeypatch.setattr(Path, "write_text", lambda *a, **k: None)
-
     runtime = OperationalKISRuntime(
         config=config,
         manifest_path=tmp_path / "manifest.json",
@@ -55,7 +53,6 @@ def fake_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         raw_video_registry=MagicMock(),
         shared_encoder=shared_encoder,
         decoder=MagicMock(),
-        exporter=MagicMock(),
         validator=FakeValidator(),
         clock=lambda: 0.0,
         bootstrap_timings={}
@@ -101,7 +98,7 @@ def test_telemetry_propagation_retrieval_only(fake_runtime):
 def test_telemetry_propagation_sequential(fake_runtime):
     fake_outcome = QueryRefinementOutcome(
         query_id="q1",
-        result=MagicMock(),
+        result=fake_runtime.weighted_rrf.fuse_rankings.return_value,
         candidates=(),
         timings={
             "refined_candidate_count": 3,
@@ -145,7 +142,7 @@ def test_telemetry_propagation_sequential(fake_runtime):
 def test_telemetry_propagation_sparse(fake_runtime):
     fake_outcome = QueryRefinementOutcome(
         query_id="q1",
-        result=MagicMock(),
+        result=fake_runtime.weighted_rrf.fuse_rankings.return_value,
         candidates=(),
         timings={
             "refined_candidate_count": 3,
@@ -189,7 +186,7 @@ def test_telemetry_propagation_sparse(fake_runtime):
 def test_telemetry_propagation_fallback(fake_runtime):
     fake_outcome = QueryRefinementOutcome(
         query_id="q1",
-        result=MagicMock(),
+        result=fake_runtime.weighted_rrf.fuse_rankings.return_value,
         candidates=(),
         timings={
             "refined_candidate_count": 3,

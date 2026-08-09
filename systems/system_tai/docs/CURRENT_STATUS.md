@@ -26,12 +26,20 @@ PRELIMINARY P0-OPT2 (shared-scan exact multi-vector retrieval) is COMPLETE / FRO
 - Kaggle/T4 PASS: same-session retrieval reduced from 7.024408s to median 4.834751s (31.17%); full wall time from 24.835049s to median 22.127217s.
 - FULL Top-20 exact semantic equivalence PASS.
 
-PRELIMINARY P0-D (Unified Top-100 Internal Checkpoint Boundary) is LOCAL IMPLEMENTATION / REVIEW PENDING:
+PRELIMINARY P0-D (Unified Top-100 Internal Checkpoint Boundary) is COMPLETE / FROZEN at commit `dfebb59deeb7834c0662825d03435e615c464823` (remote audit PASS):
 - Wraps the frozen P0-A `KISPrediction`, `QAPrediction`, and `TRAKEPrediction` schemas directly.
 - Provides strict task-specific UTF-8 JSONL parsing, deterministic serialization, per-query max-100 validation, optional TRAKE event-count validation, and exact semantic roundtrip.
 - Preserves physical query/prediction order, non-contiguous positive ranks, Q&A Unicode text, and ordered TRAKE frame tuples without sorting or renumbering.
 - This is the canonical preliminary internal checkpoint boundary, not a confirmed official BTC upload format.
-- No runtime integration is included; P0-E remains pending. No Kaggle claim is made for P0-D.
+- No Kaggle or semantic-accuracy claim is made for P0-D.
+
+PRELIMINARY P0-E (Final Runtime-to-Canonical-Top100 Integration) is LOCAL IMPLEMENTATION / REVIEW PENDING:
+- Converts final KIS runtime results and directly wraps Q&A/TRAKE P0-A predictions as P0-D `RankedTop100Query` objects.
+- Audits the existing `top100.jsonl` or `refined_top100.jsonl`, `qa_predictions.jsonl`, and `trake_predictions.jsonl`; it creates no new prediction artifact.
+- Requires exact runtime-memory to artifact equality after strict P0-D loading, including physical prediction order, non-contiguous ranks, Q&A Unicode/whitespace, and TRAKE event-frame order.
+- Handles zero-prediction queries explicitly: an empty or whitespace-only existing artifact is accepted as `EMPTY_QUERY_UNREPRESENTABLE` without weakening P0-D record-only JSONL.
+- Canonical predictions are directly consumable by the existing P0-A evaluator without another translation layer.
+- This is an internal fail-closed integration invariant, not a confirmed official BTC upload format or semantic-accuracy result. Final Kaggle E2E acceptance remains pending.
 
 The workbook and Canva design have been reviewed. Phase 1 input auditing, Phase 1.5C
 compatibility calibration, the Phase 2 exact NumPy KIS implementation, Phase 2.5

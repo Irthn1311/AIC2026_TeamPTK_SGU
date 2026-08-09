@@ -37,6 +37,12 @@ from system_tai.kis.session_schema import (
     ShutdownRequest,
     TRAKEQueryRequest,
 )
+from system_tai.preliminary.runtime_bridge import (
+    audit_runtime_top100_artifact,
+    kis_result_to_top100_query,
+    qa_predictions_to_top100_query,
+    trake_predictions_to_top100_query,
+)
 from system_tai.qa.runtime import QARuntimePipeline
 from system_tai.refinement.engine import ExactFrameRefiner
 from system_tai.refinement.models import Phase3Candidate, RefinementQuery
@@ -206,7 +212,11 @@ class OperationalKISRuntime:
             )
             manifest = cached.manifest
             discovery_seconds = clock() - discovery_start if cached.status != "CACHE_HIT" else 0.0
-            discovery_metrics = manifest.discovery_metrics if cached.status != "CACHE_HIT" else DiscoveryMetrics()
+            discovery_metrics = (
+                manifest.discovery_metrics
+                if cached.status != "CACHE_HIT"
+                else DiscoveryMetrics()
+            )
             manifest_start = clock()
             manifest.write(feature_manifest_path, portable=False)
             manifest_seconds = clock() - manifest_start
@@ -227,7 +237,11 @@ class OperationalKISRuntime:
         ref_config = config.refinement_config
         if ref_config.device not in {"cpu", "cuda"}:
             ref_config = dataclasses.replace(ref_config, device=resolved_device)
-        exec_config = dataclasses.replace(config, device=resolved_device, refinement_config=ref_config)
+        exec_config = dataclasses.replace(
+            config,
+            device=resolved_device,
+            refinement_config=ref_config,
+        )
 
         registry_start = clock()
         loader = registry_loader or FeatureStoreRegistry.from_manifest
@@ -275,7 +289,9 @@ class OperationalKISRuntime:
 
     def handle_health(self, request: HealthRequest) -> dict[str, Any]:
         if request.request_id in self._seen_request_ids:
-            raise DuplicateRequestIdError(f"request_id '{request.request_id}' has already been processed")
+            raise DuplicateRequestIdError(
+                f"request_id '{request.request_id}' has already been processed"
+            )
         self._seen_request_ids.add(request.request_id)
         self._health_request_count += 1
         self._request_count += 1
@@ -293,14 +309,20 @@ class OperationalKISRuntime:
 
     def handle_query(self, request: QueryRequest) -> dict[str, Any]:
         if request.request_id in self._seen_request_ids:
-            raise DuplicateRequestIdError(f"request_id '{request.request_id}' has already been processed")
+            raise DuplicateRequestIdError(
+                f"request_id '{request.request_id}' has already been processed"
+            )
         self._seen_request_ids.add(request.request_id)
         self._request_count += 1
 
         req_start = self.clock()
         query_dir = self.output_root / "requests" / safe_request_directory_name(request.request_id)
         if query_dir.exists():
-            query_dir = self.output_root / "requests" / f"{safe_request_directory_name(request.request_id)}-{uuid.uuid4().hex[:4]}"
+            query_dir = (
+                self.output_root
+                / "requests"
+                / f"{safe_request_directory_name(request.request_id)}-{uuid.uuid4().hex[:4]}"
+            )
         query_dir.mkdir(parents=True, exist_ok=True)
 
         validation_start = self.clock()
@@ -312,7 +334,8 @@ class OperationalKISRuntime:
         variant_embeddings = self.shared_encoder.encode_texts(texts)
         if variant_embeddings.shape[0] != len(variants):
             raise ValueError(
-                f"Batch text encode returned {variant_embeddings.shape[0]} rows for {len(variants)} variants"
+                "Batch text encode returned "
+                f"{variant_embeddings.shape[0]} rows for {len(variants)} variants"
             )
         rankings: dict[str, KISResult] = {}
         for variant, vector in zip(variants, variant_embeddings):
@@ -338,6 +361,8 @@ class OperationalKISRuntime:
         export_start = self.clock()
         top100_jsonl = query_dir / "top100.jsonl"
         self.exporter.export(fused_result, top100_jsonl)
+        final_kis_result = fused_result
+        final_prediction_artifact = top100_jsonl
         _write_internal_csv((fused_result,), query_dir / "top100.csv")
 
         candidates_json = query_dir / "candidates.json"
@@ -351,8 +376,12 @@ class OperationalKISRuntime:
                     "video_id": candidate.video_id,
                     "frame_id": candidate.frame_id,
                     "fusion_score": candidate.score,
-                    "variant_hit_count": (candidate.diagnostic_metadata or {}).get("variant_hit_count"),
-                    "best_individual_rank": (candidate.diagnostic_metadata or {}).get("best_individual_rank"),
+                    "variant_hit_count": (candidate.diagnostic_metadata or {}).get(
+                        "variant_hit_count"
+                    ),
+                    "best_individual_rank": (candidate.diagnostic_metadata or {}).get(
+                        "best_individual_rank"
+                    ),
                     "clip_row_diagnostic": candidate.clip_row,
                     "keyframe_order_diagnostic": candidate.keyframe_order,
                 }
@@ -368,15 +397,27 @@ class OperationalKISRuntime:
 
         val_report_path = query_dir / "validation_report.json"
         val_report_path.write_text(
-            json.dumps(_validation_payload(validation), ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            json.dumps(
+                _validation_payload(validation),
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
             encoding="utf-8",
         )
 
         artifacts_dict: dict[str, str] = {
             "top100_jsonl": str(top100_jsonl.relative_to(self.output_root)).replace("\\", "/"),
-            "top100_csv": str((query_dir / "top100.csv").relative_to(self.output_root)).replace("\\", "/"),
-            "candidates_json": str(candidates_json.relative_to(self.output_root)).replace("\\", "/"),
-            "validation_report": str(val_report_path.relative_to(self.output_root)).replace("\\", "/"),
+            "top100_csv": str(
+                (query_dir / "top100.csv").relative_to(self.output_root)
+            ).replace("\\", "/"),
+            "candidates_json": str(
+                candidates_json.relative_to(self.output_root)
+            ).replace("\\", "/"),
+            "validation_report": str(
+                val_report_path.relative_to(self.output_root)
+            ).replace("\\", "/"),
         }
 
         refinement_requested = request.refine_top_n > 0
@@ -418,7 +459,9 @@ class OperationalKISRuntime:
                     retrieval_provenance={
                         "fusion_score": c.score,
                         "variant_hit_count": (c.diagnostic_metadata or {}).get("variant_hit_count"),
-                        "best_individual_rank": (c.diagnostic_metadata or {}).get("best_individual_rank"),
+                        "best_individual_rank": (c.diagnostic_metadata or {}).get(
+                            "best_individual_rank"
+                        ),
                         "clip_row_diagnostic": c.clip_row,
                         "keyframe_order_diagnostic": c.keyframe_order,
                     },
@@ -444,8 +487,13 @@ class OperationalKISRuntime:
             ref_export_start = self.clock()
             refined_jsonl = query_dir / "refined_top100.jsonl"
             self.exporter.export(outcome.result, refined_jsonl)
+            final_kis_result = outcome.result
+            final_prediction_artifact = refined_jsonl
             refined_csv = _write_refined_csv((outcome.result,), query_dir / "refined_top100.csv")
-            ref_cand_json = _write_json(query_dir / "refinement_candidates.json", outcome.candidates)
+            ref_cand_json = _write_json(
+                query_dir / "refinement_candidates.json",
+                outcome.candidates,
+            )
             ref_trace_json = _write_json(
                 query_dir / "refinement_trace.json",
                 {
@@ -489,13 +537,29 @@ class OperationalKISRuntime:
 
             artifacts_dict.update(
                 {
-                    "refined_top100_jsonl": str(refined_jsonl.relative_to(self.output_root)).replace("\\", "/"),
-                    "refined_top100_csv": str(refined_csv.relative_to(self.output_root)).replace("\\", "/"),
-                    "refinement_candidates_json": str(ref_cand_json.relative_to(self.output_root)).replace("\\", "/"),
-                    "refinement_trace_json": str(ref_trace_json.relative_to(self.output_root)).replace("\\", "/"),
-                    "refinement_validation_report": str(ref_val_report.relative_to(self.output_root)).replace("\\", "/"),
+                    "refined_top100_jsonl": str(
+                        refined_jsonl.relative_to(self.output_root)
+                    ).replace("\\", "/"),
+                    "refined_top100_csv": str(
+                        refined_csv.relative_to(self.output_root)
+                    ).replace("\\", "/"),
+                    "refinement_candidates_json": str(
+                        ref_cand_json.relative_to(self.output_root)
+                    ).replace("\\", "/"),
+                    "refinement_trace_json": str(
+                        ref_trace_json.relative_to(self.output_root)
+                    ).replace("\\", "/"),
+                    "refinement_validation_report": str(
+                        ref_val_report.relative_to(self.output_root)
+                    ).replace("\\", "/"),
                 }
             )
+
+        canonical_kis_query = kis_result_to_top100_query(final_kis_result)
+        audit_runtime_top100_artifact(
+            canonical_kis_query,
+            final_prediction_artifact,
+        )
 
         total_seconds = self.clock() - req_start
 
@@ -564,7 +628,10 @@ class OperationalKISRuntime:
             f"- Total seconds: {total_seconds:.6f}s",
             "",
         ]
-        (query_dir / "request_summary.md").write_text("\n".join(summary_md) + "\n", encoding="utf-8")
+        (query_dir / "request_summary.md").write_text(
+            "\n".join(summary_md) + "\n",
+            encoding="utf-8",
+        )
 
         self._successful_query_count += 1
 
@@ -615,6 +682,12 @@ class OperationalKISRuntime:
                     "answer": p.answer,
                 }
                 stream.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+        canonical_qa_query = qa_predictions_to_top100_query(
+            query_id=request.query_id,
+            predictions=qa_result.predictions,
+        )
+        audit_runtime_top100_artifact(canonical_qa_query, predictions_jsonl)
 
         # Artifact 2: qa_evidence.json
         evidence_json = _write_json(query_dir / "qa_evidence.json", diagnostics)
@@ -730,6 +803,18 @@ class OperationalKISRuntime:
                 }
                 stream.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
+        expected_event_count = len(request.events)
+        canonical_trake_query = trake_predictions_to_top100_query(
+            query_id=request.query_id,
+            predictions=trake_result.predictions,
+            expected_event_count=expected_event_count,
+        )
+        audit_runtime_top100_artifact(
+            canonical_trake_query,
+            predictions_jsonl,
+            expected_trake_event_count=expected_event_count,
+        )
+
         # Artifact 2: trake_event_candidates.json
         candidates_json = _write_json(
             query_dir / "trake_event_candidates.json",
@@ -833,7 +918,9 @@ class OperationalKISRuntime:
         shutdown_reason: str = "requested",
     ) -> dict[str, Any]:
         if request.request_id in self._seen_request_ids:
-            raise DuplicateRequestIdError(f"request_id '{request.request_id}' has already been processed")
+            raise DuplicateRequestIdError(
+                f"request_id '{request.request_id}' has already been processed"
+            )
         self._seen_request_ids.add(request.request_id)
         self._request_count += 1
         self.close(shutdown_reason=shutdown_reason)
@@ -928,4 +1015,7 @@ class OperationalKISRuntime:
             f"- Shutdown reason: `{shutdown_reason or 'running'}`",
             "",
         ]
-        (self.output_root / "session_summary.md").write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
+        (self.output_root / "session_summary.md").write_text(
+            "\n".join(summary_lines) + "\n",
+            encoding="utf-8",
+        )

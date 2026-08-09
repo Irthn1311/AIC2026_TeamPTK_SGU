@@ -94,7 +94,7 @@ This phase implements the exact preliminary task schemas and evaluation semantic
 
 ## PRELIMINARY P0-D: Unified Top-100 Internal Checkpoint Boundary
 
-- **Status**: LOCAL IMPLEMENTATION / REVIEW PENDING.
+- **Status**: COMPLETE / FROZEN at commit `dfebb59deeb7834c0662825d03435e615c464823`; remote audit PASS.
 - Defines the canonical preliminary **internal checkpoint** boundary for KIS, Q&A, and TRAKE around the frozen P0-A prediction dataclasses and `validate_ranked_top100`.
 - Uses exact per-task UTF-8 JSONL shapes with no score, provenance, diagnostic, keyframe-order, or CLIP-row fields.
 - Preserves query order, prediction line order, positive unique non-contiguous ranks, Q&A answer bytes after UTF-8 decoding, and TRAKE `frame_ids` event order. It never sorts or renumbers predictions.
@@ -105,4 +105,15 @@ This phase implements the exact preliminary task schemas and evaluation semantic
 - The in-memory query container allows zero predictions for direct evaluator use. Canonical record-only JSONL export rejects zero-query datasets and zero-prediction query containers because they cannot be represented roundtrip without inventing a noncanonical record.
 - P0-D does not modify the legacy contiguous-rank KIS checkpoint boundary, the official evaluator, or KIS/Q&A/TRAKE runtime artifacts.
 - This is **not** a confirmed official BTC upload format. No CSV/ZIP exporter is introduced.
-- Runtime integration is intentionally deferred to P0-E. No Kaggle execution or semantic-performance claim is made for P0-D.
+- No Kaggle execution or semantic-performance claim is made for P0-D.
+
+## PRELIMINARY P0-E: Final Runtime-to-Canonical-Top100 Integration
+
+- **Status**: LOCAL IMPLEMENTATION / REVIEW PENDING.
+- Bridges the final runtime-native KIS result and the existing Q&A/TRAKE P0-A predictions into P0-D `RankedTop100Query` objects without sorting, rank compaction, or frame conversion.
+- Audits only the existing prediction artifacts: KIS `top100.jsonl` or `refined_top100.jsonl` according to the final selected stage, Q&A `qa_predictions.jsonl`, and TRAKE `trake_predictions.jsonl`.
+- Creates no additional task prediction artifact and does not change public response fields or the accepted per-request artifact key sets.
+- Non-empty artifacts are strict-loaded through P0-D and must equal the canonical in-memory `RankedTop100Dataset` exactly.
+- A zero-prediction query remains valid in memory. Its existing zero-byte or whitespace-only artifact is accepted with `EMPTY_QUERY_UNREPRESENTABLE`; any non-empty record fails closed. P0-D remains unchanged and no pseudo-record is introduced.
+- Canonical query predictions feed directly into the existing P0-A KIS, Q&A, and TRAKE evaluation functions. P0-E does not reimplement scoring.
+- P0-E proves runtime-memory/artifact roundtrip correctness, not competition semantic accuracy. It makes no official BTC upload-format claim; final Kaggle E2E acceptance remains pending.

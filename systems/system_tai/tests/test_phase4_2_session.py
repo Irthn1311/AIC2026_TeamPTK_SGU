@@ -48,7 +48,13 @@ class MockSharedEncoder:
 
     def encode_images(self, images: list[Any], *, batch_size: int = 32) -> np.ndarray:
         self.counts["image_encode"] = self.counts.get("image_encode", 0) + len(images)
-        rows = np.asarray([[1.0 / (1.0 + abs(int(getattr(img, "absolute_frame_id", 0)) - 55)), 0.1] for img in images], dtype=np.float32)
+        rows = np.asarray(
+            [
+                [1.0 / (1.0 + abs(int(getattr(img, "absolute_frame_id", 0)) - 55)), 0.1]
+                for img in images
+            ],
+            dtype=np.float32,
+        )
         return rows / np.linalg.norm(rows, axis=1, keepdims=True)
 
 
@@ -115,7 +121,9 @@ def make_test_corpus(tmp_path: Path) -> tuple[Path, CorpusManifest, dict[str, in
     return manifest_path, manifest, counts
 
 
-def setup_runtime(tmp_path: Path, counts: dict[str, int] | None = None) -> tuple[OperationalKISRuntime, dict[str, int]]:
+def setup_runtime(
+    tmp_path: Path, counts: dict[str, int] | None = None
+) -> tuple[OperationalKISRuntime, dict[str, int]]:
     cnt = counts if counts is not None else {}
     manifest_path, manifest, _ = make_test_corpus(tmp_path)
     output_root = tmp_path / "session_output"
@@ -154,7 +162,12 @@ def test_02_feature_registry_loads_once(tmp_path: Path) -> None:
 
     sub_path = tmp_path / "sub_reg"
     manifest_path, _, _ = make_test_corpus(sub_path)
-    config = SessionConfig(input_root=sub_path, reuse_manifest=manifest_path, output_root=sub_path / "out_reg", device="cpu")
+    config = SessionConfig(
+        input_root=sub_path,
+        reuse_manifest=manifest_path,
+        output_root=sub_path / "out_reg",
+        device="cpu",
+    )
     runtime = OperationalKISRuntime.bootstrap(
         config,
         registry_loader=loader,
@@ -226,15 +239,26 @@ def test_11_clean_shutdown(tmp_path: Path) -> None:
 
 
 def test_12_malformed_json_continue_mode(tmp_path: Path) -> None:
-    stdin = io.StringIO("invalid json line\n{\"type\":\"health\",\"request_id\":\"h1\"}\n")
+    stdin = io.StringIO('invalid json line\n{"type":"health","request_id":"h1"}\n')
     stdout = io.StringIO()
     stderr = io.StringIO()
     runtime, _ = setup_runtime(tmp_path)
     parser = build_parser()
-    args = parser.parse_args(["--reuse-manifest", str(runtime.manifest_path), "--output-root", str(tmp_path / "out_m1"), "--device", "cpu"])
+    args = parser.parse_args(
+        [
+            "--reuse-manifest",
+            str(runtime.manifest_path),
+            "--output-root",
+            str(tmp_path / "out_m1"),
+            "--device",
+            "cpu",
+        ]
+    )
     code = run_session(args, runtime=runtime, stdin=stdin, stdout=stdout, stderr=stderr)
     assert code == 0
-    lines = [json.loads(l) for l in stdout.getvalue().splitlines() if l.strip()]
+    lines = [
+        json.loads(line) for line in stdout.getvalue().splitlines() if line.strip()
+    ]
     assert len(lines) == 2
     assert lines[0]["type"] == "error"
     assert lines[0]["error_code"] == "MALFORMED_JSON"
@@ -242,15 +266,27 @@ def test_12_malformed_json_continue_mode(tmp_path: Path) -> None:
 
 
 def test_13_malformed_json_fail_fast(tmp_path: Path) -> None:
-    stdin = io.StringIO("invalid json line\n{\"type\":\"health\",\"request_id\":\"h1\"}\n")
+    stdin = io.StringIO('invalid json line\n{"type":"health","request_id":"h1"}\n')
     stdout = io.StringIO()
     stderr = io.StringIO()
     runtime, _ = setup_runtime(tmp_path)
     parser = build_parser()
-    args = parser.parse_args(["--reuse-manifest", str(runtime.manifest_path), "--output-root", str(tmp_path / "out_m2"), "--fail-fast-protocol", "--device", "cpu"])
+    args = parser.parse_args(
+        [
+            "--reuse-manifest",
+            str(runtime.manifest_path),
+            "--output-root",
+            str(tmp_path / "out_m2"),
+            "--fail-fast-protocol",
+            "--device",
+            "cpu",
+        ]
+    )
     code = run_session(args, runtime=runtime, stdin=stdin, stdout=stdout, stderr=stderr)
     assert code == 1
-    lines = [json.loads(l) for l in stdout.getvalue().splitlines() if l.strip()]
+    lines = [
+        json.loads(line) for line in stdout.getvalue().splitlines() if line.strip()
+    ]
     assert len(lines) == 1
     assert lines[0]["type"] == "error"
 
@@ -271,19 +307,22 @@ def test_14_to_19_request_validation_errors() -> None:
     # 17. Invalid weights
     with pytest.raises(InvalidRequestError):
         parse_session_request(
-            '{"type": "query", "request_id": "r1", "query_id": "q1", "query_vi": "v", "weight_vi": -1.0}'
+            '{"type": "query", "request_id": "r1", "query_id": "q1", '
+            '"query_vi": "v", "weight_vi": -1.0}'
         )
 
     # 18. Invalid output_top_k
     with pytest.raises(InvalidRequestError):
         parse_session_request(
-            '{"type": "query", "request_id": "r1", "query_id": "q1", "query_vi": "v", "output_top_k": 0}'
+            '{"type": "query", "request_id": "r1", "query_id": "q1", '
+            '"query_vi": "v", "output_top_k": 0}'
         )
 
     # 19. Invalid refine_top_n
     with pytest.raises(InvalidRequestError):
         parse_session_request(
-            '{"type": "query", "request_id": "r1", "query_id": "q1", "query_vi": "v", "output_top_k": 10, "refine_top_n": 20}'
+            '{"type": "query", "request_id": "r1", "query_id": "q1", '
+            '"query_vi": "v", "output_top_k": 10, "refine_top_n": 20}'
         )
 
 
@@ -320,11 +359,17 @@ def test_24_session_retrieval_jsonl_matches_contest_baseline(tmp_path: Path) -> 
         output_directory=contest_out,
         config=ContestRunConfig(device="cpu"),
     )
-    contest_jsonl = (contest_out / "queries" / safe_request_directory_name("Q1") / "top100.jsonl").read_text(encoding="utf-8")
+    contest_jsonl = (
+        contest_out / "queries" / safe_request_directory_name("Q1") / "top100.jsonl"
+    ).read_text(encoding="utf-8")
 
     session_runtime, _ = setup_runtime(tmp_path)
-    sess_resp = session_runtime.handle_query(QueryRequest("req-test", "Q1", "test query", refine_top_n=0))
-    session_jsonl = (tmp_path / "session_output" / sess_resp["artifacts"]["top100_jsonl"]).read_text(encoding="utf-8")
+    sess_resp = session_runtime.handle_query(
+        QueryRequest("req-test", "Q1", "test query", refine_top_n=0)
+    )
+    session_jsonl = (
+        tmp_path / "session_output" / sess_resp["artifacts"]["top100_jsonl"]
+    ).read_text(encoding="utf-8")
 
     assert session_jsonl == contest_jsonl
 
@@ -367,16 +412,33 @@ def test_31_32_error_isolation_and_continue_on_error(tmp_path: Path) -> None:
 
     runtime.shared_encoder = FailingEncoder({})
     stdin = io.StringIO(
-        json.dumps({"type": "query", "request_id": "r1", "query_id": "q1", "query_vi": "fail query"}) + "\n"
-        + json.dumps({"type": "query", "request_id": "r2", "query_id": "q2", "query_vi": "good query"}) + "\n"
+        json.dumps(
+            {"type": "query", "request_id": "r1", "query_id": "q1", "query_vi": "fail query"}
+        )
+        + "\n"
+        + json.dumps(
+            {"type": "query", "request_id": "r2", "query_id": "q2", "query_vi": "good query"}
+        )
+        + "\n"
     )
     stdout = io.StringIO()
     stderr = io.StringIO()
     parser = build_parser()
-    args = parser.parse_args(["--reuse-manifest", str(runtime.manifest_path), "--output-root", str(tmp_path / "out_err"), "--device", "cpu"])
+    args = parser.parse_args(
+        [
+            "--reuse-manifest",
+            str(runtime.manifest_path),
+            "--output-root",
+            str(tmp_path / "out_err"),
+            "--device",
+            "cpu",
+        ]
+    )
     code = run_session(args, runtime=runtime, stdin=stdin, stdout=stdout, stderr=stderr)
     assert code == 0
-    lines = [json.loads(l) for l in stdout.getvalue().splitlines() if l.strip()]
+    lines = [
+        json.loads(line) for line in stdout.getvalue().splitlines() if line.strip()
+    ]
     assert len(lines) == 2
     assert lines[0]["status"] == "ERROR"
     assert lines[1]["status"] == "SUCCESS"
@@ -385,16 +447,31 @@ def test_31_32_error_isolation_and_continue_on_error(tmp_path: Path) -> None:
 def test_33_max_requests(tmp_path: Path) -> None:
     runtime, _ = setup_runtime(tmp_path)
     stdin = io.StringIO(
-        json.dumps({"type": "health", "request_id": "h1"}) + "\n"
-        + json.dumps({"type": "health", "request_id": "h2"}) + "\n"
+        json.dumps({"type": "health", "request_id": "h1"})
+        + "\n"
+        + json.dumps({"type": "health", "request_id": "h2"})
+        + "\n"
     )
     stdout = io.StringIO()
     stderr = io.StringIO()
     parser = build_parser()
-    args = parser.parse_args(["--reuse-manifest", str(runtime.manifest_path), "--output-root", str(tmp_path / "out_max"), "--max-requests", "1", "--device", "cpu"])
+    args = parser.parse_args(
+        [
+            "--reuse-manifest",
+            str(runtime.manifest_path),
+            "--output-root",
+            str(tmp_path / "out_max"),
+            "--max-requests",
+            "1",
+            "--device",
+            "cpu",
+        ]
+    )
     code = run_session(args, runtime=runtime, stdin=stdin, stdout=stdout, stderr=stderr)
     assert code == 0
-    lines = [json.loads(l) for l in stdout.getvalue().splitlines() if l.strip()]
+    lines = [
+        json.loads(line) for line in stdout.getvalue().splitlines() if line.strip()
+    ]
     assert len(lines) == 1
 
 
@@ -403,7 +480,9 @@ def test_34_session_summary_counts(tmp_path: Path) -> None:
     runtime.handle_health(HealthRequest("h1"))
     runtime.handle_query(QueryRequest("r1", "q1", "query", refine_top_n=0))
     runtime.close("done")
-    manifest = json.loads((tmp_path / "session_output" / "session_manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads(
+        (tmp_path / "session_output" / "session_manifest.json").read_text(encoding="utf-8")
+    )
     assert manifest["request_count"] == 2
     assert manifest["successful_query_count"] == 1
     assert manifest["health_request_count"] == 1
@@ -430,12 +509,21 @@ def test_38_39_stdout_only_contains_valid_jsonl_responses(tmp_path: Path) -> Non
     stdout = io.StringIO()
     stderr = io.StringIO()
     parser = build_parser()
-    args = parser.parse_args(["--reuse-manifest", str(runtime.manifest_path), "--output-root", str(tmp_path / "out_stdout"), "--device", "cpu"])
+    args = parser.parse_args(
+        [
+            "--reuse-manifest",
+            str(runtime.manifest_path),
+            "--output-root",
+            str(tmp_path / "out_stdout"),
+            "--device",
+            "cpu",
+        ]
+    )
     run_session(args, runtime=runtime, stdin=stdin, stdout=stdout, stderr=stderr)
     out_lines = stdout.getvalue().splitlines()
-    for l in out_lines:
-        if l.strip():
-            obj = json.loads(l)
+    for line in out_lines:
+        if line.strip():
+            obj = json.loads(line)
             assert isinstance(obj, dict)
             assert "type" in obj
 
@@ -460,7 +548,12 @@ def test_41_42_cpu_and_fake_cuda_path(tmp_path: Path) -> None:
 
     cuda_path = tmp_path / "cuda"
     manifest_path, _, _ = make_test_corpus(cuda_path)
-    config = SessionConfig(input_root=cuda_path, reuse_manifest=manifest_path, output_root=cuda_path / "out", device="cpu")
+    config = SessionConfig(
+        input_root=cuda_path,
+        reuse_manifest=manifest_path,
+        output_root=cuda_path / "out",
+        device="cpu",
+    )
     runtime_cuda = OperationalKISRuntime.bootstrap(
         config,
         registry_loader=lambda path: FeatureStoreRegistry.from_manifest(path, expected_dimension=2),
@@ -498,7 +591,16 @@ def test_50_broken_stdin_eof_clean_shutdown(tmp_path: Path) -> None:
     stdout = io.StringIO()
     stderr = io.StringIO()
     parser = build_parser()
-    args = parser.parse_args(["--reuse-manifest", str(runtime.manifest_path), "--output-root", str(tmp_path / "out_eof"), "--device", "cpu"])
+    args = parser.parse_args(
+        [
+            "--reuse-manifest",
+            str(runtime.manifest_path),
+            "--output-root",
+            str(tmp_path / "out_eof"),
+            "--device",
+            "cpu",
+        ]
+    )
     code = run_session(args, runtime=runtime, stdin=stdin, stdout=stdout, stderr=stderr)
     assert code == 0
     assert runtime.decoder.closed is True
@@ -528,6 +630,8 @@ def test_51_52_refinement_response_metrics_regression(tmp_path: Path) -> None:
     def mock_refine_query(
         ref_query: Any, exec_config: Any, **kwargs: Any
     ) -> QueryRefinementOutcome:
+        from system_tai.common.schemas import CandidateFrame, KISResult
+
         candidates = []
         for i in range(10):
             status = RefinementStatus.REFINED if i < 3 else RefinementStatus.NOT_REFINED
@@ -556,17 +660,32 @@ def test_51_52_refinement_response_metrics_regression(tmp_path: Path) -> None:
             "fine_fusion_seconds": 0.0,
             "candidate_total_seconds": 0.0,
         }
+        result = KISResult(
+            query_id=ref_query.query_id,
+            ranked_candidates=tuple(
+                CandidateFrame(
+                    video_id=candidate.video_id,
+                    frame_id=candidate.frame_id,
+                    clip_row=index,
+                    keyframe_order=index,
+                    score=candidate.retrieval_score,
+                    rank=index + 1,
+                    source="telemetry-regression",
+                )
+                for index, candidate in enumerate(ref_query.candidates)
+            ),
+        )
         return QueryRefinementOutcome(
             query_id=ref_query.query_id,
-            result=None,  # Not used by handle_query for metrics
+            result=result,
             candidates=tuple(candidates),  # type: ignore
             timings=timings,
-            warnings=()
+            warnings=(),
         )
 
     runtime.refiner.refine_query = mock_refine_query
-    runtime.exporter.export = lambda *args, **kwargs: None
     import system_tai.kis.session_engine
+
     original_write_csv = system_tai.kis.session_engine._write_refined_csv
     original_write_json = system_tai.kis.session_engine._write_json
     system_tai.kis.session_engine._write_refined_csv = lambda _, path: Path(path)
