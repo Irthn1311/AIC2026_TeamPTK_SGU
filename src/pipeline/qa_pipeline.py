@@ -216,7 +216,8 @@ class QAPipeline:
         search_text = self._parser.build_qa_retrieval_text(qa_query)
         logger.debug(f"[QA] Retrieval text: {search_text[:120]}")
 
-        vis_results = self._vis_ret.retrieve(search_text, top_k=self._top_k_ret)
+        target_prefix = getattr(qa_query, "target_prefix", None)
+        vis_results = self._vis_ret.retrieve(search_text, top_k=self._top_k_ret, target_prefix=target_prefix)
 
         all_lists   = [vis_results]
         all_weights = [1.0]

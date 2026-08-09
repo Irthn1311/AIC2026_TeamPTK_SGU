@@ -277,10 +277,13 @@ class RetrievalPipeline:
         Q&A: retrieve candidates, then run Qwen2.5-VL to extract answer.
         Generates a heuristic fallback answer if VLM is not available.
         """
-        event_desc  = query_dict.get("description", "")
-        question    = query_dict.get("question", "")
-        answer_lang = query_dict.get("answer_language", "auto")
-        qa_query    = self._parser.parse_qa(event_desc, question, answer_language=answer_lang)
+        event_desc    = query_dict.get("description", "")
+        question      = query_dict.get("question", "")
+        answer_lang   = query_dict.get("answer_language", "auto")
+        target_prefix = query_dict.get("target_prefix", "")
+        qa_query      = self._parser.parse_qa(
+            event_desc, question, answer_language=answer_lang, target_prefix=target_prefix
+        )
 
         if self._vlm is None:
             logger.warning(
@@ -288,7 +291,7 @@ class RetrievalPipeline:
             )
             evidence = self._run_kis({
                 "text": f"{event_desc} {question}",
-                "target_prefix": query_dict.get("target_prefix"),
+                "target_prefix": target_prefix,
             }, query_id)
             if evidence:
                 # Fill metadata["answer"] using fallback heuristic
@@ -322,12 +325,6 @@ class RetrievalPipeline:
                 min_confidence=0.30,
                 high_conf_threshold=0.80,
             )
-
-        # Parse QA query — infer answer_type from question
-        event_desc  = query_dict.get("description", "")
-        question    = query_dict.get("question", "")
-        answer_lang = query_dict.get("answer_language", "auto")
-        qa_query    = self._parser.parse_qa(event_desc, question, answer_language=answer_lang)
 
         logger.debug(
             f"[QA] answer_type='{qa_query.answer_type}' | "
@@ -395,6 +392,7 @@ class RetrievalPipeline:
             sport_category=query_dict.get("sport_category", ""),
             top_k_videos=query_dict.get("top_k_videos", 5),
             video_id=query_dict.get("video_id", ""),
+            target_prefix=query_dict.get("target_prefix", ""),
         )
 
         trake_result: Optional[TRAKESubmission] = self._trake_pipeline.run(

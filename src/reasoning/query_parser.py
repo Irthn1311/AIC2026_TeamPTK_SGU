@@ -237,6 +237,7 @@ class QueryParser:
         question: str,
         answer_language: str = "auto",
         top_k: int = 20,
+        target_prefix: str = "",
     ) -> QAQuery:
         """
         Parse a Q&A query with answer type inference.
@@ -249,6 +250,7 @@ class QueryParser:
             answer_type=answer_type,
             answer_language=answer_language,
             top_k=top_k,
+            target_prefix=target_prefix,
         )
 
     def infer_answer_type(self, question: str) -> str:

@@ -77,6 +77,7 @@ class QAQuery:
     answer_type: str = "description"  # "count" | "name" | "yes_no" | "description"
     answer_language: str = "auto"     # "vi" | "en" | "auto"
     top_k: int = 20
+    target_prefix: str = ""           # e.g. "L21", "L26"
 
 
 @dataclass
@@ -97,6 +98,7 @@ class TRAKEQuery:
     top_k_videos: int = 10    # Number of candidate videos to check in Phase 1
     top_k_frames: int = 20    # Candidates per event in Phase 2
     video_id: str = ""        # If set, skip Phase 1 and go directly to alignment
+    target_prefix: str = ""   # e.g. "L23", "L24"
 
 
 # ============================================================
