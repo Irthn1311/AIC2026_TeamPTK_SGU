@@ -30,6 +30,12 @@ openai_clip_vit_b32_asset_bundle.zip
 /.tmp_openai_clip_clone/
 **/ViT-B-32.pt
 
+# Offline Vietnamese-to-English translator assets
+/aic2026-opus-mt-vi-en/
+/aic2026-opus-mt-vi-en.zip
+/.tmp_opus_mt_vi_en_download/
+/.tmp_opus_mt_vi_en_runtime/
+
 # To commit a deliberately tiny image fixture, add a narrow !tests/fixtures/... exception.
 .env
 kaggle.json
