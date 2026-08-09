@@ -19,7 +19,7 @@ from triage_eg.retrieval.stage1.stage0_loader import load_stage0_bundle
 from triage_eg.retrieval.stage1b.assets import AdapterFactory, issue, preflight_candidate
 from triage_eg.retrieval.stage1b.contracts import STAGE1B_VERSION, CandidateContract, Stage1BConfig
 from triage_eg.retrieval.stage1b.evidence import discover_encoder_evidence
-from triage_eg.retrieval.stage1b.probe import probe_candidate
+from triage_eg.retrieval.stage1b.probe import ALIGNMENT_BASIS, probe_candidate
 from triage_eg.retrieval.stage1b.registry import load_candidate_registry
 from triage_eg.retrieval.stage1b.sampling import select_probe_samples
 from triage_eg.retrieval.stage1b.smoke import run_text_smoke
@@ -70,13 +70,10 @@ def _contract_dict(candidate: CandidateContract, provenance: dict[str, Any]) -> 
     value = asdict(candidate)
     value["contract_version"] = STAGE1B_VERSION
     value["checkpoint_fingerprint"] = provenance.get("checkpoint_fingerprint")
-    if (
-        value["compatibility_status"] == "VERIFIED"
-        and provenance.get("asset_kind") == "FILE"
-        and not value.get("checkpoint_sha256")
-    ):
-        value["checkpoint_sha256"] = provenance.get("checkpoint_fingerprint")
-    elif value["compatibility_status"] == "VERIFIED" and not value.get("checkpoint_sha256"):
+    checkpoint_sha = _candidate_checkpoint_sha(candidate, provenance)
+    if checkpoint_sha:
+        value["checkpoint_sha256"] = checkpoint_sha
+    elif not value.get("checkpoint_sha256"):
         value.pop("checkpoint_sha256")
     value["asset_source"] = provenance.get("asset_source", "UNKNOWN")
     value["asset_provenance"] = {
@@ -104,19 +101,88 @@ def _issues_summary(issues: list[dict]) -> dict[str, Any]:
     }
 
 
+def _empty_alignment(alignment_basis: str, *, diagnostic_only: bool) -> dict[str, Any]:
+    return {
+        "alignment_basis": alignment_basis,
+        "diagnostic_only": diagnostic_only,
+        "top1_count": 0,
+        "top5_count": 0,
+        "top20_count": 0,
+        "top1_rate": 0.0,
+        "top5_rate": 0.0,
+        "top20_rate": 0.0,
+        "mean_rank_within_returned_topk": None,
+        "max_rank_within_returned_topk": None,
+        "missing_from_returned_topk_count": 0,
+    }
+
+
+def _empty_candidate_summary(
+    candidate: CandidateContract,
+    samples_requested: int,
+    *,
+    samples_failed: int,
+    dimension_match: bool,
+    decision: str,
+    reasons: list[str],
+) -> dict[str, Any]:
+    literal = _empty_alignment("LITERAL_GLOBAL_ROW_DIAGNOSTIC", diagnostic_only=True)
+    equivalent = _empty_alignment(ALIGNMENT_BASIS, diagnostic_only=False)
+    return {
+        "candidate_id": candidate.candidate_id,
+        "samples_requested": samples_requested,
+        "samples_completed": 0,
+        "samples_failed": samples_failed,
+        "cosine": {
+            key: None for key in ("min", "max", "mean", "median", "p05", "p95", "std")
+        },
+        "literal_target_alignment": literal,
+        "stored_vector_equivalence_alignment": equivalent,
+        "gate_alignment_basis": ALIGNMENT_BASIS,
+        "retrieval_alignment": {
+            "alignment_basis": ALIGNMENT_BASIS,
+            "target_top1_count": 0,
+            "target_top5_count": 0,
+            "target_top20_count": 0,
+            "target_top1_rate": 0.0,
+            "target_top5_rate": 0.0,
+            "target_top20_rate": 0.0,
+            "mean_target_rank": None,
+            "max_target_rank": None,
+        },
+        "dimension_match": dimension_match,
+        "finite_all": False,
+        "decision": decision,
+        "decision_reasons": reasons,
+    }
+
+
+def _candidate_checkpoint_sha(
+    candidate: CandidateContract, provenance: dict[str, Any]
+) -> str | None:
+    return (
+        provenance.get("checkpoint_sha256")
+        or provenance.get("checkpoint_fingerprint")
+        or candidate.checkpoint_sha256
+    )
+
+
 def _official_candidate_report(
-    selected: CandidateContract | None,
+    candidate: CandidateContract | None,
     provenance: dict[str, Any],
     runtime: dict[str, Any],
     metrics: dict[str, Any] | None,
     smoke_status: str,
-    readiness: str,
+    *,
+    selected: bool,
 ) -> str:
-    label = "[VERIFIED]" if selected else "[UNKNOWN]"
-    candidate_id = selected.candidate_id if selected else "not selected"
+    decision = candidate.compatibility_status if candidate else "NOT_EVALUATED"
+    label = f"[{decision}]"
+    candidate_id = candidate.candidate_id if candidate else "not evaluated"
     return (
         "\n\n# Official OpenAI CLIP Candidate\n\n"
         f"{label} Candidate: {candidate_id}\n"
+        f"\nSelected: {str(selected).lower()}\n"
         "\n# Asset Provenance\n\n"
         f"[INFERRED] {json.dumps(provenance, ensure_ascii=False, default=str)}\n"
         "\n# Module Origin\n\n"
@@ -130,7 +196,7 @@ def _official_candidate_report(
         "\n# Retrieval Alignment\n\n"
         f"{label} {json.dumps(metrics.get('retrieval_alignment') if metrics else None)}\n"
         "\n# Compatibility Decision\n\n"
-        f"{label} {readiness}\n"
+        f"{label} {decision}\n"
         "\n# Text Smoke Status\n\n"
         f"{label} {smoke_status}\n"
         "\n# Offline Runtime Guarantee\n\n"
@@ -140,6 +206,74 @@ def _official_candidate_report(
         "[UNKNOWN] BTC original implementation is not proven. Vietnamese retrieval "
         "quality is not proven.\n"
     )
+
+
+def _evaluated_candidates_report(
+    candidates: list[CandidateContract],
+    provenances: dict[str, dict[str, Any]],
+    runtime_manifests: dict[str, dict[str, Any]],
+    summaries: list[dict[str, Any]],
+    selected: CandidateContract | None,
+) -> str:
+    summaries_by_id = {item["candidate_id"]: item for item in summaries}
+    sections = ["\n\n## Evaluated Candidates\n"]
+    enabled = [candidate for candidate in candidates if candidate.enabled]
+    if not enabled:
+        sections.append("\n- None\n")
+    for candidate in enabled:
+        provenance = provenances.get(candidate.candidate_id, {})
+        runtime = runtime_manifests.get(candidate.candidate_id, {})
+        metrics = summaries_by_id.get(candidate.candidate_id, {})
+        image_execution = runtime.get("image_execution", {})
+        text_execution = runtime.get("text_execution", {})
+        equivalence_alignment = json.dumps(
+            metrics.get("stored_vector_equivalence_alignment"), ensure_ascii=False
+        )
+        sections.extend(
+            [
+                f"\n### {candidate.candidate_id}\n",
+                f"\n- Implementation: {candidate.implementation}\n",
+                f"- Architecture: {candidate.architecture}\n",
+                f"- Pretrained: {candidate.pretrained}\n",
+                f"- Candidate decision: {candidate.compatibility_status}\n",
+                "- Decision reasons: "
+                f"{json.dumps(metrics.get('decision_reasons', []), ensure_ascii=False)}\n",
+                f"- Selected: {str(selected == candidate).lower()}\n",
+                f"- Checkpoint path: {candidate.checkpoint_path or 'UNKNOWN'}\n",
+                f"- Checkpoint size: {provenance.get('checkpoint_size_bytes', 'UNKNOWN')}\n",
+                "- Checkpoint SHA-256: "
+                f"{_candidate_checkpoint_sha(candidate, provenance) or 'UNKNOWN'}\n",
+                f"- Declared hash match: {provenance.get('declared_hash_match', 'UNKNOWN')}\n",
+                f"- Source repository: {provenance.get('source_repository', 'UNKNOWN')}\n",
+                f"- Source commit: {provenance.get('source_commit', 'UNKNOWN')}\n",
+                f"- Module origin: {provenance.get('module_file', 'UNKNOWN')}\n",
+                f"- Module origin valid: {provenance.get('module_origin_valid', 'UNKNOWN')}\n",
+                f"- Required API present: {provenance.get('required_api_present', 'UNKNOWN')}\n",
+                f"- Device: {provenance.get('selected_device', 'UNKNOWN')}\n",
+                f"- Model dtype: {runtime.get('model_parameter_dtype', 'UNKNOWN')}\n",
+                f"- Image output dtype: {image_execution.get('output_dtype', 'UNKNOWN')}\n",
+                f"- Text output dtype: {text_execution.get('output_dtype', 'UNKNOWN')}\n",
+                f"- Preprocessing source: {runtime.get('preprocess_source', 'UNKNOWN')}\n",
+                f"- Tokenizer: {candidate.tokenizer or 'UNKNOWN'}\n",
+                f"- Runtime: {json.dumps(runtime, ensure_ascii=False, default=str)}\n",
+                "- Samples: "
+                f"{metrics.get('samples_completed', 0)}/{metrics.get('samples_requested', 0)} "
+                f"completed; {metrics.get('samples_failed', 0)} failed\n",
+                f"- Cosine: {json.dumps(metrics.get('cosine'), ensure_ascii=False)}\n",
+                "- Literal target-row alignment: "
+                f"{json.dumps(metrics.get('literal_target_alignment'), ensure_ascii=False)}\n",
+                "- Stored-vector equivalence alignment: "
+                f"{equivalence_alignment}\n",
+                f"- Gate alignment basis: {metrics.get('gate_alignment_basis', ALIGNMENT_BASIS)}\n",
+            ]
+        )
+    sections.extend(
+        [
+            "\n## Selected Candidate\n",
+            f"\n- Candidate: {selected.candidate_id if selected else 'None'}\n",
+        ]
+    )
+    return "".join(sections)
 
 
 def _default_smoke_queries() -> list[dict[str, str]]:
@@ -304,29 +438,14 @@ def run_stage1b(
             blocked = replace(candidate, compatibility_status=decision)
             finalized_candidates.append(blocked)
             candidate_summaries.append(
-                {
-                    "candidate_id": candidate.candidate_id,
-                    "samples_requested": len(samples),
-                    "samples_completed": 0,
-                    "samples_failed": 0,
-                    "cosine": {
-                        key: None for key in ("min", "max", "mean", "median", "p05", "p95", "std")
-                    },
-                    "retrieval_alignment": {
-                        "target_top1_count": 0,
-                        "target_top5_count": 0,
-                        "target_top20_count": 0,
-                        "target_top1_rate": 0.0,
-                        "target_top5_rate": 0.0,
-                        "target_top20_rate": 0.0,
-                        "mean_target_rank": None,
-                        "max_target_rank": None,
-                    },
-                    "dimension_match": candidate.output_dimension == 512,
-                    "finite_all": False,
-                    "decision": decision,
-                    "decision_reasons": [item["code"] for item in blocking_preflight],
-                }
+                _empty_candidate_summary(
+                    candidate,
+                    len(samples),
+                    samples_failed=0,
+                    dimension_match=candidate.output_dimension == 512,
+                    decision=decision,
+                    reasons=[item["code"] for item in blocking_preflight],
+                )
             )
             continue
         try:
@@ -368,29 +487,14 @@ def run_stage1b(
             issues.append(
                 issue("ERROR", code, candidate, Path(candidate.checkpoint_path or ""), str(error))
             )
-            summary = {
-                "candidate_id": candidate.candidate_id,
-                "samples_requested": len(samples),
-                "samples_completed": 0,
-                "samples_failed": len(samples),
-                "cosine": {
-                    key: None for key in ("min", "max", "mean", "median", "p05", "p95", "std")
-                },
-                "retrieval_alignment": {
-                    "target_top1_count": 0,
-                    "target_top5_count": 0,
-                    "target_top20_count": 0,
-                    "target_top1_rate": 0.0,
-                    "target_top5_rate": 0.0,
-                    "target_top20_rate": 0.0,
-                    "mean_target_rank": None,
-                    "max_target_rank": None,
-                },
-                "dimension_match": False,
-                "finite_all": False,
-                "decision": decision,
-                "decision_reasons": [code],
-            }
+            summary = _empty_candidate_summary(
+                candidate,
+                len(samples),
+                samples_failed=len(samples),
+                dimension_match=False,
+                decision=decision,
+                reasons=[code],
+            )
             results, matrix, encoder = [], None, None
         finalized_candidates.append(final)
         candidate_results.extend(results)
@@ -401,13 +505,39 @@ def run_stage1b(
             runtime_manifest = getattr(encoder, "runtime_manifest", None)
             if callable(runtime_manifest):
                 runtime_manifests[candidate.candidate_id] = runtime_manifest()
+        for result_item in results:
+            if "LITERAL_TARGET_ROW_TIE_DISPLACEMENT" in result_item["issue_codes"]:
+                tie_issue = issue(
+                    "INFO",
+                    "LITERAL_TARGET_ROW_TIE_DISPLACEMENT",
+                    candidate,
+                    None,
+                    "Literal target row was displaced by an exact stored-vector equivalent",
+                    target_global_row=result_item["global_row"],
+                    returned_top1_global_row=result_item["top1_global_row_when_searched"],
+                    equivalent_vector_rank=result_item["equivalent_vector_rank"],
+                    literal_target_row_rank=result_item["exact_target_row_rank"],
+                    exact_stored_vector_equal=True,
+                    alignment_basis=ALIGNMENT_BASIS,
+                )
+                tie_issue["global_row"] = result_item["global_row"]
+                tie_issue["video_id"] = result_item["video_id"]
+                issues.append(tie_issue)
         for reason in summary["decision_reasons"]:
             if reason in {
                 "PAIRWISE_COSINE_BELOW_GATE",
-                "TARGET_RETRIEVAL_ALIGNMENT_BELOW_GATE",
+                "STORED_VECTOR_EQUIVALENCE_ALIGNMENT_BELOW_GATE",
                 "ENCODER_PROVENANCE_INCOMPLETE",
             }:
-                issues.append(issue("WARNING", reason, candidate, None))
+                issues.append(
+                    issue(
+                        "WARNING",
+                        reason,
+                        candidate,
+                        None,
+                        alignment_basis=ALIGNMENT_BASIS,
+                    )
+                )
             elif reason == "ENCODER_CONTRACT_NOT_REPRODUCIBLE":
                 issues.append(issue("ERROR", reason, candidate, None))
     verified = [item for item in finalized_candidates if item.compatibility_status == "VERIFIED"]
@@ -442,6 +572,11 @@ def run_stage1b(
                 replace(item, compatibility_status="UNVERIFIED") if item in verified else item
                 for item in finalized_candidates
             ]
+            verified_ids = {item.candidate_id for item in verified}
+            for item in candidate_summaries:
+                if item["candidate_id"] in verified_ids:
+                    item["decision"] = "UNVERIFIED"
+                    item["decision_reasons"] = ["ENCODER_CANDIDATE_AMBIGUOUS"]
             verified = []
     selected_contract = (
         {
@@ -492,6 +627,19 @@ def run_stage1b(
         if callable(runtime_manifest):
             runtime_manifests[selected.candidate_id] = runtime_manifest()
     counts = Counter(item.compatibility_status for item in finalized_candidates if item.enabled)
+    candidate_summaries_by_id = {item["candidate_id"]: item for item in candidate_summaries}
+    evaluated_candidates = [
+        {
+            "candidate_id": item.candidate_id,
+            "candidate_decision": item.compatibility_status,
+            "decision_reasons": candidate_summaries_by_id.get(item.candidate_id, {}).get(
+                "decision_reasons", []
+            ),
+            "selected": item == selected,
+        }
+        for item in finalized_candidates
+        if item.enabled
+    ]
     selected_summary = {
         "candidate_id": selected.candidate_id if selected else None,
         "implementation": selected.implementation if selected else None,
@@ -506,6 +654,7 @@ def run_stage1b(
     }
     summary = {
         "status": "COMPLETE",
+        "evaluation_status": "COMPLETE",
         "stage1b_version": STAGE1B_VERSION,
         "dataset_version": "aic25-b1",
         "stage0_root": str(Path(config.stage0_root).resolve(strict=False)),
@@ -514,6 +663,7 @@ def run_stage1b(
         "stage1_build_commit": stage1_manifest["build_git_commit"],
         "compatibility_gate": {
             "name": "PROJECT_DEFINED_EMPIRICAL_GATE",
+            "alignment_basis": ALIGNMENT_BASIS,
             "thresholds": asdict(gate),
         },
         "evidence": {
@@ -530,9 +680,19 @@ def run_stage1b(
             "candidates_verified": counts["VERIFIED"],
         },
         "selected_encoder": selected_summary,
+        "selected_candidate": (
+            {
+                "candidate_id": selected.candidate_id,
+                "candidate_decision": selected.compatibility_status,
+            }
+            if selected
+            else None
+        ),
+        "evaluated_candidates": evaluated_candidates,
         "text_search_available": bool(selected and smoke_status in {"PASS", "PASS_WITH_WARNINGS"}),
         "text_smoke_status": smoke_status,
         "readiness": {
+            "encoder_readiness": "VERIFIED" if selected else "BLOCKED",
             "encoder_compatibility": "VERIFIED" if selected else "BLOCKED",
             "text_retrieval": "READY_FOR_QUALITATIVE_TESTING"
             if selected and smoke_status in {"PASS", "PASS_WITH_WARNINGS"}
@@ -552,6 +712,7 @@ def run_stage1b(
         "build_git_commit_source": commit_source,
         "config_fingerprint": config_fingerprint,
         "compatibility_gate": asdict(gate),
+        "gate_alignment_basis": ALIGNMENT_BASIS,
         "stage1_index_fingerprint": stage1_summary["index_fingerprint"],
         "started_at": started_at,
         "completed_at": datetime.now(UTC).isoformat(),
@@ -591,6 +752,14 @@ def run_stage1b(
             ),
             "runtime": runtime_manifests.get(selected.candidate_id, {}) if selected else {},
             "asset_provenance": (provenances.get(selected.candidate_id, {}) if selected else {}),
+            "evaluated_candidates": [
+                {
+                    **item,
+                    "runtime": runtime_manifests.get(item["candidate_id"], {}),
+                    "asset_provenance": provenances.get(item["candidate_id"], {}),
+                }
+                for item in evaluated_candidates
+            ],
         },
     )
     write_jsonl(staging / "smoke/smoke_queries.jsonl", smoke_queries)
@@ -605,20 +774,32 @@ def run_stage1b(
         for item in issues
         if item["severity"] == "ERROR"
     ]
-    next_step = (
-        "Provide the explicitly configured local checkpoint and dependency, then rerun Stage 1B."
-        if not selected
-        else "Proceed only to qualitative text-retrieval evaluation."
+    decisions = {item["decision"] for item in candidate_summaries}
+    if selected:
+        next_step = "Candidate passed the compatibility gate; text smoke may proceed."
+    elif "REJECTED" in decisions:
+        next_step = (
+            "Candidate executed successfully but did not satisfy the configured compatibility gate."
+        )
+    elif "UNVERIFIED" in decisions:
+        next_step = (
+            "Candidate evidence is insufficient for verification; inspect listed evidence gaps."
+        )
+    else:
+        next_step = "Provide or fix the required local asset or dependency, then rerun Stage 1B."
+    enabled_candidates = [item for item in finalized_candidates if item.enabled]
+    report_candidate = selected or next(
+        (item for item in enabled_candidates if item.implementation == "openai_clip"),
+        enabled_candidates[0] if enabled_candidates else None,
     )
-    selected_provenance = provenances.get(selected.candidate_id, {}) if selected else {}
-    selected_runtime = runtime_manifests.get(selected.candidate_id, {}) if selected else {}
-    selected_metrics = next(
-        (
-            item
-            for item in candidate_summaries
-            if selected and item["candidate_id"] == selected.candidate_id
-        ),
-        None,
+    report_provenance = (
+        provenances.get(report_candidate.candidate_id, {}) if report_candidate else {}
+    )
+    report_runtime = (
+        runtime_manifests.get(report_candidate.candidate_id, {}) if report_candidate else {}
+    )
+    report_metrics = (
+        candidate_summaries_by_id.get(report_candidate.candidate_id) if report_candidate else None
     )
     (staging / "stage1b_report.md").write_text(
         "# Stage 1B CLIP Encoder Compatibility Validation\n\n"
@@ -626,18 +807,26 @@ def run_stage1b(
         f"- Text retrieval: {summary['readiness']['text_retrieval']}\n"
         f"- Candidates verified: {counts['VERIFIED']}\n"
         "- Decision policy: PROJECT_DEFINED_EMPIRICAL_GATE.\n"
+        f"- Gate alignment basis: {ALIGNMENT_BASIS}.\n"
         "- Compatibility is not retrieval-quality or Vietnamese-quality evidence.\n"
         "- Smoke testing is not Recall@K evaluation.\n"
         "- Stage 0 and Stage 1A were reused without rebuild.\n"
         + "\n## Blocking issues\n\n"
         + ("\n".join(blocker_lines) if blocker_lines else "- None")
-        + _official_candidate_report(
+        + _evaluated_candidates_report(
+            finalized_candidates,
+            provenances,
+            runtime_manifests,
+            candidate_summaries,
             selected,
-            selected_provenance,
-            selected_runtime,
-            selected_metrics,
+        )
+        + _official_candidate_report(
+            report_candidate,
+            report_provenance,
+            report_runtime,
+            report_metrics,
             smoke_status,
-            summary["readiness"]["encoder_compatibility"],
+            selected=report_candidate == selected and selected is not None,
         )
         + f"\n\n## Next step\n\n{next_step}\n",
         encoding="utf-8",

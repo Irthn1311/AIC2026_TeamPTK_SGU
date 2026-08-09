@@ -58,7 +58,7 @@ def passing_summary(**changes) -> dict:
         "dimension_match": True,
         "finite_all": True,
         "cosine": {"min": 0.999, "mean": 0.9999},
-        "retrieval_alignment": {"target_top1_rate": 1.0, "target_top5_rate": 1.0},
+        "stored_vector_equivalence_alignment": {"top1_rate": 1.0, "top5_rate": 1.0},
     }
     value.update(changes)
     return value
@@ -128,7 +128,7 @@ def test_threshold_change_changes_registry_fingerprint(tmp_path: Path) -> None:
     from triage_eg.retrieval.stage1b.registry import load_candidate_registry
 
     template = (
-        "stage1b_version: '0.1.0'\ncompatibility_gate:\n"
+        "stage1b_version: '0.1.1'\ncompatibility_gate:\n"
         "  pairwise_cosine_mean_min: {threshold}\ncandidates: []\n"
     )
     first, second = tmp_path / "first.yaml", tmp_path / "second.yaml"

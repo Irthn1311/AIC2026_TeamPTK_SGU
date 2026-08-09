@@ -1,4 +1,4 @@
-stage1b_version: "0.1.0"
+stage1b_version: "0.1.1"
 probe:
   sample_size: 50
   seed: 2026

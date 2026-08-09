@@ -9,7 +9,7 @@ from typing import Any, Protocol
 
 import numpy as np
 
-STAGE1B_VERSION = "0.1.0"
+STAGE1B_VERSION = "0.1.1"
 EVIDENCE_SOURCES = {
     "AUTHORITATIVE",
     "REPOSITORY_SOURCE",

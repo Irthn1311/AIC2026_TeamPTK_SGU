@@ -87,7 +87,7 @@ def isolated_official_clip_modules():
         sys.modules["torch"] = original_torch
 
 
-def fixture(root: Path) -> tuple[Path, Path, Path]:
+def fixture(root: Path, *, exact_duplicate_vectors: bool = False) -> tuple[Path, Path, Path]:
     stage0, data = root / "stage0", root / "data"
     stage0.mkdir()
     data.mkdir()
@@ -125,7 +125,7 @@ def fixture(root: Path) -> tuple[Path, Path, Path]:
     for video_index, video_id in enumerate(videos):
         matrix = np.zeros((3, 512), dtype=np.float16)
         for row in range(3):
-            matrix[row, video_index * 3 + row] = 1
+            matrix[row, 0 if exact_duplicate_vectors else video_index * 3 + row] = 1
         relative = f"clips/{video_id}.npy"
         (data / "clips").mkdir(exist_ok=True)
         np.save(data / relative, matrix)
@@ -181,7 +181,7 @@ def fixture(root: Path) -> tuple[Path, Path, Path]:
 def candidate_config(root: Path, checkpoint: Path, enabled: bool = True) -> Path:
     path = root / "candidates.yaml"
     path.write_text(
-        "stage1b_version: '0.1.0'\n"
+        "stage1b_version: '0.1.1'\n"
         "compatibility_gate:\n  minimum_completed_samples: 3\n"
         "  pairwise_cosine_mean_min: 0.995\n  pairwise_cosine_min_min: 0.98\n"
         "  target_top1_rate_min: 0.95\n  target_top5_rate_min: 1.0\n"
@@ -268,7 +268,7 @@ def official_asset(root: Path, *, checkpoint_exists: bool = True) -> tuple[Path,
 def official_candidate_config(root: Path, asset: Path, source: Path, checkpoint: Path) -> Path:
     path = root / "official_candidate.yaml"
     path.write_text(
-        "stage1b_version: '0.1.0'\n"
+        "stage1b_version: '0.1.1'\n"
         "compatibility_gate:\n  minimum_completed_samples: 3\n"
         "  pairwise_cosine_mean_min: 0.995\n  pairwise_cosine_min_min: 0.98\n"
         "  target_top1_rate_min: 0.95\n  target_top5_rate_min: 1.0\n"
@@ -296,15 +296,16 @@ def official_candidate_config(root: Path, asset: Path, source: Path, checkpoint:
 
 
 class MockEncoder:
-    def __init__(self, wrong: bool = False) -> None:
+    def __init__(self, wrong: bool = False, constant: bool = False) -> None:
         self.wrong = wrong
+        self.constant = constant
 
     def encode_images(self, paths: list[Path]) -> np.ndarray:
         output = np.zeros((len(paths), 512), dtype=np.float32)
         for index, path in enumerate(paths):
             video = int(path.parent.name[-3:]) - 1
             n = int(path.stem) - 1
-            row = video * 3 + n
+            row = 0 if self.constant else video * 3 + n
             output[index, row + 100 if self.wrong else row] = 1
         return output
 
@@ -325,8 +326,16 @@ class NearMatchingEncoder(MockEncoder):
         return output
 
 
-def run_case(tmp_path: Path, *, wrong: bool = False, enabled: bool = True):
-    stage0, data, stage1 = fixture(tmp_path)
+def run_case(
+    tmp_path: Path,
+    *,
+    wrong: bool = False,
+    enabled: bool = True,
+    exact_duplicate_vectors: bool = False,
+):
+    stage0, data, stage1 = fixture(
+        tmp_path, exact_duplicate_vectors=exact_duplicate_vectors
+    )
     checkpoint = tmp_path / "checkpoint.bin"
     checkpoint.write_bytes(b"checkpoint")
     output = tmp_path / "stage1b"
@@ -342,7 +351,7 @@ def run_case(tmp_path: Path, *, wrong: bool = False, enabled: bool = True):
             overwrite=True,
             build_git_commit="stage1b-commit",
         ),
-        adapter_factory=lambda candidate: MockEncoder(wrong),
+        adapter_factory=lambda candidate: MockEncoder(wrong, exact_duplicate_vectors),
     )
     return result
 
@@ -350,6 +359,7 @@ def run_case(tmp_path: Path, *, wrong: bool = False, enabled: bool = True):
 def test_matching_encoder_verifies_and_enables_smoke(tmp_path: Path) -> None:
     result = run_case(tmp_path)
     assert result.summary["readiness"] == {
+        "encoder_readiness": "VERIFIED",
         "encoder_compatibility": "VERIFIED",
         "text_retrieval": "READY_FOR_QUALITATIVE_TESTING",
     }
@@ -362,6 +372,7 @@ def test_matching_encoder_verifies_and_enables_smoke(tmp_path: Path) -> None:
     ]
     assert len(candidates) == 3 and all(item["cosine_to_stored"] == 1 for item in candidates)
     assert all(item["matched_row_in_top1"] for item in candidates)
+    assert all(item["equivalent_vector_in_top1"] for item in candidates)
     archive = create_stage1b_report_bundle(result.output_root, tmp_path / "report.zip")
     with ZipFile(archive) as stream:
         assert stream.namelist() == list(REPORT_MEMBERS)
@@ -373,6 +384,37 @@ def test_wrong_encoder_is_rejected_and_text_stays_blocked(tmp_path: Path) -> Non
     assert result.summary["probe"]["candidates_rejected"] == 1
     assert result.summary["readiness"]["encoder_compatibility"] == "BLOCKED"
     assert result.summary["text_smoke_status"] == "NOT_RUN"
+
+
+def test_exact_duplicate_ties_verify_by_stored_vector_equivalence(tmp_path: Path) -> None:
+    result = run_case(tmp_path, exact_duplicate_vectors=True)
+    candidate_summary = json.loads(
+        (result.output_root / "probe/candidate_summaries.jsonl").read_text().splitlines()[0]
+    )
+    assert candidate_summary["literal_target_alignment"]["top1_rate"] < 1.0
+    assert candidate_summary["stored_vector_equivalence_alignment"]["top1_rate"] == 1.0
+    assert candidate_summary["stored_vector_equivalence_alignment"]["top5_rate"] == 1.0
+    assert candidate_summary["gate_alignment_basis"] == (
+        "EXACT_STORED_VECTOR_EQUIVALENCE_CLASS"
+    )
+    assert candidate_summary["decision"] == "VERIFIED"
+    assert result.selected_contract["selected_candidate_id"] == "mock_candidate"
+    assert result.summary["selected_candidate"] == {
+        "candidate_id": "mock_candidate",
+        "candidate_decision": "VERIFIED",
+    }
+    assert result.summary["text_smoke_status"] == "PASS"
+    runtime = json.loads(
+        (result.output_root / "encoder/runtime_adapter_manifest.json").read_text()
+    )
+    assert runtime["selected_candidate_id"] == "mock_candidate"
+    per_sample = [
+        json.loads(line)
+        for line in (result.output_root / "probe/candidate_results.jsonl").read_text().splitlines()
+    ]
+    displaced = [item for item in per_sample if item["literal_target_row_tie_displacement"]]
+    assert displaced
+    assert all("LITERAL_TARGET_ROW_TIE_DISPLACEMENT" in item["issue_codes"] for item in displaced)
 
 
 def test_disabled_candidate_is_quietly_blocked_without_execution(tmp_path: Path) -> None:
@@ -448,6 +490,38 @@ def test_report_states_quality_and_vietnamese_nonclaims(tmp_path: Path) -> None:
     assert "Compatibility does not prove retrieval quality" in summary["non_claims"]
     assert "Compatibility does not prove Vietnamese query quality" in summary["non_claims"]
     assert "Recall@K" in (result.output_root / "stage1b_report.md").read_text()
+
+
+def test_rejected_candidate_report_retains_evaluation_evidence(tmp_path: Path) -> None:
+    result = run_case(tmp_path, wrong=True)
+    report = (result.output_root / "stage1b_report.md").read_text(encoding="utf-8")
+    assert "## Evaluated Candidates" in report
+    assert "Candidate decision: REJECTED" in report
+    assert "Checkpoint SHA-256:" in report
+    assert "Cosine:" in report
+    assert "Literal target-row alignment:" in report
+    assert "Stored-vector equivalence alignment:" in report
+    assert "did not satisfy the configured compatibility gate" in report
+    assert "Provide or fix the required local asset" not in report
+    runtime = json.loads(
+        (result.output_root / "encoder/runtime_adapter_manifest.json").read_text()
+    )
+    assert len(runtime["evaluated_candidates"]) == 1
+    assert runtime["evaluated_candidates"][0]["candidate_decision"] == "REJECTED"
+    assert runtime["selected_candidate_id"] is None
+    assert result.summary["evaluation_status"] == "COMPLETE"
+    assert result.summary["selected_candidate"] is None
+    assert result.summary["evaluated_candidates"] == [
+        {
+            "candidate_id": "mock_candidate",
+            "candidate_decision": "REJECTED",
+            "decision_reasons": [
+                "PAIRWISE_COSINE_BELOW_GATE",
+                "STORED_VECTOR_EQUIVALENCE_ALIGNMENT_BELOW_GATE",
+            ],
+            "selected": False,
+        }
+    ]
 
 
 def test_output_does_not_modify_dataset_or_stage1(tmp_path: Path) -> None:
@@ -608,6 +682,10 @@ def test_official_candidate_missing_asset_emits_blocked_bundle(tmp_path: Path) -
     assert result.summary["probe"]["candidates_blocked"] == 1
     assert result.selected_contract["compatibility_status"] == "BLOCKED"
     assert "ENCODER_ASSET_NOT_FOUND" in (output / "issues.jsonl").read_text()
+    report = (output / "stage1b_report.md").read_text(encoding="utf-8")
+    assert "## Evaluated Candidates" in report
+    assert "Candidate decision: BLOCKED" in report
+    assert "Provide or fix the required local asset or dependency" in report
     archive = create_stage1b_report_bundle(output, tmp_path / "blocked-report.zip")
     with ZipFile(archive) as stream:
         assert stream.namelist() == list(REPORT_MEMBERS)

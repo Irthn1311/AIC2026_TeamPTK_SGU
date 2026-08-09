@@ -103,7 +103,8 @@ Do not use an unverified-encoder override for acceptance.
 - VERIFIED: local candidate passed the locked empirical model-space gate; text
   smoke may run.
 - UNVERIFIED: evidence is close or incomplete and cannot support enablement.
-- REJECTED: valid output ran but dimension, cosine, or row alignment failed.
+- REJECTED: valid output ran but dimension, cosine, or exact stored-vector-equivalence
+  alignment failed. Literal global-row alignment is diagnostic only.
 - BLOCKED: source, dependency, checkpoint, integrity, import, or load failed.
 
 MODEL_SPACE_VERIFIED does not prove the original BTC implementation, retrieval

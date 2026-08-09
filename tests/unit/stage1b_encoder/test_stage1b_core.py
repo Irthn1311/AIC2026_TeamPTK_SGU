@@ -9,7 +9,12 @@ import pytest
 from triage_eg.retrieval.stage1b.assets import inventory_fingerprint, sha256_file
 from triage_eg.retrieval.stage1b.contracts import CandidateContract, CompatibilityGate
 from triage_eg.retrieval.stage1b.evidence import EvidenceLimits, discover_encoder_evidence
-from triage_eg.retrieval.stage1b.probe import decide_candidate, validate_embedding_matrix
+from triage_eg.retrieval.stage1b.probe import (
+    ALIGNMENT_BASIS,
+    decide_candidate,
+    exact_stored_vector_alignment,
+    validate_embedding_matrix,
+)
 from triage_eg.retrieval.stage1b.registry import load_candidate_registry
 from triage_eg.retrieval.stage1b.writers import REPORT_MEMBERS, create_stage1b_report_bundle
 
@@ -47,7 +52,7 @@ def summary(**changes) -> dict:
     value = {
         "samples_completed": 20,
         "cosine": {"mean": 1.0, "min": 1.0},
-        "retrieval_alignment": {"target_top1_rate": 1.0, "target_top5_rate": 1.0},
+        "stored_vector_equivalence_alignment": {"top1_rate": 1.0, "top5_rate": 1.0},
         "dimension_match": True,
         "finite_all": True,
     }
@@ -116,11 +121,80 @@ def test_project_gate_verifies_reproducible_candidate() -> None:
 def test_gate_rejects_wrong_encoder() -> None:
     bad = summary(
         cosine={"mean": 0.1, "min": -0.1},
-        retrieval_alignment={"target_top1_rate": 0.0, "target_top5_rate": 0.0},
+        stored_vector_equivalence_alignment={"top1_rate": 0.0, "top5_rate": 0.0},
     )
     decision, reasons = decide_candidate(contract(), bad, CompatibilityGate(), True)
     assert decision == "REJECTED"
     assert "PAIRWISE_COSINE_BELOW_GATE" in reasons
+
+
+def test_locked_gate_thresholds_are_unchanged() -> None:
+    gate = CompatibilityGate()
+    assert gate.pairwise_cosine_mean_min == 0.995
+    assert gate.pairwise_cosine_min_min == 0.98
+    assert gate.target_top1_rate_min == 0.95
+    assert gate.target_top5_rate_min == 1.0
+
+
+def test_unique_target_row_passes_literal_and_equivalence_alignment() -> None:
+    stored = np.eye(3, dtype=np.float32)
+    diagnostics, literal, equivalent = exact_stored_vector_alignment(
+        np.asarray([[1, 0, 2]]),
+        np.asarray([1]),
+        stored[[[1, 0, 2]]],
+        stored[[1]],
+    )
+    assert diagnostics[0]["exact_target_row_in_top1"]
+    assert diagnostics[0]["equivalent_vector_in_top1"]
+    assert literal["top1_rate"] == equivalent["top1_rate"] == 1.0
+
+
+def test_exact_duplicate_displacement_passes_equivalence_not_literal() -> None:
+    vector = np.asarray([1.0, 0.0], dtype=np.float32)
+    other = np.asarray([0.0, 1.0], dtype=np.float32)
+    diagnostics, literal, equivalent = exact_stored_vector_alignment(
+        np.asarray([[5, 10, 20]]),
+        np.asarray([10]),
+        np.asarray([[vector, vector, other]]),
+        np.asarray([vector]),
+    )
+    item = diagnostics[0]
+    assert not item["exact_target_row_in_top1"]
+    assert item["exact_target_row_rank"] == 2
+    assert item["equivalent_vector_in_top1"]
+    assert item["literal_target_row_tie_displacement"]
+    assert literal["top1_rate"] == 0.0 and equivalent["top1_rate"] == 1.0
+
+
+def test_large_exact_group_passes_when_literal_target_is_outside_top20() -> None:
+    vector = np.asarray([1.0, 0.0], dtype=np.float32)
+    returned = np.repeat(vector[None, None, :], 20, axis=1)
+    diagnostics, literal, equivalent = exact_stored_vector_alignment(
+        np.arange(20, dtype=np.int64)[None, :],
+        np.asarray([29]),
+        returned,
+        np.asarray([vector]),
+    )
+    assert diagnostics[0]["exact_target_row_rank"] is None
+    assert diagnostics[0]["equivalent_vector_rank"] == 1
+    assert diagnostics[0]["equivalent_vector_count_in_returned_topk"] == 20
+    assert literal["top20_rate"] == 0.0
+    assert equivalent["top1_rate"] == equivalent["top5_rate"] == 1.0
+
+
+def test_near_duplicate_is_not_exact_stored_vector_equivalent() -> None:
+    target = np.asarray([1.0, 0.0], dtype=np.float32)
+    near = np.nextafter(target, np.asarray([2.0, 1.0], dtype=np.float32))
+    diagnostics, _, equivalent = exact_stored_vector_alignment(
+        np.asarray([[5, 10]]),
+        np.asarray([10]),
+        np.asarray([[near, target]]),
+        np.asarray([target]),
+    )
+    assert not np.array_equal(near, target)
+    assert not diagnostics[0]["equivalent_vector_in_top1"]
+    assert diagnostics[0]["equivalent_vector_rank"] == 2
+    assert equivalent["alignment_basis"] == ALIGNMENT_BASIS
 
 
 def test_gate_keeps_insufficient_sample_unverified() -> None:
@@ -161,7 +235,7 @@ def test_checkpoint_and_inventory_fingerprint(tmp_path: Path) -> None:
 def test_registry_disabled_candidate_is_not_enabled(tmp_path: Path) -> None:
     path = tmp_path / "config.yaml"
     path.write_text(
-        "stage1b_version: '0.1.0'\ncompatibility_gate: {}\ncandidates:\n"
+        "stage1b_version: '0.1.1'\ncompatibility_gate: {}\ncandidates:\n"
         "  - candidate_id: c\n    enabled: false\n    implementation: unknown\n"
         "    architecture: unknown\n    pretrained: unknown\n    checkpoint_path: null\n",
         encoding="utf-8",

@@ -1,4 +1,4 @@
-# Stage 1B — CLIP Encoder Compatibility Validation v0.1
+# Stage 1B — CLIP Encoder Compatibility Validation v0.1.1
 
 Stage 1B identifies a reproducible text/image encoder contract that recreates the
 stored BTC CLIP image-vector space. It reuses the completed Stage 0 manifests and
@@ -15,9 +15,18 @@ path.
 
 The configured thresholds are a `PROJECT_DEFINED_EMPIRICAL_GATE`, not a universal
 CLIP standard. `VERIFIED` requires adequate samples, finite 512-dimensional output,
-pairwise cosine and stored-row retrieval alignment above the configured thresholds,
+pairwise cosine and exact stored-vector-equivalence alignment above the configured thresholds,
 and complete checkpoint, tokenizer, and preprocessing provenance. Dimension or
 folder naming alone never verifies a candidate.
+
+The alignment gate uses `EXACT_STORED_VECTOR_EQUIVALENCE_CLASS`: a returned row
+matches a target only when their canonical stored Stage 1A vectors are exactly
+equal element-for-element. No tolerance, cosine grouping, semantic equivalence, or
+full-corpus duplicate scan is used. Literal global-row Top-1/Top-5/Top-20 remains
+available as `literal_target_alignment`, but it is diagnostic only because stable
+row-ID tie-breaking can return another row with the same exact stored vector.
+`stored_vector_equivalence_alignment` supplies the unchanged Top-1 and Top-5 gate
+thresholds. These measurements are compatibility diagnostics, not Recall@K.
 
 If equivalent implementations pass, candidate-to-candidate cosine is recorded and
 the canonical adapter is chosen by the explicitly configured `runtime_priority`,
@@ -30,7 +39,19 @@ Evidence collection examines a bounded set of small repository and dataset metad
 files. It skips keyframe, object, and video trees. The deterministic probe selects at
 most 100 catalog rows across videos using early, middle, late, partition-spread, and
 seeded-random positions. Each selected JPG is encoded once per enabled candidate and
-compared with the corresponding Stage 1A vector by cosine and exact-search rank.
+compared with the corresponding Stage 1A vector by cosine and exact search. Only
+the returned Top-K rows are batch-loaded from the existing backend to compute the
+literal target-row rank and the best exact stored-vector-equivalent rank.
+
+## Evaluation and selection states
+
+Stage execution, candidate evaluation, and system readiness are reported
+separately. `evaluation_status` records whether evaluation completed;
+`evaluated_candidates` retains every enabled candidate's provenance, runtime,
+metrics, decision, and reasons even when it is rejected or blocked. The selected
+candidate remains null unless a candidate is verified and selected. Consequently,
+a completed empirical rejection is not misreported as a missing checkpoint or
+unknown candidate.
 
 ## Text-search gate
 
