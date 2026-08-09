@@ -67,6 +67,52 @@ no query and no GT, `annotation_plan.csv` remains unassigned, Batch 2 is not rep
 and full preliminary representativeness remains `NOT_ESTABLISHED`. It is not BTC
 official GT.
 
+## Q1-B1B0 annotation queue
+
+Q1-B1B0 is human-review operations infrastructure, not semantic annotation. It adds a
+30-row `category_codebook.csv` (ten KIS, ten Q&A, and ten TRAKE categories), a
+deterministic 60-row `slot_assignment_manifest.csv`, a header-only
+`candidate_review_log.csv`, and an isolated queue helper. No Q1-B1B0 artifact contains a
+query, frame interval, answer alias, event chain, GT, or verified annotation.
+
+The method is **slot first, video second** and freezes two independent orders before
+review:
+
+1. Candidate order remains `candidate_video_manifest.csv`, generated with seed
+   `system_tai_q1b_v1` and consumed by ascending `sample_rank`.
+2. Slot order uses seed `system_tai_q1b_slot_v1`; each slot hash is
+   `SHA256("system_tai_q1b_slot_v1|" + slot_id)`, sorted by `(slot_hash, slot_id)` and
+   assigned one-based `assignment_rank` values.
+
+The current target is the first slot without an `ASSIGN`; the next candidate is the
+smallest unreviewed candidate rank. Review proceeds sequentially without gaps,
+cherry-picking, revisiting, wraparound, or resampling. One candidate can be assigned to
+at most one slot, and one slot can receive at most one assignment. The category codebook
+supplies the definition, acceptance/rejection guidance, and suggested tags for the
+current target.
+
+The only allowed decisions are:
+
+- `SKIP_NO_SUITABLE_EVENT`: raw video was reviewed before retrieval; consume the
+  candidate and keep the same slot open.
+- `SKIP_TECHNICAL_UNREADABLE`: record an explicit technical reason; consume the
+  candidate and keep the same slot open. Raw review may be false when the file could not
+  be reviewed.
+- `ASSIGN`: raw video was reviewed before retrieval; consume the candidate, fill the
+  current slot, and advance to the next deterministic slot and candidate.
+
+`planned_split` remains frozen in `annotation_plan.csv` and the slot manifest for
+internal validation, but is deliberately absent from normal next-target output and the
+human-facing review log. This split blindness prevents development/holdout identity
+from influencing suitability or later annotation choices. Retrieval output must not be
+viewed before a semantic decision.
+
+`ASSIGN` records only that a candidate video suits the planned category. It is not GT,
+does not verify an annotation, and does not modify `annotation_plan.csv`. Future Q1-B1B
+Pass 1 will separately author the query and semantic definition, establish
+original-video frame intervals and task-specific answers/events, and create a draft
+benchmark record for later independent review.
+
 The provenance explicitly covers `CURRENT_873_VIDEO_SNAPSHOT` and `BATCH_1_ONLY`.
 Batch 2 is not represented, and full preliminary representativeness is not established.
 No file in this directory currently contains real GT.

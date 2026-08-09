@@ -110,6 +110,63 @@ contains no query and no GT, `annotation_plan.csv` remains unassigned, Batch 2 i
 represented, and full preliminary representativeness remains `NOT_ESTABLISHED`. This is
 not BTC official GT.
 
+## Q1-B1B0 human annotation queue
+
+Q1-B1B0 adds annotation-operations infrastructure only. It freezes which semantic slot
+is filled first, which independently sampled candidate is reviewed next, and how a
+human records suitability without creating a query, frame interval, answer, event
+chain, ground truth, or verified annotation.
+
+### Slot-first deterministic review
+
+The queue follows two independent deterministic sequences:
+
+- Candidate order is the already frozen `candidate_video_manifest.csv` order generated
+  with seed `system_tai_q1b_v1`.
+- Slot order is generated before semantic video inspection with seed
+  `system_tai_q1b_slot_v1`. For each `slot_id`, compute
+  `SHA256("system_tai_q1b_slot_v1|" + slot_id)`, sort by `(slot_hash, slot_id)`, and
+  assign one-based `assignment_rank` values.
+
+The first slot without an `ASSIGN` decision is always the current target. The smallest
+unreviewed candidate `sample_rank` is always the next video. Candidate ranks are
+consumed strictly and never cherry-picked, revisited, wrapped, or resampled. A candidate
+can be assigned to at most one slot, and a slot can receive at most one assignment.
+Changing the target category after seeing a video is prohibited.
+
+`category_codebook.csv` defines 30 categories: ten each for KIS, Q&A, and TRAKE. It
+provides the category name, definition, acceptance and rejection guidance, and suggested
+tags shown during raw-video review. `slot_assignment_manifest.csv` freezes the 60-slot
+execution order. `candidate_review_log.csv` is header-only in Q1-B1B0 and will record
+future decisions without query text, frame IDs, answer aliases, event intervals, GT, or
+`planned_split`.
+
+### Review decisions and split blindness
+
+Only these decisions are permitted:
+
+- `SKIP_NO_SUITABLE_EVENT`: the human reviewed the raw video before retrieval and found
+  no suitable event for the current category. The candidate is permanently consumed;
+  the slot remains open for the next candidate.
+- `SKIP_TECHNICAL_UNREADABLE`: a concrete technical problem prevented review. The
+  candidate is permanently consumed, the reason is recorded, and the slot remains open;
+  `raw_video_reviewed` may be false because this is not a semantic rejection.
+- `ASSIGN`: the human reviewed the raw video before retrieval and judged it suitable for
+  the current category. The candidate and slot are permanently consumed, then both
+  deterministic sequences advance.
+
+The queue validates `planned_split` internally but never exposes development/holdout
+status in its normal next-target output or human-facing review log. Split membership
+must not influence suitability, future query wording, or future GT boundaries. Semantic
+decisions require raw-original-video review and `reviewed_before_retrieval = true`; no
+`system_tai` prediction may be inspected first.
+
+`ASSIGN` means only candidate suitability for a planned category slot. It is not a
+query, completed annotation, GT record, or verification decision, and it does not
+populate `annotation_plan.csv`. Future Q1-B1B Pass 1 will separately author and freeze
+the semantic query, definition, original-frame intervals, Q&A answers or TRAKE events,
+and a draft benchmark record before independent verification.
+
 ## Annotation-before-retrieval rule
 
 Before inspecting any `system_tai` prediction, the annotator must:
