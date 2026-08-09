@@ -1,0 +1,13 @@
+reference_experiment: RT1
+
+control:
+  top_k: 100
+
+dante:
+  lambda: 0.001
+  lambda_source: PAPER_REFERENCE_NOT_TUNED_ON_AIC2026
+
+output:
+  chain_top_k: 20
+  visual_top_k: 3
+  review_seed: 2026

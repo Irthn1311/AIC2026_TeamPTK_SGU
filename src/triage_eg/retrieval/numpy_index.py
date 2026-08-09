@@ -40,20 +40,31 @@ class NumPyFlatCosineIndex:
         self._vectors = matrix / norms
         self._ids = np.asarray(ids, dtype=str)
 
-    def search(self, query_vectors: np.ndarray, top_k: int) -> tuple[np.ndarray, np.ndarray]:
-        """Search one or more queries and return descending scores and IDs."""
+    def score_many_all(self, query_vectors: np.ndarray) -> np.ndarray:
+        """Return exact cosine scores for every query and indexed row."""
 
         if self._vectors is None or self._ids is None:
             raise RuntimeError("Index must be built before search")
         queries = np.asarray(query_vectors, dtype=np.float32)
         if queries.ndim != 2 or queries.shape[1] != self.dimension:
             raise ValueError(f"queries must have shape (n, {self.dimension})")
-        if top_k <= 0:
-            raise ValueError("top_k must be greater than zero")
         norms = np.linalg.norm(queries, axis=1, keepdims=True)
         if np.any(norms == 0):
             raise ValueError("zero query vectors are invalid for cosine search")
-        similarities = (queries / norms) @ self._vectors.T
+        return (queries / norms) @ self._vectors.T
+
+    def score_all(self, query_vector: np.ndarray) -> np.ndarray:
+        """Return exact cosine scores for one query in index-row order."""
+
+        scores = self.score_many_all(np.asarray(query_vector, dtype=np.float32).reshape(1, -1))
+        return scores[0]
+
+    def search(self, query_vectors: np.ndarray, top_k: int) -> tuple[np.ndarray, np.ndarray]:
+        """Search one or more queries and return descending scores and IDs."""
+
+        if top_k <= 0:
+            raise ValueError("top_k must be greater than zero")
+        similarities = self.score_many_all(query_vectors)
         result_count = min(top_k, self.size)
         order = np.argsort(-similarities, axis=1, kind="stable")[:, :result_count]
         return np.take_along_axis(similarities, order, axis=1), self._ids[order]
@@ -101,6 +112,53 @@ class NumPyMemmapExactIndex:
             raise IndexError("vector row selection is out of range")
         return np.asarray(self._vectors[indices], dtype=np.float32)
 
+    def _validated_queries(self, query_vectors: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        queries = np.asarray(query_vectors, dtype=np.float32)
+        if queries.ndim == 1:
+            queries = queries.reshape(1, -1)
+        if queries.ndim != 2 or queries.shape[0] == 0 or queries.shape[1] != self.dimension:
+            raise ValueError(f"queries must have shape (n, {self.dimension})")
+        if not np.isfinite(queries).all():
+            raise ValueError("query vectors must be finite")
+        query_norms = np.linalg.norm(queries, axis=1)
+        if np.any(query_norms == 0):
+            raise ValueError("zero-norm query vectors are invalid")
+        return queries, query_norms
+
+    def _score_chunk(
+        self,
+        queries: np.ndarray,
+        query_norms: np.ndarray,
+        start: int,
+        stop: int,
+    ) -> np.ndarray:
+        """Score one corpus chunk; shared by full scoring and top-k search."""
+
+        chunk = np.asarray(self._vectors[start:stop], dtype=np.float32)
+        chunk_scores = chunk @ queries.T
+        if self.metric == "cosine":
+            denominator = self._norms[start:stop, None] * query_norms[None, :]
+            chunk_scores = chunk_scores / denominator
+        return chunk_scores.astype(np.float32, copy=False)
+
+    def score_many_all(self, query_vectors: np.ndarray) -> np.ndarray:
+        """Return exact scores shaped ``(queries, corpus rows)`` without sorting."""
+
+        queries, query_norms = self._validated_queries(query_vectors)
+        scores = np.empty((len(queries), self.size), dtype=np.float32)
+        for start in range(0, self.size, self.chunk_rows):
+            stop = min(start + self.chunk_rows, self.size)
+            scores[:, start:stop] = self._score_chunk(queries, query_norms, start, stop).T
+        return scores
+
+    def score_all(self, query_vector: np.ndarray) -> np.ndarray:
+        """Return exact scores for one query in canonical global-row order."""
+
+        scores = self.score_many_all(query_vector)
+        if len(scores) != 1:
+            raise ValueError("score_all accepts exactly one query vector")
+        return scores[0]
+
     @staticmethod
     def _bounded_topk(
         scores: np.ndarray, rows: np.ndarray, result_count: int
@@ -122,28 +180,15 @@ class NumPyMemmapExactIndex:
         return scores[selected], rows[selected]
 
     def search(self, query_vectors: np.ndarray, top_k: int) -> tuple[np.ndarray, np.ndarray]:
-        queries = np.asarray(query_vectors, dtype=np.float32)
-        if queries.ndim == 1:
-            queries = queries.reshape(1, -1)
-        if queries.ndim != 2 or queries.shape[0] == 0 or queries.shape[1] != self.dimension:
-            raise ValueError(f"queries must have shape (n, {self.dimension})")
-        if not np.isfinite(queries).all():
-            raise ValueError("query vectors must be finite")
+        queries, query_norms = self._validated_queries(query_vectors)
         if top_k <= 0:
             raise ValueError("top_k must be positive")
-        query_norms = np.linalg.norm(queries, axis=1)
-        if np.any(query_norms == 0):
-            raise ValueError("zero-norm query vectors are invalid")
         result_count = min(top_k, self.size)
         best_scores = [np.empty(0, dtype=np.float32) for _ in queries]
         best_rows = [np.empty(0, dtype=np.int64) for _ in queries]
         for start in range(0, self.size, self.chunk_rows):
             stop = min(start + self.chunk_rows, self.size)
-            chunk = np.asarray(self._vectors[start:stop], dtype=np.float32)
-            chunk_scores = chunk @ queries.T
-            if self.metric == "cosine":
-                denominator = self._norms[start:stop, None] * query_norms[None, :]
-                chunk_scores = chunk_scores / denominator
+            chunk_scores = self._score_chunk(queries, query_norms, start, stop)
             rows = np.arange(start, stop, dtype=np.int64)
             for query_index in range(len(queries)):
                 combined_scores = np.concatenate(

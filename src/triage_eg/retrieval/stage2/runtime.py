@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from time import monotonic
@@ -48,6 +48,17 @@ ClipPreparer = Callable[
 TranslatorValidator = Callable[[str | Path], dict[str, Any]]
 EncoderFactory = Callable[[CandidateContract], Any]
 TranslatorFactory = Callable[[Path, TranslatorConfig, GenerationConfig], Any]
+
+
+@dataclass(frozen=True)
+class EncodedQueryBatch:
+    """Validated Stage 2A language-path outputs without retrieval side effects."""
+
+    embeddings: np.ndarray
+    resolutions: tuple[LanguageResolution, ...]
+    encodings: tuple[dict[str, Any], ...]
+    latencies_ms: tuple[dict[str, float], ...]
+    batch_latency_ms: float
 
 
 def _json(path: Path, *, error_code: str) -> dict[str, Any]:
@@ -373,18 +384,16 @@ class OperationalRetrievalRuntime:
 
         return self.search_many(request) if isinstance(request, list) else self.search_one(request)
 
-    def search_many(self, requests: list[QueryRequest]) -> list[QueryResult]:
+    def encode_requests(self, requests: list[QueryRequest]) -> EncodedQueryBatch:
+        """Apply the frozen Stage 2A language path and verified CLIP encoder."""
+
         if not self.loaded:
             raise RuntimeError("OperationalRetrievalRuntime.load() must be called first")
         if not requests:
-            return []
-        if len({item.query_id for item in requests}) != len(requests):
-            raise ValueError("query_id values must be unique within a batch")
-        if any(item.top_k > self.config.max_top_k for item in requests):
-            raise ValueError(f"top_k exceeds configured maximum {self.config.max_top_k}")
-        started = [monotonic() for _ in requests]
+            raise ValueError("encode_requests requires at least one request")
+        batch_started = monotonic()
         resolutions: list[LanguageResolution] = []
-        language_ms = []
+        language_ms: list[float] = []
         for request in requests:
             route_started = monotonic()
             resolutions.append(resolve_language(request))
@@ -421,11 +430,58 @@ class OperationalRetrievalRuntime:
         norms = np.linalg.norm(embeddings, axis=1)
         if not np.allclose(norms, 1.0, rtol=0.0, atol=1e-4):
             raise Stage2RuntimeError("CLIP_ENCODING_FAILED", "embeddings are not normalized")
+        encodings = []
+        latencies = []
+        for index, request in enumerate(requests):
+            translation = translated.get(index)
+            encodings.append(
+                {
+                    "original_query_text": request.text.strip(),
+                    "resolved_language": resolutions[index].resolved_language,
+                    "translation_applied": translation is not None,
+                    "translated_text": (
+                        translation["translated_text_for_clip"] if translation else None
+                    ),
+                    "clip_input_text": clip_inputs[index],
+                    "clip_candidate_id": self.preflight["stage1b_candidate_id"],
+                    "embedding_dimension": 512,
+                    "embedding_finite": True,
+                    "embedding_normalized": True,
+                }
+            )
+            latencies.append(
+                {
+                    "language_resolution_ms": language_ms[index],
+                    "translation_ms": float(
+                        translation.get("translation_latency_ms", 0.0) if translation else 0.0
+                    ),
+                    "clip_encoding_ms": clip_elapsed_ms / len(requests),
+                }
+            )
+        return EncodedQueryBatch(
+            embeddings,
+            tuple(resolutions),
+            tuple(encodings),
+            tuple(latencies),
+            (monotonic() - batch_started) * 1000,
+        )
+
+    def search_many(self, requests: list[QueryRequest]) -> list[QueryResult]:
+        if not self.loaded:
+            raise RuntimeError("OperationalRetrievalRuntime.load() must be called first")
+        if not requests:
+            return []
+        if len({item.query_id for item in requests}) != len(requests):
+            raise ValueError("query_id values must be unique within a batch")
+        if any(item.top_k > self.config.max_top_k for item in requests):
+            raise ValueError(f"top_k exceeds configured maximum {self.config.max_top_k}")
+        started = [monotonic() for _ in requests]
+        encoded = self.encode_requests(requests)
         results = []
         for index, request in enumerate(requests):
             try:
                 frames, search_seconds = rank_loaded_query(
-                    embeddings[index : index + 1],
+                    encoded.embeddings[index : index + 1],
                     self.backend,
                     self.catalog,
                     top_k=request.top_k,
@@ -435,26 +491,9 @@ class OperationalRetrievalRuntime:
                 )
             except (IndexError, RuntimeError, TypeError, ValueError) as error:
                 raise Stage2RuntimeError("SEARCH_FAILED", str(error)) from error
-            translation = translated.get(index)
-            encoding = {
-                "original_query_text": request.text.strip(),
-                "resolved_language": resolutions[index].resolved_language,
-                "translation_applied": translation is not None,
-                "translated_text": (
-                    translation["translated_text_for_clip"] if translation else None
-                ),
-                "clip_input_text": clip_inputs[index],
-                "clip_candidate_id": self.preflight["stage1b_candidate_id"],
-                "embedding_dimension": 512,
-                "embedding_finite": True,
-                "embedding_normalized": True,
-            }
+            encoding = encoded.encodings[index]
             latencies = {
-                "language_resolution_ms": language_ms[index],
-                "translation_ms": float(
-                    translation.get("translation_latency_ms", 0.0) if translation else 0.0
-                ),
-                "clip_encoding_ms": clip_elapsed_ms / len(requests),
+                **encoded.latencies_ms[index],
                 "search_ms": search_seconds * 1000,
                 "artifact_write_ms": 0.0,
                 "total_ms": (monotonic() - started[index]) * 1000,
@@ -462,7 +501,7 @@ class OperationalRetrievalRuntime:
             query_root, videos, artifact_ms = write_operational_query_artifacts(
                 self.config.output_root,
                 request,
-                resolutions[index],
+                encoded.resolutions[index],
                 encoding,
                 frames,
                 latencies,
@@ -472,7 +511,7 @@ class OperationalRetrievalRuntime:
             result = QueryResult(
                 request.query_id,
                 asdict(request),
-                resolutions[index].as_dict(),
+                encoded.resolutions[index].as_dict(),
                 encoding,
                 frames,
                 videos,
@@ -484,8 +523,8 @@ class OperationalRetrievalRuntime:
                 {
                     "query_id": request.query_id,
                     "requested_language": request.language,
-                    "resolved_language": resolutions[index].resolved_language,
-                    "translation_applied": translation is not None,
+                    "resolved_language": encoded.resolutions[index].resolved_language,
+                    "translation_applied": encoding["translation_applied"],
                     "top_k": request.top_k,
                     "results": len(frames),
                     "latencies_ms": latencies,
@@ -599,4 +638,4 @@ def preflight_stage2(
         runtime.close()
 
 
-__all__ = ["OperationalRetrievalRuntime", "preflight_stage2"]
+__all__ = ["EncodedQueryBatch", "OperationalRetrievalRuntime", "preflight_stage2"]

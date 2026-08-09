@@ -9,9 +9,10 @@ from .contracts import (
 )
 from .language import LanguageResolution, resolve_language
 from .results import QueryResult, grouped_video_view
-from .runtime import OperationalRetrievalRuntime, preflight_stage2
+from .runtime import EncodedQueryBatch, OperationalRetrievalRuntime, preflight_stage2
 
 __all__ = [
+    "EncodedQueryBatch",
     "LanguageResolution",
     "OperationalRetrievalRuntime",
     "QueryRequest",
