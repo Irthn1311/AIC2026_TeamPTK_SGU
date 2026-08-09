@@ -36,8 +36,10 @@ try:
     from transformers import AutoModelForConditionalGeneration, AutoProcessor
     from qwen_vl_utils import process_vision_info
     _QWEN_AVAILABLE = True
-except ImportError:
+    _QWEN_IMPORT_ERR = None
+except ImportError as e:
     _QWEN_AVAILABLE = False
+    _QWEN_IMPORT_ERR = e
 
 
 class QwenVLClient:
@@ -83,11 +85,21 @@ class QwenVLClient:
 
     def load(self) -> "QwenVLClient":
         """Load Qwen2.5-VL model and processor."""
+        global _QWEN_AVAILABLE, _QWEN_IMPORT_ERR
         if not _QWEN_AVAILABLE:
-            raise ImportError(
-                "transformers or qwen-vl-utils not installed. "
-                "Run: pip install transformers qwen-vl-utils accelerate bitsandbytes"
-            )
+            try:
+                import torch
+                from transformers import AutoModelForConditionalGeneration, AutoProcessor
+                from qwen_vl_utils import process_vision_info
+                _QWEN_AVAILABLE = True
+                _QWEN_IMPORT_ERR = None
+            except ImportError as e:
+                _QWEN_AVAILABLE = False
+                _QWEN_IMPORT_ERR = e
+                raise ImportError(
+                    f"Qwen dependencies import failed ({e}). "
+                    "Run: pip install transformers qwen-vl-utils accelerate bitsandbytes"
+                )
 
         logger.info(f"Loading {self.model_name} (4bit={self.load_in_4bit}, device={self.device})")
 
