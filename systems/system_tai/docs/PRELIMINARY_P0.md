@@ -109,11 +109,20 @@ This phase implements the exact preliminary task schemas and evaluation semantic
 
 ## PRELIMINARY P0-E: Final Runtime-to-Canonical-Top100 Integration
 
-- **Status**: LOCAL IMPLEMENTATION / REVIEW PENDING.
+- **Status**: COMPLETE / FROZEN at code commit `efb4b3dd54cb632809483796b4b09713f750e884`; remote audit PASS; final Kaggle/T4 E2E PASS.
 - Bridges the final runtime-native KIS result and the existing Q&A/TRAKE P0-A predictions into P0-D `RankedTop100Query` objects without sorting, rank compaction, or frame conversion.
 - Audits only the existing prediction artifacts: KIS `top100.jsonl` or `refined_top100.jsonl` according to the final selected stage, Q&A `qa_predictions.jsonl`, and TRAKE `trake_predictions.jsonl`.
 - Creates no additional task prediction artifact and does not change public response fields or the accepted per-request artifact key sets.
 - Non-empty artifacts are strict-loaded through P0-D and must equal the canonical in-memory `RankedTop100Dataset` exactly.
 - A zero-prediction query remains valid in memory. Its existing zero-byte or whitespace-only artifact is accepted with `EMPTY_QUERY_UNREPRESENTABLE`; any non-empty record fails closed. P0-D remains unchanged and no pseudo-record is introduced.
 - Canonical query predictions feed directly into the existing P0-A KIS, Q&A, and TRAKE evaluation functions. P0-E does not reimplement scoring.
-- P0-E proves runtime-memory/artifact roundtrip correctness, not competition semantic accuracy. It makes no official BTC upload-format claim; final Kaggle E2E acceptance remains pending.
+- **KIS final real E2E**: `SUCCESS`, wall `18.124886s`, 20 final predictions with 3 refined candidates, final canonical artifact `refined_top100.jsonl`, and P0-E roundtrip `EXACT`. The audit took approximately `0.000305s`; no new P0-E artifact was created.
+- **Q&A final real E2E**: `SUCCESS`, wall `17.799365s`, question type `COLOR`, 3 predictions, and P0-E roundtrip `EXACT`. The exact four artifacts remain `qa_predictions.jsonl`, `qa_evidence.json`, `qa_request_manifest.json`, and `qa_timings.json`; the audit took approximately `0.000215s`.
+- **TRAKE final real E2E**: retrieval median `4.731498s`, refinement median `16.360532s`, full wall median `21.120408s`, and P0-E audit median approximately `0.000422s`. Both measured runs used 382 physical image rows/request, 8 image encode calls/request, 1 `search_vectors` call/request, and 0 `search_vector` calls/request. FULL20 RUN1 equals RUN2, the historical golden Top3 is preserved, and P0-E roundtrip is `EXACT`. Against the accepted OPT2 benchmark, retrieval changed by `-2.14%`, refinement by `-3.15%`, and full wall by `-4.55%`; no P0-E performance regression was observed.
+- The global KIS/Q&A/TRAKE request-ID namespace rejected a cross-task duplicate correctly: PASS.
+- Final acceptance used Tesla T4/CUDA, official OpenAI CLIP ViT-B/32, and the verified 873-video/177321-row/873-raw-video corpus with manifest fingerprint `b0c5ea97a9d5e10dbb7e77dba18d153191218935e2a3275ef888e0a8a83ed6e4`.
+- Fresh bootstrap took `619.136776s`, including `588.613069s` in family indexing (`CACHE_BUILT`). This remains known cold-start infrastructure debt; it is not solved and is not a P0-E regression.
+- P0-E proves technical runtime correctness, exact artifact consistency, deterministic boundary behavior, regression safety, and measured technical performance. Competition semantic accuracy remains **NOT ESTABLISHED**: no claim is made for hidden/real-GT KIS Recall@K, Q&A answer accuracy, or TRAKE event-grounding accuracy.
+- P0-D remains the canonical preliminary **internal checkpoint** boundary. An official BTC upload artifact format is **not confirmed or claimed**.
+
+**P0-A / P0-B / P0-C / P0-OPT1 / P0-OPT2 / P0-D / P0-E form the frozen Preliminary technical baseline at code commit `efb4b3dd54cb632809483796b4b09713f750e884`.**

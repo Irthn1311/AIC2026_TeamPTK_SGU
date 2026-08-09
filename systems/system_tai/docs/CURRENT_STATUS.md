@@ -6,11 +6,11 @@
 
 ## Summary
 
-PRELIMINARY P0-A (official schemas, strict int, GT contracts, evaluation) is COMPLETE.
-PRELIMINARY P0-B1 (evidence-grounded closed-set Q&A baseline core) is COMPLETE.
-PRELIMINARY P0-B2 / P0-B2.1 (shared-runtime Q&A vertical slice & compatibility hotfix) is COMPLETE.
-PRELIMINARY P0-C1 (deterministic same-video temporal-chain TRAKE core) is COMPLETE.
-PRELIMINARY P0-C2 (shared-runtime TRAKE vertical slice) is COMPLETE (Kaggle/T4 technical acceptance PASS, commit `6849324769820dca27ae9b338b2bb5cfe178c436`).
+PRELIMINARY P0-A (official schemas, strict int, GT contracts, evaluation) is COMPLETE / FROZEN.
+PRELIMINARY P0-B1 (evidence-grounded closed-set Q&A baseline core) is COMPLETE / FROZEN.
+PRELIMINARY P0-B2 / P0-B2.1 (shared-runtime Q&A vertical slice & compatibility hotfix) is COMPLETE / FROZEN.
+PRELIMINARY P0-C1 (deterministic same-video temporal-chain TRAKE core) is COMPLETE / FROZEN.
+PRELIMINARY P0-C2 (shared-runtime TRAKE vertical slice) is COMPLETE / FROZEN (Kaggle/T4 technical acceptance PASS, commit `6849324769820dca27ae9b338b2bb5cfe178c436`).
 PRELIMINARY P0-OPT1 (request-scoped raw-frame CLIP image embedding reuse) is COMPLETE / FROZEN (commit `977ccf55b3cdb782052f41cec1edd65259395473`):
 - Request-scoped image embedding cache keyed by `(video_id, absolute_frame_id)`.
 - Eliminates duplicate model image inference across coarse/fine stages and multiple event refinement calls within a TRAKE request.
@@ -33,13 +33,21 @@ PRELIMINARY P0-D (Unified Top-100 Internal Checkpoint Boundary) is COMPLETE / FR
 - This is the canonical preliminary internal checkpoint boundary, not a confirmed official BTC upload format.
 - No Kaggle or semantic-accuracy claim is made for P0-D.
 
-PRELIMINARY P0-E (Final Runtime-to-Canonical-Top100 Integration) is LOCAL IMPLEMENTATION / REVIEW PENDING:
+PRELIMINARY P0-E (Final Runtime-to-Canonical-Top100 Integration) is COMPLETE / FROZEN at code commit `efb4b3dd54cb632809483796b4b09713f750e884` (remote audit PASS; final Kaggle/T4 E2E PASS):
 - Converts final KIS runtime results and directly wraps Q&A/TRAKE P0-A predictions as P0-D `RankedTop100Query` objects.
 - Audits the existing `top100.jsonl` or `refined_top100.jsonl`, `qa_predictions.jsonl`, and `trake_predictions.jsonl`; it creates no new prediction artifact.
 - Requires exact runtime-memory to artifact equality after strict P0-D loading, including physical prediction order, non-contiguous ranks, Q&A Unicode/whitespace, and TRAKE event-frame order.
 - Handles zero-prediction queries explicitly: an empty or whitespace-only existing artifact is accepted as `EMPTY_QUERY_UNREPRESENTABLE` without weakening P0-D record-only JSONL.
 - Canonical predictions are directly consumable by the existing P0-A evaluator without another translation layer.
-- This is an internal fail-closed integration invariant, not a confirmed official BTC upload format or semantic-accuracy result. Final Kaggle E2E acceptance remains pending.
+- Final KIS real E2E: `SUCCESS`, wall `18.124886s`, 20 results, 3 refined, canonical `refined_top100.jsonl`, P0-E roundtrip `EXACT`, audit wall approximately `0.000305s`; the existing KIS artifact contract is unchanged.
+- Final Q&A real E2E: `SUCCESS`, wall `17.799365s`, question type `COLOR`, 3 predictions, P0-E roundtrip `EXACT`, audit wall approximately `0.000215s`; the exact four artifacts remain `qa_predictions.jsonl`, `qa_evidence.json`, `qa_request_manifest.json`, and `qa_timings.json`.
+- Final TRAKE real E2E medians: retrieval `4.731498s`, refinement `16.360532s`, full wall `21.120408s`, and P0-E audit approximately `0.000422s`. Both measured runs retained 382 physical image rows/request, 8 image encode calls/request, 1 `search_vectors` call/request, and 0 `search_vector` calls/request. FULL20 RUN1 equals RUN2 and the historical golden Top3 is preserved. Against the accepted OPT2 benchmark, retrieval changed by `-2.14%`, refinement by `-3.15%`, and full wall by `-4.55%`; no P0-E performance regression was observed.
+- The accepted corpus had 873 videos, 177321 CLIP feature rows, 873 raw videos, and manifest fingerprint `b0c5ea97a9d5e10dbb7e77dba18d153191218935e2a3275ef888e0a8a83ed6e4`; execution used official OpenAI CLIP ViT-B/32 on Tesla T4/CUDA with shared encoder identity PASS.
+- Cold bootstrap remains known infrastructure debt: `619.136776s` total with `588.613069s` in family indexing (`CACHE_BUILT`). It is not a P0-E regression and is not solved here.
+- Known KIS telemetry accounting debt includes per-variant `search_vector` work in text-encode timing while `retrieval_seconds` mostly reflects later fusion; this does not affect ranking correctness, and `0.0011s` must not be presented as true vector-retrieval latency.
+- This is an internal fail-closed integration invariant, not a confirmed official BTC upload format or semantic-accuracy result. Competition semantic accuracy remains NOT ESTABLISHED.
+
+**PRELIMINARY TECHNICAL BASELINE is COMPLETE / FROZEN at code commit `efb4b3dd54cb632809483796b4b09713f750e884`.**
 
 The workbook and Canva design have been reviewed. Phase 1 input auditing, Phase 1.5C
 compatibility calibration, the Phase 2 exact NumPy KIS implementation, Phase 2.5
@@ -62,7 +70,7 @@ No TRIAGE-EG source, tests, configs, documentation, or generated assets belong t
 | Area | Status | Evidence | Limitation |
 |---|---|---|---|
 | System design | PLANNED | Workbook and Canva design reviewed; only the minimal KIS slice is implemented. | Broader design is not runtime evidence. |
-| Shared checkpoint boundary | PLANNED | Core KIS fields resolved as `query_id`, `rank`, `video_id`, `frame_id`; UTF-8 JSONL proposed | Optional envelope/version fields remain open. |
+| Shared checkpoint boundary | IMPLEMENTED / FROZEN | P0-D strict unified Top100 internal boundary plus P0-E exact runtime/artifact integration | Official BTC upload artifact format is not confirmed. |
 | Benchmark video catalog | IMPLEMENTED | `src/system_tai/data/video_catalog.py` and acceptance tests | Requires authoritative real catalog data. |
 | Frame mapping | IMPLEMENTED | `frame_idx` is preserved exactly; three real mapping-policy gates pass | Dataset-wide behavior beyond three videos is pending. |
 | BTC CLIP store | IMPLEMENTED | Temporary-NPY tests and real finite/shape/row audits on three videos | Compatibility evidence remains limited to three videos. |
@@ -88,8 +96,8 @@ No TRIAGE-EG source, tests, configs, documentation, or generated assets belong t
 | Phase 3.1 inspection/reproducibility | IMPLEMENTED | Explicit none/top-n/all modes, lazy per-video Path-only thumbnail indexes, isolated/combined record reuse, fast mode, detailed export timings, and run summary IDs | Phase 3.1 needs a real Kaggle retry; Pillow remains optional for contact sheets. |
 | Legacy interval fixture evaluator | PLANNED | Interface specified | Superseded for Phase 2.5 by the implemented exact-label evaluator; not an official evaluator. |
 | Official BTC exporter | DEFERRED | Separate boundary recognized | Official format is unresolved. |
-| Q&A (P0-B1/B2) | BASELINE | `system_tai.qa` closed-set baseline & session runtime | Kaggle/T4 technical acceptance PASS; semantic QA quality pending. |
-| TRAKE (P0-C1/C2) | BASELINE | `system_tai.trake` deterministic temporal core & session runtime | Kaggle acceptance pending / NOT RUN YET; local runtime complete. |
+| Q&A (P0-B1/B2) | BASELINE / FROZEN | `system_tai.qa` closed-set baseline, session runtime, and final Kaggle/T4 E2E PASS | Semantic QA accuracy on competition ground truth is not established. |
+| TRAKE (P0-C1/C2) | BASELINE / FROZEN | `system_tai.trake` deterministic temporal core, session runtime, and final Kaggle/T4 E2E PASS | Semantic TRAKE event-grounding accuracy on competition ground truth is not established. |
 | Backend and production frontend | DEFERRED | Personal design and untracked prototype | Outside the first slice. |
 | Agent/GNN/Event Graph/VLM/OCR/ASR | DEFERRED | Optional design ideas | Explicitly excluded. |
 
