@@ -74,8 +74,20 @@ class FaissDB:
             normalize:  L2-normalize vectors for cosine similarity
         """
         npy_dir = Path(npy_dir)
-        npy_files = sorted(npy_dir.glob("*.npy"))
-        logger.info(f"Found {len(npy_files)} .npy files in {npy_dir}")
+        npy_files = sorted(
+            list(npy_dir.glob("*.npy")) + list(npy_dir.glob("*/*.npy")) + list(npy_dir.rglob("*.npy")),
+            key=lambda p: p.stem
+        )
+        # Deduplicate paths preserving order
+        seen_stems = set()
+        unique_npy_files = []
+        for p in npy_files:
+            if p.stem not in seen_stems:
+                seen_stems.add(p.stem)
+                unique_npy_files.append(p)
+        npy_files = unique_npy_files
+
+        logger.info(f"Found {len(npy_files)} unique .npy files in {npy_dir}")
 
         if not npy_files:
             raise FileNotFoundError(f"No .npy files found in {npy_dir}")

@@ -58,6 +58,7 @@ class VisualRetriever(BaseRetriever):
         self,
         query: str,
         top_k: int = 100,
+        target_prefix: Optional[str] = None,
     ) -> List[SearchResult]:
         """
         Search FAISS for keyframes visually similar to the text query.
@@ -65,6 +66,7 @@ class VisualRetriever(BaseRetriever):
         Args:
             query: Natural language description (Vietnamese or English)
             top_k: Number of candidates to return
+            target_prefix: e.g. "L21", "L23" (if specified, filter results to this prefix)
 
         Returns:
             List[SearchResult] sorted by cosine similarity score descending
@@ -72,8 +74,9 @@ class VisualRetriever(BaseRetriever):
         # 1. Encode query text → CLIP vector
         query_vec = self._encoder.encode_text(query, normalize=True)
 
-        # 2. FAISS ANN search
-        faiss_ids, scores = self._faiss_db.search(query_vec, top_k=top_k)
+        # 2. FAISS ANN search (fetch extra candidates if filtering by prefix)
+        search_k = max(top_k * 20, 2000) if target_prefix else top_k
+        faiss_ids, scores = self._faiss_db.search(query_vec, top_k=search_k)
 
         # 3. Map faiss_id → KeyframeMeta → SearchResult
         results: List[SearchResult] = []
@@ -84,6 +87,10 @@ class VisualRetriever(BaseRetriever):
             if meta is None:
                 logger.warning(f"No metadata for faiss_id={fid}")
                 continue
+
+            if target_prefix and not meta.video_id.startswith(target_prefix):
+                continue
+
             results.append(SearchResult(
                 keyframe_id=meta.keyframe_id,
                 video_id=meta.video_id,
@@ -93,8 +100,10 @@ class VisualRetriever(BaseRetriever):
                 score=float(score),
                 retriever_source=self.name,
             ))
+            if len(results) >= top_k:
+                break
 
-        logger.debug(f"[{self.name}] query='{query[:50]}' → {len(results)} results")
+        logger.debug(f"[{self.name}] query='{query[:50]}' (prefix={target_prefix}) → {len(results)} results")
         return results
 
     def retrieve_by_vector(

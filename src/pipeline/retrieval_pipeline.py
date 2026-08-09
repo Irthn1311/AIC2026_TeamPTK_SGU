@@ -242,10 +242,11 @@ class RetrievalPipeline:
     ) -> Optional[EvidenceResult]:
         """Text → CLIP → FAISS → (Qdrant / InMemory OCR) → RRF → best frame."""
         raw_text = query_dict.get("text") or query_dict.get("description", "")
+        target_prefix = query_dict.get("target_prefix")
         kis_query = self._parser.parse_kis(raw_text, top_k=self._top_k_ret)
         retrieval_text = self._parser.build_retrieval_text(kis_query)
 
-        vis_results  = self._vis_ret.retrieve(retrieval_text, top_k=self._top_k_ret)
+        vis_results  = self._vis_ret.retrieve(retrieval_text, top_k=self._top_k_ret, target_prefix=target_prefix)
         all_lists    = [vis_results]
         all_weights  = [self._visual_weight]
 
@@ -285,7 +286,10 @@ class RetrievalPipeline:
             logger.warning(
                 "[QA] VLM not loaded — using visual retrieval with heuristic fallback answer."
             )
-            evidence = self._run_kis({"text": f"{event_desc} {question}"}, query_id)
+            evidence = self._run_kis({
+                "text": f"{event_desc} {question}",
+                "target_prefix": query_dict.get("target_prefix"),
+            }, query_id)
             if evidence:
                 # Fill metadata["answer"] using fallback heuristic
                 from src.pipeline.qa_pipeline import QAPipeline

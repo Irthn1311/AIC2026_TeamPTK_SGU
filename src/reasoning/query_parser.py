@@ -275,43 +275,42 @@ class QueryParser:
 
     def build_retrieval_text(self, kis_query: "TextualKISQuery") -> str:
         """
-        Build the final retrieval text string to encode with CLIP (v2).
+        Build retrieval prompt for CLIP (v3 — English-First Strategy).
 
-        Strategy:
-          1. Full raw_text (Vietnamese context)
-          2. Translated colors (Vi→En) — CLIP is English-dominant
-          3. Translated scene context
-          4. Object labels (CLIP responds well to English nouns)
-          5. Spatial hints (translated)
-          6. OCR keywords ("text on screen: VTV1")
-          7. Action translation (wearing, standing, speaking...)
+        Puts high-precision English visual terms FIRST to ensure they fall within
+        CLIP's 77-token context limit, followed by concise raw Vietnamese text.
         """
-        parts = [kis_query.raw_text]
+        en_parts = []
 
-        # 1. Colors — translate compound first, then simple
+        # 1. Scene translation (English)
+        raw_lower = kis_query.raw_text.lower()
+        if kis_query.parsed_scene:
+            scene_en = kis_query.parsed_scene
+            for vi, en in _VI_TO_EN_SCENES.items():
+                if vi in raw_lower:
+                    scene_en = en
+                    break
+            en_parts.append(scene_en)
+
+        # 2. Action translation (English)
+        for vi_action, en_action in _VI_TO_EN_ACTIONS.items():
+            if vi_action in raw_lower:
+                en_parts.append(en_action)
+
+        # 3. Object labels (English)
+        if kis_query.parsed_objects:
+            en_parts.append(", ".join(kis_query.parsed_objects))
+
+        # 4. Colors (English)
         color_en_terms = []
         for vi_color in kis_query.parsed_colors:
             en = _VI_TO_EN_COLORS.get(vi_color, vi_color)
             if en not in color_en_terms:
                 color_en_terms.append(en)
         if color_en_terms:
-            parts.append("wearing " + " and ".join(color_en_terms))
+            en_parts.append("wearing " + " and ".join(color_en_terms))
 
-        # 2. Scene translation
-        if kis_query.parsed_scene:
-            scene_en = kis_query.parsed_scene
-            raw_lower = kis_query.raw_text.lower()
-            for vi, en in _VI_TO_EN_SCENES.items():
-                if vi in raw_lower:
-                    scene_en = en
-                    break
-            parts.append(scene_en)
-
-        # 3. Object labels
-        if kis_query.parsed_objects:
-            parts.append(", ".join(kis_query.parsed_objects))
-
-        # 4. Spatial hints translated
+        # 5. Spatial hints (English)
         spatial_en = []
         for hint in kis_query.spatial_hints:
             translated = hint
@@ -321,22 +320,17 @@ class QueryParser:
                     break
             spatial_en.append(translated)
         if spatial_en:
-            parts.append(", ".join(spatial_en))
+            en_parts.append(", ".join(spatial_en))
 
-        # 5. OCR keywords
+        # 6. OCR keywords
         if kis_query.ocr_keywords:
-            parts.append("text on screen: " + " ".join(kis_query.ocr_keywords))
+            en_parts.append("text: " + " ".join(kis_query.ocr_keywords))
 
-        # 6. Action translation
-        raw_lower = kis_query.raw_text.lower()
-        action_en = []
-        for vi_action, en_action in _VI_TO_EN_ACTIONS.items():
-            if vi_action in raw_lower:
-                action_en.append(en_action)
-        if action_en:
-            parts.append(", ".join(action_en))
-
-        return ". ".join(parts)
+        # Combine: English visual terms FIRST, followed by concise raw_text
+        prefix = ". ".join(en_parts)
+        if prefix:
+            return f"{prefix}. {kis_query.raw_text}"
+        return kis_query.raw_text
 
     # ============================================================
     # Build CLIP retrieval text (Q&A)

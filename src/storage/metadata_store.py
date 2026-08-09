@@ -79,9 +79,21 @@ class MetadataStore:
         records = []
         faiss_id = 0
 
-        # Iterate all batch/video CSV files
-        csv_files = sorted(self.map_keyframes_root.glob("*.csv"))
-        logger.info(f"Found {len(csv_files)} CSV files to process")
+        # Iterate all batch/video CSV files (recursively search subfolders)
+        csv_files = sorted(
+            list(self.map_keyframes_root.glob("*.csv")) + list(self.map_keyframes_root.glob("*/*.csv")) + list(self.map_keyframes_root.rglob("*.csv")),
+            key=lambda p: p.stem
+        )
+        # Deduplicate paths preserving order
+        seen_stems = set()
+        unique_csv_files = []
+        for p in csv_files:
+            if p.stem not in seen_stems:
+                seen_stems.add(p.stem)
+                unique_csv_files.append(p)
+        csv_files = unique_csv_files
+
+        logger.info(f"Found {len(csv_files)} unique CSV files to process")
 
         for csv_path in csv_files:
             video_id = csv_path.stem  # e.g. "L21_V001"
