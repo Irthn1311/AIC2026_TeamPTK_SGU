@@ -152,6 +152,7 @@ class CaptionGenerator(BaseExtractor):
                     "Run: pip install transformers qwen-vl-utils accelerate bitsandbytes"
                 )
         import torch
+        from transformers import AutoProcessor
 
         logger.info(f"Loading {self.model_name} (4bit={self.load_in_4bit})")
 

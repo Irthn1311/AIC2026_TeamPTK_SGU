@@ -121,6 +121,7 @@ class QwenVLClient:
                     "Run: pip install transformers qwen-vl-utils accelerate bitsandbytes"
                 )
 
+        from transformers import AutoProcessor
         logger.info(f"Loading {self.model_name} (4bit={self.load_in_4bit}, device={self.device})")
 
         model_kwargs: Dict[str, Any] = {"torch_dtype": torch.float16}
