@@ -259,6 +259,17 @@ def test_missing_dependency_is_reported() -> None:
         translator_dependency_versions(loader)
 
 
+def test_missing_optional_sacremoses_does_not_block_preflight() -> None:
+    def loader(name: str):
+        if name == "sacremoses":
+            raise ImportError(name)
+        return _module_loader(name)
+
+    versions = translator_dependency_versions(loader)
+    assert versions["sacremoses_available"] is False
+    assert versions["sacremoses_version"] is None
+
+
 def test_empty_translation_is_rejected(tmp_path: Path) -> None:
     class EmptyTokenizer(_Tokenizer):
         @classmethod

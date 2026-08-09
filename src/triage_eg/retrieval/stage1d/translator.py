@@ -20,7 +20,7 @@ def translator_dependency_versions(
 ) -> dict[str, Any]:
     modules: dict[str, ModuleType] = {}
     missing = []
-    for name in ("torch", "transformers", "sentencepiece", "sacremoses"):
+    for name in ("torch", "transformers", "sentencepiece"):
         try:
             modules[name] = module_loader(name)
         except ImportError:
@@ -29,6 +29,10 @@ def translator_dependency_versions(
         raise ImportError(
             "TRANSLATOR_DEPENDENCY_NOT_AVAILABLE: " + ", ".join(sorted(missing))
         )
+    try:
+        sacremoses = module_loader("sacremoses")
+    except ImportError:
+        sacremoses = None
     torch = modules["torch"]
     return {
         "torch_version": str(getattr(torch, "__version__", "UNKNOWN")),
@@ -38,8 +42,11 @@ def translator_dependency_versions(
         "sentencepiece_version": str(
             getattr(modules["sentencepiece"], "__version__", "UNKNOWN")
         ),
-        "sacremoses_version": str(
-            getattr(modules["sacremoses"], "__version__", "UNKNOWN")
+        "sacremoses_available": sacremoses is not None,
+        "sacremoses_version": (
+            str(getattr(sacremoses, "__version__", "UNKNOWN"))
+            if sacremoses is not None
+            else None
         ),
         "cuda_available": bool(torch.cuda.is_available()),
     }
@@ -172,6 +179,11 @@ class OfflineViEnTranslator:
             "dependencies": self.dependencies,
             "load_latency_ms": self.load_latency_ms,
             "model_generation_defaults": self.model_generation_defaults,
+            "punctuation_normalizer": (
+                "SACREMOSES_MOSES_PUNCT_NORMALIZER"
+                if self.dependencies.get("sacremoses_available")
+                else "TRANSFORMERS_IDENTITY_FALLBACK"
+            ),
             "effective_generation_config": self.generation.as_generate_kwargs(),
         }
 

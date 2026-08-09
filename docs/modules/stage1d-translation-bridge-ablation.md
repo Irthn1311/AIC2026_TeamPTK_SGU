@@ -34,6 +34,12 @@ hashes are verified before model loading. `AutoTokenizer` and
 `local_files_only=True`; `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` are set
 before loading.
 
+The required Python runtime dependencies are `torch`, `transformers`, and
+`sentencepiece`. `sacremoses` is optional in Transformers' Marian tokenizer:
+when absent, Transformers uses its documented identity punctuation-normalizer
+fallback. Stage 1D records availability, version, and the effective normalizer
+backend in runtime provenance instead of blocking the run.
+
 Generation is deterministic: sampling is disabled, beam count is 4,
 `max_new_tokens` is 64, length penalty is 1.0, and early stopping is enabled.
 The input is the exact Stage 1C Vietnamese text. The generated text is only
@@ -80,4 +86,3 @@ The standalone bundle contains manifests, translations, translated rankings,
 bounded frozen comparison evidence, contact sheets, issues, and the blinded
 review package. It excludes translator/CLIP weights, Stage 1 matrices, `.npy`
 files, the full keyframe corpus, raw videos, logs, and caches.
-
