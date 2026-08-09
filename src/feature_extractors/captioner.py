@@ -86,6 +86,34 @@ _PROMPT_VI = (
     "Ngắn gọn và cụ thể (2-3 câu)."
 )
 
+_PROMPT_BILINGUAL = (
+    "Describe this video frame in detail (main subject, clothing colors, actions, location/setting, visible text).\n"
+    "Format your output strictly as:\n"
+    "EN: <detailed description in English>\n"
+    "VI: <mô tả chi tiết bằng tiếng Việt>"
+)
+
+
+def _parse_bilingual_caption(text: str) -> tuple[str, str]:
+    en, vi = "", ""
+    if "EN:" in text and "VI:" in text:
+        try:
+            after_en = text.split("EN:", 1)[1]
+            en_part, vi_part = after_en.split("VI:", 1)
+            en = en_part.strip()
+            vi = vi_part.strip()
+        except Exception:
+            en = text.strip()
+            vi = text.strip()
+    elif "VI:" in text:
+        parts = text.split("VI:", 1)
+        en = parts[0].replace("EN:", "").strip()
+        vi = parts[1].strip()
+    else:
+        en = text.strip()
+        vi = text.strip()
+    return en, vi
+
 
 class CaptionGenerator(BaseExtractor):
     """
@@ -203,8 +231,12 @@ class CaptionGenerator(BaseExtractor):
         if self._model is None:
             raise RuntimeError("CaptionGenerator not loaded. Call load() first.")
 
-        caption_en = self._generate_caption(input_path, _PROMPT_EN)
-        caption_vi = self._generate_caption(input_path, _PROMPT_VI) if self.generate_vi else ""
+        if self.generate_vi:
+            raw = self._generate_caption(input_path, _PROMPT_BILINGUAL)
+            caption_en, caption_vi = _parse_bilingual_caption(raw)
+        else:
+            caption_en = self._generate_caption(input_path, _PROMPT_EN)
+            caption_vi = ""
 
         return {
             "n":          n,
@@ -340,8 +372,10 @@ class CaptionGenerator(BaseExtractor):
                 if video_dir:
                     break
 
+        from tqdm import tqdm
+
         keyframe_results = []
-        for i, (_, row) in enumerate(df.iterrows()):
+        for i, (_, row) in enumerate(tqdm(df.iterrows(), total=len(df), desc=f"  {video_id}", leave=False)):
             n = int(row["n"])
             names = [f"{n:03d}.jpg", f"{n}.jpg", f"{n:04d}.jpg", f"{n:02d}.jpg"]
 
