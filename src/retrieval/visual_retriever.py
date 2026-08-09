@@ -59,14 +59,17 @@ class VisualRetriever(BaseRetriever):
         query: str,
         top_k: int = 100,
         target_prefix: Optional[str] = None,
+        max_per_video: int = 3,
     ) -> List[SearchResult]:
         """
         Search FAISS for keyframes visually similar to the text query.
+        Applies Video-Level Deduplication to prevent long videos (like L25) from saturating results.
 
         Args:
             query: Natural language description (Vietnamese or English)
             top_k: Number of candidates to return
-            target_prefix: e.g. "L21", "L23" (if specified, filter results to this prefix)
+            target_prefix: e.g. "L21", "L23" (optional prefix filter)
+            max_per_video: Maximum keyframes to accept per video_id (default: 3)
 
         Returns:
             List[SearchResult] sorted by cosine similarity score descending
@@ -74,12 +77,14 @@ class VisualRetriever(BaseRetriever):
         # 1. Encode query text → CLIP vector
         query_vec = self._encoder.encode_text(query, normalize=True)
 
-        # 2. FAISS ANN search (fetch extra candidates if filtering by prefix)
-        search_k = max(top_k * 20, 2000) if target_prefix else top_k
+        # 2. FAISS ANN search (fetch a large pool so deduplication yields diverse videos)
+        search_k = max(top_k * 30, 3000)
         faiss_ids, scores = self._faiss_db.search(query_vec, top_k=search_k)
 
-        # 3. Map faiss_id → KeyframeMeta → SearchResult
+        # 3. Map faiss_id → KeyframeMeta → SearchResult with Video-Level Deduplication
         results: List[SearchResult] = []
+        video_counts: Dict[str, int] = {}
+
         for fid, score in zip(faiss_ids, scores):
             if fid < 0:  # FAISS returns -1 for empty slots
                 continue
@@ -90,6 +95,13 @@ class VisualRetriever(BaseRetriever):
 
             if target_prefix and not meta.video_id.startswith(target_prefix):
                 continue
+
+            # Video-level deduplication: prevent any single video from monopolizing candidate list
+            if max_per_video > 0:
+                count = video_counts.get(meta.video_id, 0)
+                if count >= max_per_video:
+                    continue
+                video_counts[meta.video_id] = count + 1
 
             results.append(SearchResult(
                 keyframe_id=meta.keyframe_id,
@@ -103,7 +115,7 @@ class VisualRetriever(BaseRetriever):
             if len(results) >= top_k:
                 break
 
-        logger.debug(f"[{self.name}] query='{query[:50]}' (prefix={target_prefix}) → {len(results)} results")
+        logger.debug(f"[{self.name}] query='{query[:50]}' (prefix={target_prefix}) → {len(results)} results from {len(video_counts)} videos")
         return results
 
     def retrieve_by_vector(

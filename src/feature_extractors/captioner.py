@@ -127,12 +127,14 @@ class CaptionGenerator(BaseExtractor):
 
         logger.info(f"Loading {self.model_name} (4bit={self.load_in_4bit})")
 
-        model_kwargs = {"torch_dtype": torch.float16}
+        model_kwargs: Dict[str, Any] = {"torch_dtype": torch.float16}
         if self.load_in_4bit:
             from transformers import BitsAndBytesConfig
             model_kwargs["quantization_config"] = BitsAndBytesConfig(
                 load_in_4bit=True,
                 bnb_4bit_compute_dtype=torch.float16,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_use_double_quant=True,
             )
             model_kwargs["device_map"] = "auto"
         else:
@@ -198,20 +200,24 @@ class CaptionGenerator(BaseExtractor):
                 messages, tokenize=False, add_generation_prompt=True
             )
             image_inputs, video_inputs = process_vision_info(messages)
+
+            target_device = self._model.device if hasattr(self._model, "device") else (
+                "cuda" if torch.cuda.is_available() else self.device
+            )
             inputs = self._processor(
                 text=[text],
                 images=image_inputs,
                 videos=video_inputs,
                 padding=True,
                 return_tensors="pt",
-            ).to(self._model.device)
+            ).to(target_device)
 
-            import torch
             with torch.no_grad():
                 output_ids = self._model.generate(
                     **inputs,
                     max_new_tokens=self.max_new_tokens,
                     do_sample=False,
+                    temperature=None,
                 )
             # Decode only the generated portion
             generated = output_ids[:, inputs.input_ids.shape[1]:]

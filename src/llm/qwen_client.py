@@ -100,7 +100,7 @@ class QwenVLClient:
                 bnb_4bit_quant_type="nf4",
                 bnb_4bit_use_double_quant=True,
             )
-            model_kwargs["device_map"] = {"": "cuda"} if torch.cuda.is_available() else "auto"
+            model_kwargs["device_map"] = "auto"
         else:
             model_kwargs["device_map"] = self.device
 

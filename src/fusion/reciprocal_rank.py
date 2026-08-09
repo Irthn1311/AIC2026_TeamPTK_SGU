@@ -55,6 +55,7 @@ class ReciprocalRankFusion:
         result_lists: List[List[SearchResult]],
         weights: Optional[List[float]] = None,
         top_k: int = 50,
+        max_per_video: int = 3,
     ) -> List[SearchResult]:
         """
         Fuse multiple ranked result lists into one.
@@ -65,6 +66,7 @@ class ReciprocalRankFusion:
             weights:      Per-retriever multiplier on the RRF score.
                           If None, all retrievers are weighted equally (1.0).
             top_k:        Return at most this many results.
+            max_per_video: Max keyframes per video_id in fused output (default: 3).
 
         Returns:
             Merged list of SearchResult sorted by fused score descending.
@@ -103,10 +105,18 @@ class ReciprocalRankFusion:
         if not rrf_scores:
             return []
 
-        # Build fused result list
+        # Build fused result list with optional video-level deduplication
         fused: List[SearchResult] = []
+        video_counts: Dict[str, int] = {}
+
         for kid, fused_score in sorted(rrf_scores.items(), key=lambda x: -x[1]):
             ref = best_result[kid]
+            if max_per_video > 0:
+                cnt = video_counts.get(ref.video_id, 0)
+                if cnt >= max_per_video:
+                    continue
+                video_counts[ref.video_id] = cnt + 1
+
             fused.append(SearchResult(
                 keyframe_id=ref.keyframe_id,
                 video_id=ref.video_id,
@@ -121,10 +131,11 @@ class ReciprocalRankFusion:
                     "n_sources": len(contributing_sources[kid]),
                 },
             ))
+            if len(fused) >= top_k:
+                break
 
-        fused = fused[:top_k]
         logger.debug(
-            f"[RRF] Fused {len(result_lists)} lists → {len(fused)} results "
+            f"[RRF] Fused {len(result_lists)} lists → {len(fused)} results from {len(video_counts)} videos "
             f"(top score={fused[0].score:.4f} if fused else 'N/A')"
         )
         return fused
