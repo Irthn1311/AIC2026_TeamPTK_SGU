@@ -29,9 +29,9 @@ datasets/captions/*
 !datasets/captions/.gitkeep
 datasets/embeddings/*
 !datasets/embeddings/.gitkeep
-datasets/queries/*
+# datasets/queries/*
 !datasets/queries/.gitkeep
-datasets/groundtruth/*
+# datasets/groundtruth/*
 !datasets/groundtruth/.gitkeep
 
 # Vector Indexes

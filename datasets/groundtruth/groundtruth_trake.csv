@@ -1,0 +1,4 @@
+query_id,video_id,event_1_frame_idx,event_2_frame_idx,event_3_frame_idx,event_4_frame_idx
+q004_trake_cycling_sprint,L23_V001,100,350,620,890
+q005_trake_dragon_dance,L24_V001,120,280,450,600
+q008_trake_cooking_chicken,L26_V003,90,210,420,630

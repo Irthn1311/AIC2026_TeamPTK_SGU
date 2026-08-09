@@ -97,8 +97,10 @@ class QwenVLClient:
             model_kwargs["quantization_config"] = BitsAndBytesConfig(
                 load_in_4bit=True,
                 bnb_4bit_compute_dtype=torch.float16,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_use_double_quant=True,
             )
-            model_kwargs["device_map"] = "auto"
+            model_kwargs["device_map"] = {"": "cuda"} if torch.cuda.is_available() else "auto"
         else:
             model_kwargs["device_map"] = self.device
 
@@ -246,7 +248,7 @@ class QwenVLClient:
             return result
 
         except Exception as e:
-            logger.warning(f"[QwenVLClient] Inference failed: {e}")
+            logger.warning(f"[QwenVLClient] Inference failed ({type(e).__name__}): {e}")
             return ""
 
     def _check_loaded(self) -> None:

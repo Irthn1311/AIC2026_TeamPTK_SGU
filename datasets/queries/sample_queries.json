@@ -1,0 +1,159 @@
+[
+  {
+    "query_id": "q001_kis_60g_morning",
+    "type": "textual_kis",
+    "target_prefix": "L21",
+    "text": "Màn hình bản tin thời sự 60 Giây Sáng trên kênh HTV7 có logo VTV/HTV góc màn hình, nam nữ MC phát thanh viên đang phát biểu trong trường quay tin tức"
+  },
+  {
+    "query_id": "q002_qa_60g_press",
+    "type": "qa",
+    "target_prefix": "L21",
+    "description": "Cảnh phòng họp báo chính phủ trang trọng với phông nền đỏ có cờ Việt Nam và biểu ngữ cơ quan nhà nước",
+    "question": "Người đang đứng phát biểu trên bục mặc trang phục màu gì?"
+  },
+  {
+    "query_id": "q003_kis_traffic_evening",
+    "type": "textual_kis",
+    "target_prefix": "L22",
+    "text": "Cảnh giao thông đường phố Thành phố Hồ Chí Minh giờ cao điểm chiều với đông đúc xe máy di chuyển qua ngã tư có đèn tín hiệu"
+  },
+  {
+    "query_id": "q004_trake_cycling_sprint",
+    "type": "trake",
+    "target_prefix": "L23",
+    "activity": "Đua xe đạp chặng bứt phá vạch đích Cúp Truyền Hình HTV",
+    "sport_category": "cycling",
+    "events": [
+      {
+        "id": 1,
+        "name": "Đoàn đua di chuyển",
+        "description": "Đoàn vận động viên đua xe đạp di chuyển cùng nhau trong tốp đông trên đường nhựa",
+        "hint": "Các tay đua đi thành nhóm đông, đồng phục thể thao sặc sỡ, xe đạp cuộc đường trường"
+      },
+      {
+        "id": 2,
+        "name": "Tấn công bứt phá",
+        "description": "Một số tay đua bắt đầu đạp mạnh tấn công bứt phá tách khỏi tốp đông",
+        "hint": "Một nhóm nhỏ 2-3 tay đua vọt lên phía trước, khoảng cách với tốp sau dần nới rộng"
+      },
+      {
+        "id": 3,
+        "name": "Nước rút về đích",
+        "description": "Tay đua dẫn đầu guồng chân nhanh với tốc độ cao hướng về phía vạch đích",
+        "hint": "Cận cảnh tay đua cúi thấp người rạp trên ghi đông, hai bên đường khán giả hò reo"
+      },
+      {
+        "id": 4,
+        "name": "Cán vạch đích ăn mừng",
+        "description": "Tay đua đưa hai tay lên cao ăn mừng khi bánh xe cán qua vạch đích",
+        "hint": "Vận động viên giơ tay mừng chiến thắng, phía sau có cổng vạch đích và băng rôn HTV Tôn Đông Á"
+      }
+    ]
+  },
+  {
+    "query_id": "q005_trake_dragon_dance",
+    "type": "trake",
+    "target_prefix": "L24",
+    "activity": "Múa Rồng truyền thống Cúp Chợ Lớn HTV",
+    "sport_category": "dragon_dance",
+    "events": [
+      {
+        "id": 1,
+        "name": "Xuất quân và khởi động",
+        "description": "Đội múa rồng bước ra sân khấu khởi động cùng tiếng trống múa lân dồn dập",
+        "hint": "Các thành viên mặc đồng phục múa lân cầm gậy nâng thân rồng dài"
+      },
+      {
+        "id": 2,
+        "name": "Rồng uốn lượn sóng",
+        "description": "Con rồng uốn lượn hình sóng nước theo sự điều khiển của quả cầu ngọc dẫn đường",
+        "hint": "Thân rồng nhấp nhô liên tục tạo thành các làn sóng mềm mại trên không"
+      },
+      {
+        "id": 3,
+        "name": "Rồng cuộn tháp vươn cao",
+        "description": "Con rồng cuộn tròn thành hình tháp và nâng đầu rồng lên vị trí cao nhất",
+        "hint": "Vận động viên đứng trên vai đồng đội nâng đầu rồng rực rỡ lên cao"
+      },
+      {
+        "id": 4,
+        "name": "Hạ rồng chào khán giả",
+        "description": "Các vận động viên hạ thân rồng xuống và xếp hàng cúi chào khán giả",
+        "hint": "Đầu rồng cúi thấp, các vận động viên vẫy tay chào khán giả kết thúc bài thi"
+      }
+    ]
+  },
+  {
+    "query_id": "q006_kis_thpt_lecture",
+    "type": "textual_kis",
+    "target_prefix": "L25",
+    "text": "Lớp học chuyên đề Bí quyết ôn thi THPT trên Báo Thanh Niên, thầy giáo đứng cạnh bảng chiếu slide bài giảng môn Ngữ Văn hoặc Lịch Sử"
+  },
+  {
+    "query_id": "q007_qa_cooking_crepe",
+    "type": "qa",
+    "target_prefix": "L26",
+    "description": "Cảnh đầu bếp trong chương trình Món Ngon Mỗi Ngày trình bày đĩa thức ăn hoàn chỉnh lên bàn ăn có trang trí rau răm và dải sốt",
+    "question": "Có bao nhiêu phần món ăn được xếp trên đĩa?"
+  },
+  {
+    "query_id": "q008_trake_cooking_chicken",
+    "type": "trake",
+    "target_prefix": "L26",
+    "activity": "Chế biến món ức gà nhồi phô mai",
+    "sport_category": "cooking",
+    "events": [
+      {
+        "id": 1,
+        "name": "Sơ chế ức gà",
+        "description": "Rửa sạch và dùng dao rạch rãnh ở giữa miếng phi lê ức gà trên thớt",
+        "hint": "Dao bếp rạch một đường ngang giữa miếng ức gà tươi màu hồng trên thớt gỗ"
+      },
+      {
+        "id": 2,
+        "name": "Nhồi nhân phô mai",
+        "description": "Nhồi nhân phô mai bào và rau gia vị vào bên trong khe ức gà",
+        "hint": "Đầu bếp dùng muỗng hoặc tay nhét phô mai màu trắng/vàng vào rãnh thịt gà"
+      },
+      {
+        "id": 3,
+        "name": "Chiên áp chảo",
+        "description": "Đặt miếng ức gà vào chảo dầu nóng chiên áp chảo cho chín vàng hai mặt",
+        "hint": "Miếng ức gà xèo xèo trong chảo dầu rực lửa, bề mặt thịt chuyển màu vàng giòn"
+      },
+      {
+        "id": 4,
+        "name": "Cắt lát trình bày",
+        "description": "Cắt lát ức gà chín nóng hổi thấy lớp phô mai chảy ra và xếp lên đĩa",
+        "hint": "Dao cắt đôi miếng gà làm phô mai chảy béo ngậy, bày ra đĩa ăn kèm xà lách"
+      }
+    ]
+  },
+  {
+    "query_id": "q009_kis_mieu_ba_sam",
+    "type": "textual_kis",
+    "target_prefix": "L27",
+    "text": "Toàn cảnh kiến trúc Miếu Bà Núi Sam nhìn từ trên cao xuống có hình đóa hoa sen uốn lượn màu xanh và mái ngói cổ kính"
+  },
+  {
+    "query_id": "q010_qa_mekong_bamboo",
+    "type": "qa",
+    "target_prefix": "L29",
+    "description": "Cảnh người thợ thủ công khuyết tật tại Cà Mau đang miệt mài đan đát các sản phẩm mây tre đan trong xưởng",
+    "question": "Người thợ đang sử dụng vật liệu gì để đan thành phẩm?"
+  },
+  {
+    "query_id": "q011_kis_heron_sanctuary",
+    "type": "textual_kis",
+    "target_prefix": "L29",
+    "text": "Đàn cò trắng hàng ngàn con đang bay lượn ngợp trời và đậu kín trên các ngọn cây xanh tại Vườn Cò Tư Sự Cà Mau"
+  },
+  {
+    "query_id": "q012_qa_positive_energy",
+    "type": "qa",
+    "target_prefix": "L30",
+    "description": "Cảnh chàng trai trong chương trình Lan Tỏa Năng Lượng Tích Cực đang sửa chữa xe đạp cũ trong phòng trọ nhỏ để tặng người nghèo",
+    "question": "Trong phòng trọ có vật dụng gì được chất đống nhiều nhất?"
+  }
+]

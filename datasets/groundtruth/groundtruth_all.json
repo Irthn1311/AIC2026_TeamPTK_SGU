@@ -1,0 +1,81 @@
+{
+  "q001_kis_60g_morning": {
+    "type": "textual_kis",
+    "video_id": "L21_V001",
+    "frame_idx": 150
+  },
+  "q002_qa_60g_press": {
+    "type": "qa",
+    "video_id": "L21_V005",
+    "frame_idx": 320,
+    "answer": "màu đen"
+  },
+  "q003_kis_traffic_evening": {
+    "type": "textual_kis",
+    "video_id": "L22_V001",
+    "frame_idx": 480
+  },
+  "q004_trake_cycling_sprint": {
+    "type": "trake",
+    "video_id": "L23_V001",
+    "events": {
+      "1": 100,
+      "2": 350,
+      "3": 620,
+      "4": 890
+    }
+  },
+  "q005_trake_dragon_dance": {
+    "type": "trake",
+    "video_id": "L24_V001",
+    "events": {
+      "1": 120,
+      "2": 280,
+      "3": 450,
+      "4": 600
+    }
+  },
+  "q006_kis_thpt_lecture": {
+    "type": "textual_kis",
+    "video_id": "L25_V001",
+    "frame_idx": 750
+  },
+  "q007_qa_cooking_crepe": {
+    "type": "qa",
+    "video_id": "L26_V002",
+    "frame_idx": 510,
+    "answer": "3"
+  },
+  "q008_trake_cooking_chicken": {
+    "type": "trake",
+    "video_id": "L26_V003",
+    "events": {
+      "1": 90,
+      "2": 210,
+      "3": 420,
+      "4": 630
+    }
+  },
+  "q009_kis_mieu_ba_sam": {
+    "type": "textual_kis",
+    "video_id": "L27_V017",
+    "frame_idx": 240
+  },
+  "q010_qa_mekong_bamboo": {
+    "type": "qa",
+    "video_id": "L29_V003",
+    "frame_idx": 380,
+    "answer": "nan tre"
+  },
+  "q011_kis_heron_sanctuary": {
+    "type": "textual_kis",
+    "video_id": "L29_V001",
+    "frame_idx": 180
+  },
+  "q012_qa_positive_energy": {
+    "type": "qa",
+    "video_id": "L30_V001",
+    "frame_idx": 210,
+    "answer": "xe đạp"
+  }
+}
