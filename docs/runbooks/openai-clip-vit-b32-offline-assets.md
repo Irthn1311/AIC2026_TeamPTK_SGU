@@ -78,7 +78,7 @@ does not rebuild Stage 1A.
       --repo-root /kaggle/working/AIC2026_TeamPTK_SGU \
       --dataset-root /kaggle/input/datasets/nadkli/dataset-aic \
       --stage0-root /kaggle/input/datasets/irthn1311/triage-eg-stage0-audit-bundle \
-      --stage1-root /kaggle/input/datasets/irthn1311/triage-eg-stage1-baseline \
+      --stage1-root /kaggle/input/datasets/irthn1311/triage-eg-stage1b-input-bundle \
       --output-root /kaggle/working/triage_eg_stage1b_encoder_compatibility \
       --candidate-config configs/retrieval/stage1b_openai_clip_official_kaggle.yaml \
       --queries configs/retrieval/stage1b_smoke_queries.jsonl \
