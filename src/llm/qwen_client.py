@@ -33,7 +33,7 @@ logger = get_logger(__name__)
 
 try:
     import torch
-    from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
+    from transformers import AutoModelForConditionalGeneration, AutoProcessor
     from qwen_vl_utils import process_vision_info
     _QWEN_AVAILABLE = True
 except ImportError:
@@ -104,7 +104,7 @@ class QwenVLClient:
         else:
             model_kwargs["device_map"] = self.device
 
-        self._model = Qwen2VLForConditionalGeneration.from_pretrained(
+        self._model = AutoModelForConditionalGeneration.from_pretrained(
             self.model_name, **model_kwargs
         )
         self._model.eval()

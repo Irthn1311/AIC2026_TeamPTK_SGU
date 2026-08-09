@@ -40,7 +40,7 @@ logger = get_logger(__name__)
 try:
     import torch
     from transformers import (
-        Qwen2VLForConditionalGeneration,
+        AutoModelForConditionalGeneration,
         AutoTokenizer,
         AutoProcessor,
     )
@@ -140,7 +140,7 @@ class CaptionGenerator(BaseExtractor):
         else:
             model_kwargs["device_map"] = self.device
 
-        self._model = Qwen2VLForConditionalGeneration.from_pretrained(
+        self._model = AutoModelForConditionalGeneration.from_pretrained(
             self.model_name,
             **model_kwargs,
         )
