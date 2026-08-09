@@ -86,8 +86,31 @@ def rank_query(
     query: np.ndarray, config: SearchConfig, *, encoder_status: str = "NOT_APPLICABLE_VECTOR_QUERY"
 ) -> tuple[list[dict[str, Any]], float]:
     backend, catalog = load_search_backend(config)
+    return rank_loaded_query(
+        query,
+        backend,
+        catalog,
+        top_k=config.top_k,
+        metric=config.metric,
+        query_id=config.query_id,
+        encoder_status=encoder_status,
+    )
+
+
+def rank_loaded_query(
+    query: np.ndarray,
+    backend: Any,
+    catalog: CompactCatalog,
+    *,
+    top_k: int,
+    metric: str,
+    query_id: str,
+    encoder_status: str,
+) -> tuple[list[dict[str, Any]], float]:
+    """Apply canonical Stage 1 ranking/mapping using an already-loaded backend."""
+
     started = monotonic()
-    scores, rows = backend.search(query, config.top_k)
+    scores, rows = backend.search(query, top_k)
     if scores.shape[0] != 1:
         raise ValueError("Stage 1 query runner accepts exactly one query vector per run")
     latency = monotonic() - started
@@ -98,13 +121,32 @@ def rank_query(
                 "rank": rank,
                 **catalog.map_row(int(global_row)),
                 "score": float(score),
-                "metric": config.metric,
+                "metric": metric,
                 "encoder_contract_status": encoder_status,
-                "query_id": config.query_id,
+                "query_id": query_id,
                 "issues": [],
             }
         )
     return candidates, latency
+
+
+def write_kis_candidates(
+    path: Path,
+    candidates: list[dict[str, Any]],
+    *,
+    max_predictions: int,
+    csv_header: bool = True,
+) -> dict[tuple[str, int], list[int]]:
+    """Write the canonical KIS video_id/original_frame_idx export."""
+
+    kis, supporting = deduplicate_kis(candidates, max_predictions)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=["video_id", "frame_id"])
+        if csv_header:
+            writer.writeheader()
+        writer.writerows(kis)
+    return supporting
 
 
 def group_videos(
@@ -188,12 +230,12 @@ def write_query_outputs(
     videos_path.write_text(
         "".join(json.dumps(item, ensure_ascii=False) + "\n" for item in videos), encoding="utf-8"
     )
-    kis, supporting = deduplicate_kis(candidates, config.max_predictions)
-    with csv_path.open("w", encoding="utf-8", newline="") as stream:
-        writer = csv.DictWriter(stream, fieldnames=["video_id", "frame_id"])
-        if config.csv_header:
-            writer.writeheader()
-        writer.writerows(kis)
+    supporting = write_kis_candidates(
+        csv_path,
+        candidates,
+        max_predictions=config.max_predictions,
+        csv_header=config.csv_header,
+    )
     run_path.write_text(
         json.dumps(
             {
@@ -202,7 +244,7 @@ def write_query_outputs(
                 "top_k": config.top_k,
                 "search_latency_seconds": search_latency_seconds,
                 "encoder_contract_status": encoder_status,
-                "kis_candidate_count": len(kis),
+                "kis_candidate_count": len(supporting),
                 "supporting_ordinals": {
                     f"{video_id}:{frame_id}": values
                     for (video_id, frame_id), values in sorted(supporting.items())

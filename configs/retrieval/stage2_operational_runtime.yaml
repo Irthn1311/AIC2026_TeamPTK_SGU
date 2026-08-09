@@ -1,0 +1,20 @@
+stage2_version: "0.1.0"
+
+runtime:
+  default_language: auto
+  default_top_k: 100
+
+clip:
+  device: cpu
+  batch_size: 32
+
+translator:
+  device: cpu
+  batch_size: 8
+  lazy_load: true
+
+search:
+  backend: existing_stage1_exact
+  max_top_k: 100
+  chunk_rows: 16384
+

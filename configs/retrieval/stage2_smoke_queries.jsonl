@@ -1,0 +1,4 @@
+{"query_id":"smoke_en_cooking","text":"a person cooking in a kitchen","language":"en","top_k":20}
+{"query_id":"smoke_vi_cooking","text":"một người đang nấu ăn trong bếp","language":"vi","top_k":20}
+{"query_id":"smoke_en_red_car","text":"a red car","language":"en","top_k":20}
+{"query_id":"smoke_vi_red_car","text":"một chiếc ô tô màu đỏ","language":"vi","top_k":20}
