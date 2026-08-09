@@ -78,7 +78,9 @@ This phase implements the exact preliminary task schemas and evaluation semantic
 - Shared across all per-event refinement queries in a single request. Unreachable after request completes.
 - Preserves 100% exact output semantics, coarse/fine window parameters, candidate sets, temporal rules, and independent per-event text scoring.
 - Legacy execution path (`frame_embedding_cache=None`) remains default and preserves QA behavior.
-- Status: Local implementation complete & verified. Kaggle benchmark PENDING.
+- Status: COMPLETE / FROZEN at commit `977ccf55b3cdb782052f41cec1edd65259395473`.
+- Kaggle/T4: STRONG PASS. Before: full ~41.629s, refinement ~34.966s, 1057 physical CLIP image rows. After: full median ~23.715s, refinement median ~16.893s, 382 physical CLIP image rows.
+- Refinement reduction: 51.69%. Physical image work reduction: 63.86%.
 
 ## PRELIMINARY P0-OPT2: Shared-Scan Exact Multi-Vector Retrieval
 - Implemented shared-scan multi-vector cosine retrieval in `ExactNumpyRetriever.search_vectors`.
@@ -86,4 +88,21 @@ This phase implements the exact preliminary task schemas and evaluation semantic
 - Computes exact per-query GEMV `(chunk @ query_unit) / norms` inside one shared corpus scan loop, eliminating `(Q - 1)` redundant corpus disk/RAM reads.
 - Preserves 100% exact numerical similarity scores and deterministic tie-breaking semantics with `search_vector`.
 - Integrated into `TRAKERuntimePipeline.process_trake_query` to retrieve all event variants in a single batched corpus scan.
-- Status: Local implementation complete & verified (19/19 batched retrieval tests PASS, 391/391 system_tai tests PASS, 0 ruff errors). Kaggle benchmark PENDING.
+- Status: COMPLETE / FROZEN at commit `64841a63471ade21eebf7f22299420c5369a637c`.
+- Kaggle/T4: PASS. Same-session legacy retrieval 7.024408s; OPT2 retrieval median 4.834751s; retrieval reduction 31.17%.
+- Full wall time: 24.835049s legacy; 22.127217s OPT2 median. FULL Top-20 exact semantic equivalence PASS.
+
+## PRELIMINARY P0-D: Unified Top-100 Internal Checkpoint Boundary
+
+- **Status**: LOCAL IMPLEMENTATION / REVIEW PENDING.
+- Defines the canonical preliminary **internal checkpoint** boundary for KIS, Q&A, and TRAKE around the frozen P0-A prediction dataclasses and `validate_ranked_top100`.
+- Uses exact per-task UTF-8 JSONL shapes with no score, provenance, diagnostic, keyframe-order, or CLIP-row fields.
+- Preserves query order, prediction line order, positive unique non-contiguous ranks, Q&A answer bytes after UTF-8 decoding, and TRAKE `frame_ids` event order. It never sorts or renumbers predictions.
+- Enforces maximum 100 predictions per query, dataset task consistency, unique query IDs, optional expected query membership, and optional TRAKE expected event counts.
+- Expected query IDs are checked by exact set membership (missing/unexpected IDs fail); caller order is not treated as meaningful.
+- Performs whole-dataset validation and serialization before writing, so validation failure cannot partially overwrite the destination.
+- Does not use `FeatureStoreRegistry` and therefore permits refined absolute original-video frame IDs that are not mapped keyframes.
+- The in-memory query container allows zero predictions for direct evaluator use. Canonical record-only JSONL export rejects zero-query datasets and zero-prediction query containers because they cannot be represented roundtrip without inventing a noncanonical record.
+- P0-D does not modify the legacy contiguous-rank KIS checkpoint boundary, the official evaluator, or KIS/Q&A/TRAKE runtime artifacts.
+- This is **not** a confirmed official BTC upload format. No CSV/ZIP exporter is introduced.
+- Runtime integration is intentionally deferred to P0-E. No Kaggle execution or semantic-performance claim is made for P0-D.

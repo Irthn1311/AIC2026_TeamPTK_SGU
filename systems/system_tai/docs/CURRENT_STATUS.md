@@ -2,7 +2,7 @@
 
 ## Status date
 
-`2026-08-08`
+`2026-08-09`
 
 ## Summary
 
@@ -11,18 +11,27 @@ PRELIMINARY P0-B1 (evidence-grounded closed-set Q&A baseline core) is COMPLETE.
 PRELIMINARY P0-B2 / P0-B2.1 (shared-runtime Q&A vertical slice & compatibility hotfix) is COMPLETE.
 PRELIMINARY P0-C1 (deterministic same-video temporal-chain TRAKE core) is COMPLETE.
 PRELIMINARY P0-C2 (shared-runtime TRAKE vertical slice) is COMPLETE (Kaggle/T4 technical acceptance PASS, commit `6849324769820dca27ae9b338b2bb5cfe178c436`).
-PRELIMINARY P0-OPT1 (request-scoped raw-frame CLIP image embedding reuse) is IMPLEMENTED locally:
+PRELIMINARY P0-OPT1 (request-scoped raw-frame CLIP image embedding reuse) is COMPLETE / FROZEN (commit `977ccf55b3cdb782052f41cec1edd65259395473`):
 - Request-scoped image embedding cache keyed by `(video_id, absolute_frame_id)`.
 - Eliminates duplicate model image inference across coarse/fine stages and multiple event refinement calls within a TRAKE request.
 - Preserves 100% exact output semantics and independent per-event text scoring.
-- Local implementation complete & verified. Kaggle benchmark pending. No official BTC artifact-format claim.
+- Kaggle/T4 STRONG PASS: full runtime reduced from ~41.629s to median ~23.715s; refinement from ~34.966s to median ~16.893s; physical CLIP image rows from 1057 to 382.
+- Refinement reduction: 51.69%. Physical image work reduction: 63.86%.
 
-PRELIMINARY P0-OPT2 (shared-scan exact multi-vector retrieval) is IMPLEMENTED locally:
+PRELIMINARY P0-OPT2 (shared-scan exact multi-vector retrieval) is COMPLETE / FROZEN (commit `64841a63471ade21eebf7f22299420c5369a637c`):
 - Shared-scan `ExactNumpyRetriever.search_vectors` scans each video feature chunk once for all query vectors in a single request.
 - Computes exact per-query GEMV `(chunk @ query_unit) / norms` inside one shared corpus scan, reducing corpus memory reads by `num_queries`.
 - Preserves 100% exact numerical and deterministic tie-break ranking equivalence with `search_vector`.
 - Integrated into `TRAKERuntimePipeline.process_trake_query`.
-- Full system_tai (391 tests) PASS, 0 ruff errors. Kaggle benchmark pending.
+- Kaggle/T4 PASS: same-session retrieval reduced from 7.024408s to median 4.834751s (31.17%); full wall time from 24.835049s to median 22.127217s.
+- FULL Top-20 exact semantic equivalence PASS.
+
+PRELIMINARY P0-D (Unified Top-100 Internal Checkpoint Boundary) is LOCAL IMPLEMENTATION / REVIEW PENDING:
+- Wraps the frozen P0-A `KISPrediction`, `QAPrediction`, and `TRAKEPrediction` schemas directly.
+- Provides strict task-specific UTF-8 JSONL parsing, deterministic serialization, per-query max-100 validation, optional TRAKE event-count validation, and exact semantic roundtrip.
+- Preserves physical query/prediction order, non-contiguous positive ranks, Q&A Unicode text, and ordered TRAKE frame tuples without sorting or renumbering.
+- This is the canonical preliminary internal checkpoint boundary, not a confirmed official BTC upload format.
+- No runtime integration is included; P0-E remains pending. No Kaggle claim is made for P0-D.
 
 The workbook and Canva design have been reviewed. Phase 1 input auditing, Phase 1.5C
 compatibility calibration, the Phase 2 exact NumPy KIS implementation, Phase 2.5
