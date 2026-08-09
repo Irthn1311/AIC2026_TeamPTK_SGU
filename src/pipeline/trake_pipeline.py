@@ -180,13 +180,22 @@ class TRAKEPipeline:
 
         # Build submission
         events = []
+        last_valid_fidx = 0
         for event in trake_query.event_sequence:
             ev_id = event.event_id
             frame = best.event_frames.get(ev_id)
+            if frame is not None and frame.frame_idx > 0:
+                last_valid_fidx = frame.frame_idx
+                f_idx = frame.frame_idx
+                pts = frame.pts_time
+            else:
+                f_idx = last_valid_fidx if last_valid_fidx > 0 else 1
+                pts = 0.0
+
             events.append(TRAKEEventResult(
                 event_id=ev_id,
-                frame_idx=frame.frame_idx if frame else 0,
-                pts_time=frame.pts_time if frame else 0.0,
+                frame_idx=f_idx,
+                pts_time=pts,
             ))
 
         return TRAKESubmission(

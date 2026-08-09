@@ -149,15 +149,39 @@ class VisualRetriever(BaseRetriever):
             logger.warning(f"No keyframes found for video_id={video_id}")
             return []
 
-        # Search globally, filter to this video
-        search_k = min(self._faiss_db.total_vectors, max(top_k * 10, 1000))
+        # 1. Direct O(N_video) exact cosine similarity via vector reconstruction
+        results: List[SearchResult] = []
+        try:
+            for fid in video_faiss_ids:
+                try:
+                    vec = self._faiss_db._index.reconstruct(int(fid))
+                    sim = float(np.dot(vec, query_vec))
+                    meta = self._meta_store.get_by_faiss_id(int(fid))
+                    if meta:
+                        results.append(SearchResult(
+                            keyframe_id=meta.keyframe_id,
+                            video_id=meta.video_id,
+                            n=meta.n,
+                            frame_idx=meta.frame_idx,
+                            pts_time=meta.pts_time,
+                            score=sim,
+                            retriever_source=f"{self.name}_in_video",
+                        ))
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.debug(f"FAISS vector reconstruct failed: {e}")
+
+        if results:
+            results.sort(key=lambda x: x.score, reverse=True)
+            return results[:top_k]
+
+        # 2. Fallback: Search globally with total_vectors, filter to video_id
+        search_k = min(self._faiss_db.total_vectors, max(top_k * 10, 10000))
         faiss_ids, scores = self._faiss_db.search(query_vec, top_k=search_k)
 
-        results: List[SearchResult] = []
         for fid, score in zip(faiss_ids, scores):
-            if fid < 0:
-                continue
-            if int(fid) not in video_faiss_ids:
+            if fid < 0 or int(fid) not in video_faiss_ids:
                 continue
             meta = self._meta_store.get_by_faiss_id(int(fid))
             if meta is None:
