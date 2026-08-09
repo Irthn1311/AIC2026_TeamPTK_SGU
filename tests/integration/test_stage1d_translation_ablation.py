@@ -17,6 +17,7 @@ from triage_eg.retrieval.stage1d import (
     ReviewConfig,
     Stage1DConfig,
     create_stage1d_bundle,
+    patch_blinded_review_visuals,
     run_stage1d,
 )
 from triage_eg.retrieval.stage1d.contracts import TRANSLATOR_MODEL_ID, TRANSLATOR_REVISION
@@ -169,12 +170,22 @@ def test_synthetic_stage1d_preserves_frozen_baselines_and_builds_audit_bundle(
     assert manifest["no_model_download"]
     assert manifest["no_reranking"]
 
+    patch = patch_blinded_review_visuals(
+        result.output_root, stage1c_settings.dataset_root
+    )
+    assert patch["blinded_sheet_count"] == 1
+    assert patch["review_rows"] == 15
+    assert (
+        result.output_root / "review/blinded_sheets/obj_top5.jpg"
+    ).is_file()
     archive = create_stage1d_bundle(result.output_root, tmp_path / "stage1d_bundle.zip")
     with ZipFile(archive) as stream:
         names = stream.namelist()
     assert "translated_queries/obj/ranked_frames.jsonl" in names
     assert "comparisons/obj/comparison_top5.jpg" in names
     assert "review/review_template_blinded.csv" in names
+    assert "review/blinded_sheet_index.csv" in names
+    assert "review/blinded_sheets/obj_top5.jpg" in names
     assert not any(name.endswith((".bin", ".npy", ".mp4")) for name in names)
 
 

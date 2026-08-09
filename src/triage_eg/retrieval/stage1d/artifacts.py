@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import textwrap
 from pathlib import Path
 from typing import Any
@@ -282,6 +283,33 @@ def create_stage1d_bundle(root: str | Path, zip_path: str | Path) -> Path:
     if missing:
         raise FileNotFoundError(f"Missing Stage 1D bundle artifacts: {missing}")
     members = list(CORE_BUNDLE_MEMBERS)
+    summary = json.loads((source / "stage1d_summary.json").read_text(encoding="utf-8"))
+    blinded_index = source / "review/blinded_sheet_index.csv"
+    if summary.get("stage1d_version") == "0.1.1" and not blinded_index.is_file():
+        raise FileNotFoundError("Stage 1D v0.1.1 requires blinded_sheet_index.csv")
+    if blinded_index.is_file():
+        members.append("review/blinded_sheet_index.csv")
+        with blinded_index.open(encoding="utf-8-sig", newline="") as stream:
+            rows = list(csv.DictReader(stream))
+        expected = int(summary.get("human_review", {}).get("blinded_sheet_count", 0))
+        if not rows or len(rows) != expected:
+            raise ValueError("Blinded sheet index count does not match Stage 1D summary")
+        seen: set[str] = set()
+        for row in rows:
+            relative = Path(str(row.get("sheet_path", "")))
+            parts = relative.parts
+            if (
+                relative.is_absolute()
+                or len(parts) != 3
+                or parts[:2] != ("review", "blinded_sheets")
+                or relative.suffix.lower() != ".jpg"
+            ):
+                raise ValueError(f"Unsafe blinded sheet path: {relative}")
+            name = relative.as_posix()
+            if name in seen or not (source / relative).is_file():
+                raise FileNotFoundError(f"Missing or duplicate blinded sheet: {relative}")
+            seen.add(name)
+            members.append(name)
     for optional in ("review/review_metrics.json", "review/review_metrics.md"):
         if (source / optional).is_file():
             members.append(optional)

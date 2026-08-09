@@ -95,7 +95,32 @@ def write_blinded_review(
     return count
 
 
-def review_instructions() -> str:
+def review_instructions(*, blinded_visuals: bool = False) -> str:
+    if blinded_visuals:
+        return """# Stage 1D Blinded Translation-Ablation Review
+
+## Blind-integrity rules
+
+**DO NOT OPEN DURING HUMAN REVIEW:**
+
+- `review/review_key.json`
+- `comparisons/<pair_id>/comparison_top5.jpg`
+
+Those are scoring and engineering-audit artifacts that expose the actual arms.
+For each pair, open only the matching
+`review/blinded_sheets/<pair_id>_top5.jpg`. Read the English and Vietnamese
+intent, judge every C01/C02/C03 rank, and enter the label in the matching row
+of `review_template_blinded.csv`.
+
+- RELEVANT: clearly satisfies the main semantic intent.
+- PARTIAL: satisfies part of the intent but misses or contradicts an important part.
+- IRRELEVANT: does not satisfy the main intent.
+- UNCERTAIN: the static frame does not provide enough evidence to decide.
+
+Do not edit identity columns. Do not use retrieval score to decide relevance.
+Condition codes are deliberately opaque; keep the review key hidden until
+scoring. This qualitative ablation is not competition Recall@K.
+"""
     return """# Stage 1D Blinded Translation-Ablation Review
 
 Judge each visible frame against the shared semantic intent shown by the English
@@ -276,4 +301,3 @@ def score_stage1d_review(
         "\n".join(lines) + "\n", encoding="utf-8"
     )
     return metrics
-

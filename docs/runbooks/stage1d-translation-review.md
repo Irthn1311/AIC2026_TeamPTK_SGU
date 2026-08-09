@@ -16,12 +16,27 @@ The last cell creates:
 Download that single ZIP. A successful execution still reports human review
 and language-bridge quality as `NOT_REVIEWED`.
 
+To patch an already-frozen v0.1.0 output without invoking translation, CLIP, or
+search, run:
+
+```bash
+python scripts/patch_stage1d_blinded_review_visuals.py \
+  --stage1d-root /path/to/frozen_stage1d_v0_1_0 \
+  --dataset-root /path/to/dataset-aic \
+  --output-root /path/to/stage1d_v0_1_1 \
+  --zip-path /path/to/triage_eg_stage1d_translation_ablation_v0_1_1_bundle.zip
+```
+
+Omit `--output-root` only when the frozen output is writable and an in-place
+review-presentation patch is intentional. The command validates every CSV
+identity against the frozen arm record before rendering.
+
 ## Inspect evidence
 
-Start with `stage1d_report.md` and `stage1d_summary.json`. Then inspect
-`comparisons/<pair_id>/comparison_top5.jpg` for three side-by-side conditions:
-English direct, Vietnamese direct, and translated Vietnamese. Contact sheets
-are diagnostics only; do not infer a winner from CLIP score or overlap alone.
+Start with `stage1d_report.md` and `stage1d_summary.json` for engineering audit.
+The files under `comparisons/<pair_id>/comparison_top5.jpg` expose the real arm
+names and are never review inputs. Contact sheets and ranking diagnostics do not
+establish semantic relevance.
 
 Use `translations/translations.jsonl` to audit exact Vietnamese inputs,
 translated outputs, model revision, generation settings, latency, and status.
@@ -31,10 +46,13 @@ Stage 1C bundle.
 ## Complete blinded review
 
 1. Copy `review/review_template_blinded.csv` outside the immutable result bundle.
-2. For every row, enter one allowed `review_label`: `RELEVANT`, `PARTIAL`,
+2. Keep `review/review_key.json` and every engineering comparison sheet closed.
+3. For each pair, open only `review/blinded_sheets/<pair_id>_top5.jpg` and match
+   each `Cxx`/rank tile to the corresponding CSV row.
+4. Enter one allowed `review_label`: `RELEVANT`, `PARTIAL`,
    `IRRELEVANT`, or `UNCERTAIN`. Notes are optional.
-3. Do not edit identity columns or consult `review_key.json` while judging.
-4. Score the completed copy:
+5. Do not edit identity columns and do not use retrieval scores as labels.
+6. Score the completed copy:
 
 ```bash
 python scripts/score_stage1d_translation_ablation_review.py \

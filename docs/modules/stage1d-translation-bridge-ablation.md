@@ -80,6 +80,21 @@ not competition Recall@K.
 No language-bridge or production decision is valid before review is complete.
 Fallback policy is intentionally outside Stage 1D.
 
+### v0.1.1 blinded visual patch
+
+The review presentation patch consumes only frozen v0.1.0 rankings and
+canonical dataset keyframes. It creates one Top-5 sheet per pair under
+`review/blinded_sheets/`, with columns labeled only `C01`, `C02`, and `C03` in
+the order defined by `review_key.json`. Headers show the pair ID plus English
+and Vietnamese intent; they omit machine translation, scores, and real arm
+names. The existing comparison sheets remain explicitly unblinded engineering
+artifacts and must not be opened while judging.
+
+The patch hashes frozen translation and ranking artifacts before and after
+rendering and refuses completion if any change. Its output provenance declares
+`retrieval_source=FROZEN_STAGE1D_V0_1_0`, all regeneration flags false, and
+`patch_scope=REVIEW_PRESENTATION_ONLY`.
+
 ## Outputs
 
 The standalone bundle contains manifests, translations, translated rankings,

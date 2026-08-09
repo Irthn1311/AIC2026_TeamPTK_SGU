@@ -9,6 +9,7 @@ from typing import Any
 from triage_eg.retrieval.stage1c.contracts import StructuralFlagConfig
 
 STAGE1D_VERSION = "0.1.0"
+STAGE1D_REVIEW_PATCH_VERSION = "0.1.1"
 TRANSLATOR_MODEL_ID = "Helsinki-NLP/opus-mt-vi-en"
 TRANSLATOR_REVISION = "c8d2853e77f5fae31124d993e0b35176b1c8914e"
 TRANSLATOR_ARCHITECTURE = "MarianMT"

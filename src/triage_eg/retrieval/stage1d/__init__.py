@@ -13,6 +13,7 @@ from .contracts import (
 )
 from .inputs import resolve_input_root, validate_translator_asset
 from .review import score_stage1d_review
+from .review_visuals import patch_blinded_review_visuals
 from .runner import preflight_stage1d, run_stage1d
 from .translator import OfflineViEnTranslator
 
@@ -27,6 +28,7 @@ __all__ = [
     "TranslatorConfig",
     "create_stage1d_bundle",
     "load_stage1d_yaml",
+    "patch_blinded_review_visuals",
     "preflight_stage1d",
     "resolve_input_root",
     "run_stage1d",
@@ -34,4 +36,3 @@ __all__ = [
     "settings_from_yaml",
     "validate_translator_asset",
 ]
-
