@@ -22,7 +22,8 @@ Synthetic labels exist only in tests. No guessed real ground truth is committed.
 One strict UTF-8 JSON object contains schema version 1, benchmark ID, description, and
 physically ordered queries with globally unique IDs. Unknown fields, BOM, invalid UTF-8,
 wrong task fields, invalid enums, bool frame IDs, duplicate tags/IDs, and malformed
-ground truth fail closed.
+ground truth fail closed. Raw JSON also rejects duplicate object keys at every nesting
+level; no last-key-wins repair is permitted.
 
 Task ground truths reuse the frozen P0-A types directly:
 

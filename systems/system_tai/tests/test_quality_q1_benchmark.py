@@ -324,6 +324,64 @@ def test_json_loader_preserves_unicode(tmp_path: Path) -> None:
     assert benchmark.queries[0].query_vi == "một xe màu xanh"
 
 
+def test_json_loader_rejects_duplicate_top_level_key(tmp_path: Path) -> None:
+    path = tmp_path / "duplicate-top-level.json"
+    path.write_text(
+        '{"schema_version":1,"schema_version":1,'
+        '"benchmark_id":"quality","description":"","queries":[]}',
+        encoding="utf-8",
+    )
+    with pytest.raises(QualityBenchmarkFormatError, match="duplicate JSON object key"):
+        load_quality_benchmark_json(path)
+
+
+def test_json_loader_rejects_duplicate_query_key(tmp_path: Path) -> None:
+    path = tmp_path / "duplicate-query.json"
+    path.write_text(
+        '{"schema_version":1,"benchmark_id":"quality","description":"",'
+        '"queries":[{"task_type":"kis","query_id":"kis-1",'
+        '"query_id":"kis-2","annotation_status":"draft",'
+        '"label_origin":"unlabeled","difficulty":"unknown","tags":[],'
+        '"annotation_notes":"","source_reference":"","query_vi":"query",'
+        '"query_en":null,"query_en_expansion":null,"ground_truth":null}]}',
+        encoding="utf-8",
+    )
+    with pytest.raises(QualityBenchmarkFormatError, match="duplicate JSON object key"):
+        load_quality_benchmark_json(path)
+
+
+def test_json_loader_rejects_duplicate_ground_truth_key(tmp_path: Path) -> None:
+    path = tmp_path / "duplicate-ground-truth.json"
+    path.write_text(
+        '{"schema_version":1,"benchmark_id":"quality","description":"",'
+        '"queries":[{"task_type":"kis","query_id":"kis-1",'
+        '"annotation_status":"verified","label_origin":"human_raw_video",'
+        '"difficulty":"medium","tags":[],"annotation_notes":"",'
+        '"source_reference":"raw video","query_vi":"query","query_en":null,'
+        '"query_en_expansion":null,"ground_truth":{"video_id":"V1",'
+        '"video_id":"V2","start_frame_id":1,"end_frame_id":2}}]}',
+        encoding="utf-8",
+    )
+    with pytest.raises(QualityBenchmarkFormatError, match="duplicate JSON object key"):
+        load_quality_benchmark_json(path)
+
+
+def test_json_loader_rejects_duplicate_trake_event_key(tmp_path: Path) -> None:
+    path = tmp_path / "duplicate-trake-event.json"
+    path.write_text(
+        '{"schema_version":1,"benchmark_id":"quality","description":"",'
+        '"queries":[{"task_type":"trake","query_id":"trake-1",'
+        '"annotation_status":"draft","label_origin":"unlabeled",'
+        '"difficulty":"unknown","tags":[],"annotation_notes":"",'
+        '"source_reference":"","events":[{"description":"event one",'
+        '"description":"event two","description_en":null}],'
+        '"ground_truth":null}]}',
+        encoding="utf-8",
+    )
+    with pytest.raises(QualityBenchmarkFormatError, match="duplicate JSON object key"):
+        load_quality_benchmark_json(path)
+
+
 def test_eval_1_to_3_reuses_p0_metrics_for_all_tasks() -> None:
     report = evaluate_quality_benchmark(_three_task_benchmark(), _predictions())
     by_id = {item.query_id: item.evaluation for item in report.query_reports}

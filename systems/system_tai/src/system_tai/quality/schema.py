@@ -44,6 +44,19 @@ class QualityBenchmarkFormatError(ValueError):
     """Raised when a quality benchmark violates its strict JSON contract."""
 
 
+def _reject_duplicate_object_pairs(
+    pairs: list[tuple[str, Any]],
+) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise QualityBenchmarkFormatError(
+                f"duplicate JSON object key: {key!r}"
+            )
+        result[key] = value
+    return result
+
+
 def _require_text(value: object, name: str, *, allow_empty: bool = False) -> str:
     if type(value) is not str:
         raise TypeError(f"{name} must be a string")
@@ -452,7 +465,7 @@ def load_quality_benchmark_json(path: Path) -> QualityBenchmark:
     if text.startswith("\ufeff"):
         raise QualityBenchmarkFormatError("UTF-8 BOM is not permitted")
     try:
-        decoded = json.loads(text)
+        decoded = json.loads(text, object_pairs_hook=_reject_duplicate_object_pairs)
     except json.JSONDecodeError as exc:
         raise QualityBenchmarkFormatError(f"invalid benchmark JSON: {exc.msg}") from exc
     return parse_quality_benchmark_payload(decoded)
