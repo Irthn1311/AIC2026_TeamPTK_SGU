@@ -1,0 +1,28 @@
+{"query_id":"obj_01_en","pair_id":"obj_01","language":"en","category":"OBJECT","difficulty":"EASY","text":"a red car","notes":"Short object and color probe."}
+{"query_id":"obj_01_vi","pair_id":"obj_01","language":"vi","category":"OBJECT","difficulty":"EASY","text":"một chiếc ô tô màu đỏ","notes":"Vietnamese pair for obj_01."}
+{"query_id":"obj_02_en","pair_id":"obj_02","language":"en","category":"OBJECT","difficulty":"MEDIUM","text":"a person holding a microphone","notes":"Object plus human interaction."}
+{"query_id":"obj_02_vi","pair_id":"obj_02","language":"vi","category":"OBJECT","difficulty":"MEDIUM","text":"một người đang cầm micro","notes":"Vietnamese pair for obj_02."}
+{"query_id":"action_01_en","pair_id":"action_01","language":"en","category":"ACTION","difficulty":"MEDIUM","text":"a person cooking food","notes":"Human action probe."}
+{"query_id":"action_01_vi","pair_id":"action_01","language":"vi","category":"ACTION","difficulty":"MEDIUM","text":"một người đang nấu ăn","notes":"Vietnamese pair for action_01."}
+{"query_id":"action_02_en","pair_id":"action_02","language":"en","category":"ACTION","difficulty":"MEDIUM","text":"people playing football","notes":"Multi-person sport action."}
+{"query_id":"action_02_vi","pair_id":"action_02","language":"vi","category":"ACTION","difficulty":"MEDIUM","text":"mọi người đang chơi bóng đá","notes":"Vietnamese pair for action_02."}
+{"query_id":"scene_01_en","pair_id":"scene_01","language":"en","category":"SCENE","difficulty":"MEDIUM","text":"a busy street with many vehicles","notes":"Outdoor traffic scene."}
+{"query_id":"scene_01_vi","pair_id":"scene_01","language":"vi","category":"SCENE","difficulty":"MEDIUM","text":"một con đường đông đúc có nhiều phương tiện","notes":"Vietnamese pair for scene_01."}
+{"query_id":"scene_02_en","pair_id":"scene_02","language":"en","category":"SCENE","difficulty":"EASY","text":"inside a kitchen","notes":"Indoor place probe."}
+{"query_id":"scene_02_vi","pair_id":"scene_02","language":"vi","category":"SCENE","difficulty":"EASY","text":"bên trong một căn bếp","notes":"Vietnamese pair for scene_02."}
+{"query_id":"attribute_01_en","pair_id":"attribute_01","language":"en","category":"ATTRIBUTE","difficulty":"MEDIUM","text":"a person wearing a white shirt","notes":"Clothing color attribute."}
+{"query_id":"attribute_01_vi","pair_id":"attribute_01","language":"vi","category":"ATTRIBUTE","difficulty":"MEDIUM","text":"một người mặc áo màu trắng","notes":"Vietnamese pair for attribute_01."}
+{"query_id":"attribute_02_en","pair_id":"attribute_02","language":"en","category":"ATTRIBUTE","difficulty":"MEDIUM","text":"a blue vehicle","notes":"Vehicle color attribute."}
+{"query_id":"attribute_02_vi","pair_id":"attribute_02","language":"vi","category":"ATTRIBUTE","difficulty":"MEDIUM","text":"một phương tiện màu xanh dương","notes":"Vietnamese pair for attribute_02."}
+{"query_id":"spatial_01_en","pair_id":"spatial_01","language":"en","category":"SPATIAL_RELATION","difficulty":"HARD","text":"a person standing next to a car","notes":"Person-object spatial relation."}
+{"query_id":"spatial_01_vi","pair_id":"spatial_01","language":"vi","category":"SPATIAL_RELATION","difficulty":"HARD","text":"một người đứng cạnh một chiếc ô tô","notes":"Vietnamese pair for spatial_01."}
+{"query_id":"spatial_02_en","pair_id":"spatial_02","language":"en","category":"SPATIAL_RELATION","difficulty":"HARD","text":"people sitting around a table","notes":"Multi-person spatial configuration."}
+{"query_id":"spatial_02_vi","pair_id":"spatial_02","language":"vi","category":"SPATIAL_RELATION","difficulty":"HARD","text":"mọi người ngồi xung quanh một cái bàn","notes":"Vietnamese pair for spatial_02."}
+{"query_id":"multi_01_en","pair_id":"multi_01","language":"en","category":"MULTI_CONCEPT","difficulty":"HARD","text":"a woman speaking into a microphone on a stage","notes":"Person, action, object, and scene composition."}
+{"query_id":"multi_01_vi","pair_id":"multi_01","language":"vi","category":"MULTI_CONCEPT","difficulty":"HARD","text":"một người phụ nữ nói vào micro trên sân khấu","notes":"Vietnamese pair for multi_01."}
+{"query_id":"multi_02_en","pair_id":"multi_02","language":"en","category":"MULTI_CONCEPT","difficulty":"HARD","text":"a person cooking in a kitchen","notes":"Action and scene composition."}
+{"query_id":"multi_02_vi","pair_id":"multi_02","language":"vi","category":"MULTI_CONCEPT","difficulty":"HARD","text":"một người đang nấu ăn trong bếp","notes":"Vietnamese pair for multi_02."}
+{"query_id":"event_01_en","pair_id":"event_01","language":"en","category":"EVENT","difficulty":"HARD","text":"a vehicle moving through traffic","notes":"Motion event represented by a single-frame baseline."}
+{"query_id":"event_01_vi","pair_id":"event_01","language":"vi","category":"EVENT","difficulty":"HARD","text":"một phương tiện đang di chuyển giữa dòng xe","notes":"Vietnamese pair for event_01."}
+{"query_id":"difficult_01_en","pair_id":"difficult_01","language":"en","category":"DIFFICULT","difficulty":"HARD","text":"a person interacting with another person indoors","notes":"Generic interaction with weak single-frame specificity."}
+{"query_id":"difficult_01_vi","pair_id":"difficult_01","language":"vi","category":"DIFFICULT","difficulty":"HARD","text":"một người đang tương tác với người khác ở trong nhà","notes":"Vietnamese pair for difficult_01."}
