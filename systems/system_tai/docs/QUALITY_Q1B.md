@@ -71,6 +71,29 @@ The fixed sampling seed is `system_tai_q1b_v1`. Q1-B0 does not execute this algo
 against guessed IDs and does not commit a fabricated 873-video inventory. Retrieval is
 never used to select an easier replacement video.
 
+### Q1-B1A candidate-video sampling manifest
+
+Q1-B1A materializes the global unbiased order as `candidate_video_manifest.csv` with
+exactly `sample_rank`, `video_id`, and `selection_hash`. Rank is one-based physical CSV
+order after sorting by the lowercase SHA-256 digest and then `video_id`; it is not a
+retrieval rank or evidence that the video suits any planned category. The implementation
+uses only UTF-8 `SHA256("system_tai_q1b_v1|" + video_id)` and rejects duplicate, empty,
+or malformed inventories rather than silently repairing them.
+
+Real generation is permitted only after the existing corpus loader validates the
+accepted `CorpusManifest.fingerprint`/`manifest_fingerprint`, 873 videos, and 177321
+feature rows for `CURRENT_873_VIDEO_SNAPSHOT` / `BATCH_1_ONLY`. In portable schema v2,
+the existing loader additionally proves that `dataset_identity.fingerprint` equals that
+same manifest fingerprint; the two fields are not independently substituted. Local
+synthetic tests prove only sampler mechanics. When the private corpus is unavailable
+locally, generation is deferred to bounded discovery under `/kaggle/input`, and only the
+compact result may be written under `/kaggle/working/system_tai_outputs/quality_q1b/`.
+
+`annotation_plan.csv` intentionally remains unassigned in Q1-B1A. A human must inspect
+raw video in sampling order and apply `SKIP_NO_SUITABLE_EVENT` before a sampled video can
+be associated with a semantic category slot; deterministic selection alone creates no
+query, GT, or suitability claim.
+
 ## Annotation-before-retrieval rule
 
 Before inspecting any `system_tai` prediction, the annotator must:
