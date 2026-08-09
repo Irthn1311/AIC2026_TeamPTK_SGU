@@ -134,6 +134,101 @@ class ExactNumpyRetriever:
         )
         return KISResult(query_id=query_id, ranked_candidates=candidates)
 
+    def search_vectors(
+        self,
+        *,
+        query_ids: Sequence[str],
+        query_vectors: Sequence[Sequence[float] | NDArray[np.number]],
+        top_k: int,
+    ) -> dict[str, KISResult]:
+        if not query_ids:
+            raise ValueError("query_ids must not be empty")
+        if len(query_ids) != len(query_vectors):
+            raise ValueError("query_ids and query_vectors length mismatch")
+        if top_k <= 0:
+            raise ValueError("top_k must be positive")
+        for qid in query_ids:
+            if not isinstance(qid, str) or not qid.strip():
+                raise ValueError("query_id must not be empty")
+        if len(set(query_ids)) != len(query_ids):
+            raise ValueError("query_ids must be unique")
+
+        query_units = [
+            _normalize_vector(
+                vector, expected_dimension=self.registry.embedding_dimension
+            )
+            for vector in query_vectors
+        ]
+        best_by_query: list[dict[tuple[str, int], _ScoredCandidate]] = [
+            {} for _ in query_units
+        ]
+        for store in self.registry.stores:
+            row_count = store.descriptor.row_count
+            for start in range(0, row_count, self.chunk_size):
+                stop = min(start + self.chunk_size, row_count)
+                chunk = np.asarray(store.matrix[start:stop], dtype=np.float32)
+                if not np.isfinite(chunk).all():
+                    raise ValueError(
+                        f"non-finite feature chunk: video={store.descriptor.video_id}, "
+                        f"rows=[{start}, {stop})"
+                    )
+                norms = np.linalg.norm(chunk, axis=1)
+                if np.any(norms == 0):
+                    raise ValueError(f"zero-norm feature row in {store.descriptor.video_id}")
+
+                score_vectors: list[NDArray[np.float32]] = []
+                for query_unit in query_units:
+                    scores = (chunk @ query_unit) / norms
+                    if not np.isfinite(scores).all():
+                        raise ValueError("cosine computation produced NaN or Infinity")
+                    score_vectors.append(scores)
+
+                video_id = store.descriptor.video_id
+                for local_row in range(stop - start):
+                    clip_row = start + local_row
+                    mapping = store.mappings[clip_row]
+                    frame_id = mapping.frame_id
+                    keyframe_order = mapping.keyframe_order
+                    identity = (video_id, frame_id)
+
+                    for q_idx in range(len(query_units)):
+                        score = float(score_vectors[q_idx][local_row])
+                        candidate = _ScoredCandidate(
+                            video_id=video_id,
+                            frame_id=frame_id,
+                            clip_row=clip_row,
+                            keyframe_order=keyframe_order,
+                            score=score,
+                        )
+                        existing = best_by_query[q_idx].get(identity)
+                        if existing is None or _candidate_sort_key(
+                            candidate
+                        ) < _candidate_sort_key(existing):
+                            best_by_query[q_idx][identity] = candidate
+
+        results: dict[str, KISResult] = {}
+        for q_idx, query_id in enumerate(query_ids):
+            ranked = sorted(best_by_query[q_idx].values(), key=_candidate_sort_key)[:top_k]
+            candidates = tuple(
+                CandidateFrame(
+                    video_id=item.video_id,
+                    frame_id=item.frame_id,
+                    clip_row=item.clip_row,
+                    keyframe_order=item.keyframe_order,
+                    score=float(item.score),
+                    rank=rank,
+                    source="clip_exact",
+                    diagnostic_metadata={
+                        "feature_dimension": self.registry.embedding_dimension,
+                        "chunk_size": self.chunk_size,
+                    },
+                )
+                for rank, item in enumerate(ranked, start=1)
+            )
+            results[query_id] = KISResult(query_id=query_id, ranked_candidates=candidates)
+
+        return results
+
 
 class VectorSearch:
     """Compatibility exact search over a single unlabelled feature matrix."""

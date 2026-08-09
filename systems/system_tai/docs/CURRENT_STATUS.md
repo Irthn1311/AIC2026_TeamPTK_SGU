@@ -17,6 +17,13 @@ PRELIMINARY P0-OPT1 (request-scoped raw-frame CLIP image embedding reuse) is IMP
 - Preserves 100% exact output semantics and independent per-event text scoring.
 - Local implementation complete & verified. Kaggle benchmark pending. No official BTC artifact-format claim.
 
+PRELIMINARY P0-OPT2 (shared-scan exact multi-vector retrieval) is IMPLEMENTED locally:
+- Shared-scan `ExactNumpyRetriever.search_vectors` scans each video feature chunk once for all query vectors in a single request.
+- Computes exact per-query GEMV `(chunk @ query_unit) / norms` inside one shared corpus scan, reducing corpus memory reads by `num_queries`.
+- Preserves 100% exact numerical and deterministic tie-break ranking equivalence with `search_vector`.
+- Integrated into `TRAKERuntimePipeline.process_trake_query`.
+- Full system_tai (391 tests) PASS, 0 ruff errors. Kaggle benchmark pending.
+
 The workbook and Canva design have been reviewed. Phase 1 input auditing, Phase 1.5C
 compatibility calibration, the Phase 2 exact NumPy KIS implementation, Phase 2.5
 ground-truth evaluation, and an opt-in Phase 2.6 Weighted RRF pilot implementation are

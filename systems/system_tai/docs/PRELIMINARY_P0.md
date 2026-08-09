@@ -79,3 +79,11 @@ This phase implements the exact preliminary task schemas and evaluation semantic
 - Preserves 100% exact output semantics, coarse/fine window parameters, candidate sets, temporal rules, and independent per-event text scoring.
 - Legacy execution path (`frame_embedding_cache=None`) remains default and preserves QA behavior.
 - Status: Local implementation complete & verified. Kaggle benchmark PENDING.
+
+## PRELIMINARY P0-OPT2: Shared-Scan Exact Multi-Vector Retrieval
+- Implemented shared-scan multi-vector cosine retrieval in `ExactNumpyRetriever.search_vectors`.
+- Scans each loaded video feature store chunk exactly once per batched search call.
+- Computes exact per-query GEMV `(chunk @ query_unit) / norms` inside one shared corpus scan loop, eliminating `(Q - 1)` redundant corpus disk/RAM reads.
+- Preserves 100% exact numerical similarity scores and deterministic tie-breaking semantics with `search_vector`.
+- Integrated into `TRAKERuntimePipeline.process_trake_query` to retrieve all event variants in a single batched corpus scan.
+- Status: Local implementation complete & verified (19/19 batched retrieval tests PASS, 391/391 system_tai tests PASS, 0 ruff errors). Kaggle benchmark PENDING.

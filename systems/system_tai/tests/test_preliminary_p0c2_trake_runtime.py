@@ -1,4 +1,5 @@
 import json
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -54,10 +55,27 @@ class FakeRetriever:
     def __init__(self, cands_per_event: list[list[dict]] | None = None) -> None:
         self.cands_per_event = cands_per_event
         self.search_vector_calls: list[dict] = []
+        self.search_vectors_calls: list[dict] = []
+
+    def search_vectors(
+        self,
+        query_ids: Sequence[str],
+        query_vectors: Sequence[np.ndarray],
+        top_k: int,
+    ) -> dict[str, KISResult]:
+        self.search_vectors_calls.append({"query_ids": list(query_ids), "top_k": top_k})
+        results: dict[str, KISResult] = {}
+        for qid, vec in zip(query_ids, query_vectors):
+            results[qid] = self._single_search(query_id=qid, query_vector=vec, top_k=top_k)
+        return results
 
     def search_vector(self, query_id: str, query_vector: np.ndarray, top_k: int) -> KISResult:
         self.search_vector_calls.append({"query_id": query_id, "top_k": top_k})
+        return self._single_search(query_id=query_id, query_vector=query_vector, top_k=top_k)
 
+    def _single_search(
+        self, query_id: str, query_vector: np.ndarray, top_k: int
+    ) -> KISResult:
         if self.cands_per_event and "::e" in query_id:
             e_part = query_id.split("::e")[1].split("::")[0]
             e_idx = int(e_part)
@@ -99,7 +117,7 @@ class FakeRetriever:
                 clip_row=2,
                 keyframe_order=2,
                 source="fake_exact",
-                diagnostic_metadata={"variant_hit_count": 1, "best_individual_rank": 2},
+                diagnostic_metadata={"variant_hit_count": 1, "best_individual_rank": 1},
             ),
         ]
         return KISResult(query_id=query_id, ranked_candidates=tuple(cands))
@@ -876,9 +894,9 @@ def test_real_contract_integration_flow():
         "person stepping out",
     ]
 
-    # 2. Verify search_vector was called with variant IDs
-    assert len(retriever.search_vector_calls) == 4
-    called_ids = [call["query_id"] for call in retriever.search_vector_calls]
+    # 2. Verify search_vectors was called with variant IDs
+    assert len(retriever.search_vectors_calls) == 1
+    called_ids = retriever.search_vectors_calls[0]["query_ids"]
     assert called_ids == [
         "Q_INT::e0::v1_vi",
         "Q_INT::e0::v2_en",

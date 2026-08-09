@@ -140,29 +140,32 @@ class TRAKERuntimePipeline:
         event_variants_map: dict[int, list[QueryVariant]] = {
             i: [] for i in range(len(domain_events))
         }
+        all_variant_ids: list[str] = []
+        all_variant_vectors: list[np.ndarray] = []
 
         for (idx, var), vec in zip(flattened_variants, encoded_vectors):
             variant_vector_map[var.variant_id] = vec
             event_variants_map[idx].append(var)
+            all_variant_ids.append(var.variant_id)
+            all_variant_vectors.append(vec)
 
-        # 3. Per-Event Vector Retrieval & Fusion
+        # 3. Multi-Vector Retrieval & Per-Event Fusion
         event_candidate_pools: list[list[TRAKEEventCandidate]] = []
-        total_retrieval_sec = 0.0
         total_fusion_sec = 0.0
+
+        t_r = self.clock()
+        all_search_results = self.exact_retriever.search_vectors(
+            query_ids=all_variant_ids,
+            query_vectors=all_variant_vectors,
+            top_k=request.top_k_per_variant,
+        )
+        timings.event_retrieval_seconds = self.clock() - t_r
 
         for e_idx in range(len(domain_events)):
             e_vars = event_variants_map[e_idx]
-            variant_search_results: dict[str, Any] = {}
-            for var in e_vars:
-                vec = variant_vector_map[var.variant_id]
-                t_s = self.clock()
-                search_res = self.exact_retriever.search_vector(
-                    query_id=var.variant_id,
-                    query_vector=vec,
-                    top_k=request.top_k_per_variant,
-                )
-                total_retrieval_sec += self.clock() - t_s
-                variant_search_results[var.variant_id] = search_res
+            variant_search_results: dict[str, Any] = {
+                var.variant_id: all_search_results[var.variant_id] for var in e_vars
+            }
 
             t_f = self.clock()
             fused_event_result = self.weighted_rrf.fuse_rankings(
@@ -195,7 +198,6 @@ class TRAKERuntimePipeline:
                 e_pool.append(tc)
             event_candidate_pools.append(e_pool)
 
-        timings.event_retrieval_seconds = total_retrieval_sec
         timings.event_fusion_seconds = total_fusion_sec
 
         # 4. C1 Planner Integration
