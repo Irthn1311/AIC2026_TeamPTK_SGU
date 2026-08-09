@@ -7,7 +7,6 @@ indexes/
 models/
 *.npy
 *.npz
-*.pt
 *.pth
 *.ckpt
 *.faiss
@@ -20,6 +19,16 @@ models/
 *.jpeg
 *.png
 *.parquet
+
+# Local/offline encoder assets (never commit official weights or packaged bundles)
+/encoder_assets/
+/local_model_cache/
+/openai_clip_vit_b32_asset_bundle/
+openai_clip_vit_b32_asset_bundle.zip
+/aic2026-openai-clip-vit-b32/
+/aic2026-openai-clip-vit-b32.zip
+/.tmp_openai_clip_clone/
+**/ViT-B-32.pt
 
 # To commit a deliberately tiny image fixture, add a narrow !tests/fixtures/... exception.
 .env

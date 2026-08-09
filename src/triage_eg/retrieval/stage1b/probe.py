@@ -84,7 +84,7 @@ def probe_candidate(
     provenance: dict[str, Any],
     adapter_factory: AdapterFactory | None = None,
 ) -> tuple[CandidateContract, list[dict], dict, np.ndarray | None, Any | None]:
-    encoder = load_multimodal_encoder(candidate, adapter_factory)
+    encoder = load_multimodal_encoder(candidate, adapter_factory, provenance)
     paths = [Path(item["keyframe_path"]) for item in samples]
     try:
         encoded = encoder.encode_images(paths)
@@ -95,8 +95,23 @@ def probe_candidate(
             raise
         raise ValueError(f"IMAGE_PREPROCESS_FAILED: {error}") from error
     values = validate_embedding_matrix(encoded, len(samples), 512)
-    raw_norms = np.linalg.norm(values, axis=1)
-    normalized = values / raw_norms[:, None] if candidate.image_embedding_normalization else values
+    adapter_metrics = getattr(encoder, "last_image_metrics", {})
+    raw_norms = np.asarray(
+        adapter_metrics.get("raw_norms", np.linalg.norm(values, axis=1)),
+        dtype=np.float32,
+    )
+    if adapter_metrics.get("normalized_output"):
+        normalized = values
+    else:
+        value_norms = np.linalg.norm(values, axis=1)
+        normalized = (
+            values / value_norms[:, None] if candidate.image_embedding_normalization else values
+        )
+    normalized_norms = np.asarray(
+        adapter_metrics.get("normalized_norms", np.linalg.norm(normalized, axis=1)),
+        dtype=np.float32,
+    )
+    latencies = list(adapter_metrics.get("latency_seconds", [None] * len(samples)))
     backend, _ = load_search_backend(
         SearchConfig(stage1_root, f"stage1b_{candidate.candidate_id}", top_k=20)
     )
@@ -106,7 +121,7 @@ def probe_candidate(
     cosine = np.sum(normalized * stored, axis=1) / (
         np.linalg.norm(normalized, axis=1) * stored_norms
     )
-    scores, rows = backend.search(normalized, 20)
+    _, rows = backend.search(normalized, 20)
     results, target_ranks = [], []
     for index, sample in enumerate(samples):
         positions = np.flatnonzero(rows[index] == sample["global_row"])
@@ -119,10 +134,11 @@ def probe_candidate(
                 "global_row": sample["global_row"],
                 "video_id": sample["video_id"],
                 "n": sample["n"],
+                "original_frame_idx": sample["original_frame_idx"],
                 "encode_status": "SUCCESS",
                 "candidate_dimension": int(values.shape[1]),
                 "candidate_norm_before_normalization": float(raw_norms[index]),
-                "candidate_norm_after_normalization": float(np.linalg.norm(normalized[index])),
+                "candidate_norm_after_normalization": float(normalized_norms[index]),
                 "stored_norm": float(stored_norms[index]),
                 "cosine_to_stored": float(cosine[index]),
                 "top1_global_row_when_searched": int(rows[index, 0]),
@@ -130,6 +146,7 @@ def probe_candidate(
                 "matched_row_in_top1": rank == 1,
                 "matched_row_in_top5": rank is not None and rank <= 5,
                 "matched_row_in_top20": rank is not None,
+                "encode_latency_seconds": latencies[index],
                 "issue_codes": [],
             }
         )
@@ -160,7 +177,7 @@ def probe_candidate(
         candidate,
         summary,
         gate,
-        bool(provenance.get("checkpoint_fingerprint")),
+        bool(provenance.get("reproducible", provenance.get("checkpoint_fingerprint"))),
     )
     summary.update(decision=decision, decision_reasons=reasons)
     evidence_source = "EMPIRICAL_PROBE" if decision == "VERIFIED" else candidate.evidence_source

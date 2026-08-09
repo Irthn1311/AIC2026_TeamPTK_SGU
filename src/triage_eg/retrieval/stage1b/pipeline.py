@@ -79,6 +79,19 @@ def _contract_dict(candidate: CandidateContract, provenance: dict[str, Any]) -> 
     elif value["compatibility_status"] == "VERIFIED" and not value.get("checkpoint_sha256"):
         value.pop("checkpoint_sha256")
     value["asset_source"] = provenance.get("asset_source", "UNKNOWN")
+    value["asset_provenance"] = {
+        key: provenance.get(key)
+        for key in (
+            "source_repository",
+            "source_commit",
+            "module_file",
+            "module_origin_valid",
+            "checkpoint_size_bytes",
+            "checkpoint_sha256",
+            "declared_hash_match",
+        )
+        if provenance.get(key) is not None
+    }
     value["notes"] = list(candidate.notes)
     return value
 
@@ -89,6 +102,44 @@ def _issues_summary(issues: list[dict]) -> dict[str, Any]:
         "by_code": dict(sorted(Counter(item["code"] for item in issues).items())),
         "by_severity": dict(sorted(Counter(item["severity"] for item in issues).items())),
     }
+
+
+def _official_candidate_report(
+    selected: CandidateContract | None,
+    provenance: dict[str, Any],
+    runtime: dict[str, Any],
+    metrics: dict[str, Any] | None,
+    smoke_status: str,
+    readiness: str,
+) -> str:
+    label = "[VERIFIED]" if selected else "[UNKNOWN]"
+    candidate_id = selected.candidate_id if selected else "not selected"
+    return (
+        "\n\n# Official OpenAI CLIP Candidate\n\n"
+        f"{label} Candidate: {candidate_id}\n"
+        "\n# Asset Provenance\n\n"
+        f"[INFERRED] {json.dumps(provenance, ensure_ascii=False, default=str)}\n"
+        "\n# Module Origin\n\n"
+        f"{label} {provenance.get('module_file', 'UNKNOWN')}\n"
+        "\n# Checkpoint Integrity\n\n"
+        f"{label} SHA-256: {provenance.get('checkpoint_sha256', 'UNKNOWN')}\n"
+        "\n# Image Preprocessing Source\n\n"
+        f"{label} {runtime.get('preprocess_source', 'UNKNOWN')}\n"
+        "\n# Empirical Compatibility Metrics\n\n"
+        f"{label} {json.dumps(metrics, ensure_ascii=False, default=str)}\n"
+        "\n# Retrieval Alignment\n\n"
+        f"{label} {json.dumps(metrics.get('retrieval_alignment') if metrics else None)}\n"
+        "\n# Compatibility Decision\n\n"
+        f"{label} {readiness}\n"
+        "\n# Text Smoke Status\n\n"
+        f"{label} {smoke_status}\n"
+        "\n# Offline Runtime Guarantee\n\n"
+        "[VERIFIED] Only an absolute local checkpoint path is accepted; the package "
+        "download helper is blocked during model load.\n"
+        "\n# Non-Claims\n\n"
+        "[UNKNOWN] BTC original implementation is not proven. Vietnamese retrieval "
+        "quality is not proven.\n"
+    )
 
 
 def _default_smoke_queries() -> list[dict[str, str]]:
@@ -231,6 +282,7 @@ def run_stage1b(
     provenances: dict[str, dict[str, Any]] = {}
     embeddings: dict[str, np.ndarray] = {}
     encoders: dict[str, Any] = {}
+    runtime_manifests: dict[str, dict[str, Any]] = {}
     executed_candidates = 0
     for candidate in candidates:
         if not candidate.enabled:
@@ -239,11 +291,13 @@ def run_stage1b(
         provenance, preflight_issues = preflight_candidate(candidate, config.repo_root, dataset)
         provenances[candidate.candidate_id] = provenance
         issues.extend(preflight_issues)
-        if preflight_issues:
+        blocking_preflight = [item for item in preflight_issues if item["severity"] == "ERROR"]
+        if blocking_preflight:
             decision = (
                 "REJECTED"
                 if any(
-                    item["code"] == "ENCODER_OUTPUT_DIMENSION_MISMATCH" for item in preflight_issues
+                    item["code"] == "ENCODER_OUTPUT_DIMENSION_MISMATCH"
+                    for item in blocking_preflight
                 )
                 else "BLOCKED"
             )
@@ -271,7 +325,7 @@ def run_stage1b(
                     "dimension_match": candidate.output_dimension == 512,
                     "finite_all": False,
                     "decision": decision,
-                    "decision_reasons": [item["code"] for item in preflight_issues],
+                    "decision_reasons": [item["code"] for item in blocking_preflight],
                 }
             )
             continue
@@ -292,7 +346,16 @@ def run_stage1b(
             prefix = error_message.split(":", 1)[0]
             code = (
                 prefix
-                if prefix.startswith(("ENCODER_", "IMAGE_"))
+                if prefix.startswith(
+                    (
+                        "ENCODER_",
+                        "IMAGE_",
+                        "OPENAI_CLIP_",
+                        "CHECKPOINT_",
+                        "ASSET_MANIFEST_",
+                        "NETWORK_",
+                    )
+                )
                 else "ENCODER_CHECKPOINT_LOAD_FAILED"
             )
             rejected_codes = {
@@ -335,6 +398,9 @@ def run_stage1b(
         if matrix is not None:
             embeddings[candidate.candidate_id] = matrix
             encoders[candidate.candidate_id] = encoder
+            runtime_manifest = getattr(encoder, "runtime_manifest", None)
+            if callable(runtime_manifest):
+                runtime_manifests[candidate.candidate_id] = runtime_manifest()
         for reason in summary["decision_reasons"]:
             if reason in {
                 "PAIRWISE_COSINE_BELOW_GATE",
@@ -411,11 +477,20 @@ def run_stage1b(
             ValueError,
         ) as error:
             smoke_status = "FAIL"
-            if str(error).startswith("TEXT_EMBEDDING_INVALID"):
-                issues.append(issue("ERROR", "TEXT_EMBEDDING_INVALID", selected, None, str(error)))
+            text_code = str(error).split(":", 1)[0]
+            if text_code in {
+                "TEXT_EMBEDDING_INVALID",
+                "TEXT_TOKENIZATION_FAILED",
+                "TEXT_CONTEXT_LENGTH_EXCEEDED",
+            }:
+                issues.append(issue("ERROR", text_code, selected, None, str(error)))
             issues.append(issue("ERROR", "TEXT_SEARCH_SMOKE_FAILED", selected, None, str(error)))
     elif not selected:
         issues.append(issue("INFO", "TEXT_ENCODER_BLOCKED", None, None))
+    if selected:
+        runtime_manifest = getattr(encoders[selected.candidate_id], "runtime_manifest", None)
+        if callable(runtime_manifest):
+            runtime_manifests[selected.candidate_id] = runtime_manifest()
     counts = Counter(item.compatibility_status for item in finalized_candidates if item.enabled)
     selected_summary = {
         "candidate_id": selected.candidate_id if selected else None,
@@ -514,6 +589,8 @@ def run_stage1b(
             "selection_criteria": (
                 "lowest_configured_runtime_priority_then_candidate_id" if selected else None
             ),
+            "runtime": runtime_manifests.get(selected.candidate_id, {}) if selected else {},
+            "asset_provenance": (provenances.get(selected.candidate_id, {}) if selected else {}),
         },
     )
     write_jsonl(staging / "smoke/smoke_queries.jsonl", smoke_queries)
@@ -533,6 +610,16 @@ def run_stage1b(
         if not selected
         else "Proceed only to qualitative text-retrieval evaluation."
     )
+    selected_provenance = provenances.get(selected.candidate_id, {}) if selected else {}
+    selected_runtime = runtime_manifests.get(selected.candidate_id, {}) if selected else {}
+    selected_metrics = next(
+        (
+            item
+            for item in candidate_summaries
+            if selected and item["candidate_id"] == selected.candidate_id
+        ),
+        None,
+    )
     (staging / "stage1b_report.md").write_text(
         "# Stage 1B CLIP Encoder Compatibility Validation\n\n"
         f"- Encoder compatibility: {summary['readiness']['encoder_compatibility']}\n"
@@ -544,8 +631,20 @@ def run_stage1b(
         "- Stage 0 and Stage 1A were reused without rebuild.\n"
         + "\n## Blocking issues\n\n"
         + ("\n".join(blocker_lines) if blocker_lines else "- None")
+        + _official_candidate_report(
+            selected,
+            selected_provenance,
+            selected_runtime,
+            selected_metrics,
+            smoke_status,
+            summary["readiness"]["encoder_compatibility"],
+        )
         + f"\n\n## Next step\n\n{next_step}\n",
         encoding="utf-8",
     )
+    for encoder in encoders.values():
+        close = getattr(encoder, "close", None)
+        if callable(close):
+            close()
     _publish(staging, output, config.overwrite)
     return Stage1BResult(output, summary, selected_contract, False)

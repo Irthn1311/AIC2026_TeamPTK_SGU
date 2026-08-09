@@ -73,6 +73,11 @@ class CandidateContract:
     evidence_source: str = "HYPOTHESIS"
     compatibility_status: str = "NOT_TESTED"
     checkpoint_sha256: str | None = None
+    source_root: str | None = None
+    asset_manifest_path: str | None = None
+    text_truncate: bool = False
+    device: str = "auto"
+    batch_size: int = 16
     runtime_priority: int = 100
     notes: tuple[str, ...] = ()
 
@@ -89,6 +94,8 @@ class CandidateContract:
             self.output_dimension <= 0
             or self.runtime_dtype != "float32"
             or self.runtime_priority < 0
+            or self.batch_size <= 0
+            or self.device not in {"auto", "cpu", "cuda", "cuda:0"}
         ):
             raise ValueError("Candidate output contract is invalid")
 
@@ -101,6 +108,17 @@ class CandidateContract:
 
     def reproducible(self) -> bool:
         preprocess = self.image_preprocessing
+        if self.implementation == "openai_clip" and self.source_root:
+            return bool(
+                self.architecture == "ViT-B/32"
+                and self.pretrained == "openai"
+                and self.checkpoint_path
+                and self.tokenizer == "official clip.tokenize"
+                and self.context_length
+                and preprocess.get("source") == "official_clip_load_return_value"
+                and preprocess.get("manual_preprocess_override") is False
+                and {"strip", "lowercase", "unicode_normalization"} <= set(self.text_preprocessing)
+            )
         required_image = {"resize", "crop", "interpolation", "convert_rgb", "mean", "std"}
         required_text = {"strip", "lowercase", "unicode_normalization"}
         required = (

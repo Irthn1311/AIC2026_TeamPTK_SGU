@@ -101,6 +101,61 @@ def preflight_candidate(
     candidate: CandidateContract, repo_root: Path, dataset_root: Path
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     issues: list[dict[str, Any]] = []
+    if candidate.implementation == "openai_clip" and candidate.source_root:
+        path_values = (
+            candidate.source_root,
+            candidate.checkpoint_path,
+            candidate.asset_manifest_path,
+        )
+        if any(value and "${" in value for value in path_values):
+            unresolved = [value for value in path_values if value and "${" in value]
+            return {
+                "checkpoint_path": candidate.checkpoint_path,
+                "checkpoint_fingerprint": None,
+                "asset_available": False,
+                "asset_source": "UNKNOWN",
+                "reproducible": False,
+            }, [
+                issue(
+                    "ERROR",
+                    "ENCODER_ENVIRONMENT_PATH_UNRESOLVED",
+                    candidate,
+                    None,
+                    unresolved=unresolved,
+                )
+            ]
+        from triage_eg.retrieval.stage1b.adapters.openai_clip_official import (
+            preflight_official_openai_clip,
+            resolve_official_asset_paths,
+        )
+
+        paths = resolve_official_asset_paths(
+            source_root=candidate.source_root,
+            checkpoint_path=candidate.checkpoint_path,
+            asset_manifest_path=candidate.asset_manifest_path,
+        )
+        provenance, official_issues, _ = preflight_official_openai_clip(
+            paths, requested_device=candidate.device
+        )
+        for item in official_issues:
+            item["candidate_id"] = candidate.candidate_id
+        if (
+            candidate.checkpoint_sha256
+            and provenance.get("checkpoint_sha256")
+            and candidate.checkpoint_sha256.lower() != provenance["checkpoint_sha256"]
+        ):
+            official_issues.append(
+                issue(
+                    "ERROR",
+                    "CHECKPOINT_HASH_MISMATCH",
+                    candidate,
+                    Path(candidate.checkpoint_path or ""),
+                    expected=candidate.checkpoint_sha256.lower(),
+                    actual=provenance["checkpoint_sha256"],
+                )
+            )
+            provenance["reproducible"] = False
+        return provenance, official_issues
     dependency = dependency_name(candidate.implementation)
     dependency_ok = dependency is None or importlib.util.find_spec(dependency) is not None
     checkpoint = (
@@ -226,12 +281,32 @@ class OpenAIClipMultimodalEncoder:
 
 
 def load_multimodal_encoder(
-    candidate: CandidateContract, adapter_factory: AdapterFactory | None = None
+    candidate: CandidateContract,
+    adapter_factory: AdapterFactory | None = None,
+    provenance: dict[str, Any] | None = None,
 ) -> MultimodalEncoder:
     if adapter_factory is not None:
         return adapter_factory(candidate)
     if candidate.implementation == "open_clip":
         return OpenClipMultimodalEncoder(candidate)
+    if candidate.implementation == "openai_clip" and candidate.source_root:
+        from triage_eg.retrieval.stage1b.adapters.openai_clip_official import (
+            OfficialOpenAIClipAdapter,
+            controlled_import_clip,
+            resolve_official_asset_paths,
+        )
+
+        if provenance:
+            paths = resolve_official_asset_paths(
+                source_root=candidate.source_root,
+                checkpoint_path=candidate.checkpoint_path,
+                asset_manifest_path=candidate.asset_manifest_path,
+            )
+            module, _, codes = controlled_import_clip(paths.source_root)
+            if codes or module is None:
+                raise RuntimeError(codes[0] if codes else "OPENAI_CLIP_PACKAGE_INVALID")
+            return OfficialOpenAIClipAdapter(candidate, paths, module, provenance)
+        return OfficialOpenAIClipAdapter.load(candidate)
     if candidate.implementation == "openai_clip":
         return OpenAIClipMultimodalEncoder(candidate)
     raise FileNotFoundError(

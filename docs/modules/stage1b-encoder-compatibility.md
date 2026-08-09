@@ -40,6 +40,25 @@ export, and latency; they are not a retrieval-quality benchmark. In particular,
 model-space compatibility does not establish Vietnamese retrieval quality. No
 translation, multilingual projection, or query expansion is added here.
 
+## Official OpenAI CLIP candidate
+
+The stage1b_openai_clip_official_kaggle.yaml config defines the first enabled
+empirical hypothesis: official OpenAI CLIP ViT-B/32 with OpenAI weights. It is
+not VERIFIED by default. Runtime must resolve an official source checkout and a
+local ViT-B-32.pt checkpoint.
+
+The adapter imports clip from the configured source root using an explicit module
+spec and rejects a previously imported package from another origin. It passes the
+absolute checkpoint path to clip.load, blocks the package download helper during
+load, uses the preprocessing object returned by clip.load, and uses clip.tokenize
+for text. Missing assets or integrity failures produce a BLOCKED report rather
+than falling back to OpenCLIP.
+
+Checkpoint SHA-256, optional declared hash, source commit, module origin, runtime
+device, model dtype, preprocess provenance, and tokenizer behavior are recorded.
+An empirical pass means MODEL_SPACE_VERIFIED; it does not prove that BTC used the
+same original library implementation.
+
 ## Kaggle run
 
 Provide Stage 0 and Stage 1A saved outputs plus any dependency/checkpoint as Kaggle

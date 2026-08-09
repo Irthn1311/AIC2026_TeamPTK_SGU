@@ -1,0 +1,41 @@
+stage1b_version: "0.1.0"
+probe:
+  sample_size: 50
+  seed: 2026
+  batch_size: 16
+compatibility_gate:
+  minimum_completed_samples: 20
+  pairwise_cosine_mean_min: 0.995
+  pairwise_cosine_min_min: 0.98
+  target_top1_rate_min: 0.95
+  target_top5_rate_min: 1.0
+  require_dimension_512: true
+  require_all_finite: true
+  implementation_equivalence_cosine_min: 0.999999
+candidates:
+  - candidate_id: openai_clip_vit_b32_openai_official
+    enabled: true
+    implementation: openai_clip
+    architecture: ViT-B/32
+    pretrained: openai
+    source_root: "${AIC_OPENAI_CLIP_SOURCE_ROOT}"
+    checkpoint_path: "${AIC_OPENAI_CLIP_CHECKPOINT}"
+    asset_manifest_path: "${AIC_OPENAI_CLIP_ASSET_ROOT}/manifests/asset_manifest.json"
+    tokenizer: official clip.tokenize
+    context_length: 77
+    image_preprocessing:
+      source: official_clip_load_return_value
+      manual_preprocess_override: false
+    text_preprocessing:
+      strip: false
+      lowercase: false
+      unicode_normalization: null
+    output_dimension: 512
+    runtime_dtype: float32
+    image_embedding_normalization: true
+    text_embedding_normalization: true
+    text_truncate: false
+    device: auto
+    batch_size: 16
+    evidence_source: HYPOTHESIS
+    runtime_priority: 10

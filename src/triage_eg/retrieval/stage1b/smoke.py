@@ -55,8 +55,11 @@ def run_text_smoke(
     try:
         embeddings = validate_encoder_output(encoder.encode_text(texts), len(texts))
     except ValueError as error:
+        if str(error).startswith(("TEXT_TOKENIZATION_FAILED", "TEXT_CONTEXT_LENGTH_EXCEEDED")):
+            raise
         raise ValueError(f"TEXT_EMBEDDING_INVALID: {error}") from error
-    if candidate.text_embedding_normalization:
+    text_metrics = getattr(encoder, "last_text_metrics", {})
+    if candidate.text_embedding_normalization and not text_metrics.get("normalized_output"):
         embeddings = embeddings / np.linalg.norm(embeddings, axis=1, keepdims=True)
     results = []
     for index, query in enumerate(queries):
@@ -76,6 +79,16 @@ def run_text_smoke(
             {
                 **query,
                 "encoder_status": "VERIFIED",
+                "tokenization_status": list(
+                    text_metrics.get("tokenization_status", ["SUCCESS"] * len(texts))
+                )[index],
+                "text_was_truncated": list(
+                    text_metrics.get("text_was_truncated", [False] * len(texts))
+                )[index],
+                "text_embedding_norm": float(np.linalg.norm(embeddings[index])),
+                "text_encode_latency_seconds": list(
+                    text_metrics.get("latency_seconds", [None] * len(texts))
+                )[index],
                 "top_k": top_k,
                 "latency_seconds": latency,
                 "result_artifacts": {
