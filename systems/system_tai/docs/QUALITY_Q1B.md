@@ -94,6 +94,22 @@ raw video in sampling order and apply `SKIP_NO_SUITABLE_EVENT` before a sampled 
 be associated with a semantic category slot; deterministic selection alone creates no
 query, GT, or suitability claim.
 
+#### Real-corpus acceptance
+
+The Q1-B1A Kaggle real-corpus acceptance passed using sampler revision
+`ae65395d91de5edb8d1a449ea35f3558a4a609d7`. The accepted identity is
+`CURRENT_873_VIDEO_SNAPSHOT`, `BATCH_1_ONLY`, with 873 videos, 177321 feature rows,
+873 raw videos, and corpus fingerprint
+`b0c5ea97a9d5e10dbb7e77dba18d153191218935e2a3275ef888e0a8a83ed6e4`.
+Using sampling seed `system_tai_q1b_v1` produced 873 candidate rows; the byte-exact
+`candidate_video_manifest.csv` SHA-256 is
+`d4ef95e0fe51615a436de65760f99c588478f984f27a1cad25337af297aa4661`.
+
+This sampling rank is neither retrieval rank nor task/category assignment. The manifest
+contains no query and no GT, `annotation_plan.csv` remains unassigned, Batch 2 is not
+represented, and full preliminary representativeness remains `NOT_ESTABLISHED`. This is
+not BTC official GT.
+
 ## Annotation-before-retrieval rule
 
 Before inspecting any `system_tai` prediction, the annotator must:

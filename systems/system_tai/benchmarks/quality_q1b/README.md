@@ -51,6 +51,22 @@ slug is hard-coded and no source artifact is copied. `annotation_plan.csv` remai
 unassigned until human raw-video inspection establishes category suitability. Sampling
 rank is not a category assignment and creates no query or verified label.
 
+### Accepted Kaggle artifact
+
+Real-corpus acceptance passed with sampler revision
+`ae65395d91de5edb8d1a449ea35f3558a4a609d7`, dataset scope
+`CURRENT_873_VIDEO_SNAPSHOT`, batch scope `BATCH_1_ONLY`, 873 videos, 177321 feature
+rows, 873 raw videos, and corpus fingerprint
+`b0c5ea97a9d5e10dbb7e77dba18d153191218935e2a3275ef888e0a8a83ed6e4`.
+Seed `system_tai_q1b_v1` produced 873 rows in the byte-frozen
+`candidate_video_manifest.csv`; its SHA-256 is
+`d4ef95e0fe51615a436de65760f99c588478f984f27a1cad25337af297aa4661`.
+
+Sampling rank is not retrieval rank or task/category assignment. The manifest contains
+no query and no GT, `annotation_plan.csv` remains unassigned, Batch 2 is not represented,
+and full preliminary representativeness remains `NOT_ESTABLISHED`. It is not BTC
+official GT.
+
 The provenance explicitly covers `CURRENT_873_VIDEO_SNAPSHOT` and `BATCH_1_ONLY`.
 Batch 2 is not represented, and full preliminary representativeness is not established.
 No file in this directory currently contains real GT.
