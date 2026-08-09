@@ -31,7 +31,7 @@ manifest, and deterministic file inventory. Existing output is protected unless
 Upload the resulting directory or ZIP as a private Kaggle Dataset. Attach it to
 Notebook 07 so the mounted layout is:
 
-    /kaggle/input/aic2026-openai-clip-vit-b32/
+    /kaggle/input/datasets/irthn1311/aic2026-openai-clip-vit-b32/
     ├── checkpoint/ViT-B-32.pt
     ├── source/openai_clip/clip/
     └── manifests/
@@ -39,7 +39,7 @@ Notebook 07 so the mounted layout is:
 Notebook 07 derives source and checkpoint paths from
 AIC_OPENAI_CLIP_ASSET_ROOT. Override paths when the Kaggle mount name differs:
 
-    export AIC_OPENAI_CLIP_ASSET_ROOT=/kaggle/input/aic2026-openai-clip-vit-b32
+    export AIC_OPENAI_CLIP_ASSET_ROOT=/kaggle/input/datasets/irthn1311/aic2026-openai-clip-vit-b32
     export AIC_OPENAI_CLIP_SOURCE_ROOT=$AIC_OPENAI_CLIP_ASSET_ROOT/source/openai_clip
     export AIC_OPENAI_CLIP_CHECKPOINT=$AIC_OPENAI_CLIP_ASSET_ROOT/checkpoint/ViT-B-32.pt
     export AIC_STAGE1B_DEVICE=auto
@@ -51,7 +51,7 @@ modify the repository template or Kaggle Input.
 ## Preflight
 
     python scripts/preflight_openai_clip_candidate.py \
-      --asset-root /kaggle/input/aic2026-openai-clip-vit-b32 \
+      --asset-root /kaggle/input/datasets/irthn1311/aic2026-openai-clip-vit-b32 \
       --load-model \
       --strict
 
@@ -61,6 +61,18 @@ dependencies, and selected device. Model load still uses only the absolute local
 checkpoint and blocks the package download helper.
 
 ## Run Stage 1B
+
+Stage 1B requires the complete saved Stage 1A index, including the vector matrix,
+norms, and compact-catalog arrays. The small
+`triage_eg_stage1_baseline_reports.zip` is report-only and is not sufficient.
+Attach the saved Notebook 06 output that contains
+`triage_eg_stage1_baseline/index/clip_vectors.f16.npy`, or attach a Dataset that
+contains the single `/kaggle/working/triage_eg_stage1b_input_bundle.zip` created
+by Notebook 06. Notebook 07 discovers the ZIP and safely materializes its strict
+allowlist under `/kaggle/working/triage_eg_stage1b_saved_input`. The ZIP contains
+`stage1_summary.json`, provenance, the vector matrix, norms, and every
+compact-catalog array required by Notebook 07. This reuses the locked index; it
+does not rebuild Stage 1A.
 
     python scripts/run_stage1b_encoder_compatibility.py \
       --repo-root /kaggle/working/AIC2026_TeamPTK_SGU \

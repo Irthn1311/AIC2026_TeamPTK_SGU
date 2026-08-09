@@ -19,8 +19,10 @@ from triage_eg.retrieval.stage1.stage0_loader import load_stage0_bundle
 from triage_eg.retrieval.stage1.writers import (
     INDEX_MEMBERS,
     REPORT_MEMBERS,
+    STAGE1B_INPUT_MEMBERS,
     create_index_bundle,
     create_report_bundle,
+    create_stage1b_input_bundle,
 )
 
 
@@ -471,12 +473,18 @@ def test_report_and_index_zip_members(tmp_path: Path) -> None:
     run_benchmark(result.output_root, random_queries=1, self_queries=1, top_k=2)
     report_zip = create_report_bundle(result.output_root, tmp_path / "reports.zip")
     index_zip = create_index_bundle(result.output_root, tmp_path / "index.zip")
+    stage1b_zip = create_stage1b_input_bundle(result.output_root, tmp_path / "stage1b.zip")
     with ZipFile(report_zip) as archive:
         assert set(archive.namelist()) == set(REPORT_MEMBERS)
         assert "index/clip_vectors.f16.npy" not in archive.namelist()
     with ZipFile(index_zip) as archive:
         assert set(archive.namelist()) == set(INDEX_MEMBERS)
         assert index_zip.name not in archive.namelist()
+    with ZipFile(stage1b_zip) as archive:
+        assert archive.namelist() == list(STAGE1B_INPUT_MEMBERS)
+        assert "stage1_summary.json" in archive.namelist()
+        assert "index/clip_vectors.f16.npy" in archive.namelist()
+        assert stage1b_zip.name not in archive.namelist()
 
 
 def test_source_has_no_disallowed_runtime_branches() -> None:

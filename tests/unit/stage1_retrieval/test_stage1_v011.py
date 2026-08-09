@@ -252,3 +252,6 @@ def test_notebook_exports_and_passes_resolved_commit_without_stage0_rerun() -> N
     assert 'repo_root=REPO_DIR' in source
     assert "run_stage0_data_audit.py" not in source
     assert 'os.environ.get(\\"AIC_STAGE1_REUSE_INDEX\\") is None' not in source
+    assert "create_stage1b_input_bundle" in source
+    assert "triage_eg_stage1b_input_bundle.zip" in source
+    assert "archive.testzip() is None" in source

@@ -15,7 +15,10 @@ from triage_eg.retrieval.stage1.encoder import (
 )
 from triage_eg.retrieval.stage1.runner import load_query_vector
 from triage_eg.retrieval.stage1.stage0_loader import REQUIRED_FILES, load_stage0_bundle
-from triage_eg.retrieval.stage1.writers import create_report_bundle
+from triage_eg.retrieval.stage1.writers import (
+    create_report_bundle,
+    create_stage1b_input_bundle,
+)
 
 
 def base_build(tmp_path: Path, **kwargs) -> Stage1BuildConfig:
@@ -148,3 +151,11 @@ def test_report_zip_cannot_be_inside_stage1_root(tmp_path: Path) -> None:
     tmp_path.mkdir(exist_ok=True)
     with pytest.raises(ValueError):
         create_report_bundle(tmp_path, tmp_path / "reports.zip")
+
+
+def test_stage1b_input_zip_is_fail_closed(tmp_path: Path) -> None:
+    tmp_path.mkdir(exist_ok=True)
+    with pytest.raises(ValueError):
+        create_stage1b_input_bundle(tmp_path, tmp_path / "stage1b.zip")
+    with pytest.raises(FileNotFoundError, match="Missing Stage 1B input artifacts"):
+        create_stage1b_input_bundle(tmp_path, tmp_path.parent / "stage1b.zip")

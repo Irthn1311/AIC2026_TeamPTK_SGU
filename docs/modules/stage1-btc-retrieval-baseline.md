@@ -62,9 +62,12 @@ python scripts/benchmark_stage1.py \
   --random-queries 50 --self-queries 100 --top-k 100 --seed 2026
 ```
 
-Notebook 06 creates `triage_eg_stage1_baseline_reports.zip` by default. This report
-bundle excludes vector/catalog arrays; setting `AIC_ZIP_INDEX=1` creates the separate,
-potentially large `triage_eg_stage1_index_bundle.zip`.
+Notebook 06 creates two default downloads. `triage_eg_stage1_baseline_reports.zip`
+is the small human-readable report bundle and intentionally excludes vectors.
+`triage_eg_stage1b_input_bundle.zip` is the self-contained downstream bundle with
+`stage1_summary.json`, provenance, vector/norm arrays, and the full compact catalog
+required by Stage 1B. The legacy `AIC_ZIP_INDEX=1` option may still create the
+index-only ZIP, but Notebook 07 should use the single Stage 1B input bundle.
 
 Self-retrieval verifies catalog/vector alignment, not semantic retrieval quality.
 Its full-corpus, chunked diagnostic distinguishes deterministic tie saturation from

@@ -1,4 +1,4 @@
-"""Stage 1 report and optional index ZIP packaging."""
+"""Stage 1 report, index, and downstream Stage 1B ZIP packaging."""
 
 from __future__ import annotations
 
@@ -30,6 +30,14 @@ INDEX_MEMBERS = (
     "index/frame_pts_time.npy",
     "index/frame_mapping_fps.npy",
     "index/duplicate_group_size.npy",
+)
+STAGE1B_INPUT_MEMBERS = (
+    "run_manifest.json",
+    "stage1_summary.json",
+    "contract_notes.json",
+    "encoder/encoder_contract.json",
+    "encoder/compatibility_report.json",
+    *INDEX_MEMBERS,
 )
 
 
@@ -65,5 +73,21 @@ def create_index_bundle(stage1_root: str | Path, zip_path: str | Path) -> Path:
         raise FileNotFoundError(f"Missing index artifacts: {', '.join(missing)}")
     with ZipFile(target, "w", compression=ZIP_DEFLATED) as archive:
         for name in INDEX_MEMBERS:
+            archive.write(root / name, arcname=name)
+    return target
+
+
+def create_stage1b_input_bundle(stage1_root: str | Path, zip_path: str | Path) -> Path:
+    """Create one self-contained saved Stage 1A input for downstream Stage 1B."""
+
+    root = Path(stage1_root).resolve(strict=True)
+    target = Path(zip_path).resolve(strict=False)
+    if root in target.parents:
+        raise ValueError("Stage 1B input ZIP must be outside Stage 1 root")
+    missing = [name for name in STAGE1B_INPUT_MEMBERS if not (root / name).is_file()]
+    if missing:
+        raise FileNotFoundError(f"Missing Stage 1B input artifacts: {', '.join(missing)}")
+    with ZipFile(target, "w", compression=ZIP_DEFLATED) as archive:
+        for name in STAGE1B_INPUT_MEMBERS:
             archive.write(root / name, arcname=name)
     return target

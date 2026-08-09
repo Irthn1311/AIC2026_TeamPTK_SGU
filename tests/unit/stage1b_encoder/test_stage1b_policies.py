@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from zipfile import ZipFile
 
 import numpy as np
 import pytest
 
 from triage_eg.retrieval.stage1.encoder import compatibility_gate, validate_encoder_output
+from triage_eg.retrieval.stage1.writers import STAGE1B_INPUT_MEMBERS
 from triage_eg.retrieval.stage1b.assets import (
     asset_source,
     inventory_fingerprint,
@@ -221,6 +223,65 @@ def test_saved_stage1_root_is_found_at_kaggle_style_depth(tmp_path: Path) -> Non
         path.write_bytes(b"x")
     resolved = resolve_stage1_root(tmp_path / "working-missing", search_root=tmp_path)
     assert resolved == attached.resolve()
+
+
+def test_existing_kaggle_mount_discovers_nested_complete_stage1_root(tmp_path: Path) -> None:
+    mount = tmp_path / "datasets/owner/triage-eg-stage1-baseline"
+    complete = mount / "triage_eg_stage1_baseline"
+    for name in STAGE1_REQUIRED:
+        path = complete / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"x")
+    resolved = resolve_stage1_root(mount, search_root=tmp_path)
+    assert resolved == complete.resolve()
+
+
+def test_report_only_stage1_mount_has_actionable_error(tmp_path: Path) -> None:
+    mount = tmp_path / "datasets/owner/triage-eg-stage1-baseline"
+    (mount / "index").mkdir(parents=True)
+    (mount / "stage1_summary.json").write_text("{}", encoding="utf-8")
+    (mount / "index/index_manifest.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(FileNotFoundError, match="report-only bundle is insufficient"):
+        resolve_stage1_root(mount, search_root=tmp_path)
+
+
+def test_stage1b_input_zip_is_materialized_for_notebook07(tmp_path: Path) -> None:
+    mount = tmp_path / "datasets/owner/triage-eg-stage1-baseline"
+    mount.mkdir(parents=True)
+    bundle = mount / "triage_eg_stage1b_input_bundle.zip"
+    with ZipFile(bundle, "w") as archive:
+        for name in STAGE1B_INPUT_MEMBERS:
+            archive.writestr(name, b"x")
+    materialized = tmp_path / "working/triage_eg_stage1b_saved_input"
+    resolved = resolve_stage1_root(
+        mount,
+        search_root=tmp_path,
+        materialize_root=materialized,
+    )
+    assert resolved == materialized.resolve()
+    assert all((resolved / name).is_file() for name in STAGE1_REQUIRED)
+    assert resolve_stage1_root(
+        mount,
+        search_root=tmp_path,
+        materialize_root=materialized,
+    ) == materialized.resolve()
+
+
+def test_stage1b_input_zip_rejects_unexpected_member(tmp_path: Path) -> None:
+    mount = tmp_path / "mount"
+    mount.mkdir()
+    bundle = mount / "triage_eg_stage1b_input_bundle.zip"
+    with ZipFile(bundle, "w") as archive:
+        for name in STAGE1B_INPUT_MEMBERS:
+            archive.writestr(name, b"x")
+        archive.writestr("../escape.txt", b"unsafe")
+    with pytest.raises(ValueError, match="unexpected or duplicate"):
+        resolve_stage1_root(
+            mount,
+            search_root=mount,
+            materialize_root=tmp_path / "materialized",
+        )
+    assert not (tmp_path / "escape.txt").exists()
 
 
 def test_saved_stage1_root_discovery_fails_on_ambiguity(tmp_path: Path) -> None:
