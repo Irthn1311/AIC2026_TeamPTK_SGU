@@ -23,6 +23,13 @@ def main() -> int:
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--zip", action="store_true", dest="create_zip")
+    parser.add_argument(
+        "--dependency-wheel",
+        action="append",
+        default=[],
+        type=Path,
+        help="Existing pure-Python wheel to bundle for offline runtime; repeat as needed.",
+    )
     args = parser.parse_args()
     try:
         result = build_openai_clip_asset_bundle(
@@ -34,6 +41,7 @@ def main() -> int:
                 overwrite=args.overwrite,
                 dry_run=args.dry_run,
                 create_zip=args.create_zip,
+                dependency_wheels=tuple(args.dependency_wheel),
             )
         )
     except (FileExistsError, FileNotFoundError, OSError, ValueError) as error:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -34,6 +35,7 @@ class AssetBundleConfig:
     overwrite: bool = False
     dry_run: bool = False
     create_zip: bool = False
+    dependency_wheels: tuple[Path, ...] = ()
 
 
 def _within(path: Path, root: Path) -> bool:
@@ -41,7 +43,7 @@ def _within(path: Path, root: Path) -> bool:
     return resolved == parent or parent in resolved.parents
 
 
-def _validate(config: AssetBundleConfig) -> tuple[Path, Path, Path]:
+def _validate(config: AssetBundleConfig) -> tuple[Path, Path, Path, tuple[Path, ...]]:
     source = config.source_root.expanduser().resolve(strict=True)
     checkpoint = config.checkpoint.expanduser().resolve(strict=True)
     output = config.output_root.expanduser().resolve(strict=False)
@@ -55,7 +57,12 @@ def _validate(config: AssetBundleConfig) -> tuple[Path, Path, Path]:
         raise ValueError("Asset bundle output root is too broad")
     if _within(output, source) or _within(output, checkpoint.parent):
         raise ValueError("Asset bundle output must be outside source/checkpoint roots")
-    return source, checkpoint, output
+    wheels = tuple(path.expanduser().resolve(strict=True) for path in config.dependency_wheels)
+    if any(path.suffix.lower() != ".whl" or not path.is_file() for path in wheels):
+        raise ValueError("OFFLINE_DEPENDENCY_WHEEL_INVALID")
+    if len({path.name for path in wheels}) != len(wheels):
+        raise ValueError("OFFLINE_DEPENDENCY_WHEEL_DUPLICATE")
+    return source, checkpoint, output, wheels
 
 
 def _source_files(source: Path) -> list[Path]:
@@ -98,12 +105,36 @@ def _normalized_repository(value: str) -> str:
     return normalized.removesuffix("/").removesuffix(".git")
 
 
-def _source_provenance(source: Path, declared: str | None) -> dict[str, Any]:
+def _source_provenance(
+    source: Path,
+    declared: str | None,
+    existing: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     canonical_repository = "https://github.com/openai/CLIP.git"
     origin = _git_value(source, "remote", "get-url", "origin")
     if origin and _normalized_repository(origin) != _normalized_repository(canonical_repository):
         raise ValueError("OPENAI_CLIP_SOURCE_REPOSITORY_INVALID")
     actual_commit = _git_value(source, "rev-parse", "HEAD")
+    if not actual_commit and existing:
+        existing_repository = str(existing.get("source_repository", ""))
+        existing_commit = str(existing.get("source_commit", "")).strip()
+        if _normalized_repository(existing_repository) != _normalized_repository(
+            canonical_repository
+        ):
+            raise ValueError("OPENAI_CLIP_SOURCE_REPOSITORY_INVALID")
+        if declared and existing_commit and declared.strip() != existing_commit:
+            raise ValueError("OPENAI_CLIP_SOURCE_COMMIT_MISMATCH")
+        return {
+            "source_repository": canonical_repository,
+            "source_commit": declared.strip() if declared else existing_commit or "UNKNOWN",
+            "source_branch": str(existing.get("source_branch", "UNKNOWN")),
+            "source_commit_timestamp": str(
+                existing.get("source_commit_timestamp", "UNKNOWN")
+            ),
+            "source_acquisition": str(existing.get("source_acquisition", "git_clone")),
+            "source_destination": "source/openai_clip",
+            "nested_git_directory_included": False,
+        }
     source_commit = declared.strip() if declared else actual_commit or "UNKNOWN"
     if declared and actual_commit and source_commit != actual_commit:
         raise ValueError("OPENAI_CLIP_SOURCE_COMMIT_MISMATCH")
@@ -194,10 +225,20 @@ def _create_zip(root: Path, overwrite: bool) -> Path:
 
 
 def build_openai_clip_asset_bundle(config: AssetBundleConfig) -> dict[str, Any]:
-    source, checkpoint, output = _validate(config)
+    source, checkpoint, output, dependency_wheels = _validate(config)
     source_files = _source_files(source)
     checkpoint_hash = sha256_file(checkpoint)
-    source_provenance = _source_provenance(source, config.source_commit)
+    existing_provenance = None
+    existing_provenance_path = output / "manifests/source_provenance.json"
+    if existing_provenance_path.is_file():
+        try:
+            value = json.loads(existing_provenance_path.read_text(encoding="utf-8"))
+            existing_provenance = value if isinstance(value, dict) else None
+        except (OSError, json.JSONDecodeError):
+            existing_provenance = None
+    source_provenance = _source_provenance(
+        source, config.source_commit, existing=existing_provenance
+    )
     source_commit = str(source_provenance["source_commit"])
     plan = {
         "source_root": str(source),
@@ -206,6 +247,7 @@ def build_openai_clip_asset_bundle(config: AssetBundleConfig) -> dict[str, Any]:
         "source_files": [path.relative_to(source).as_posix() for path in source_files],
         "checkpoint_sha256": checkpoint_hash,
         "source_commit": source_commit,
+        "dependency_wheels": [str(path) for path in dependency_wheels],
         "dry_run": config.dry_run,
     }
     if config.dry_run:
@@ -225,6 +267,18 @@ def build_openai_clip_asset_bundle(config: AssetBundleConfig) -> dict[str, Any]:
         checkpoint_target = staging / "checkpoint/ViT-B-32.pt"
         checkpoint_target.parent.mkdir(parents=True)
         shutil.copy2(checkpoint, checkpoint_target)
+        dependency_records = []
+        for wheel in dependency_wheels:
+            target = staging / "source/dependencies" / wheel.name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(wheel, target)
+            dependency_records.append(
+                {
+                    "relative_path": target.relative_to(staging).as_posix(),
+                    "size_bytes": target.stat().st_size,
+                    "sha256": sha256_file(target),
+                }
+            )
         manifests = staging / "manifests"
         manifests.mkdir()
         (manifests / "checkpoint.sha256").write_text(
@@ -249,6 +303,7 @@ def build_openai_clip_asset_bundle(config: AssetBundleConfig) -> dict[str, Any]:
             ),
             "internet_required_at_runtime": False,
             "runtime_model_load_policy": "absolute_local_checkpoint_path_only",
+            "offline_dependency_wheels": dependency_records,
             "created_at": datetime.now(UTC).isoformat(),
             "notes": [
                 "This bundle is a Stage 1B encoder compatibility hypothesis.",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import json
 import sys
 from pathlib import Path
@@ -15,6 +16,7 @@ from triage_eg.retrieval.stage1b.adapters.openai_clip_official import (
     _device_details,
     _numpy_output,
     controlled_import_clip,
+    materialize_kaggle_expanded_tokenizer,
     preflight_official_openai_clip,
     resolve_official_asset_paths,
 )
@@ -270,9 +272,48 @@ def test_controlled_import_reports_missing_runtime_dependency(tmp_path: Path) ->
         "def tokenize(*args, **kwargs): return None\n"
     )
     _, source, _ = make_asset(tmp_path, package_source=package_source)
-    module, _, issues = controlled_import_clip(source)
+    module, details, issues = controlled_import_clip(source)
     assert module is None
     assert issues == ["ENCODER_DEPENDENCY_NOT_AVAILABLE"]
+    assert details["missing_dependency"] == "triage_eg_intentionally_missing_dependency"
+
+
+def test_kaggle_expanded_tokenizer_is_restored_in_working_copy(tmp_path: Path) -> None:
+    _, source, _ = make_asset(tmp_path)
+    compressed = source / "clip/bpe_simple_vocab_16e6.txt.gz"
+    compressed.unlink()
+    expanded = source / "clip/bpe_simple_vocab_16e6.txt"
+    expanded.write_bytes(b"tokenizer contents")
+    runtime, restored = materialize_kaggle_expanded_tokenizer(
+        source, tmp_path / "working/openai_clip"
+    )
+    assert restored and runtime != source
+    assert expanded.is_file() and not compressed.exists()
+    with gzip.open(runtime / "clip/bpe_simple_vocab_16e6.txt.gz", "rb") as stream:
+        assert stream.read() == b"tokenizer contents"
+
+
+def test_preflight_imports_dependency_from_offline_wheel(tmp_path: Path) -> None:
+    dependency = "triage_eg_offline_test_dependency"
+    package_source = (
+        f"import {dependency}\n"
+        "def load(*args, **kwargs): return None\n"
+        "def tokenize(*args, **kwargs): return None\n"
+    )
+    asset, source, checkpoint = make_asset(tmp_path, package_source=package_source)
+    wheel = asset / "source/dependencies/dependency-1.0-py3-none-any.whl"
+    wheel.parent.mkdir(parents=True)
+    with ZipFile(wheel, "w") as archive:
+        archive.writestr(f"{dependency}.py", "VALUE = 'offline'\n")
+    try:
+        provenance, issues, module = preflight_official_openai_clip(
+            resolve_official_asset_paths(asset, source, checkpoint), requested_device="cpu"
+        )
+        assert module is not None
+        assert "ENCODER_DEPENDENCY_NOT_AVAILABLE" not in issue_codes(issues)
+        assert provenance["offline_dependency_wheels"] == [str(wheel.resolve())]
+    finally:
+        sys.modules.pop(dependency, None)
 
 
 def test_existing_wrong_clip_origin_is_rejected(tmp_path: Path) -> None:
@@ -548,6 +589,9 @@ def test_asset_bundle_contains_runtime_assets_and_excludes_git(tmp_path: Path) -
     (source / "tests").mkdir()
     (source / "tests/test.py").write_text("ignored", encoding="utf-8")
     output = tmp_path / "portable/bundle"
+    dependency_wheel = tmp_path / "wheels/ftfy-6.3.1-py3-none-any.whl"
+    dependency_wheel.parent.mkdir()
+    dependency_wheel.write_bytes(b"wheel")
     result = build_openai_clip_asset_bundle(
         AssetBundleConfig(
             source,
@@ -555,6 +599,7 @@ def test_asset_bundle_contains_runtime_assets_and_excludes_git(tmp_path: Path) -
             output,
             source_commit="abc123",
             create_zip=True,
+            dependency_wheels=(dependency_wheel,),
         )
     )
     assert (output / "source/openai_clip/clip/__init__.py").is_file()
@@ -564,11 +609,15 @@ def test_asset_bundle_contains_runtime_assets_and_excludes_git(tmp_path: Path) -
     assert (output / "manifests/asset_manifest.json").is_file()
     assert (output / "manifests/source_provenance.json").is_file()
     assert (output / "manifests/file_inventory.jsonl").is_file()
+    assert (output / "source/dependencies/ftfy-6.3.1-py3-none-any.whl").is_file()
     manifest = json.loads((output / "manifests/asset_manifest.json").read_text())
     assert manifest["source_repository"] == "https://github.com/openai/CLIP.git"
     assert manifest["checkpoint_filename"] == "ViT-B-32.pt"
     assert manifest["checkpoint_size_bytes"] == checkpoint.stat().st_size
     assert manifest["runtime_model_load_policy"] == "absolute_local_checkpoint_path_only"
+    assert manifest["offline_dependency_wheels"][0]["relative_path"] == (
+        "source/dependencies/ftfy-6.3.1-py3-none-any.whl"
+    )
     provenance = json.loads((output / "manifests/source_provenance.json").read_text())
     assert provenance["source_commit"] == "abc123"
     assert provenance["source_destination"] == "source/openai_clip"
@@ -640,6 +689,7 @@ def test_notebook_uses_runtime_yaml_and_contains_no_model_download_cell() -> Non
     source = "\n".join("".join(cell.get("source", [])) for cell in notebook["cells"])
     assert "stage1b_openai_clip_runtime.yaml" in source
     assert "write_official_runtime_config" in source
+    assert "materialize_kaggle_expanded_tokenizer" in source
     assert "!pip install" not in source
     assert "%pip install" not in source
     assert "OpenAI/CLIP.git" not in source

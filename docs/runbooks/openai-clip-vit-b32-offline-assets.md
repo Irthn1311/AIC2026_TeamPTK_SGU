@@ -18,13 +18,17 @@ Run this on the machine that already has both assets:
       --checkpoint /path/to/ViT-B-32.pt \
       --output-root /path/to/openai_clip_vit_b32_asset_bundle \
       --source-commit YOUR_SOURCE_COMMIT \
+      --dependency-wheel /path/to/ftfy-6.3.1-py3-none-any.whl \
+      --dependency-wheel /path/to/wcwidth-0.2.13-py2.py3-none-any.whl \
       --zip
 
 Use --dry-run first to inspect the selected files. The tool copies only runtime
 source files, LICENSE, tokenizer asset, and checkpoint; it excludes .git,
 caches, and tests. It writes the computed checkpoint hash, source commit, asset
 manifest, and deterministic file inventory. Existing output is protected unless
---overwrite is supplied.
+--overwrite is supplied. Pure-Python dependency wheels are copied under
+`source/dependencies/` and imported directly at runtime; Notebook 07 does not
+run pip or access the Internet.
 
 ## Upload and attach to Kaggle
 
@@ -34,7 +38,14 @@ Notebook 07 so the mounted layout is:
     /kaggle/input/datasets/irthn1311/aic2026-openai-clip-vit-b32/
     ├── checkpoint/ViT-B-32.pt
     ├── source/openai_clip/clip/
+    ├── source/dependencies/
     └── manifests/
+
+Kaggle can expose the tokenizer member without its outer gzip layer as
+`bpe_simple_vocab_16e6.txt`. Notebook 07 detects that exact case, copies the
+official source into `/kaggle/working`, recreates the required deterministic
+`.txt.gz`, and points the runtime adapter at the working copy. Kaggle Input stays
+read-only and unchanged.
 
 Notebook 07 derives source and checkpoint paths from
 AIC_OPENAI_CLIP_ASSET_ROOT. Override paths when the Kaggle mount name differs:

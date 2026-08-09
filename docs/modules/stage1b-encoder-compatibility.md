@@ -9,8 +9,9 @@ Stage 1A index; it does not rebuild either stage or scan the full corpus.
 Candidates are disabled by default in
 `configs/retrieval/stage1b_encoder_candidates.yaml`. A candidate runs only when it
 is explicitly enabled, declares 512 output dimensions, has its dependency already
-installed, and resolves to a local checkpoint or model-asset directory. The code
-contains no model-download path.
+installed or supplied as an offline wheel in the asset bundle, and resolves to a
+local checkpoint or model-asset directory. The code contains no model-download
+path.
 
 The configured thresholds are a `PROJECT_DEFINED_EMPIRICAL_GATE`, not a universal
 CLIP standard. `VERIFIED` requires adequate samples, finite 512-dimensional output,
@@ -64,6 +65,9 @@ same original library implementation.
 Provide Stage 0 and Stage 1A saved outputs plus any dependency/checkpoint as Kaggle
 inputs, edit or generate an explicit candidate config containing the mounted local
 checkpoint path, then run `notebooks/07_stage1b_encoder_compatibility.ipynb`.
+Official OpenAI CLIP pure-Python wheels under `source/dependencies/` are imported
+without pip. If Kaggle expands the tokenizer gzip into a `.txt` member, the notebook
+recreates `.txt.gz` in `/kaggle/working` and leaves the mounted input unchanged.
 The final cell creates
 `/kaggle/working/triage_eg_stage1b_encoder_compatibility_reports.zip` containing
 report artifacts only. If no enabled asset is available, a complete `BLOCKED`

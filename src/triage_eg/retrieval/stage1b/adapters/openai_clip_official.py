@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import gzip
 import importlib.util
 import json
 import os
+import shutil
 import sys
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
@@ -20,6 +22,8 @@ from triage_eg.retrieval.stage1b.contracts import CandidateContract
 
 DEFAULT_ASSET_ROOT = Path("/kaggle/input/aic2026-openai-clip-vit-b32")
 TOKENIZER_ASSET = Path("clip/bpe_simple_vocab_16e6.txt.gz")
+KAGGLE_EXPANDED_TOKENIZER_ASSET = Path("clip/bpe_simple_vocab_16e6.txt")
+OFFLINE_DEPENDENCY_ROOT = Path("source/dependencies")
 REQUIRED_APIS = ("load", "tokenize")
 
 
@@ -68,6 +72,64 @@ def resolve_official_asset_paths(
 def _is_within(path: Path, root: Path) -> bool:
     resolved, parent = path.resolve(strict=False), root.resolve(strict=False)
     return resolved == parent or parent in resolved.parents
+
+
+def materialize_kaggle_expanded_tokenizer(
+    source_root: str | Path,
+    runtime_root: str | Path,
+) -> tuple[Path, bool]:
+    """Restore the tokenizer gzip Kaggle expands, without mutating read-only input."""
+    source = _absolute(source_root)
+    expected = source / TOKENIZER_ASSET
+    if expected.is_file():
+        return source, False
+    expanded = source / KAGGLE_EXPANDED_TOKENIZER_ASSET
+    if not expanded.is_file():
+        return source, False
+    runtime = _absolute(runtime_root)
+    if runtime == Path(runtime.anchor) or len(runtime.parts) < 3 or _is_within(runtime, source):
+        raise ValueError("OpenAI CLIP runtime source path is unsafe")
+    staging = runtime.with_name(f".{runtime.name}.building")
+    if staging.exists():
+        shutil.rmtree(staging)
+    try:
+        shutil.copytree(source, staging)
+        runtime_tokenizer = staging / TOKENIZER_ASSET
+        runtime_tokenizer.parent.mkdir(parents=True, exist_ok=True)
+        with (
+            expanded.open("rb") as source_file,
+            runtime_tokenizer.open("wb") as target_file,
+            gzip.GzipFile(fileobj=target_file, mode="wb", mtime=0) as compressed,
+        ):
+            shutil.copyfileobj(source_file, compressed)
+        if runtime.exists():
+            shutil.rmtree(runtime)
+        os.replace(staging, runtime)
+    except Exception:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    return runtime, True
+
+
+def _offline_dependency_wheels(asset_root: Path) -> tuple[Path, ...]:
+    root = asset_root / OFFLINE_DEPENDENCY_ROOT
+    return tuple(sorted(path.resolve() for path in root.glob("*.whl") if path.is_file()))
+
+
+@contextmanager
+def _temporary_dependency_paths(paths: Sequence[Path]) -> Iterator[None]:
+    inserted: list[str] = []
+    try:
+        for path in reversed(paths):
+            value = str(path)
+            if value not in sys.path:
+                sys.path.insert(0, value)
+                inserted.append(value)
+        yield
+    finally:
+        for value in inserted:
+            if value in sys.path:
+                sys.path.remove(value)
 
 
 def _read_declared_hash(path: Path) -> str | None:
@@ -155,10 +217,11 @@ def controlled_import_clip(
         module = importlib.util.module_from_spec(spec)
         sys.modules["clip"] = module
         spec.loader.exec_module(module)
-    except ModuleNotFoundError:
+    except ModuleNotFoundError as error:
         for name in set(sys.modules) - before:
             if name == "clip" or name.startswith("clip."):
                 sys.modules.pop(name, None)
+        details["missing_dependency"] = error.name
         return None, details, ["ENCODER_DEPENDENCY_NOT_AVAILABLE"]
     except Exception:
         for name in set(sys.modules) - before:
@@ -209,9 +272,20 @@ def preflight_official_openai_clip(
     from triage_eg.retrieval.stage1b.assets import issue, sha256_file
 
     issues: list[dict[str, Any]] = []
-    module, module_details, module_codes = controlled_import_clip(paths.source_root)
+    dependency_wheels = _offline_dependency_wheels(paths.asset_root)
+    with _temporary_dependency_paths(dependency_wheels):
+        module, module_details, module_codes = controlled_import_clip(paths.source_root)
+    module_details["offline_dependency_wheels"] = [str(path) for path in dependency_wheels]
     for code in module_codes:
-        issues.append(issue("ERROR", code, None, paths.source_root))
+        issues.append(
+            issue(
+                "ERROR",
+                code,
+                None,
+                paths.source_root,
+                dependency=module_details.get("missing_dependency"),
+            )
+        )
     tokenizer_path = paths.source_root / TOKENIZER_ASSET
     if not tokenizer_path.is_file():
         issues.append(
@@ -262,11 +336,13 @@ def preflight_official_openai_clip(
     )
     if not source_commit or source_commit.upper() == "UNKNOWN":
         issues.append(issue("WARNING", "SOURCE_COMMIT_UNKNOWN", None, source_commit_path))
+    device_missing_dependency = None
     try:
         import torch
 
         device, device_details, device_codes = _device_details(torch, requested_device)
-    except ImportError:
+    except ImportError as error:
+        device_missing_dependency = error.name or "torch"
         device = requested_device
         device_details = {
             "torch_version": None,
@@ -276,7 +352,15 @@ def preflight_official_openai_clip(
         }
         device_codes = ["ENCODER_DEPENDENCY_NOT_AVAILABLE"]
     for code in device_codes:
-        issues.append(issue("ERROR", code, None, None))
+        issues.append(
+            issue(
+                "ERROR",
+                code,
+                None,
+                None,
+                dependency=device_missing_dependency,
+            )
+        )
     try:
         from PIL import Image  # noqa: F401
 
