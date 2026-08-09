@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "benchmark_id": "system_tai-q1b-b1-diagnostic-v1-draft",
+  "description": "Bootstrap scaffold with no verified semantic GT yet. This is Batch 1 diagnostic scope only and is not official competition ground truth.",
+  "queries": []
+}

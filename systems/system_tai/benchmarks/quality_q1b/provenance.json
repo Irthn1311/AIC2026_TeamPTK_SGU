@@ -1,0 +1,23 @@
+{
+  "provenance_schema_version": 1,
+  "benchmark_id": "system_tai-q1b-b1-diagnostic-v1-draft",
+  "benchmark_role": "DIAGNOSTIC",
+  "dataset_scope": "CURRENT_873_VIDEO_SNAPSHOT",
+  "btc_batch_scope": "BATCH_1_ONLY",
+  "corpus_video_count": 873,
+  "clip_row_count": 177321,
+  "corpus_fingerprint": "b0c5ea97a9d5e10dbb7e77dba18d153191218935e2a3275ef888e0a8a83ed6e4",
+  "full_preliminary_representativeness": "NOT_ESTABLISHED",
+  "sampling_seed": "system_tai_q1b_v1",
+  "quality_tooling_revision": "0d11115d4945bdacb214483f4a4dffa81af2f581",
+  "frozen_code_revision": "efb4b3dd54cb632809483796b4b09713f750e884",
+  "documentation_base_revision": "6721954207a55f287c936e1bcad0e184690c731b",
+  "benchmark_sha256": null,
+  "annotation_status": "BOOTSTRAP_ONLY",
+  "verified_query_count": 0,
+  "task_counts": {
+    "kis": 0,
+    "qa": 0,
+    "trake": 0
+  }
+}
