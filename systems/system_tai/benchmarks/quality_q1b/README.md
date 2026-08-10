@@ -113,6 +113,28 @@ Pass 1 will separately author the query and semantic definition, establish
 original-video frame intervals and task-specific answers/events, and create a draft
 benchmark record for later independent review.
 
+### PILOT15 repaired checkpoint
+
+The canonical `candidate_review_log.csv` now contains a 15-`ASSIGN` human-suitability
+checkpoint. It is annotation-workflow state, not the final benchmark; the full Q1-B
+target remains 60 verified queries. PILOT15 created no semantic query or semantic GT,
+and no retrieval or model output was inspected before the suitability decisions.
+
+Independent post-Kaggle audit found stale duplicated notes in reviews 8 and 12. Their
+raw videos were re-audited, and only the two `notes` fields were repaired. The
+pre-repair forensic SHA-256 is
+`a595580b741ced0d03f4008b005659d7da99ce4d00c37802dfc05ca762fea27b`; the repaired
+canonical SHA-256 is
+`41ee3117146ed446602b0a36422097173595fbf53f8fff07c7c22f46bc5f8a8e`.
+Review 8 remains `L23_V013 / TRAKE-001 / TR-C1`, review 12 remains
+`L25_V024 / KIS-018 / KIS-C8`, and the next deterministic unreviewed target remains
+`L23_V023 / KIS-011 / KIS-C1`.
+
+Dataset scope remains `CURRENT_873_VIDEO_SNAPSHOT`, BTC batch scope remains
+`BATCH_1_ONLY`, and benchmark role remains `DIAGNOSTIC`; full preliminary
+representativeness remains `NOT_ESTABLISHED`. PILOT15 is not official BTC GT or a
+semantic benchmark freeze. Q1-C and Q2 have not started.
+
 The provenance explicitly covers `CURRENT_873_VIDEO_SNAPSHOT` and `BATCH_1_ONLY`.
 Batch 2 is not represented, and full preliminary representativeness is not established.
 No file in this directory currently contains real GT.

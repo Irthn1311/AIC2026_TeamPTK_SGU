@@ -84,7 +84,9 @@ def _reviews_for(candidates, slots, decisions):
 
 def _paths_with_temp_log(tmp_path: Path):
     review_log = tmp_path / "candidate_review_log.csv"
-    review_log.write_bytes(PATHS.review_log.read_bytes())
+    with review_log.open("w", encoding="utf-8", newline="") as stream:
+        writer = csv.writer(stream, lineterminator="\n")
+        writer.writerow(QUEUE.REVIEW_COLUMNS)
     return PATHS._replace(review_log=review_log)
 
 
@@ -141,8 +143,8 @@ def test_candidate_manifest_exact_sha_gate_is_enforced(tmp_path: Path) -> None:
 
 
 def test_empty_review_log_returns_first_candidate_and_calculated_slot(loaded_queue) -> None:
-    candidates, slots, reviews, codebook = loaded_queue
-    target = QUEUE.resolve_next_target(candidates, slots, reviews, codebook)
+    candidates, slots, _canonical_reviews, codebook = loaded_queue
+    target = QUEUE.resolve_next_target(candidates, slots, (), codebook)
     assert target["review_sequence"] == 1
     assert target["sample_rank"] == 1
     assert target["video_id"] == "L26_V065"
@@ -308,9 +310,26 @@ def test_assign_with_skip_reason_is_rejected(loaded_queue) -> None:
         QUEUE.validate_review_state(candidates, slots, (bad,))
 
 
-def test_canonical_candidate_review_log_has_zero_data_rows() -> None:
-    with PATHS.review_log.open(encoding="utf-8", newline="") as stream:
-        assert list(csv.reader(stream))[1:] == []
+def test_canonical_candidate_review_log_is_valid_progress_state() -> None:
+    candidates, slots, reviews, codebook = QUEUE.load_queue(PATHS)
+    expected_sequence = list(range(1, len(reviews) + 1))
+    assert [review.review_sequence for review in reviews] == expected_sequence
+    assert [review.sample_rank for review in reviews] == expected_sequence
+    assert all(review.decision in QUEUE.ALLOWED_DECISIONS for review in reviews)
+
+    state = QUEUE.validate_review_state(candidates, slots, reviews)
+    target = QUEUE.resolve_next_target(candidates, slots, reviews, codebook)
+    if state.assigned_slot_count == len(slots):
+        assert target == {"status": "ANNOTATION_SLOT_ASSIGNMENT_COMPLETE"}
+    else:
+        assert target["status"] == "NEXT_REVIEW_TARGET"
+        assert target["review_sequence"] == len(reviews) + 1
+        assert target["sample_rank"] == len(reviews) + 1
+
+    serialized = json.dumps(target)
+    assert "planned_split" not in serialized
+    assert "development" not in serialized
+    assert "holdout" not in serialized
 
 
 def test_next_operation_preserves_annotation_plan() -> None:
@@ -385,6 +404,9 @@ def test_record_operation_appends_exactly_one_row(tmp_path: Path) -> None:
         rows = list(csv.reader(stream))
     assert len(rows) == 2
     assert rows[1][0:2] == ["1", "1"]
+    assert rows[1][2] == "L26_V065"
+    assert rows[1][5] == "KIS-015"
+    assert rows[1][8] == QUEUE.ASSIGN
 
 
 def test_record_cannot_cherry_pick_arbitrary_rank(tmp_path: Path) -> None:

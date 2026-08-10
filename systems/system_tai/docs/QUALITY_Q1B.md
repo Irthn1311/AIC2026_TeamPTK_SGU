@@ -167,6 +167,28 @@ populate `annotation_plan.csv`. Future Q1-B1B Pass 1 will separately author and 
 the semantic query, definition, original-frame intervals, Q&A answers or TRAKE events,
 and a draft benchmark record before independent verification.
 
+### PILOT15 repaired human-suitability checkpoint
+
+PILOT15 records 15 consecutive `ASSIGN` decisions as an annotation-workflow
+checkpoint. It is not the final benchmark: the planned Q1-B target remains 60 verified
+queries. PILOT15 created no semantic query or semantic GT, and no retrieval or model
+output was inspected before the suitability decisions.
+
+A post-Kaggle independent audit found stale duplicated notes in reviews 8 and 12. Both
+raw videos were re-audited, and only the `notes` fields were repaired; all assignment
+identities and other fields remained unchanged. The forensic pre-repair log SHA-256 is
+`a595580b741ced0d03f4008b005659d7da99ce4d00c37802dfc05ca762fea27b`; the repaired
+canonical log SHA-256 is
+`41ee3117146ed446602b0a36422097173595fbf53f8fff07c7c22f46bc5f8a8e`.
+Review 8 remains `L23_V013 / TRAKE-001 / TR-C1`; review 12 remains
+`L25_V024 / KIS-018 / KIS-C8`. The next deterministic unreviewed target remains
+`L23_V023 / KIS-011 / KIS-C1`.
+
+The checkpoint remains `DIAGNOSTIC` for `CURRENT_873_VIDEO_SNAPSHOT` and
+`BATCH_1_ONLY`; full preliminary representativeness remains `NOT_ESTABLISHED`.
+PILOT15 is neither official BTC GT nor a semantic benchmark freeze. Q1-C and Q2 have
+not started.
+
 ## Annotation-before-retrieval rule
 
 Before inspecting any `system_tai` prediction, the annotator must:
