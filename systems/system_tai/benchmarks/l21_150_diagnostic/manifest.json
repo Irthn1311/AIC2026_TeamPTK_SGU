@@ -1,0 +1,121 @@
+{
+  "schema_version": 1,
+  "benchmark_id": "system_tai-l21-150-diagnostic-v1",
+  "benchmark_role": "DIAGNOSTIC_DEVELOPMENT",
+  "official_ground_truth": false,
+  "source_document_name": "AIC2026_Tap_Test_150_Cau_L21.docx",
+  "source_document_sha256": "09732560be1b467f63b4566e5ad943f461838fedb2cc650ff0f67c064c3ddaf0",
+  "importer_version": "l21_150_import_v1",
+  "query_count": 150,
+  "task_counts": {
+    "kis": 50,
+    "qa": 50,
+    "trake": 50
+  },
+  "dataset_scope": "L21 16-video subset",
+  "unique_video_count": 16,
+  "frame_gt_status": "PROPOSED_UNTIL_MAPPING_VALIDATED",
+  "split_seed": "system_tai_l21_150_v1",
+  "split_algorithm": "sha256(seed + '|' + video_id); first 12 DEV, last 4 HOLDOUT",
+  "dev_video_count": 12,
+  "holdout_video_count": 4,
+  "video_assignments": [
+    {
+      "split_rank": 1,
+      "video_id": "L21_V005",
+      "split_hash": "032b007a2758f39cf7a251dc82d33859abd5575a46b76e5aee6f9d7d7789c86a",
+      "split": "DEV"
+    },
+    {
+      "split_rank": 2,
+      "video_id": "L21_V010",
+      "split_hash": "0d617275758e558b9e1d89d26974911bdf5a0de7ec9d2a45f3c0887d18d795da",
+      "split": "DEV"
+    },
+    {
+      "split_rank": 3,
+      "video_id": "L21_V012",
+      "split_hash": "2577c0dcb89f739d257a30d38fcf2ee08b64e82a9dc85e039559296477843d54",
+      "split": "DEV"
+    },
+    {
+      "split_rank": 4,
+      "video_id": "L21_V016",
+      "split_hash": "3d74f6c60c1f52d43e5710e109d281e40834b6ed0e304409b49000b8cb5be10f",
+      "split": "DEV"
+    },
+    {
+      "split_rank": 5,
+      "video_id": "L21_V009",
+      "split_hash": "4aac06188f37e229329fda92111e1b6f9d6d632a09615098162e684f36090c4d",
+      "split": "DEV"
+    },
+    {
+      "split_rank": 6,
+      "video_id": "L21_V007",
+      "split_hash": "52926a2280781a9e2dd91424a05cd4913f3ab12010d326f045e9bf0e14a5954a",
+      "split": "DEV"
+    },
+    {
+      "split_rank": 7,
+      "video_id": "L21_V017",
+      "split_hash": "626c3c6359bf2120fbcb7f575484a7b2f574b596404d656679e448e0ffed68cb",
+      "split": "DEV"
+    },
+    {
+      "split_rank": 8,
+      "video_id": "L21_V003",
+      "split_hash": "770ca98a361c0831c943bf626b5f55bab65ad340e8e4fbb50ad413671b426e72",
+      "split": "DEV"
+    },
+    {
+      "split_rank": 9,
+      "video_id": "L21_V011",
+      "split_hash": "777663691cae9d913c804ef577b5e681198904aa25ace5b01d5ba072c7ae3439",
+      "split": "DEV"
+    },
+    {
+      "split_rank": 10,
+      "video_id": "L21_V015",
+      "split_hash": "92e676b492b65c1ee9d5c63d15dab8060d5f4510725747a8898f7083898e7b28",
+      "split": "DEV"
+    },
+    {
+      "split_rank": 11,
+      "video_id": "L21_V008",
+      "split_hash": "9c9558b149908670df2b4e041ce2ed34f0074120ab00dfa1d5c19de3af1a532d",
+      "split": "DEV"
+    },
+    {
+      "split_rank": 12,
+      "video_id": "L21_V001",
+      "split_hash": "abbf20f148883813cb8cc68c34fde0627c57e04e1b86493116987614c800ec8e",
+      "split": "DEV"
+    },
+    {
+      "split_rank": 13,
+      "video_id": "L21_V006",
+      "split_hash": "bbd739b3a39275e7e2c83cb996603962dcf117f8d19362fa78821c4e50da3afc",
+      "split": "HOLDOUT"
+    },
+    {
+      "split_rank": 14,
+      "video_id": "L21_V002",
+      "split_hash": "bd73eed7649d22c7271430d9d8ea5caea4016d596f637442caea3f9914d3bf9e",
+      "split": "HOLDOUT"
+    },
+    {
+      "split_rank": 15,
+      "video_id": "L21_V014",
+      "split_hash": "c79b79808c614094b9971244106eebb41de8844fb6f90ef2fe4ac456b68497f1",
+      "split": "HOLDOUT"
+    },
+    {
+      "split_rank": 16,
+      "video_id": "L21_V013",
+      "split_hash": "e05dedc8e179e4a4d7448fe2fabee7bef95cdb297fbab0727e1beae033f72bab",
+      "split": "HOLDOUT"
+    }
+  ],
+  "benchmark_sha256": "02f0bfc27053a9e532abb8c2cba9ead8f9923d7600993145c57b315f5e55ad1a"
+}

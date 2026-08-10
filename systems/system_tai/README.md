@@ -18,6 +18,78 @@ It does not implement FAISS, advanced retrieval, Q&A, TRAKE, an API server, or a
 frontend. Synthetic tests prove code mechanics only. Text-retrieval quality requires a
 separate Kaggle smoke test and manual evidence review.
 
+## L21-150 diagnostic E0 harness
+
+`benchmarks/l21_150_diagnostic/` is a separate internal development benchmark imported
+deterministically from `AIC2026_Tap_Test_150_Cau_L21.docx`. It contains 50 KIS, 50 Q&A,
+and 50 TRAKE queries over 16 L21 videos. It is **not** BTC official ground truth. The
+KIS/Q&A frame references are source-proposed ±1 second trial intervals and TRAKE uses
+source-proposed ±4-frame event intervals; strict frame scoring should use the mapping
+validator first. No ASR transcript ground truth is invented.
+
+The video-level split uses `sha256("system_tai_l21_150_v1|" + video_id)`: the first 12
+videos are DEV and the remaining four are HOLDOUT. All tasks for one video stay in the
+same split. Do not tune on HOLDOUT. Q1-B remains a separate human-verified benchmark and
+provenance workflow.
+
+Re-import the source document without committing the DOCX:
+
+```bash
+python systems/system_tai/scripts/l21_150_import.py \
+  --source-docx AIC2026_Tap_Test_150_Cau_L21.docx \
+  --benchmark-output systems/system_tai/benchmarks/l21_150_diagnostic/benchmark.json \
+  --manifest-output systems/system_tai/benchmarks/l21_150_diagnostic/manifest.json
+```
+
+Validate proposed frame references against runtime mapping/raw-video evidence:
+
+```bash
+python systems/system_tai/scripts/l21_150_validate_mapping.py \
+  --mapping-root <map-keyframes-root> \
+  --video-root <raw-video-root> \
+  --benchmark systems/system_tai/benchmarks/l21_150_diagnostic/benchmark.json \
+  --output <outside-git>/l21_150_mapping_validation.json
+```
+
+Run E0 through the existing `OperationalKISRuntime` task handlers. The harness does not
+duplicate CLIP retrieval or change production ranking, Q&A, or TRAKE behavior:
+
+```bash
+python systems/system_tai/scripts/l21_150_run_baseline.py \
+  --benchmark systems/system_tai/benchmarks/l21_150_diagnostic/benchmark.json \
+  --input-root /kaggle/input \
+  --reuse-manifest /kaggle/input/system-tai-manifest/feature_manifest.json \
+  --split dev --task all --top-k 100 \
+  --output-dir /kaggle/working/system_tai_outputs/l21_150_e0 \
+  --device auto --allow-model-download
+```
+
+Evaluate either explicitly proposed GT or mapping-validated GT only:
+
+```bash
+python systems/system_tai/scripts/l21_150_evaluate.py \
+  --benchmark systems/system_tai/benchmarks/l21_150_diagnostic/benchmark.json \
+  --predictions /kaggle/working/system_tai_outputs/l21_150_e0/predictions.jsonl \
+  --gt-policy proposed \
+  --output /kaggle/working/system_tai_outputs/l21_150_e0/evaluation.json \
+  --csv-output /kaggle/working/system_tai_outputs/l21_150_e0/evaluation.csv \
+  --markdown-output /kaggle/working/system_tai_outputs/l21_150_e0/evaluation.md
+```
+
+KIS and Q&A use inclusive video/frame tuple hits; Q&A additionally requires a
+conservatively normalized source-provided answer. TRAKE scores corresponding event
+indexes without prediction reordering. For every task, R@k is the maximum candidate
+score in the prefix and Final Score is the mean of R@1/5/20/50/100. Run
+`l21_150_error_analysis.py` for mechanical error categories by task, branch, difficulty,
+video, and split. Branch labels are slices, not causal diagnoses. Generated E0 artifacts
+must remain outside Git. This harness measures the current baseline as-is and does not
+start Q2 optimization.
+
+The source Q&A table provides one combined event/question cell, not two independently
+authored fields. The benchmark preserves it as `question_vi`; the E0 adapter supplies
+that same text to both fields required by the existing QA runtime rather than inventing
+semantic context that is absent from the source.
+
 ## Install
 
 From the shared repository root:

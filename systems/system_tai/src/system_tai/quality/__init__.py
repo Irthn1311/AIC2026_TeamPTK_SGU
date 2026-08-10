@@ -14,6 +14,18 @@ from .evaluator import (
     QualityTaskSummary,
     evaluate_quality_benchmark,
 )
+from .l21_150_answers import answer_matches, normalize_answer, source_answer_aliases
+from .l21_150_evaluator import OFFICIAL_K as L21_150_OFFICIAL_K
+from .l21_150_evaluator import evaluate_l21_150
+from .l21_150_schema import (
+    L21150Benchmark,
+    L21150FormatError,
+    L21150KISQuery,
+    L21150QAQuery,
+    L21150TRAKEEvent,
+    L21150TRAKEQuery,
+    load_l21_150_benchmark,
+)
 from .reports import (
     TAG_DELIMITER,
     write_quality_comparison_json,
@@ -40,6 +52,13 @@ __all__ = [
     "DeltaClassification",
     "Difficulty",
     "KISQualityQuery",
+    "L21150Benchmark",
+    "L21150FormatError",
+    "L21150KISQuery",
+    "L21150QAQuery",
+    "L21150TRAKEEvent",
+    "L21150TRAKEQuery",
+    "L21_150_OFFICIAL_K",
     "LabelOrigin",
     "QAQualityQuery",
     "QualityBenchmark",
@@ -56,10 +75,15 @@ __all__ = [
     "TAG_DELIMITER",
     "TRAKEQualityQuery",
     "compare_quality_reports",
+    "answer_matches",
     "evaluate_quality_benchmark",
+    "evaluate_l21_150",
+    "load_l21_150_benchmark",
     "load_quality_benchmark_json",
+    "normalize_answer",
     "parse_quality_benchmark_payload",
     "write_quality_comparison_json",
     "write_quality_report_csv",
     "write_quality_report_json",
+    "source_answer_aliases",
 ]

@@ -1,0 +1,3771 @@
+{
+  "schema_version": 1,
+  "benchmark_id": "system_tai-l21-150-diagnostic-v1",
+  "benchmark_role": "DIAGNOSTIC_DEVELOPMENT",
+  "official_ground_truth": false,
+  "dataset_scope": "L21 16-video subset",
+  "frame_gt_status": "PROPOSED_UNTIL_MAPPING_VALIDATED",
+  "description": "Internal diagnostic benchmark imported from the human-reviewed L21-150 source. Proposed KIS/Q&A intervals use the source ±1 second trial windows; TRAKE intervals use ±4 frames. This is not official BTC ground truth, and no ASR transcript ground truth is fabricated.",
+  "queries": [
+    {
+      "task_type": "kis",
+      "query_id": "KIS-01",
+      "video_id": "L21_V001",
+      "branch": "Visual scene",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "query_vi": "Tìm cảnh cháy rừng lớn vào ban đêm, lửa lan dọc sườn đồi và khói dày phủ bầu trời.",
+      "reference_timestamp": "00:25",
+      "proposed_frame_center": 750,
+      "proposed_interval": [
+        720,
+        780
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-02",
+      "video_id": "L21_V001",
+      "branch": "Visual + Object",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "query_vi": "Tìm cảnh một người đàn ông ngồi xổm bên một cột nước trắng phun mạnh thẳng lên từ mặt đất ở khu vực nông thôn.",
+      "reference_timestamp": "03:47",
+      "proposed_frame_center": 6810,
+      "proposed_interval": [
+        6780,
+        6840
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-03",
+      "video_id": "L21_V001",
+      "branch": "Visual + OCR",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "query_vi": "Tìm cảnh một người đàn ông tóc bạc, đeo kính, phát biểu tại bục với cờ Mỹ và biểu tượng ngân hàng trung ương ở phía sau.",
+      "reference_timestamp": "13:02",
+      "proposed_frame_center": 23460,
+      "proposed_interval": [
+        23430,
+        23490
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-04",
+      "video_id": "L21_V002",
+      "branch": "Visual scene",
+      "difficulty": "Dễ",
+      "split": "HOLDOUT",
+      "query_vi": "Tìm cảnh một con hẻm đông người và xe máy, hai bên treo nhiều cờ Việt Nam.",
+      "reference_timestamp": "00:21",
+      "proposed_frame_center": 630,
+      "proposed_interval": [
+        600,
+        660
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-05",
+      "video_id": "L21_V002",
+      "branch": "Visual scene",
+      "difficulty": "Dễ",
+      "split": "HOLDOUT",
+      "query_vi": "Tìm cảnh một tháp cổ bằng gạch đã xuống cấp, cây xanh mọc trên phần thân công trình.",
+      "reference_timestamp": "05:17",
+      "proposed_frame_center": 9510,
+      "proposed_interval": [
+        9480,
+        9540
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-06",
+      "video_id": "L21_V002",
+      "branch": "Visual + Object",
+      "difficulty": "Trung bình",
+      "split": "HOLDOUT",
+      "query_vi": "Tìm cảnh một khu BMX/skatepark ngoài trời vào ban đêm với nhiều dốc trượt và hình vẽ xe đạp trên tường.",
+      "reference_timestamp": "16:33",
+      "proposed_frame_center": 29790,
+      "proposed_interval": [
+        29760,
+        29820
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-07",
+      "video_id": "L21_V003",
+      "branch": "OCR",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "query_vi": "Tìm đồ họa nền xanh liệt kê số cửa xả đang mở của các hồ thủy điện Hòa Bình, Sơn La và Tuyên Quang.",
+      "reference_timestamp": "01:11",
+      "proposed_frame_center": 1775,
+      "proposed_interval": [
+        1750,
+        1800
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-08",
+      "video_id": "L21_V003",
+      "branch": "Object",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "query_vi": "Tìm cận cảnh một thau/chậu tròn chứa rất nhiều cá nhỏ màu bạc.",
+      "reference_timestamp": "05:59",
+      "proposed_frame_center": 8975,
+      "proposed_interval": [
+        8950,
+        9000
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-09",
+      "video_id": "L21_V003",
+      "branch": "Visual + Object",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "query_vi": "Tìm cảnh một chiếc xe mui trần cổ màu đỏ chở nhiều người đi qua đám đông.",
+      "reference_timestamp": "17:10",
+      "proposed_frame_center": 25750,
+      "proposed_interval": [
+        25725,
+        25775
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-10",
+      "video_id": "L21_V005",
+      "branch": "Visual + OCR",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "query_vi": "Tìm cảnh một phụ nữ mặc áo xanh họa tiết được phỏng vấn, phía sau có các gói sản phẩm và giấy chứng nhận.",
+      "reference_timestamp": "01:34",
+      "proposed_frame_center": 2820,
+      "proposed_interval": [
+        2790,
+        2850
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-11",
+      "video_id": "L21_V005",
+      "branch": "Visual scene",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "query_vi": "Tìm cảnh một người đàn ông đội mũ rơm được phỏng vấn cạnh bờ biển nhiều đá.",
+      "reference_timestamp": "04:05",
+      "proposed_frame_center": 7350,
+      "proposed_interval": [
+        7320,
+        7380
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-12",
+      "video_id": "L21_V005",
+      "branch": "Visual scene",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "query_vi": "Tìm cảnh núi lửa đang phun, tạo cột khói rất lớn trên nền trời xanh.",
+      "reference_timestamp": "11:00",
+      "proposed_frame_center": 19800,
+      "proposed_interval": [
+        19770,
+        19830
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-13",
+      "video_id": "L21_V006",
+      "branch": "Visual",
+      "difficulty": "Dễ",
+      "split": "HOLDOUT",
+      "query_vi": "Tìm cảnh nữ người dẫn chương trình mặc áo màu be/hồng nhạt đứng một mình trong trường quay.",
+      "reference_timestamp": "01:43",
+      "proposed_frame_center": 3090,
+      "proposed_interval": [
+        3060,
+        3120
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-14",
+      "video_id": "L21_V006",
+      "branch": "Visual scene",
+      "difficulty": "Trung bình",
+      "split": "HOLDOUT",
+      "query_vi": "Tìm cảnh một khu chợ/không gian ẩm thực đông người, nhiều quầy chế biến món ăn dưới mái che lớn.",
+      "reference_timestamp": "04:29",
+      "proposed_frame_center": 8070,
+      "proposed_interval": [
+        8040,
+        8100
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-15",
+      "video_id": "L21_V006",
+      "branch": "Visual + Object",
+      "difficulty": "Dễ",
+      "split": "HOLDOUT",
+      "query_vi": "Tìm cảnh một hồ bơi ngoài trời màu xanh ngọc với rất nhiều người đang tắm.",
+      "reference_timestamp": "16:54",
+      "proposed_frame_center": 30420,
+      "proposed_interval": [
+        30390,
+        30450
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-16",
+      "video_id": "L21_V007",
+      "branch": "Visual scene",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "query_vi": "Tìm cảnh đoàn cán bộ đứng kiểm tra khu vực bờ bị sạt lở, phía sau có các khối bê tông chắn sóng.",
+      "reference_timestamp": "00:16",
+      "proposed_frame_center": 480,
+      "proposed_interval": [
+        450,
+        510
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-17",
+      "video_id": "L21_V007",
+      "branch": "Visual + Object",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "query_vi": "Tìm cảnh nhiều người đội mũ bảo hộ đang làm việc hoặc tham quan trong một nhà xưởng/công trình lớn.",
+      "reference_timestamp": "04:46",
+      "proposed_frame_center": 8580,
+      "proposed_interval": [
+        8550,
+        8610
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-18",
+      "video_id": "L21_V007",
+      "branch": "Visual + Object",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "query_vi": "Tìm cảnh một người đàn ông đứng trong vườn chuối và cầm/kiểm tra một buồng hoặc hoa chuối.",
+      "reference_timestamp": "10:22",
+      "proposed_frame_center": 18660,
+      "proposed_interval": [
+        18630,
+        18690
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-19",
+      "video_id": "L21_V008",
+      "branch": "Object",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "query_vi": "Tìm cảnh nhiều con bò trong chuồng, một số con nằm trên nền đất.",
+      "reference_timestamp": "00:26",
+      "proposed_frame_center": 650,
+      "proposed_interval": [
+        625,
+        675
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-20",
+      "video_id": "L21_V008",
+      "branch": "Visual",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "query_vi": "Tìm cảnh hai người dẫn chương trình đứng cạnh nhau trong trường quay, nam mặc áo xanh và nữ mặc áo be.",
+      "reference_timestamp": "04:56",
+      "proposed_frame_center": 7400,
+      "proposed_interval": [
+        7375,
+        7425
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-21",
+      "video_id": "L21_V008",
+      "branch": "Visual + Object",
+      "difficulty": "Khó",
+      "split": "DEV",
+      "query_vi": "Tìm cận cảnh một thiết bị tròn màu đen trong bối cảnh tối, bên phải có nhiều tia lửa bắn ra.",
+      "reference_timestamp": "16:38",
+      "proposed_frame_center": 24950,
+      "proposed_interval": [
+        24925,
+        24975
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-22",
+      "video_id": "L21_V009",
+      "branch": "Object",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "query_vi": "Tìm cận cảnh nhiều túi lưới chứa các quả trứng màu nhạt xếp chồng lên nhau.",
+      "reference_timestamp": "00:23",
+      "proposed_frame_center": 575,
+      "proposed_interval": [
+        550,
+        600
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-23",
+      "video_id": "L21_V009",
+      "branch": "Object",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "query_vi": "Tìm cảnh một đàn vịt rất đông đang đứng và di chuyển trên cánh đồng ngập nước.",
+      "reference_timestamp": "05:47",
+      "proposed_frame_center": 8675,
+      "proposed_interval": [
+        8650,
+        8700
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-24",
+      "video_id": "L21_V009",
+      "branch": "Visual",
+      "difficulty": "Khó",
+      "split": "DEV",
+      "query_vi": "Tìm cảnh một người đeo mặt nạ có khuôn mặt giống Donald Trump đứng giữa đám đông.",
+      "reference_timestamp": "16:37",
+      "proposed_frame_center": 24925,
+      "proposed_interval": [
+        24900,
+        24950
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-25",
+      "video_id": "L21_V010",
+      "branch": "Visual scene",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "query_vi": "Tìm cảnh một người lớn tuổi ngồi làm thủ tục tại quầy, giữa hai bên có tấm chắn trong suốt.",
+      "reference_timestamp": "00:22",
+      "proposed_frame_center": 550,
+      "proposed_interval": [
+        525,
+        575
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-26",
+      "video_id": "L21_V010",
+      "branch": "Visual + Action",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "query_vi": "Tìm cảnh một công nhân mặc áo cam đang sơn/trát một bức tường trắng ngoài trời.",
+      "reference_timestamp": "04:54",
+      "proposed_frame_center": 7350,
+      "proposed_interval": [
+        7325,
+        7375
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-27",
+      "video_id": "L21_V010",
+      "branch": "Visual",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "query_vi": "Tìm cảnh nữ MC mặc váy vàng đứng trong trường quay cạnh màn hình đang chiếu một đám đông ban đêm.",
+      "reference_timestamp": "13:58",
+      "proposed_frame_center": 20950,
+      "proposed_interval": [
+        20925,
+        20975
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-28",
+      "video_id": "L21_V011",
+      "branch": "Visual + Object",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "query_vi": "Tìm cảnh bác sĩ đeo khẩu trang, mặc áo blouse trắng khám cho một em bé được người đàn ông bế.",
+      "reference_timestamp": "00:20",
+      "proposed_frame_center": 500,
+      "proposed_interval": [
+        475,
+        525
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-29",
+      "video_id": "L21_V011",
+      "branch": "OCR + Object",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "query_vi": "Tìm cảnh một người mặc áo đỏ thao tác trước dãy tủ gửi đồ tự động màu xám có chữ “Giảm CO2”.",
+      "reference_timestamp": "04:21",
+      "proposed_frame_center": 6525,
+      "proposed_interval": [
+        6500,
+        6550
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-30",
+      "video_id": "L21_V011",
+      "branch": "Visual + Action",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "query_vi": "Tìm cảnh hai phụ nữ chạy thi trên bãi cỏ trong một cuộc đua vượt chướng ngại vật.",
+      "reference_timestamp": "15:44",
+      "proposed_frame_center": 23600,
+      "proposed_interval": [
+        23575,
+        23625
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-31",
+      "video_id": "L21_V012",
+      "branch": "Visual scene",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "query_vi": "Tìm cảnh một sườn đồi bị sạt lở, đất đá trượt xuống tạo thành mảng nâu lớn.",
+      "reference_timestamp": "00:18",
+      "proposed_frame_center": 540,
+      "proposed_interval": [
+        510,
+        570
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-32",
+      "video_id": "L21_V012",
+      "branch": "Visual scene",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "query_vi": "Tìm cảnh một phòng học trống với nhiều dãy bàn ghế ngay ngắn.",
+      "reference_timestamp": "03:25",
+      "proposed_frame_center": 6150,
+      "proposed_interval": [
+        6120,
+        6180
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-33",
+      "video_id": "L21_V012",
+      "branch": "Visual scene",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "query_vi": "Tìm cảnh dòng thác/ghềnh nước đục chảy rất mạnh, phía dưới có đông khách tham quan.",
+      "reference_timestamp": "13:59",
+      "proposed_frame_center": 25170,
+      "proposed_interval": [
+        25140,
+        25200
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-34",
+      "video_id": "L21_V013",
+      "branch": "Visual + Object",
+      "difficulty": "Trung bình",
+      "split": "HOLDOUT",
+      "query_vi": "Tìm cảnh thiết bị/buồng nâng màu đỏ làm việc trên cao giữa tán cây để kiểm tra cây xanh.",
+      "reference_timestamp": "00:22",
+      "proposed_frame_center": 660,
+      "proposed_interval": [
+        630,
+        690
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-35",
+      "video_id": "L21_V013",
+      "branch": "Visual",
+      "difficulty": "Dễ",
+      "split": "HOLDOUT",
+      "query_vi": "Tìm cảnh hai MC trong trường quay, nữ mặc trang phục đen-trắng và nam mặc sơ mi tối màu.",
+      "reference_timestamp": "04:52",
+      "proposed_frame_center": 8760,
+      "proposed_interval": [
+        8730,
+        8790
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-36",
+      "video_id": "L21_V013",
+      "branch": "OCR + Visual",
+      "difficulty": "Trung bình",
+      "split": "HOLDOUT",
+      "query_vi": "Tìm cảnh đám đông đang ăn mừng và giơ một khung chứng nhận Guinness World Records.",
+      "reference_timestamp": "15:24",
+      "proposed_frame_center": 27720,
+      "proposed_interval": [
+        27690,
+        27750
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-37",
+      "video_id": "L21_V014",
+      "branch": "Visual + Object",
+      "difficulty": "Trung bình",
+      "split": "HOLDOUT",
+      "query_vi": "Tìm cảnh một sàn/buồng nâng màu đỏ đang hoạt động trên cao trong tán cây xanh.",
+      "reference_timestamp": "00:22",
+      "proposed_frame_center": 660,
+      "proposed_interval": [
+        630,
+        690
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-38",
+      "video_id": "L21_V014",
+      "branch": "Visual scene",
+      "difficulty": "Dễ",
+      "split": "HOLDOUT",
+      "query_vi": "Tìm cảnh quay từ trên cao một thị trấn ven sông/biển với rất nhiều tàu thuyền đậu dọc bờ.",
+      "reference_timestamp": "04:50",
+      "proposed_frame_center": 8700,
+      "proposed_interval": [
+        8670,
+        8730
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-39",
+      "video_id": "L21_V014",
+      "branch": "Visual + Object",
+      "difficulty": "Trung bình",
+      "split": "HOLDOUT",
+      "query_vi": "Tìm cảnh quay từ trên cao một nhóm cá voi/cá lớn đang bơi trên mặt biển.",
+      "reference_timestamp": "16:45",
+      "proposed_frame_center": 30150,
+      "proposed_interval": [
+        30120,
+        30180
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-40",
+      "video_id": "L21_V015",
+      "branch": "Visual scene",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "query_vi": "Tìm cảnh quay từ trên cao một khu du lịch xanh mướt với hồ nước màu xanh ngọc giữa địa hình khô cằn ở Oman.",
+      "reference_timestamp": "00:26",
+      "proposed_frame_center": 780,
+      "proposed_interval": [
+        750,
+        810
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-41",
+      "video_id": "L21_V015",
+      "branch": "Object",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "query_vi": "Tìm cận cảnh một rổ nhựa đỏ chứa đầy cá nhỏ màu bạc.",
+      "reference_timestamp": "06:31",
+      "proposed_frame_center": 11730,
+      "proposed_interval": [
+        11700,
+        11760
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-42",
+      "video_id": "L21_V015",
+      "branch": "OCR + Visual",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "query_vi": "Tìm cảnh một tay đua xe đạp đứng trên bục màu cam của Zwift và giơ cúp lên cao.",
+      "reference_timestamp": "20:25",
+      "proposed_frame_center": 36750,
+      "proposed_interval": [
+        36720,
+        36780
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-43",
+      "video_id": "L21_V016",
+      "branch": "Visual scene",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "query_vi": "Tìm cảnh một tuyến đường trung tâm thành phố có nhiều cây xanh và xe máy đang lưu thông.",
+      "reference_timestamp": "00:21",
+      "proposed_frame_center": 630,
+      "proposed_interval": [
+        600,
+        660
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-44",
+      "video_id": "L21_V016",
+      "branch": "Visual",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "query_vi": "Tìm cảnh trường quay có một nam MC ở bàn dẫn và một nữ MC đứng ở phía bên phải.",
+      "reference_timestamp": "05:16",
+      "proposed_frame_center": 9480,
+      "proposed_interval": [
+        9450,
+        9510
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-45",
+      "video_id": "L21_V016",
+      "branch": "Visual scene",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "query_vi": "Tìm cảnh một quảng trường châu Âu có thảm hoa khổng lồ nhiều màu trải trên mặt đất.",
+      "reference_timestamp": "15:48",
+      "proposed_frame_center": 28440,
+      "proposed_interval": [
+        28410,
+        28470
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-46",
+      "video_id": "L21_V017",
+      "branch": "Object + Scene",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "query_vi": "Tìm cảnh nhiều xe tải/xe thương mại đang ở bên trong một trung tâm đăng kiểm.",
+      "reference_timestamp": "00:19",
+      "proposed_frame_center": 475,
+      "proposed_interval": [
+        450,
+        500
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-47",
+      "video_id": "L21_V017",
+      "branch": "Visual scene",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "query_vi": "Tìm cảnh quay từ trên cao một nút giao thông lớn với rất nhiều ô tô và xe máy di chuyển theo nhiều hướng.",
+      "reference_timestamp": "02:13",
+      "proposed_frame_center": 3325,
+      "proposed_interval": [
+        3300,
+        3350
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-48",
+      "video_id": "L21_V017",
+      "branch": "Visual scene",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "query_vi": "Tìm cảnh nhiều khán giả đứng dọc hai bên một tuyến đường có cọc tiêu màu cam để xem sự kiện/đua xe.",
+      "reference_timestamp": "14:15",
+      "proposed_frame_center": 21375,
+      "proposed_interval": [
+        21350,
+        21400
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-49",
+      "video_id": "L21_V001",
+      "branch": "Visual + Object",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "query_vi": "Tìm cảnh một xe tải/xe cứu trợ màu trắng có biểu tượng chữ thập đỏ chạy hoặc dừng trước dãy cửa hàng vào ban đêm.",
+      "reference_timestamp": "20:36",
+      "proposed_frame_center": 37080,
+      "proposed_interval": [
+        37050,
+        37110
+      ]
+    },
+    {
+      "task_type": "kis",
+      "query_id": "KIS-50",
+      "video_id": "L21_V015",
+      "branch": "Visual + Action",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "query_vi": "Tìm cảnh một vận động viên trượt ván đang đứng trên ván tại một skatepark ngoài trời lớn.",
+      "reference_timestamp": "21:17",
+      "proposed_frame_center": 38310,
+      "proposed_interval": [
+        38280,
+        38340
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-01",
+      "video_id": "L21_V001",
+      "branch": "OCR",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "question_vi": "Trong cảnh có tấm biển cảnh báo màu vàng-đỏ, biển đang cảnh báo nguy hiểm gì?",
+      "reference_timestamp": "01:15",
+      "proposed_frame_center": 2250,
+      "proposed_interval": [
+        2220,
+        2280
+      ],
+      "source_answer": "Sạt lở nguy hiểm",
+      "canonical_answer": "Sạt lở nguy hiểm",
+      "accepted_answers": [
+        "Sạt lở nguy hiểm"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-02",
+      "video_id": "L21_V001",
+      "branch": "Visual",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "question_vi": "Trong cảnh người đàn ông mặc áo sọc đang làm việc với cán bộ, anh ta đang ngồi phía sau vật gì?",
+      "reference_timestamp": "08:49",
+      "proposed_frame_center": 15870,
+      "proposed_interval": [
+        15840,
+        15900
+      ],
+      "source_answer": "Song sắt / khung cửa sắt",
+      "canonical_answer": "Song sắt",
+      "accepted_answers": [
+        "Song sắt",
+        "khung cửa sắt"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-03",
+      "video_id": "L21_V001",
+      "branch": "Object count",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "question_vi": "Trong cảnh có người dắt chó, có bao nhiêu con chó nhìn thấy rõ?",
+      "reference_timestamp": "18:55",
+      "proposed_frame_center": 34050,
+      "proposed_interval": [
+        34020,
+        34080
+      ],
+      "source_answer": "2",
+      "canonical_answer": "2",
+      "accepted_answers": [
+        "2"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-04",
+      "video_id": "L21_V001",
+      "branch": "Visual",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "question_vi": "Màn hình lớn cạnh nữ MC đang hiển thị cảnh gì?",
+      "reference_timestamp": "14:43",
+      "proposed_frame_center": 26490,
+      "proposed_interval": [
+        26460,
+        26520
+      ],
+      "source_answer": "Một vụ cháy rừng/đám cháy lớn ban đêm",
+      "canonical_answer": "Một vụ cháy rừng",
+      "accepted_answers": [
+        "Một vụ cháy rừng",
+        "đám cháy lớn ban đêm"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-05",
+      "video_id": "L21_V002",
+      "branch": "Visual",
+      "difficulty": "Dễ",
+      "split": "HOLDOUT",
+      "question_vi": "Trong cảnh sự kiện trên sân khấu, người đàn ông đứng gần giữa mặc áo khoác màu gì?",
+      "reference_timestamp": "01:45",
+      "proposed_frame_center": 3150,
+      "proposed_interval": [
+        3120,
+        3180
+      ],
+      "source_answer": "Trắng",
+      "canonical_answer": "Trắng",
+      "accepted_answers": [
+        "Trắng"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-06",
+      "video_id": "L21_V002",
+      "branch": "Visual",
+      "difficulty": "Dễ",
+      "split": "HOLDOUT",
+      "question_vi": "Nam MC trong trường quay có đeo kính không?",
+      "reference_timestamp": "09:30",
+      "proposed_frame_center": 17100,
+      "proposed_interval": [
+        17070,
+        17130
+      ],
+      "source_answer": "Có",
+      "canonical_answer": "Có",
+      "accepted_answers": [
+        "Có"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-07",
+      "video_id": "L21_V002",
+      "branch": "Visual scene",
+      "difficulty": "Trung bình",
+      "split": "HOLDOUT",
+      "question_vi": "Thiết bị nông nghiệp nhìn từ trên cao đang chạy trên loại khu vực nào?",
+      "reference_timestamp": "14:27",
+      "proposed_frame_center": 26010,
+      "proposed_interval": [
+        25980,
+        26040
+      ],
+      "source_answer": "Cánh đồng/ruộng trồng theo luống",
+      "canonical_answer": "Cánh đồng",
+      "accepted_answers": [
+        "Cánh đồng",
+        "ruộng trồng theo luống"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-08",
+      "video_id": "L21_V003",
+      "branch": "OCR + Visual",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "question_vi": "Bữa tiệc sinh nhật trong bản tin được tổ chức cho con vật nào?",
+      "reference_timestamp": "00:23",
+      "proposed_frame_center": 575,
+      "proposed_interval": [
+        550,
+        600
+      ],
+      "source_answer": "Hà mã",
+      "canonical_answer": "Hà mã",
+      "accepted_answers": [
+        "Hà mã"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-09",
+      "video_id": "L21_V003",
+      "branch": "Object",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "question_vi": "Phương tiện cỡ lớn ở phía trái khung hình là loại xe gì?",
+      "reference_timestamp": "09:11",
+      "proposed_frame_center": 13775,
+      "proposed_interval": [
+        13750,
+        13800
+      ],
+      "source_answer": "Xe tải",
+      "canonical_answer": "Xe tải",
+      "accepted_answers": [
+        "Xe tải"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-10",
+      "video_id": "L21_V003",
+      "branch": "Object",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "question_vi": "Người đang ở trên cao phía trên thành phố ngồi trên vật gì?",
+      "reference_timestamp": "18:45",
+      "proposed_frame_center": 28125,
+      "proposed_interval": [
+        28100,
+        28150
+      ],
+      "source_answer": "Xích đu",
+      "canonical_answer": "Xích đu",
+      "accepted_answers": [
+        "Xích đu"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-11",
+      "video_id": "L21_V005",
+      "branch": "Visual + OCR",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "question_vi": "Cây trồng đang được máy thu hoạch trong cảnh là gì?",
+      "reference_timestamp": "00:18",
+      "proposed_frame_center": 540,
+      "proposed_interval": [
+        510,
+        570
+      ],
+      "source_answer": "Lúa",
+      "canonical_answer": "Lúa",
+      "accepted_answers": [
+        "Lúa"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-12",
+      "video_id": "L21_V005",
+      "branch": "Visual",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "question_vi": "Người phụ nữ được phỏng vấn mặc áo màu gì?",
+      "reference_timestamp": "05:20",
+      "proposed_frame_center": 9600,
+      "proposed_interval": [
+        9570,
+        9630
+      ],
+      "source_answer": "Xanh lá",
+      "canonical_answer": "Xanh lá",
+      "accepted_answers": [
+        "Xanh lá"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-13",
+      "video_id": "L21_V005",
+      "branch": "Object",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "question_vi": "Cuộc đua trong bùn sử dụng con vật nào?",
+      "reference_timestamp": "12:53",
+      "proposed_frame_center": 23190,
+      "proposed_interval": [
+        23160,
+        23220
+      ],
+      "source_answer": "Trâu",
+      "canonical_answer": "Trâu",
+      "accepted_answers": [
+        "Trâu"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-14",
+      "video_id": "L21_V006",
+      "branch": "OCR",
+      "difficulty": "Dễ",
+      "split": "HOLDOUT",
+      "question_vi": "Dòng tiêu đề cho biết có bao nhiêu trận động đất liên tiếp ở Kon Tum?",
+      "reference_timestamp": "00:20",
+      "proposed_frame_center": 600,
+      "proposed_interval": [
+        570,
+        630
+      ],
+      "source_answer": "4",
+      "canonical_answer": "4",
+      "accepted_answers": [
+        "4"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-15",
+      "video_id": "L21_V006",
+      "branch": "Visual",
+      "difficulty": "Dễ",
+      "split": "HOLDOUT",
+      "question_vi": "Cột khói lớn từ đám cháy có màu chủ đạo gì?",
+      "reference_timestamp": "07:56",
+      "proposed_frame_center": 14280,
+      "proposed_interval": [
+        14250,
+        14310
+      ],
+      "source_answer": "Đen",
+      "canonical_answer": "Đen",
+      "accepted_answers": [
+        "Đen"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-16",
+      "video_id": "L21_V006",
+      "branch": "OCR",
+      "difficulty": "Dễ",
+      "split": "HOLDOUT",
+      "question_vi": "Tên công ty xuất hiện trên mặt tiền tòa nhà là gì?",
+      "reference_timestamp": "14:50",
+      "proposed_frame_center": 26700,
+      "proposed_interval": [
+        26670,
+        26730
+      ],
+      "source_answer": "ByteDance",
+      "canonical_answer": "ByteDance",
+      "accepted_answers": [
+        "ByteDance"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-17",
+      "video_id": "L21_V006",
+      "branch": "OCR numeric",
+      "difficulty": "Trung bình",
+      "split": "HOLDOUT",
+      "question_vi": "Theo đồ họa chứng khoán, chỉ số DJI giảm bao nhiêu phần trăm?",
+      "reference_timestamp": "12:46",
+      "proposed_frame_center": 22980,
+      "proposed_interval": [
+        22950,
+        23010
+      ],
+      "source_answer": "2,60%",
+      "canonical_answer": "2,60%",
+      "accepted_answers": [
+        "2,60%"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-18",
+      "video_id": "L21_V007",
+      "branch": "Visual",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "question_vi": "Bề mặt trong cảnh chủ yếu là loại địa hình nào?",
+      "reference_timestamp": "01:57",
+      "proposed_frame_center": 3510,
+      "proposed_interval": [
+        3480,
+        3540
+      ],
+      "source_answer": "Đất bùn/đất sạt lở",
+      "canonical_answer": "Đất bùn",
+      "accepted_answers": [
+        "Đất bùn",
+        "đất sạt lở"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-19",
+      "video_id": "L21_V007",
+      "branch": "OCR",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "question_vi": "Tên cửa hàng xuất hiện lặp lại trên biển hiệu là gì?",
+      "reference_timestamp": "06:27",
+      "proposed_frame_center": 11610,
+      "proposed_interval": [
+        11580,
+        11640
+      ],
+      "source_answer": "Con Cưng",
+      "canonical_answer": "Con Cưng",
+      "accepted_answers": [
+        "Con Cưng"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-20",
+      "video_id": "L21_V007",
+      "branch": "Object count",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "question_vi": "Có bao nhiêu người dẫn chương trình trong khung hình?",
+      "reference_timestamp": "08:08",
+      "proposed_frame_center": 14640,
+      "proposed_interval": [
+        14610,
+        14670
+      ],
+      "source_answer": "2",
+      "canonical_answer": "2",
+      "accepted_answers": [
+        "2"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-21",
+      "video_id": "L21_V008",
+      "branch": "OCR numeric",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "question_vi": "Trong bảng mức phí, mức đề xuất cho xe mô tô/xe gắn máy là bao nhiêu?",
+      "reference_timestamp": "01:20",
+      "proposed_frame_center": 2000,
+      "proposed_interval": [
+        1975,
+        2025
+      ],
+      "source_answer": "400.000 - 600.000 đồng",
+      "canonical_answer": "400.000 - 600.000 đồng",
+      "accepted_answers": [
+        "400.000 - 600.000 đồng"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-22",
+      "video_id": "L21_V008",
+      "branch": "Object",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "question_vi": "Cậu bé đang dùng dụng cụ gì để quan sát vật nhỏ?",
+      "reference_timestamp": "06:44",
+      "proposed_frame_center": 10100,
+      "proposed_interval": [
+        10075,
+        10125
+      ],
+      "source_answer": "Kính lúp",
+      "canonical_answer": "Kính lúp",
+      "accepted_answers": [
+        "Kính lúp"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-23",
+      "video_id": "L21_V008",
+      "branch": "OCR",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "question_vi": "Thương hiệu thời trang nào được nhắc trong dòng tiêu đề bên dưới?",
+      "reference_timestamp": "19:20",
+      "proposed_frame_center": 29000,
+      "proposed_interval": [
+        28975,
+        29025
+      ],
+      "source_answer": "Dior",
+      "canonical_answer": "Dior",
+      "accepted_answers": [
+        "Dior"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-24",
+      "video_id": "L21_V009",
+      "branch": "Object count",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "question_vi": "Có bao nhiêu MC đứng sau bàn trong trường quay?",
+      "reference_timestamp": "01:55",
+      "proposed_frame_center": 2875,
+      "proposed_interval": [
+        2850,
+        2900
+      ],
+      "source_answer": "2",
+      "canonical_answer": "2",
+      "accepted_answers": [
+        "2"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-25",
+      "video_id": "L21_V009",
+      "branch": "Visual",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "question_vi": "Nữ MC mặc trang phục màu gì?",
+      "reference_timestamp": "07:20",
+      "proposed_frame_center": 11000,
+      "proposed_interval": [
+        10975,
+        11025
+      ],
+      "source_answer": "Xanh dương",
+      "canonical_answer": "Xanh dương",
+      "accepted_answers": [
+        "Xanh dương"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-26",
+      "video_id": "L21_V009",
+      "branch": "Object",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "question_vi": "Đoàn xe màu trắng trong cảnh chủ yếu là loại xe gì?",
+      "reference_timestamp": "14:18",
+      "proposed_frame_center": 21450,
+      "proposed_interval": [
+        21425,
+        21475
+      ],
+      "source_answer": "Taxi",
+      "canonical_answer": "Taxi",
+      "accepted_answers": [
+        "Taxi"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-27",
+      "video_id": "L21_V010",
+      "branch": "Visual",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "question_vi": "Người công nhân đang sơn/trát tường mặc áo màu gì?",
+      "reference_timestamp": "04:54",
+      "proposed_frame_center": 7350,
+      "proposed_interval": [
+        7325,
+        7375
+      ],
+      "source_answer": "Cam",
+      "canonical_answer": "Cam",
+      "accepted_answers": [
+        "Cam"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-28",
+      "video_id": "L21_V010",
+      "branch": "OCR",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "question_vi": "Tên công viên xuất hiện trên ảnh ghép là gì?",
+      "reference_timestamp": "09:26",
+      "proposed_frame_center": 14150,
+      "proposed_interval": [
+        14125,
+        14175
+      ],
+      "source_answer": "Công viên Tao Đàn",
+      "canonical_answer": "Công viên Tao Đàn",
+      "accepted_answers": [
+        "Công viên Tao Đàn"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-29",
+      "video_id": "L21_V010",
+      "branch": "Visual",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "question_vi": "Người biểu diễn trên sân khấu mặc áo khoác màu gì?",
+      "reference_timestamp": "16:59",
+      "proposed_frame_center": 25475,
+      "proposed_interval": [
+        25450,
+        25500
+      ],
+      "source_answer": "Xanh lá",
+      "canonical_answer": "Xanh lá",
+      "accepted_answers": [
+        "Xanh lá"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-30",
+      "video_id": "L21_V010",
+      "branch": "Object",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "question_vi": "Khán giả đang dùng thiết bị gì để chụp/quay vật thể phát sáng trên trời?",
+      "reference_timestamp": "12:27",
+      "proposed_frame_center": 18675,
+      "proposed_interval": [
+        18650,
+        18700
+      ],
+      "source_answer": "Điện thoại thông minh",
+      "canonical_answer": "Điện thoại thông minh",
+      "accepted_answers": [
+        "Điện thoại thông minh"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-31",
+      "video_id": "L21_V011",
+      "branch": "Visual",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "question_vi": "Bác sĩ đang khám cho trẻ mặc áo màu gì?",
+      "reference_timestamp": "02:20",
+      "proposed_frame_center": 3500,
+      "proposed_interval": [
+        3475,
+        3525
+      ],
+      "source_answer": "Trắng",
+      "canonical_answer": "Trắng",
+      "accepted_answers": [
+        "Trắng"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-32",
+      "video_id": "L21_V011",
+      "branch": "Visual",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "question_vi": "Chiếc giỏ nhựa chứa thực phẩm/gia cầm có màu gì?",
+      "reference_timestamp": "08:22",
+      "proposed_frame_center": 12550,
+      "proposed_interval": [
+        12525,
+        12575
+      ],
+      "source_answer": "Xanh dương",
+      "canonical_answer": "Xanh dương",
+      "accepted_answers": [
+        "Xanh dương"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-33",
+      "video_id": "L21_V011",
+      "branch": "Action",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "question_vi": "Những người đang di chuyển trên dây cáp thực hiện hoạt động gì?",
+      "reference_timestamp": "12:23",
+      "proposed_frame_center": 18575,
+      "proposed_interval": [
+        18550,
+        18600
+      ],
+      "source_answer": "Đu dây / zipline",
+      "canonical_answer": "Đu dây",
+      "accepted_answers": [
+        "Đu dây",
+        "zipline"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-34",
+      "video_id": "L21_V012",
+      "branch": "Visual",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "question_vi": "Biểu tượng hình cầu bên cạnh nữ MC có hai màu chính nào?",
+      "reference_timestamp": "02:47",
+      "proposed_frame_center": 5010,
+      "proposed_interval": [
+        4980,
+        5040
+      ],
+      "source_answer": "Đỏ và trắng",
+      "canonical_answer": "Đỏ và trắng",
+      "accepted_answers": [
+        "Đỏ và trắng"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-35",
+      "video_id": "L21_V012",
+      "branch": "Visual",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "question_vi": "Nam MC mặc áo sơ mi màu gì?",
+      "reference_timestamp": "04:02",
+      "proposed_frame_center": 7260,
+      "proposed_interval": [
+        7230,
+        7290
+      ],
+      "source_answer": "Trắng",
+      "canonical_answer": "Trắng",
+      "accepted_answers": [
+        "Trắng"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-36",
+      "video_id": "L21_V012",
+      "branch": "OCR",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "question_vi": "Trên bục vận động tranh cử có tên hai người nào?",
+      "reference_timestamp": "10:15",
+      "proposed_frame_center": 18450,
+      "proposed_interval": [
+        18420,
+        18480
+      ],
+      "source_answer": "Trump và Vance",
+      "canonical_answer": "Trump và Vance",
+      "accepted_answers": [
+        "Trump và Vance"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-37",
+      "video_id": "L21_V013",
+      "branch": "Action",
+      "difficulty": "Trung bình",
+      "split": "HOLDOUT",
+      "question_vi": "Nhóm người trong phòng đang thực hiện hoạt động gì?",
+      "reference_timestamp": "07:08",
+      "proposed_frame_center": 12840,
+      "proposed_interval": [
+        12810,
+        12870
+      ],
+      "source_answer": "Họp / làm việc với tài liệu",
+      "canonical_answer": "Họp",
+      "accepted_answers": [
+        "Họp",
+        "làm việc với tài liệu"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-38",
+      "video_id": "L21_V013",
+      "branch": "Object",
+      "difficulty": "Trung bình",
+      "split": "HOLDOUT",
+      "question_vi": "Người lao động đang đứng/làm việc trên cấu trúc gì?",
+      "reference_timestamp": "11:38",
+      "proposed_frame_center": 20940,
+      "proposed_interval": [
+        20910,
+        20970
+      ],
+      "source_answer": "Giàn giáo",
+      "canonical_answer": "Giàn giáo",
+      "accepted_answers": [
+        "Giàn giáo"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-39",
+      "video_id": "L21_V013",
+      "branch": "Visual",
+      "difficulty": "Dễ",
+      "split": "HOLDOUT",
+      "question_vi": "Môn thể thao trong cảnh là gì?",
+      "reference_timestamp": "16:09",
+      "proposed_frame_center": 29070,
+      "proposed_interval": [
+        29040,
+        29100
+      ],
+      "source_answer": "Đua xe đạp",
+      "canonical_answer": "Đua xe đạp",
+      "accepted_answers": [
+        "Đua xe đạp"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-40",
+      "video_id": "L21_V014",
+      "branch": "Landmark + OCR",
+      "difficulty": "Dễ",
+      "split": "HOLDOUT",
+      "question_vi": "Công trình nổi tiếng trong cảnh là gì?",
+      "reference_timestamp": "01:07",
+      "proposed_frame_center": 2010,
+      "proposed_interval": [
+        1980,
+        2040
+      ],
+      "source_answer": "Lăng Chủ tịch Hồ Chí Minh",
+      "canonical_answer": "Lăng Chủ tịch Hồ Chí Minh",
+      "accepted_answers": [
+        "Lăng Chủ tịch Hồ Chí Minh"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-41",
+      "video_id": "L21_V014",
+      "branch": "Visual",
+      "difficulty": "Dễ",
+      "split": "HOLDOUT",
+      "question_vi": "Nữ MC mặc trang phục màu gì?",
+      "reference_timestamp": "02:36",
+      "proposed_frame_center": 4680,
+      "proposed_interval": [
+        4650,
+        4710
+      ],
+      "source_answer": "Đỏ",
+      "canonical_answer": "Đỏ",
+      "accepted_answers": [
+        "Đỏ"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-42",
+      "video_id": "L21_V015",
+      "branch": "Object",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "question_vi": "Vật kim loại màu vàng trong hộp nhựa là gì?",
+      "reference_timestamp": "02:10",
+      "proposed_frame_center": 3900,
+      "proposed_interval": [
+        3870,
+        3930
+      ],
+      "source_answer": "Vàng miếng / thỏi vàng",
+      "canonical_answer": "Vàng miếng",
+      "accepted_answers": [
+        "Vàng miếng",
+        "thỏi vàng"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-43",
+      "video_id": "L21_V015",
+      "branch": "OCR",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "question_vi": "Tên cửa hàng trên biển hiệu lớn là gì?",
+      "reference_timestamp": "08:15",
+      "proposed_frame_center": 14850,
+      "proposed_interval": [
+        14820,
+        14880
+      ],
+      "source_answer": "Bánh mì Hồng Ngọc",
+      "canonical_answer": "Bánh mì Hồng Ngọc",
+      "accepted_answers": [
+        "Bánh mì Hồng Ngọc"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-44",
+      "video_id": "L21_V015",
+      "branch": "Visual",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "question_vi": "Nữ MC mặc áo màu gì?",
+      "reference_timestamp": "11:44",
+      "proposed_frame_center": 21120,
+      "proposed_interval": [
+        21090,
+        21150
+      ],
+      "source_answer": "Trắng",
+      "canonical_answer": "Trắng",
+      "accepted_answers": [
+        "Trắng"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-45",
+      "video_id": "L21_V016",
+      "branch": "Object",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "question_vi": "Thiết bị xây dựng lớn vươn lên trời trong cảnh là gì?",
+      "reference_timestamp": "01:03",
+      "proposed_frame_center": 1890,
+      "proposed_interval": [
+        1860,
+        1920
+      ],
+      "source_answer": "Cần cẩu",
+      "canonical_answer": "Cần cẩu",
+      "accepted_answers": [
+        "Cần cẩu"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-46",
+      "video_id": "L21_V016",
+      "branch": "Action",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "question_vi": "Hai người phụ nữ đang thực hiện nghề thủ công gì?",
+      "reference_timestamp": "04:34",
+      "proposed_frame_center": 8220,
+      "proposed_interval": [
+        8190,
+        8250
+      ],
+      "source_answer": "Dệt/đan thổ cẩm",
+      "canonical_answer": "Dệt",
+      "accepted_answers": [
+        "Dệt",
+        "đan thổ cẩm"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-47",
+      "video_id": "L21_V016",
+      "branch": "OCR",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "question_vi": "Tên thuốc in lớn trên hộp là gì?",
+      "reference_timestamp": "08:47",
+      "proposed_frame_center": 15810,
+      "proposed_interval": [
+        15780,
+        15840
+      ],
+      "source_answer": "BRAVO",
+      "canonical_answer": "BRAVO",
+      "accepted_answers": [
+        "BRAVO"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-48",
+      "video_id": "L21_V017",
+      "branch": "Action",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "question_vi": "Hai học sinh ở phía trước đang làm gì?",
+      "reference_timestamp": "00:57",
+      "proposed_frame_center": 1425,
+      "proposed_interval": [
+        1400,
+        1450
+      ],
+      "source_answer": "Làm bài thi / viết bài",
+      "canonical_answer": "Làm bài thi",
+      "accepted_answers": [
+        "Làm bài thi",
+        "viết bài"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-49",
+      "video_id": "L21_V017",
+      "branch": "Scene",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "question_vi": "Khung cảnh này diễn ra trong bối cảnh nào?",
+      "reference_timestamp": "06:39",
+      "proposed_frame_center": 9975,
+      "proposed_interval": [
+        9950,
+        10000
+      ],
+      "source_answer": "Phiên tòa / phòng xét xử",
+      "canonical_answer": "Phiên tòa",
+      "accepted_answers": [
+        "Phiên tòa",
+        "phòng xét xử"
+      ]
+    },
+    {
+      "task_type": "qa",
+      "query_id": "QA-50",
+      "video_id": "L21_V017",
+      "branch": "Object",
+      "difficulty": "Dễ",
+      "split": "DEV",
+      "question_vi": "Con vật hiển thị trên màn hình cạnh nữ MC là gì?",
+      "reference_timestamp": "12:59",
+      "proposed_frame_center": 19475,
+      "proposed_interval": [
+        19450,
+        19500
+      ],
+      "source_answer": "Tinh tinh (chimpanzee)",
+      "canonical_answer": "Tinh tinh (chimpanzee)",
+      "accepted_answers": [
+        "Tinh tinh (chimpanzee)"
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-01",
+      "video_id": "L21_V001",
+      "branch": "Temporal + Mixed",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "cháy rừng ban đêm",
+          "reference_timestamp": "00:25",
+          "proposed_frame_center": 750,
+          "proposed_interval": [
+            746,
+            754
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "biển cảnh báo sạt lở",
+          "reference_timestamp": "01:15",
+          "proposed_frame_center": 2250,
+          "proposed_interval": [
+            2246,
+            2254
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "người đàn ông cạnh cột nước phun",
+          "reference_timestamp": "03:47",
+          "proposed_frame_center": 6810,
+          "proposed_interval": [
+            6806,
+            6814
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-02",
+      "video_id": "L21_V001",
+      "branch": "Temporal + Mixed",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "người đàn ông áo sọc sau song sắt",
+          "reference_timestamp": "08:49",
+          "proposed_frame_center": 15870,
+          "proposed_interval": [
+            15866,
+            15874
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "người tóc bạc phát biểu trước cờ Mỹ",
+          "reference_timestamp": "13:02",
+          "proposed_frame_center": 23460,
+          "proposed_interval": [
+            23456,
+            23464
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "nữ MC cạnh màn hình cháy rừng",
+          "reference_timestamp": "14:43",
+          "proposed_frame_center": 26490,
+          "proposed_interval": [
+            26486,
+            26494
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-03",
+      "video_id": "L21_V001",
+      "branch": "Temporal + OCR/Visual",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "nữ MC cạnh màn hình cháy rừng",
+          "reference_timestamp": "14:43",
+          "proposed_frame_center": 26490,
+          "proposed_interval": [
+            26486,
+            26494
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "hai con chó được dắt",
+          "reference_timestamp": "18:55",
+          "proposed_frame_center": 34050,
+          "proposed_interval": [
+            34046,
+            34054
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "xe cứu trợ/chữ thập đỏ vào ban đêm",
+          "reference_timestamp": "20:36",
+          "proposed_frame_center": 37080,
+          "proposed_interval": [
+            37076,
+            37084
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-04",
+      "video_id": "L21_V002",
+      "branch": "Temporal + Mixed",
+      "difficulty": "Trung bình",
+      "split": "HOLDOUT",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "hẻm treo nhiều cờ Việt Nam",
+          "reference_timestamp": "00:21",
+          "proposed_frame_center": 630,
+          "proposed_interval": [
+            626,
+            634
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "sự kiện sân khấu với người áo trắng",
+          "reference_timestamp": "01:45",
+          "proposed_frame_center": 3150,
+          "proposed_interval": [
+            3146,
+            3154
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "tháp cổ bằng gạch",
+          "reference_timestamp": "05:17",
+          "proposed_frame_center": 9510,
+          "proposed_interval": [
+            9506,
+            9514
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-05",
+      "video_id": "L21_V002",
+      "branch": "Temporal + Mixed",
+      "difficulty": "Khó",
+      "split": "HOLDOUT",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "tháp cổ bằng gạch",
+          "reference_timestamp": "05:17",
+          "proposed_frame_center": 9510,
+          "proposed_interval": [
+            9506,
+            9514
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "nam MC đeo kính trong studio",
+          "reference_timestamp": "09:30",
+          "proposed_frame_center": 17100,
+          "proposed_interval": [
+            17096,
+            17104
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "máy nông nghiệp nhìn từ trên cao",
+          "reference_timestamp": "14:27",
+          "proposed_frame_center": 26010,
+          "proposed_interval": [
+            26006,
+            26014
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-06",
+      "video_id": "L21_V002",
+      "branch": "Temporal + OCR/Visual",
+      "difficulty": "Trung bình",
+      "split": "HOLDOUT",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "nam MC đeo kính",
+          "reference_timestamp": "09:30",
+          "proposed_frame_center": 17100,
+          "proposed_interval": [
+            17096,
+            17104
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "máy nông nghiệp trên ruộng",
+          "reference_timestamp": "14:27",
+          "proposed_frame_center": 26010,
+          "proposed_interval": [
+            26006,
+            26014
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "BMX/skatepark ban đêm",
+          "reference_timestamp": "16:33",
+          "proposed_frame_center": 29790,
+          "proposed_interval": [
+            29786,
+            29794
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-07",
+      "video_id": "L21_V003",
+      "branch": "Temporal + Mixed",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "tiệc sinh nhật cho hà mã",
+          "reference_timestamp": "00:23",
+          "proposed_frame_center": 575,
+          "proposed_interval": [
+            571,
+            579
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "đồ họa mở cửa hồ thủy điện",
+          "reference_timestamp": "01:11",
+          "proposed_frame_center": 1775,
+          "proposed_interval": [
+            1771,
+            1779
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "chậu đầy cá nhỏ",
+          "reference_timestamp": "05:59",
+          "proposed_frame_center": 8975,
+          "proposed_interval": [
+            8971,
+            8979
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-08",
+      "video_id": "L21_V003",
+      "branch": "Temporal + Mixed",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "chậu đầy cá nhỏ",
+          "reference_timestamp": "05:59",
+          "proposed_frame_center": 8975,
+          "proposed_interval": [
+            8971,
+            8979
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "xe tải lớn giữa đường phố",
+          "reference_timestamp": "09:11",
+          "proposed_frame_center": 13775,
+          "proposed_interval": [
+            13771,
+            13779
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "xe mui trần cổ màu đỏ",
+          "reference_timestamp": "17:10",
+          "proposed_frame_center": 25750,
+          "proposed_interval": [
+            25746,
+            25754
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-09",
+      "video_id": "L21_V003",
+      "branch": "Temporal + OCR/Visual",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "xe tải lớn giữa đường phố",
+          "reference_timestamp": "09:11",
+          "proposed_frame_center": 13775,
+          "proposed_interval": [
+            13771,
+            13779
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "xe mui trần cổ màu đỏ",
+          "reference_timestamp": "17:10",
+          "proposed_frame_center": 25750,
+          "proposed_interval": [
+            25746,
+            25754
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "người ngồi xích đu trên cao",
+          "reference_timestamp": "18:45",
+          "proposed_frame_center": 28125,
+          "proposed_interval": [
+            28121,
+            28129
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-10",
+      "video_id": "L21_V005",
+      "branch": "Temporal + Mixed",
+      "difficulty": "Khó",
+      "split": "DEV",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "máy thu hoạch lúa",
+          "reference_timestamp": "00:18",
+          "proposed_frame_center": 540,
+          "proposed_interval": [
+            536,
+            544
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "phỏng vấn phụ nữ áo xanh họa tiết",
+          "reference_timestamp": "01:34",
+          "proposed_frame_center": 2820,
+          "proposed_interval": [
+            2816,
+            2824
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "phỏng vấn người đàn ông đội mũ rơm ở bờ biển",
+          "reference_timestamp": "04:05",
+          "proposed_frame_center": 7350,
+          "proposed_interval": [
+            7346,
+            7354
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-11",
+      "video_id": "L21_V005",
+      "branch": "Temporal + Mixed",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "người đàn ông đội mũ rơm ở bờ biển",
+          "reference_timestamp": "04:05",
+          "proposed_frame_center": 7350,
+          "proposed_interval": [
+            7346,
+            7354
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "phỏng vấn phụ nữ cạnh thuyền",
+          "reference_timestamp": "05:20",
+          "proposed_frame_center": 9600,
+          "proposed_interval": [
+            9596,
+            9604
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "núi lửa phun khói",
+          "reference_timestamp": "11:00",
+          "proposed_frame_center": 19800,
+          "proposed_interval": [
+            19796,
+            19804
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-12",
+      "video_id": "L21_V005",
+      "branch": "Temporal + OCR/Visual",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "phỏng vấn phụ nữ cạnh thuyền",
+          "reference_timestamp": "05:20",
+          "proposed_frame_center": 9600,
+          "proposed_interval": [
+            9596,
+            9604
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "núi lửa phun",
+          "reference_timestamp": "11:00",
+          "proposed_frame_center": 19800,
+          "proposed_interval": [
+            19796,
+            19804
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "đua trâu trong bùn",
+          "reference_timestamp": "12:53",
+          "proposed_frame_center": 23190,
+          "proposed_interval": [
+            23186,
+            23194
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-13",
+      "video_id": "L21_V006",
+      "branch": "Temporal + Mixed",
+      "difficulty": "Trung bình",
+      "split": "HOLDOUT",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "bản đồ 4 trận động đất Kon Tum",
+          "reference_timestamp": "00:20",
+          "proposed_frame_center": 600,
+          "proposed_interval": [
+            596,
+            604
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "nữ MC trong studio",
+          "reference_timestamp": "01:43",
+          "proposed_frame_center": 3090,
+          "proposed_interval": [
+            3086,
+            3094
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "khu ẩm thực đông người",
+          "reference_timestamp": "04:29",
+          "proposed_frame_center": 8070,
+          "proposed_interval": [
+            8066,
+            8074
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-14",
+      "video_id": "L21_V006",
+      "branch": "Temporal + Mixed",
+      "difficulty": "Trung bình",
+      "split": "HOLDOUT",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "khu ẩm thực đông người",
+          "reference_timestamp": "04:29",
+          "proposed_frame_center": 8070,
+          "proposed_interval": [
+            8066,
+            8074
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "đám cháy cột khói đen",
+          "reference_timestamp": "07:56",
+          "proposed_frame_center": 14280,
+          "proposed_interval": [
+            14276,
+            14284
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "đồ họa chỉ số DJI",
+          "reference_timestamp": "12:46",
+          "proposed_frame_center": 22980,
+          "proposed_interval": [
+            22976,
+            22984
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-15",
+      "video_id": "L21_V006",
+      "branch": "Temporal + OCR/Visual",
+      "difficulty": "Khó",
+      "split": "HOLDOUT",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "đồ họa DJI giảm 2,60%",
+          "reference_timestamp": "12:46",
+          "proposed_frame_center": 22980,
+          "proposed_interval": [
+            22976,
+            22984
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "tòa nhà ByteDance",
+          "reference_timestamp": "14:50",
+          "proposed_frame_center": 26700,
+          "proposed_interval": [
+            26696,
+            26704
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "hồ bơi ngoài trời đông người",
+          "reference_timestamp": "16:54",
+          "proposed_frame_center": 30420,
+          "proposed_interval": [
+            30416,
+            30424
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-16",
+      "video_id": "L21_V007",
+      "branch": "Temporal + Mixed",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "kiểm tra bờ sạt lở",
+          "reference_timestamp": "00:16",
+          "proposed_frame_center": 480,
+          "proposed_interval": [
+            476,
+            484
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "cận cảnh đất bùn/sạt lở",
+          "reference_timestamp": "01:57",
+          "proposed_frame_center": 3510,
+          "proposed_interval": [
+            3506,
+            3514
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "nhiều người trong nhà xưởng/công trình",
+          "reference_timestamp": "04:46",
+          "proposed_frame_center": 8580,
+          "proposed_interval": [
+            8576,
+            8584
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-17",
+      "video_id": "L21_V007",
+      "branch": "Temporal + Mixed",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "nhà xưởng/công trình đông người",
+          "reference_timestamp": "04:46",
+          "proposed_frame_center": 8580,
+          "proposed_interval": [
+            8576,
+            8584
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "cửa hàng Con Cưng ban đêm",
+          "reference_timestamp": "06:27",
+          "proposed_frame_center": 11610,
+          "proposed_interval": [
+            11606,
+            11614
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "hai MC trong studio",
+          "reference_timestamp": "08:08",
+          "proposed_frame_center": 14640,
+          "proposed_interval": [
+            14636,
+            14644
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-18",
+      "video_id": "L21_V007",
+      "branch": "Temporal + OCR/Visual",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "cửa hàng Con Cưng ban đêm",
+          "reference_timestamp": "06:27",
+          "proposed_frame_center": 11610,
+          "proposed_interval": [
+            11606,
+            11614
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "hai MC trong studio",
+          "reference_timestamp": "08:08",
+          "proposed_frame_center": 14640,
+          "proposed_interval": [
+            14636,
+            14644
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "người đàn ông trong vườn chuối",
+          "reference_timestamp": "10:22",
+          "proposed_frame_center": 18660,
+          "proposed_interval": [
+            18656,
+            18664
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-19",
+      "video_id": "L21_V008",
+      "branch": "Temporal + Mixed",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "đàn bò trong chuồng",
+          "reference_timestamp": "00:26",
+          "proposed_frame_center": 650,
+          "proposed_interval": [
+            646,
+            654
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "bảng mức phí phương tiện",
+          "reference_timestamp": "01:20",
+          "proposed_frame_center": 2000,
+          "proposed_interval": [
+            1996,
+            2004
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "hai MC trong studio",
+          "reference_timestamp": "04:56",
+          "proposed_frame_center": 7400,
+          "proposed_interval": [
+            7396,
+            7404
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-20",
+      "video_id": "L21_V008",
+      "branch": "Temporal + Mixed",
+      "difficulty": "Khó",
+      "split": "DEV",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "hai MC trong studio",
+          "reference_timestamp": "04:56",
+          "proposed_frame_center": 7400,
+          "proposed_interval": [
+            7396,
+            7404
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "cậu bé dùng kính lúp",
+          "reference_timestamp": "06:44",
+          "proposed_frame_center": 10100,
+          "proposed_interval": [
+            10096,
+            10104
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "thiết bị tròn màu đen cạnh tia lửa",
+          "reference_timestamp": "16:38",
+          "proposed_frame_center": 24950,
+          "proposed_interval": [
+            24946,
+            24954
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-21",
+      "video_id": "L21_V008",
+      "branch": "Temporal + OCR/Visual",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "cậu bé dùng kính lúp",
+          "reference_timestamp": "06:44",
+          "proposed_frame_center": 10100,
+          "proposed_interval": [
+            10096,
+            10104
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "thiết bị tròn màu đen cạnh tia lửa",
+          "reference_timestamp": "16:38",
+          "proposed_frame_center": 24950,
+          "proposed_interval": [
+            24946,
+            24954
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "Lady Gaga/Dior trên sân khấu",
+          "reference_timestamp": "19:20",
+          "proposed_frame_center": 29000,
+          "proposed_interval": [
+            28996,
+            29004
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-22",
+      "video_id": "L21_V009",
+      "branch": "Temporal + Mixed",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "nhiều túi lưới chứa trứng",
+          "reference_timestamp": "00:23",
+          "proposed_frame_center": 575,
+          "proposed_interval": [
+            571,
+            579
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "hai MC trong studio",
+          "reference_timestamp": "01:55",
+          "proposed_frame_center": 2875,
+          "proposed_interval": [
+            2871,
+            2879
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "đàn vịt trên ruộng nước",
+          "reference_timestamp": "05:47",
+          "proposed_frame_center": 8675,
+          "proposed_interval": [
+            8671,
+            8679
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-23",
+      "video_id": "L21_V009",
+      "branch": "Temporal + Mixed",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "đàn vịt trên ruộng nước",
+          "reference_timestamp": "05:47",
+          "proposed_frame_center": 8675,
+          "proposed_interval": [
+            8671,
+            8679
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "nữ MC áo xanh",
+          "reference_timestamp": "07:20",
+          "proposed_frame_center": 11000,
+          "proposed_interval": [
+            10996,
+            11004
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "đoàn taxi trắng",
+          "reference_timestamp": "14:18",
+          "proposed_frame_center": 21450,
+          "proposed_interval": [
+            21446,
+            21454
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-24",
+      "video_id": "L21_V009",
+      "branch": "Temporal + OCR/Visual",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "nữ MC áo xanh",
+          "reference_timestamp": "07:20",
+          "proposed_frame_center": 11000,
+          "proposed_interval": [
+            10996,
+            11004
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "đoàn taxi trắng",
+          "reference_timestamp": "14:18",
+          "proposed_frame_center": 21450,
+          "proposed_interval": [
+            21446,
+            21454
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "người đeo mặt nạ Donald Trump",
+          "reference_timestamp": "16:37",
+          "proposed_frame_center": 24925,
+          "proposed_interval": [
+            24921,
+            24929
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-25",
+      "video_id": "L21_V010",
+      "branch": "Temporal + Mixed",
+      "difficulty": "Khó",
+      "split": "DEV",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "người lớn tuổi làm thủ tục ở quầy",
+          "reference_timestamp": "00:22",
+          "proposed_frame_center": 550,
+          "proposed_interval": [
+            546,
+            554
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "công nhân áo cam sơn tường",
+          "reference_timestamp": "04:54",
+          "proposed_frame_center": 7350,
+          "proposed_interval": [
+            7346,
+            7354
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "ảnh ghép Công viên Tao Đàn",
+          "reference_timestamp": "09:26",
+          "proposed_frame_center": 14150,
+          "proposed_interval": [
+            14146,
+            14154
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-26",
+      "video_id": "L21_V010",
+      "branch": "Temporal + Mixed",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "công nhân áo cam sơn tường",
+          "reference_timestamp": "04:54",
+          "proposed_frame_center": 7350,
+          "proposed_interval": [
+            7346,
+            7354
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "ảnh ghép Công viên Tao Đàn",
+          "reference_timestamp": "09:26",
+          "proposed_frame_center": 14150,
+          "proposed_interval": [
+            14146,
+            14154
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "khán giả dùng điện thoại chụp vật thể phát sáng",
+          "reference_timestamp": "12:27",
+          "proposed_frame_center": 18675,
+          "proposed_interval": [
+            18671,
+            18679
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-27",
+      "video_id": "L21_V010",
+      "branch": "Temporal + OCR/Visual",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "khán giả chụp vật thể phát sáng",
+          "reference_timestamp": "12:27",
+          "proposed_frame_center": 18675,
+          "proposed_interval": [
+            18671,
+            18679
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "nữ MC váy vàng cạnh màn hình",
+          "reference_timestamp": "13:58",
+          "proposed_frame_center": 20950,
+          "proposed_interval": [
+            20946,
+            20954
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "người biểu diễn mặc áo xanh lá",
+          "reference_timestamp": "16:59",
+          "proposed_frame_center": 25475,
+          "proposed_interval": [
+            25471,
+            25479
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-28",
+      "video_id": "L21_V011",
+      "branch": "Temporal + Mixed",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "bác sĩ khám em bé",
+          "reference_timestamp": "00:20",
+          "proposed_frame_center": 500,
+          "proposed_interval": [
+            496,
+            504
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "người thao tác dãy tủ gửi đồ",
+          "reference_timestamp": "04:21",
+          "proposed_frame_center": 6525,
+          "proposed_interval": [
+            6521,
+            6529
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "giỏ nhựa xanh chứa gia cầm/thực phẩm",
+          "reference_timestamp": "08:22",
+          "proposed_frame_center": 12550,
+          "proposed_interval": [
+            12546,
+            12554
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-29",
+      "video_id": "L21_V011",
+      "branch": "Temporal + Mixed",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "dãy tủ gửi đồ",
+          "reference_timestamp": "04:21",
+          "proposed_frame_center": 6525,
+          "proposed_interval": [
+            6521,
+            6529
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "giỏ nhựa xanh chứa gia cầm/thực phẩm",
+          "reference_timestamp": "08:22",
+          "proposed_frame_center": 12550,
+          "proposed_interval": [
+            12546,
+            12554
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "người chơi zipline",
+          "reference_timestamp": "12:23",
+          "proposed_frame_center": 18575,
+          "proposed_interval": [
+            18571,
+            18579
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-30",
+      "video_id": "L21_V011",
+      "branch": "Temporal + OCR/Visual",
+      "difficulty": "Khó",
+      "split": "DEV",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "giỏ nhựa xanh chứa gia cầm/thực phẩm",
+          "reference_timestamp": "08:22",
+          "proposed_frame_center": 12550,
+          "proposed_interval": [
+            12546,
+            12554
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "người chơi zipline",
+          "reference_timestamp": "12:23",
+          "proposed_frame_center": 18575,
+          "proposed_interval": [
+            18571,
+            18579
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "hai phụ nữ chạy vượt chướng ngại",
+          "reference_timestamp": "15:44",
+          "proposed_frame_center": 23600,
+          "proposed_interval": [
+            23596,
+            23604
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-31",
+      "video_id": "L21_V012",
+      "branch": "Temporal + Mixed",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "sườn đồi sạt lở",
+          "reference_timestamp": "00:18",
+          "proposed_frame_center": 540,
+          "proposed_interval": [
+            536,
+            544
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "nữ MC cạnh biểu tượng cầu đỏ-trắng",
+          "reference_timestamp": "02:47",
+          "proposed_frame_center": 5010,
+          "proposed_interval": [
+            5006,
+            5014
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "phòng học trống",
+          "reference_timestamp": "03:25",
+          "proposed_frame_center": 6150,
+          "proposed_interval": [
+            6146,
+            6154
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-32",
+      "video_id": "L21_V012",
+      "branch": "Temporal + Mixed",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "phòng học trống",
+          "reference_timestamp": "03:25",
+          "proposed_frame_center": 6150,
+          "proposed_interval": [
+            6146,
+            6154
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "nam MC áo trắng",
+          "reference_timestamp": "04:02",
+          "proposed_frame_center": 7260,
+          "proposed_interval": [
+            7256,
+            7264
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "bục tranh cử Trump Vance",
+          "reference_timestamp": "10:15",
+          "proposed_frame_center": 18450,
+          "proposed_interval": [
+            18446,
+            18454
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-33",
+      "video_id": "L21_V012",
+      "branch": "Temporal + OCR/Visual",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "nam MC áo trắng",
+          "reference_timestamp": "04:02",
+          "proposed_frame_center": 7260,
+          "proposed_interval": [
+            7256,
+            7264
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "bục Trump Vance",
+          "reference_timestamp": "10:15",
+          "proposed_frame_center": 18450,
+          "proposed_interval": [
+            18446,
+            18454
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "thác nước đục rất mạnh",
+          "reference_timestamp": "13:59",
+          "proposed_frame_center": 25170,
+          "proposed_interval": [
+            25166,
+            25174
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-34",
+      "video_id": "L21_V013",
+      "branch": "Temporal + Mixed",
+      "difficulty": "Trung bình",
+      "split": "HOLDOUT",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "buồng nâng đỏ kiểm tra cây",
+          "reference_timestamp": "00:22",
+          "proposed_frame_center": 660,
+          "proposed_interval": [
+            656,
+            664
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "hai MC trong studio",
+          "reference_timestamp": "04:52",
+          "proposed_frame_center": 8760,
+          "proposed_interval": [
+            8756,
+            8764
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "cuộc họp trong phòng",
+          "reference_timestamp": "07:08",
+          "proposed_frame_center": 12840,
+          "proposed_interval": [
+            12836,
+            12844
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-35",
+      "video_id": "L21_V013",
+      "branch": "Temporal + Mixed",
+      "difficulty": "Khó",
+      "split": "HOLDOUT",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "cuộc họp trong phòng",
+          "reference_timestamp": "07:08",
+          "proposed_frame_center": 12840,
+          "proposed_interval": [
+            12836,
+            12844
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "người làm việc trên giàn giáo",
+          "reference_timestamp": "11:38",
+          "proposed_frame_center": 20940,
+          "proposed_interval": [
+            20936,
+            20944
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "đám đông giơ chứng nhận Guinness",
+          "reference_timestamp": "15:24",
+          "proposed_frame_center": 27720,
+          "proposed_interval": [
+            27716,
+            27724
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-36",
+      "video_id": "L21_V013",
+      "branch": "Temporal + OCR/Visual",
+      "difficulty": "Trung bình",
+      "split": "HOLDOUT",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "người làm việc trên giàn giáo",
+          "reference_timestamp": "11:38",
+          "proposed_frame_center": 20940,
+          "proposed_interval": [
+            20936,
+            20944
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "đám đông giơ chứng nhận Guinness",
+          "reference_timestamp": "15:24",
+          "proposed_frame_center": 27720,
+          "proposed_interval": [
+            27716,
+            27724
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "đua xe đạp đường trường",
+          "reference_timestamp": "16:09",
+          "proposed_frame_center": 29070,
+          "proposed_interval": [
+            29066,
+            29074
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-37",
+      "video_id": "L21_V014",
+      "branch": "Temporal + Mixed",
+      "difficulty": "Trung bình",
+      "split": "HOLDOUT",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "buồng nâng đỏ trong tán cây",
+          "reference_timestamp": "00:22",
+          "proposed_frame_center": 660,
+          "proposed_interval": [
+            656,
+            664
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "Lăng Chủ tịch Hồ Chí Minh",
+          "reference_timestamp": "01:07",
+          "proposed_frame_center": 2010,
+          "proposed_interval": [
+            2006,
+            2014
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "hai MC trong studio",
+          "reference_timestamp": "02:36",
+          "proposed_frame_center": 4680,
+          "proposed_interval": [
+            4676,
+            4684
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-38",
+      "video_id": "L21_V014",
+      "branch": "Temporal + Mixed",
+      "difficulty": "Trung bình",
+      "split": "HOLDOUT",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "Lăng Chủ tịch Hồ Chí Minh",
+          "reference_timestamp": "01:07",
+          "proposed_frame_center": 2010,
+          "proposed_interval": [
+            2006,
+            2014
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "cảng cá nhìn từ trên cao",
+          "reference_timestamp": "04:50",
+          "proposed_frame_center": 8700,
+          "proposed_interval": [
+            8696,
+            8704
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "cá voi bơi trên biển",
+          "reference_timestamp": "16:45",
+          "proposed_frame_center": 30150,
+          "proposed_interval": [
+            30146,
+            30154
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-39",
+      "video_id": "L21_V014",
+      "branch": "Temporal + OCR/Visual",
+      "difficulty": "Trung bình",
+      "split": "HOLDOUT",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "hai MC trong studio",
+          "reference_timestamp": "02:36",
+          "proposed_frame_center": 4680,
+          "proposed_interval": [
+            4676,
+            4684
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "cảng cá nhìn từ trên cao",
+          "reference_timestamp": "04:50",
+          "proposed_frame_center": 8700,
+          "proposed_interval": [
+            8696,
+            8704
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "cá voi bơi trên biển",
+          "reference_timestamp": "16:45",
+          "proposed_frame_center": 30150,
+          "proposed_interval": [
+            30146,
+            30154
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-40",
+      "video_id": "L21_V015",
+      "branch": "Temporal + Mixed",
+      "difficulty": "Khó",
+      "split": "DEV",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "khu du lịch xanh ở Oman",
+          "reference_timestamp": "00:26",
+          "proposed_frame_center": 780,
+          "proposed_interval": [
+            776,
+            784
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "cận cảnh vàng miếng",
+          "reference_timestamp": "02:10",
+          "proposed_frame_center": 3900,
+          "proposed_interval": [
+            3896,
+            3904
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "rổ đỏ đầy cá nhỏ",
+          "reference_timestamp": "06:31",
+          "proposed_frame_center": 11730,
+          "proposed_interval": [
+            11726,
+            11734
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-41",
+      "video_id": "L21_V015",
+      "branch": "Temporal + Mixed",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "rổ đỏ đầy cá nhỏ",
+          "reference_timestamp": "06:31",
+          "proposed_frame_center": 11730,
+          "proposed_interval": [
+            11726,
+            11734
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "biển hiệu Bánh mì Hồng Ngọc",
+          "reference_timestamp": "08:15",
+          "proposed_frame_center": 14850,
+          "proposed_interval": [
+            14846,
+            14854
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "nữ MC áo trắng",
+          "reference_timestamp": "11:44",
+          "proposed_frame_center": 21120,
+          "proposed_interval": [
+            21116,
+            21124
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-42",
+      "video_id": "L21_V015",
+      "branch": "Temporal + OCR/Visual",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "nữ MC áo trắng",
+          "reference_timestamp": "11:44",
+          "proposed_frame_center": 21120,
+          "proposed_interval": [
+            21116,
+            21124
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "tay đua xe đạp nâng cúp Zwift",
+          "reference_timestamp": "20:25",
+          "proposed_frame_center": 36750,
+          "proposed_interval": [
+            36746,
+            36754
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "vận động viên trượt ván",
+          "reference_timestamp": "21:17",
+          "proposed_frame_center": 38310,
+          "proposed_interval": [
+            38306,
+            38314
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-43",
+      "video_id": "L21_V016",
+      "branch": "Temporal + Mixed",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "đường trung tâm nhiều cây xanh",
+          "reference_timestamp": "00:21",
+          "proposed_frame_center": 630,
+          "proposed_interval": [
+            626,
+            634
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "cần cẩu vươn lên trời",
+          "reference_timestamp": "01:03",
+          "proposed_frame_center": 1890,
+          "proposed_interval": [
+            1886,
+            1894
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "hai phụ nữ dệt/đan thổ cẩm",
+          "reference_timestamp": "04:34",
+          "proposed_frame_center": 8220,
+          "proposed_interval": [
+            8216,
+            8224
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-44",
+      "video_id": "L21_V016",
+      "branch": "Temporal + Mixed",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "hai phụ nữ dệt/đan thổ cẩm",
+          "reference_timestamp": "04:34",
+          "proposed_frame_center": 8220,
+          "proposed_interval": [
+            8216,
+            8224
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "nam và nữ MC trong studio",
+          "reference_timestamp": "05:16",
+          "proposed_frame_center": 9480,
+          "proposed_interval": [
+            9476,
+            9484
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "cận cảnh hộp thuốc BRAVO",
+          "reference_timestamp": "08:47",
+          "proposed_frame_center": 15810,
+          "proposed_interval": [
+            15806,
+            15814
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-45",
+      "video_id": "L21_V016",
+      "branch": "Temporal + OCR/Visual",
+      "difficulty": "Khó",
+      "split": "DEV",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "nam và nữ MC trong studio",
+          "reference_timestamp": "05:16",
+          "proposed_frame_center": 9480,
+          "proposed_interval": [
+            9476,
+            9484
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "hộp thuốc BRAVO",
+          "reference_timestamp": "08:47",
+          "proposed_frame_center": 15810,
+          "proposed_interval": [
+            15806,
+            15814
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "thảm hoa lớn ở quảng trường",
+          "reference_timestamp": "15:48",
+          "proposed_frame_center": 28440,
+          "proposed_interval": [
+            28436,
+            28444
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-46",
+      "video_id": "L21_V017",
+      "branch": "Temporal + Mixed",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "xe tải trong trung tâm đăng kiểm",
+          "reference_timestamp": "00:19",
+          "proposed_frame_center": 475,
+          "proposed_interval": [
+            471,
+            479
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "học sinh làm bài thi",
+          "reference_timestamp": "00:57",
+          "proposed_frame_center": 1425,
+          "proposed_interval": [
+            1421,
+            1429
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "nút giao thông nhìn từ trên cao",
+          "reference_timestamp": "02:13",
+          "proposed_frame_center": 3325,
+          "proposed_interval": [
+            3321,
+            3329
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-47",
+      "video_id": "L21_V017",
+      "branch": "Temporal + Mixed",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "nút giao thông nhìn từ trên cao",
+          "reference_timestamp": "02:13",
+          "proposed_frame_center": 3325,
+          "proposed_interval": [
+            3321,
+            3329
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "phiên tòa/phòng xét xử",
+          "reference_timestamp": "06:39",
+          "proposed_frame_center": 9975,
+          "proposed_interval": [
+            9971,
+            9979
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "nữ MC cạnh hình tinh tinh",
+          "reference_timestamp": "12:59",
+          "proposed_frame_center": 19475,
+          "proposed_interval": [
+            19471,
+            19479
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-48",
+      "video_id": "L21_V017",
+      "branch": "Temporal + OCR/Visual",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "phiên tòa/phòng xét xử",
+          "reference_timestamp": "06:39",
+          "proposed_frame_center": 9975,
+          "proposed_interval": [
+            9971,
+            9979
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "nữ MC cạnh hình tinh tinh",
+          "reference_timestamp": "12:59",
+          "proposed_frame_center": 19475,
+          "proposed_interval": [
+            19471,
+            19479
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "khán giả đứng dọc đường đua",
+          "reference_timestamp": "14:15",
+          "proposed_frame_center": 21375,
+          "proposed_interval": [
+            21371,
+            21379
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-49",
+      "video_id": "L21_V001",
+      "branch": "Temporal + Mixed",
+      "difficulty": "Trung bình",
+      "split": "DEV",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "cháy rừng ban đêm",
+          "reference_timestamp": "00:25",
+          "proposed_frame_center": 750,
+          "proposed_interval": [
+            746,
+            754
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "người phát biểu trước cờ Mỹ",
+          "reference_timestamp": "13:02",
+          "proposed_frame_center": 23460,
+          "proposed_interval": [
+            23456,
+            23464
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "xe cứu trợ/chữ thập đỏ ban đêm",
+          "reference_timestamp": "20:36",
+          "proposed_frame_center": 37080,
+          "proposed_interval": [
+            37076,
+            37084
+          ]
+        }
+      ]
+    },
+    {
+      "task_type": "trake",
+      "query_id": "TR-50",
+      "video_id": "L21_V015",
+      "branch": "Temporal + Mixed",
+      "difficulty": "Khó",
+      "split": "DEV",
+      "events": [
+        {
+          "event_index": 1,
+          "description_vi": "khu du lịch xanh ở Oman",
+          "reference_timestamp": "00:26",
+          "proposed_frame_center": 780,
+          "proposed_interval": [
+            776,
+            784
+          ]
+        },
+        {
+          "event_index": 2,
+          "description_vi": "biển hiệu Bánh mì Hồng Ngọc",
+          "reference_timestamp": "08:15",
+          "proposed_frame_center": 14850,
+          "proposed_interval": [
+            14846,
+            14854
+          ]
+        },
+        {
+          "event_index": 3,
+          "description_vi": "vận động viên trượt ván",
+          "reference_timestamp": "21:17",
+          "proposed_frame_center": 38310,
+          "proposed_interval": [
+            38306,
+            38314
+          ]
+        }
+      ]
+    }
+  ]
+}
