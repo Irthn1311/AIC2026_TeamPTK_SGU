@@ -135,6 +135,100 @@ Dataset scope remains `CURRENT_873_VIDEO_SNAPSHOT`, BTC batch scope remains
 representativeness remains `NOT_ESTABLISHED`. PILOT15 is not official BTC GT or a
 semantic benchmark freeze. Q1-C and Q2 have not started.
 
+## Q1-B1C0 semantic workstation (local review pending)
+
+Q1-B1C0 supplies a strict human-only Pass-1, independent Pass-2, revision, status, and
+cross-artifact audit workflow. It does not generate or translate queries, select frame
+boundaries, infer answers/events, run retrieval, or inspect model output. The original
+raw video remains the semantic and coordinate source of truth.
+
+Do not confuse the two queues:
+
+- Suitability next is review 16: `L23_V023 / KIS-011 / KIS-C1`.
+- Semantic Pass-1 next is assignment 1:
+  `L26_V065 / KIS-015 / KIS-C5 / q1b-kis-015`.
+
+Semantic Pass 1 consumes only `ASSIGN` records in ascending `assignment_rank`.
+PILOT15 contains 15 such targets (8 KIS, 5 Q&A, and 2 TRAKE), but the state machine is
+not capped at 15.
+
+### Operations
+
+```text
+python systems/system_tai/scripts/quality_q1b_semantic_annotation.py pass1-next
+python systems/system_tai/scripts/quality_q1b_semantic_annotation.py template --slot-id KIS-015
+python systems/system_tai/scripts/quality_q1b_semantic_annotation.py pass1-record --input pass1.json
+python systems/system_tai/scripts/quality_q1b_semantic_annotation.py pass2-next
+python systems/system_tai/scripts/quality_q1b_semantic_annotation.py pass2-record --input pass2.json
+python systems/system_tai/scripts/quality_q1b_semantic_annotation.py revision-next
+python systems/system_tai/scripts/quality_q1b_semantic_annotation.py pass1-revise --input revision.json
+python systems/system_tai/scripts/quality_q1b_semantic_annotation.py status
+python systems/system_tai/scripts/quality_q1b_semantic_annotation.py audit
+python systems/system_tai/scripts/quality_q1b_semantic_annotation.py pilot15-export --output pilot15.json
+```
+
+All write inputs are exact-field, duplicate-key-rejecting UTF-8 JSON without BOM.
+`expect_assignment_rank` and `expect_slot_id` protect against stale targets. Frozen slot
+IDs must use their exact uppercase `TASK-NNN` namespace/range; malformed or padded IDs
+are rejected. Query IDs are derived, never entered: `q1b-` plus the case-folded valid
+slot ID. Annotator/reviewer IDs are exact, case-sensitive, unpadded provenance values.
+Common confirmations
+require raw-video review, query and GT authorship before retrieval, verified original
+coordinates, a positive raw-video frame count, an existing Q1 difficulty, ordered
+unique semantic tags, and human notes/definition fields.
+
+KIS input provides Vietnamese query text, optional English variants, and one inclusive
+interval. Q&A provides event/question text, optional English text, one evidence
+interval, and ordered unique accepted answers. TRAKE provides two to five already
+ordered events, each with descriptions, a moment definition, and an inclusive interval;
+event starts must be strictly increasing. Frame bounds must satisfy
+`0 <= start <= end < raw_video_frame_count` and are never shifted or widened.
+
+Portable source references are generated automatically:
+
+- KIS/Q&A: `raw_video:<video_id>;reviewed_frames:<start>-<end>`
+- TRAKE: `raw_video:<video_id>;event_windows:<s1>-<e1>|...`
+
+No absolute Windows, Kaggle, or home-directory path is accepted as canonical provenance.
+
+Pass 1 transactionally writes a `draft`/`human_raw_video` query, a registry row in
+`COMPLETE / REVIEW_PENDING` with `benchmark_included=false`, and ordered TRAKE review
+rows when applicable. Pass 2 requires a different reviewer and either moves all state
+to `VERIFIED`/included without rewriting semantics, or records
+`REVISION_REQUIRED`/not included with review notes. Revision preserves query ID, slot,
+task, and video; resets review state; and replaces rather than appends TRAKE rows.
+
+Writes use one exclusive single-writer lock. Candidate state is serialized to unique
+same-directory temporary files, flushed and `fsync`ed, reloaded through the frozen
+schema, audited, then replaced. Pre-replace failures leave canonical files unchanged;
+mid-replace failures attempt to restore original bytes and audit the restoration, while
+rollback/cleanup failures are reported loudly. `audit` fails closed on
+duplicate/orphan records, identity or state mismatches, malformed source references,
+TRAKE event inconsistencies, ordering/encoding errors, and split leakage.
+
+This is exception-level rollback, not power-loss atomicity across three files; no
+directory `fsync` or journal is claimed. A hard kill may leave dot-prefixed temp files
+(which loaders ignore) or `.quality_q1b_semantic_annotation.lock`. Confirm that no
+writer is active before manually deleting a stale lock. Writers that bypass this tool
+are outside the lock guarantee.
+
+Normal success and expected error output from `next`, `status`, `template`, audit, and
+PILOT15 export is split-blind.
+`planned_split`, development/holdout labels, `q1b_dev`, and `q1b_holdout` are not
+exposed; the two split tags and model/rank-derived tags are rejected in Pass 1. The
+PILOT15 packet deterministically selects the first 15 assignments (not the first 15
+review rows), contains no GT/retrieval data, and may only be written to a destination
+lexically and physically outside the repository.
+
+Current canonical semantic state remains empty after this tooling work:
+
+- `benchmark.draft.json`: zero queries;
+- `annotation_registry.csv`: header only, zero data rows;
+- `trake_event_review.csv`: header only, zero data rows.
+
+Therefore Q1-B1C0 currently establishes workflow mechanics only: there is no real
+semantic query, GT, verified annotation, benchmark score, Q1-C run, or Q2 experiment.
+
 The provenance explicitly covers `CURRENT_873_VIDEO_SNAPSHOT` and `BATCH_1_ONLY`.
 Batch 2 is not represented, and full preliminary representativeness is not established.
 No file in this directory currently contains real GT.

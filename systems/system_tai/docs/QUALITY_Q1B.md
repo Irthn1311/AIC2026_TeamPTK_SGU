@@ -189,6 +189,154 @@ The checkpoint remains `DIAGNOSTIC` for `CURRENT_873_VIDEO_SNAPSHOT` and
 PILOT15 is neither official BTC GT nor a semantic benchmark freeze. Q1-C and Q2 have
 not started.
 
+## Q1-B1C0 semantic annotation workstation
+
+Q1-B1C0 is a local implementation under review for human-only Pass 1 authoring,
+independent Pass 2 verification, revision, and cross-artifact audit. It does not run
+retrieval, inspect model output, author text, translate, select boundaries, or infer
+answers/events. A human must supply every semantic field after reviewing the original
+raw video. Tooling implementation is not evidence that the semantic benchmark is
+complete.
+
+The two active queues have different purposes and positions:
+
+- **Suitability queue:** asks whether the next independently sampled raw video suits
+  the next frozen category slot. After PILOT15, its next target is review 16,
+  `L23_V023 / KIS-011 / KIS-C1`.
+- **Semantic Pass-1 queue:** consumes only existing `ASSIGN` records in ascending
+  `assignment_rank`. Its initial target is assignment 1,
+  `L26_V065 / KIS-015 / KIS-C5`, with derived query ID `q1b-kis-015`.
+
+An `ASSIGN` decision therefore does not mean Pass 1 is complete. The suitability queue
+may advance while the semantic queue begins at the earliest assigned slot without an
+annotation-registry row. Core semantic logic is forward-compatible beyond PILOT15; the
+PILOT15 packet is only the first 15 assignments (8 KIS, 5 Q&A, and 2 TRAKE).
+
+### Strict input and identity contract
+
+All human input is strict UTF-8 JSON without a BOM or duplicate keys. Unknown fields,
+whitespace-only required strings, stale target expectations, and silent repair are
+rejected. Each Pass-1 input includes `expect_assignment_rank`, `expect_slot_id`,
+`annotator_id`, the four true confirmations (`raw_video_reviewed`,
+`query_authored_before_retrieval`, `gt_authored_before_retrieval`, and
+`original_frame_coordinates_verified`), positive `raw_video_frame_count`, an existing
+Q1 difficulty enum, ordered unique semantic `tags`, `semantic_definition`,
+`annotation_notes`, `boundary_notes`, and `answer_notes`.
+
+The query ID is never accepted from Pass-1 human input. Frozen slot IDs must match the
+exact uppercase `KIS-NNN`, `QA-NNN`, or `TRAKE-NNN` namespace and its frozen task range;
+malformed, padded, or case-altered IDs are rejected rather than normalized. A valid ID
+is permanently derived as `"q1b-" + slot_id.casefold()`, for example `KIS-015` becomes
+`q1b-kis-015`. Assignment video, task, category, and slot identity come only from the
+frozen suitability state. Annotator/reviewer IDs are exact, case-sensitive provenance
+strings with no outer whitespace or control characters.
+
+Task-specific Pass-1 fields are:
+
+- **KIS:** non-empty `query_vi`; nullable `query_en` and `query_en_expansion`; inclusive
+  `start_frame_id` and `end_frame_id` within the raw-video frame count.
+- **Q&A:** non-empty `event_description` and `question`; nullable English counterparts;
+  an inclusive evidence interval; and a non-empty, ordered, duplicate-free
+  `accepted_answers` list.
+- **TRAKE:** two to five ordered event objects containing exactly `description`,
+  nullable `description_en`, non-empty `moment_definition`, `start_frame_id`, and
+  `end_frame_id`. Event starts must be strictly increasing; the workstation never sorts
+  them. `moment_definition` remains in the review sidecar because the frozen canonical
+  Q1 schema stores only event descriptions and intervals.
+
+Frame bounds are exact inclusive original-video coordinates:
+`0 <= start_frame_id <= end_frame_id < raw_video_frame_count`. The tooling never widens
+an interval or applies a plus/minus-one correction.
+
+### Source references and synchronized state
+
+Machine paths are not human inputs and never enter canonical semantic artifacts. The
+workstation generates portable references:
+
+- KIS/Q&A: `raw_video:<video_id>;reviewed_frames:<start>-<end>`
+- TRAKE: `raw_video:<video_id>;event_windows:<s1>-<e1>|<s2>-<e2>|...`
+
+A successful Pass 1 creates a `draft` query with label origin `human_raw_video`, writes
+its GT to `benchmark.draft.json`, writes a registry row with
+`COMPLETE / REVIEW_PENDING / benchmark_included=false`, and writes ordered
+`REVIEW_PENDING` event-sidecar rows for TRAKE only. Draft human GT is not score-eligible.
+Queries serialize in assignment order using deterministic UTF-8 JSON and must round-trip
+through the frozen Q1 loader before publication.
+
+Pass 2 is independent: `reviewer_id` must differ from `annotator_id`, and the reviewer
+must recheck raw video, semantic support, video identity, coordinates, intervals, plus
+Q&A answers or TRAKE event order as applicable. The state transitions are:
+
+| Operation | Benchmark | Registry Pass 1 | Registry Pass 2 | Included |
+|---|---|---|---|---:|
+| Pass 1 | `draft` | `COMPLETE` | `REVIEW_PENDING` | `false` |
+| Pass 2 `VERIFIED` | `verified` | `COMPLETE` | `VERIFIED` | `true` |
+| Pass 2 `REVISION_REQUIRED` | `draft` | `COMPLETE` | `REVISION_REQUIRED` | `false` |
+| Pass-1 revision | `draft` | `COMPLETE` | `REVIEW_PENDING` | `false` |
+
+Verification changes status and reviewer fields only; it never rewrites authored
+semantics. `REVISION_REQUIRED` requires non-empty review notes and also does not edit
+semantic content automatically. A subsequent revision preserves query ID, slot, task,
+and video, requires a complete new human-authored payload, clears reviewer state, and
+replaces (rather than appends) that query's TRAKE sidecar rows.
+
+### Transaction and audit guarantees
+
+Every write operation acquires one exclusive same-directory writer lock, then loads and
+audits the current benchmark, registry, sidecar, and frozen assignment state; builds the
+complete next state in memory; serializes every affected artifact to collision-resistant
+same-directory temporary files; flushes and `fsync`s those files; independently reloads
+and audits them; and only then replaces canonical files. Pre-replacement failure leaves
+all canonical bytes unchanged. A replacement failure attempts to restore every affected
+file from preserved original bytes, audits the restored state, and reports rollback or
+cleanup failures loudly. The lock prevents cooperating workstation processes from
+silently overwriting a state loaded by another writer.
+
+This is exception/process-level rollback, not a power-loss-atomic multi-file filesystem
+transaction. Canonical-directory `fsync` and an OS journal are not provided. A hard kill
+may leave dot-prefixed temp/rollback files, which are never treated as canonical. It may
+also leave `.quality_q1b_semantic_annotation.lock`; after independently confirming that
+no writer is active, a human must remove that stale lock before writing again. Manual
+edits or writers that bypass this workstation are outside the concurrency guarantee.
+
+The cross-artifact audit fails closed on duplicate or orphan identities, slot/task/video
+mismatches, invalid state transitions or source references, missing/extra/reordered
+TRAKE events, noncanonical UTF-8/order, and split leakage.
+
+### Split blindness and commands
+
+Normal human success and expected CLI error output never expose `planned_split`, development/holdout identity,
+`q1b_dev`, or `q1b_holdout`. These two split tags, model-result tags such as
+`retrieval_bad`, and rank-derived tags such as `rank_37` are rejected in semantic Pass
+1. Frozen split information is reserved for a later benchmark freeze and cannot guide
+query wording, GT, verification, status, or packet export.
+
+The local command surface is:
+
+```text
+python systems/system_tai/scripts/quality_q1b_semantic_annotation.py pass1-next
+python systems/system_tai/scripts/quality_q1b_semantic_annotation.py template --slot-id KIS-015
+python systems/system_tai/scripts/quality_q1b_semantic_annotation.py pass1-record --input pass1.json
+python systems/system_tai/scripts/quality_q1b_semantic_annotation.py pass2-next
+python systems/system_tai/scripts/quality_q1b_semantic_annotation.py pass2-record --input pass2.json
+python systems/system_tai/scripts/quality_q1b_semantic_annotation.py revision-next
+python systems/system_tai/scripts/quality_q1b_semantic_annotation.py pass1-revise --input revision.json
+python systems/system_tai/scripts/quality_q1b_semantic_annotation.py status
+python systems/system_tai/scripts/quality_q1b_semantic_annotation.py audit
+python systems/system_tai/scripts/quality_q1b_semantic_annotation.py pilot15-export --output pilot15.json
+```
+
+`pass1-next`, `pass2-next`, `revision-next`, `status`, `template`, and `pilot15-export`
+are split-blind. The export is a deterministic external work packet containing the first
+15 `ASSIGN` records by `assignment_rank`, not the first 15 review rows. Its destination
+must resolve and lexically reside outside the repository; it does not mutate repository
+state and contains no GT or retrieval data.
+
+At this Q1-B1C0 tooling milestone the repository remains deliberately semantic-data
+empty: `benchmark.draft.json` has zero queries, `annotation_registry.csv` has zero data
+rows, and `trake_event_review.csv` has zero data rows. There is no real query, real GT,
+verified annotation, semantic score, Q1-C run, or Q2 experiment yet.
+
 ## Annotation-before-retrieval rule
 
 Before inspecting any `system_tai` prediction, the annotator must:
@@ -251,7 +399,9 @@ Tags describe semantics and future failure slices, such as `person_action`,
 `object_attribute`, `small_object`, `relation`, `motion`, `brief_event`,
 `repeated_action`, `ocr`, `count`, `open_ended`, `transition`, `contact`, and
 `camera_cut`. Model-result tags such as `rank_37` or `retrieval_bad` are forbidden before
-baseline evaluation. Split tags may be `q1b_dev` and `q1b_holdout`.
+baseline evaluation. Split tags `q1b_dev` and `q1b_holdout` are also forbidden in
+semantic Pass 1; split assignment remains hidden until the later benchmark-freeze
+boundary.
 
 ## Two-pass verification
 
