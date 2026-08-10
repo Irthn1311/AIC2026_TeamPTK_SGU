@@ -1,0 +1,31 @@
+reference_experiment: RT2
+
+seed: 2026
+
+candidate_preparation:
+  candidate_count: 36
+  frames_per_sheet: 16
+  minimum_canonical_btc_keyframes: 12
+  bucket_counts:
+    TEMPORALLY_DIVERSE: 18
+    GENERAL_ELIGIBLE: 18
+
+evaluation:
+  minimum_usable_queries: 18
+  visual_top_k: 3
+  lambda_grid:
+    - 0
+    - 0.0001
+    - 0.0003
+    - 0.001
+    - 0.003
+    - 0.01
+  split:
+    dev_fraction_approximate: 0.6666666667
+    stratify_by: event_count
+  lambda_selection:
+    - maximize INTERNAL_VIDEO_RECALL_AT_5
+    - maximize MRR
+    - maximize AI_REFERENCE_ANCHOR_HIT_WITHIN_3
+    - minimize AI_REFERENCE_ANCHOR_MAE
+    - prefer smaller absolute lambda
