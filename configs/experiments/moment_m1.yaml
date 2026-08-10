@@ -1,0 +1,11 @@
+experiment: MOMENT_M1
+version: 0.1.0
+seed: 2026
+reference_temporal_solver: ORDER_ONLY_MONOTONIC_DP
+distance_lambda: 0.0
+
+local_refinement:
+  window_seconds: 6.0
+  coarse_stride_frames: 12
+  dense_radius_frames: 15
+  debug_strip_min_abs_delta_frames: 30
