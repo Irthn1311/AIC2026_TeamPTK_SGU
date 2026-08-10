@@ -35,7 +35,10 @@ from system_tai.refinement.video import CoarseDecodeStrategy
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run a long-lived contest operational KIS session using JSON lines over stdin/stdout."
+        description=(
+            "Run a long-lived contest operational KIS session using JSON lines "
+            "over stdin/stdout."
+        )
     )
     parser.add_argument("--input-root", type=Path, default=Path("/kaggle/input"))
     manifest_source = parser.add_mutually_exclusive_group()
@@ -206,7 +209,10 @@ def run_session(
                     error_code="MALFORMED_JSON",
                     error_type=type(exc).__name__,
                     message=str(exc),
-                    session_continues=config.continue_on_request_error and not config.fail_fast_protocol,
+                    session_continues=(
+                        config.continue_on_request_error
+                        and not config.fail_fast_protocol
+                    ),
                 )
                 _write_resp(err_resp)
                 if config.fail_fast_protocol:
@@ -214,13 +220,20 @@ def run_session(
                     break
                 continue
             except (InvalidRequestError, UnknownRequestTypeError, SessionProtocolError) as exc:
-                err_code = "UNKNOWN_REQUEST_TYPE" if isinstance(exc, UnknownRequestTypeError) else "INVALID_REQUEST"
+                err_code = (
+                    "UNKNOWN_REQUEST_TYPE"
+                    if isinstance(exc, UnknownRequestTypeError)
+                    else "INVALID_REQUEST"
+                )
                 err_resp = active_runtime.handle_error(
                     request_id=None,
                     error_code=err_code,
                     error_type=type(exc).__name__,
                     message=str(exc),
-                    session_continues=config.continue_on_request_error and not config.fail_fast_protocol,
+                    session_continues=(
+                        config.continue_on_request_error
+                        and not config.fail_fast_protocol
+                    ),
                 )
                 _write_resp(err_resp)
                 if config.fail_fast_protocol:
@@ -276,7 +289,10 @@ def run_session(
                         error_code="QUERY_EXECUTION_FAILED",
                         error_type=type(exc).__name__,
                         message=f"{type(exc).__name__}: {exc}",
-                        session_continues=config.continue_on_request_error and not config.fail_fast_protocol,
+                        session_continues=(
+                            config.continue_on_request_error
+                            and not config.fail_fast_protocol
+                        ),
                     )
                     _write_resp(resp)
                     if not config.continue_on_request_error or config.fail_fast_protocol:
@@ -296,13 +312,19 @@ def run_session(
                     )
                     _write_resp(resp)
                 except Exception as exc:
-                    print(f"qa query execution error on {request.request_id}: {exc}", file=err_stream)
+                    print(
+                        f"qa query execution error on {request.request_id}: {exc}",
+                        file=err_stream,
+                    )
                     resp = active_runtime.handle_error(
                         request_id=request.request_id,
                         error_code="QUERY_EXECUTION_FAILED",
                         error_type=type(exc).__name__,
                         message=f"{type(exc).__name__}: {exc}",
-                        session_continues=config.continue_on_request_error and not config.fail_fast_protocol,
+                        session_continues=(
+                            config.continue_on_request_error
+                            and not config.fail_fast_protocol
+                        ),
                     )
                     _write_resp(resp)
                     if not config.continue_on_request_error or config.fail_fast_protocol:
@@ -322,21 +344,33 @@ def run_session(
                     )
                     _write_resp(resp)
                 except Exception as exc:
-                    print(f"trake query execution error on {request.request_id}: {exc}", file=err_stream)
+                    print(
+                        f"trake query execution error on {request.request_id}: {exc}",
+                        file=err_stream,
+                    )
                     resp = active_runtime.handle_error(
                         request_id=request.request_id,
                         error_code="QUERY_EXECUTION_FAILED",
                         error_type=type(exc).__name__,
                         message=f"{type(exc).__name__}: {exc}",
-                        session_continues=config.continue_on_request_error and not config.fail_fast_protocol,
+                        session_continues=(
+                            config.continue_on_request_error
+                            and not config.fail_fast_protocol
+                        ),
                     )
                     _write_resp(resp)
                     if not config.continue_on_request_error or config.fail_fast_protocol:
                         exit_code = 1
                         break
 
-            if config.max_requests is not None and active_runtime._request_count >= config.max_requests:
-                print(f"max_requests limit ({config.max_requests}) reached, closing session", file=err_stream)
+            if (
+                config.max_requests is not None
+                and active_runtime._request_count >= config.max_requests
+            ):
+                print(
+                    f"max_requests limit ({config.max_requests}) reached, closing session",
+                    file=err_stream,
+                )
                 active_runtime.close(shutdown_reason="max_requests_reached")
                 break
 

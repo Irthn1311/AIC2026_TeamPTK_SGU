@@ -8,7 +8,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-from system_tai.checkpointing.exporter import CheckpointExporter
 from system_tai.data.corpus_discovery import CorpusManifest, DiscoveredVideo, _fingerprint
 from system_tai.features.btc_clip_store import FeatureStoreRegistry
 from system_tai.validation.checkpoint_validator import CheckpointValidator
@@ -135,7 +134,9 @@ def test_operational_session_subprocess_smoke(tmp_path: Path) -> None:
     assert proc.returncode == 0, f"Process exited non-zero ({proc.returncode}): {stderr_data}"
 
     stdout_lines = [line.strip() for line in stdout_data.splitlines() if line.strip()]
-    assert len(stdout_lines) == 6, f"Expected 6 output lines, got {len(stdout_lines)}: {stdout_lines}"
+    assert len(stdout_lines) == 6, (
+        f"Expected 6 output lines, got {len(stdout_lines)}: {stdout_lines}"
+    )
 
     responses = [json.loads(line) for line in stdout_lines]
 

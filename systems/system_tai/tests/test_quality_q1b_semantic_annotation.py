@@ -35,8 +35,17 @@ EXPECTED_REVIEW_SHA256 = (
 @pytest.fixture
 def semantic_paths(tmp_path: Path):
     copied = tmp_path / "quality_q1b"
-    shutil.copytree(BENCHMARK_DIR, copied)
-    return SEMANTIC.SemanticPaths(
+    copied.mkdir()
+    for filename in (
+        "candidate_video_manifest.csv",
+        "annotation_plan.csv",
+        "category_codebook.csv",
+        "slot_assignment_manifest.csv",
+        "candidate_review_log.csv",
+    ):
+        shutil.copy2(BENCHMARK_DIR / filename, copied / filename)
+
+    paths = SEMANTIC.SemanticPaths(
         copied / "candidate_video_manifest.csv",
         copied / "annotation_plan.csv",
         copied / "category_codebook.csv",
@@ -46,6 +55,15 @@ def semantic_paths(tmp_path: Path):
         copied / "annotation_registry.csv",
         copied / "trake_event_review.csv",
     )
+    canonical = SEMANTIC.load_quality_benchmark_json(
+        BENCHMARK_DIR / "benchmark.draft.json"
+    )
+    paths.benchmark.write_bytes(
+        SEMANTIC._serialize_benchmark(replace(canonical, queries=tuple()))
+    )
+    paths.registry.write_bytes(SEMANTIC._serialize_registry(tuple()))
+    paths.trake_review.write_bytes(SEMANTIC._serialize_trake_reviews(tuple()))
+    return paths
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> Path:
@@ -343,11 +361,23 @@ def _assert_cli_json(capsys, expected_code: int, invoke: Callable[[], int]) -> d
     return json.loads(selected)
 
 
-def test_real_semantic_artifacts_are_initially_empty() -> None:
-    benchmark = _benchmark_payload(BENCHMARK_DIR / "benchmark.draft.json")
-    assert benchmark["queries"] == []
-    assert len(_csv_rows(BENCHMARK_DIR / "annotation_registry.csv")) == 1
-    assert len(_csv_rows(BENCHMARK_DIR / "trake_event_review.csv")) == 1
+def test_real_semantic_artifacts_are_valid_and_keep_verified_checkpoint() -> None:
+    paths = SEMANTIC.default_paths()
+    assert SEMANTIC.audit(paths)["valid"] is True
+    state = SEMANTIC.load_semantic_state(paths)
+
+    query = next(
+        item for item in state.benchmark.queries if item.query_id == "q1b-kis-015"
+    )
+    record = next(item for item in state.registry if item.query_id == query.query_id)
+    assert query.annotation_status.value == "verified"
+    assert query.ground_truth.video_id == "L26_V065"
+    assert (query.ground_truth.start_frame_id, query.ground_truth.end_frame_id) == (
+        657,
+        911,
+    )
+    assert record.annotation_pass2_status == "VERIFIED"
+    assert record.benchmark_included is True
 
 
 def test_real_review_log_sha_is_frozen() -> None:
@@ -1929,10 +1959,12 @@ def test_normal_outputs_never_expose_split_identifiers(semantic_paths, tmp_path:
 
 
 def test_real_suitability_and_semantic_queues_are_distinct() -> None:
-    semantic_target = SEMANTIC.pass1_next(SEMANTIC.default_paths())
+    paths = SEMANTIC.default_paths()
+    semantic_state = SEMANTIC.load_semantic_state(paths)
+    semantic_target = SEMANTIC.pass1_next(paths)
     queue = SEMANTIC._load_queue_module()
     candidates, slots, reviews, codebook = queue.load_queue(
-        SEMANTIC._queue_paths(SEMANTIC.default_paths())
+        SEMANTIC._queue_paths(paths)
     )
     suitability_target = queue.resolve_next_target(candidates, slots, reviews, codebook)
     assert (
@@ -1940,12 +1972,24 @@ def test_real_suitability_and_semantic_queues_are_distinct() -> None:
         suitability_target["video_id"],
         suitability_target["slot_id"],
     ) == (16, "L23_V023", "KIS-011")
+
+    recorded_query_ids = {record.query_id for record in semantic_state.registry}
+    expected_target = next(
+        target
+        for target in semantic_state.targets
+        if target.derived_query_id not in recorded_query_ids
+    )
     assert (
         semantic_target["assignment_rank"],
         semantic_target["video_id"],
         semantic_target["slot_id"],
         semantic_target["derived_query_id"],
-    ) == (1, "L26_V065", "KIS-015", "q1b-kis-015")
+    ) == (
+        expected_target.assignment_rank,
+        expected_target.video_id,
+        expected_target.slot_id,
+        expected_target.derived_query_id,
+    )
 
 
 def test_new_script_has_no_forbidden_runtime_dependencies() -> None:

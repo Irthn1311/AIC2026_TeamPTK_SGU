@@ -171,7 +171,8 @@ class SharedOpenAIClipEncoder:
             callable(getattr(clip, name, None)) for name in ("available_models", "load", "tokenize")
         ):
             raise TextEncoderUnavailable(
-                "installed clip package does not expose official load, tokenize, and available_models APIs"
+                "installed clip package does not expose official load, tokenize, "
+                "and available_models APIs"
             )
         available_models = tuple(str(name) for name in clip.available_models())
         if self.MODEL_NAME not in available_models:
@@ -307,4 +308,3 @@ class SharedOpenAIClipEncoder:
         if array.ndim == 3 and array.shape[2] == 3:
             array = array[:, :, ::-1]
         return self._image_api.fromarray(np.asarray(array, dtype=np.uint8))
-
