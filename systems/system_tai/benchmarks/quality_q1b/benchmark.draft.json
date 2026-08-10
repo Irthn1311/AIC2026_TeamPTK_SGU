@@ -2,5 +2,27 @@
   "schema_version": 1,
   "benchmark_id": "system_tai-q1b-b1-diagnostic-v1-draft",
   "description": "Bootstrap scaffold with no verified semantic GT yet. This is Batch 1 diagnostic scope only and is not official competition ground truth.",
-  "queries": []
+  "queries": [
+    {
+      "task_type": "kis",
+      "query_id": "q1b-kis-015",
+      "annotation_status": "verified",
+      "label_origin": "human_raw_video",
+      "difficulty": "medium",
+      "tags": [
+        "small_object",
+        "ingredient_presentation"
+      ],
+      "annotation_notes": "Raw video L26_V065 được kiểm tra trực tiếp ở 25 FPS với 8174 original frames. Vật thể mục tiêu là một bát đen nhỏ chứa nguyên liệu màu đỏ được băm nhỏ, xuất hiện cùng các nguyên liệu nấu ăn và chiếm diện tích tương đối nhỏ trong khung hình.",
+      "source_reference": "raw_video:L26_V065;reviewed_frames:657-911",
+      "query_vi": "Bát đen nhỏ chứa nguyên liệu màu đỏ được băm nhỏ",
+      "query_en": null,
+      "query_en_expansion": null,
+      "ground_truth": {
+        "video_id": "L26_V065",
+        "start_frame_id": 657,
+        "end_frame_id": 911
+      }
+    }
+  ]
 }
