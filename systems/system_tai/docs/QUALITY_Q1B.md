@@ -191,8 +191,9 @@ not started.
 
 ## Q1-B1C0 semantic annotation workstation
 
-Q1-B1C0 is a local implementation under review for human-only Pass 1 authoring,
-independent Pass 2 verification, revision, and cross-artifact audit. It does not run
+Q1-B1C0 is frozen human-only annotation tooling for Pass 1 authoring, independent Pass 2
+verification, revision, and cross-artifact audit. Frozen implementation revision:
+`810dd6a9c71882e5f29cb70e5d8d558672614a1b`. It does not run
 retrieval, inspect model output, author text, translate, select boundaries, or infer
 answers/events. A human must supply every semantic field after reviewing the original
 raw video. Tooling implementation is not evidence that the semantic benchmark is

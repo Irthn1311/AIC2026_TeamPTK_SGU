@@ -135,12 +135,14 @@ Dataset scope remains `CURRENT_873_VIDEO_SNAPSHOT`, BTC batch scope remains
 representativeness remains `NOT_ESTABLISHED`. PILOT15 is not official BTC GT or a
 semantic benchmark freeze. Q1-C and Q2 have not started.
 
-## Q1-B1C0 semantic workstation (local review pending)
+## Q1-B1C0 semantic workstation (frozen tooling)
 
-Q1-B1C0 supplies a strict human-only Pass-1, independent Pass-2, revision, status, and
-cross-artifact audit workflow. It does not generate or translate queries, select frame
-boundaries, infer answers/events, run retrieval, or inspect model output. The original
-raw video remains the semantic and coordinate source of truth.
+Q1-B1C0 tooling was frozen on `feat/system-tai-quality-q1b` at commit
+`810dd6a9c71882e5f29cb70e5d8d558672614a1b` after adversarial review and regression
+validation. It supplies a strict human-only Pass-1, independent Pass-2, revision,
+status, and cross-artifact audit workflow. It does not generate or translate queries,
+select frame boundaries, infer answers/events, run retrieval, or inspect model output.
+The original raw video remains the semantic and coordinate source of truth.
 
 Do not confuse the two queues:
 
