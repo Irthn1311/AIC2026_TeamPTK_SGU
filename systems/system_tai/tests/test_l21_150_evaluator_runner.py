@@ -780,7 +780,19 @@ def test_baseline_runner_uses_existing_runtime_contracts_and_top100_boundary(
     assert len([row for row in predictions if row["query_id"] == "KIS-X"]) == 100
     assert max(row["rank"] for row in predictions if row["query_id"] == "KIS-X") == 100
     assert report["production_algorithm_modified"] is False
+    assert report["production_algorithm_modified_scope"] == (
+        "CORE_PRODUCTION_IMPLEMENTATION"
+    )
+    assert report["core_production_algorithm_modified"] is False
+    assert report["kis_query_policy"] == "VI_ONLY"
+    assert report["query_policy_changed_from_e0"] is False
+    assert "kis_query_experiment" not in report
     assert report["runtime_contract"] == "OperationalKISRuntime public task handlers"
+    summary = (output / "run_summary.md").read_text(encoding="utf-8")
+    assert summary.startswith("# L21-150 Experiment Run\n")
+    assert "Core production retrieval/ranking implementation changed: `false`" in summary
+    assert "KIS query policy: `VI_ONLY`" in summary
+    assert "Query policy changed from E0: `false`" in summary
 
 
 def test_baseline_depth_diagnostics_exact_requested_depth(tmp_path: Path) -> None:

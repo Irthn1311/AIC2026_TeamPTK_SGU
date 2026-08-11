@@ -442,6 +442,12 @@ def run_l21_150_baseline(
     success_count = sum(summary["status"] == "SUCCESS" for summary in query_summaries)
     runtime_manifest = getattr(runtime, "manifest", None)
     runtime_encoder = getattr(runtime, "shared_encoder", None)
+    resolved_kis_query_policy = (
+        "TRANSLATION_AUGMENTED_RRF"
+        if kis_query_policy == "translation_augmented_rrf"
+        else "VI_ONLY"
+    )
+    query_policy_changed_from_e0 = kis_query_policy != "vi_only"
     metadata = {
         "schema_version": 2,
         "experiment_id": experiment_id,
@@ -465,6 +471,10 @@ def run_l21_150_baseline(
         "failed_query_count": len(query_summaries) - success_count,
         "task_counts": dict(sorted(task_counts.items())),
         "production_algorithm_modified": False,
+        "production_algorithm_modified_scope": "CORE_PRODUCTION_IMPLEMENTATION",
+        "core_production_algorithm_modified": False,
+        "kis_query_policy": resolved_kis_query_policy,
+        "query_policy_changed_from_e0": query_policy_changed_from_e0,
         "runtime_contract": "OperationalKISRuntime public task handlers",
         "known_current_limitations": [
             "QA closed-set support centers on COLOR, COUNT, YES_NO, and DIRECTION",
@@ -500,7 +510,7 @@ def run_l21_150_baseline(
     (output / "run_summary.md").write_text(
         "\n".join(
             [
-                "# L21-150 E0 Baseline Run",
+                "# L21-150 Experiment Run",
                 "",
                 f"- Experiment: `{experiment_id}`",
                 f"- Selected queries: {len(selected)}",
@@ -521,7 +531,12 @@ def run_l21_150_baseline(
                     "- Duplicate output identities: "
                     f"{metadata['duplicate_output_identity_count']}"
                 ),
-                "- Production retrieval/ranking policy changed: `false`",
+                "- Core production retrieval/ranking implementation changed: `false`",
+                f"- KIS query policy: `{resolved_kis_query_policy}`",
+                (
+                    "- Query policy changed from E0: "
+                    f"`{str(query_policy_changed_from_e0).lower()}`"
+                ),
                 "- Semantic quality claim: `false` until evaluator output is reviewed",
                 "",
             ]

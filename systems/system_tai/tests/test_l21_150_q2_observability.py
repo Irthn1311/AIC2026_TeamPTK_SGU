@@ -427,11 +427,23 @@ def test_arm_b_runner_records_frozen_sidecar_provenance(tmp_path: Path) -> None:
     assert all(len(request.variants()) == 2 for request in runtime.requests)
     assert all(request.query_en_expansion is None for request in runtime.requests)
     experiment = report["kis_query_experiment"]
+    assert report["production_algorithm_modified"] is False
+    assert report["production_algorithm_modified_scope"] == (
+        "CORE_PRODUCTION_IMPLEMENTATION"
+    )
+    assert report["core_production_algorithm_modified"] is False
+    assert report["kis_query_policy"] == "TRANSLATION_AUGMENTED_RRF"
+    assert report["query_policy_changed_from_e0"] is True
     assert experiment["query_policy"] == "TRANSLATION_AUGMENTED_RRF"
     assert experiment["sidecar_sha256"] == sidecar_sha
     assert experiment["sidecar_schema_version"] == 1
     assert experiment["translation_status"] == "REVIEWED_FROZEN"
     assert experiment["variant_count_policy"] == "2_VARIANTS_VI_PLUS_EN"
+    summary = (tmp_path / "run/run_summary.md").read_text(encoding="utf-8")
+    assert summary.startswith("# L21-150 Experiment Run\n")
+    assert "Core production retrieval/ranking implementation changed: `false`" in summary
+    assert "KIS query policy: `TRANSLATION_AUGMENTED_RRF`" in summary
+    assert "Query policy changed from E0: `true`" in summary
 
 
 def test_stage_analyzer_reports_offline_hits_without_runtime_gt(tmp_path: Path) -> None:
