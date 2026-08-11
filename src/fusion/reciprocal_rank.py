@@ -111,13 +111,18 @@ class ReciprocalRankFusion:
 
         # Apply Topic Soft-Scoring boost if query_topic is specified
         final_scores: Dict[str, float] = {}
+        boosted_count = 0
         for kid, score in rrf_scores.items():
             ref = best_result[kid]
             candidate_topic = ref.metadata.get("topic_category", "")
             if query_topic and candidate_topic and query_topic == candidate_topic:
                 final_scores[kid] = score * (1.0 + topic_boost_weight)
+                boosted_count += 1
             else:
                 final_scores[kid] = score
+
+        if query_topic and boosted_count > 0:
+            logger.info(f"  • RRF Topic Boost: Applied +{topic_boost_weight*100:.0f}% bonus to {boosted_count} candidates matching '{query_topic}'")
 
         # Build fused result list with optional video-level deduplication
         fused: List[SearchResult] = []
@@ -147,6 +152,13 @@ class ReciprocalRankFusion:
             ))
             if len(fused) >= top_k:
                 break
+
+        if fused:
+            logger.info("  • Top Fused Candidates:")
+            for rank_idx, cand in enumerate(fused[:3], start=1):
+                srcs = ",".join(cand.metadata.get("sources", []))
+                cand_topic = cand.metadata.get("topic_category", "N/A")
+                logger.info(f"    Rank #{rank_idx}: {cand.video_id} (frame={cand.frame_idx}, pts={cand.pts_time:.1f}s) | Score={cand.score:.4f} | Topic={cand_topic} | Sources=[{srcs}]")
 
         logger.debug(
             f"[RRF] Fused {len(result_lists)} lists → {len(fused)} results from {len(video_counts)} videos "

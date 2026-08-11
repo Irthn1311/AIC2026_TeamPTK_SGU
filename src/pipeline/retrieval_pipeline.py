@@ -243,14 +243,28 @@ class RetrievalPipeline:
         """Text → CLIP → FAISS → (Qdrant / InMemory OCR) → Topic-SoftScored RRF → best frame."""
         raw_text = query_dict.get("text") or query_dict.get("description", "")
         target_prefix = query_dict.get("target_prefix")
+
+        logger.info(f"\n{'='*70}")
+        logger.info(f"PROCESSING QUERY [id='{query_id}']")
+        logger.info(f"Raw Input: '{raw_text}'")
+
+        # Step 1: Query Parsing & Intent Extraction
         kis_query = self._parser.parse_kis(raw_text, top_k=self._top_k_ret)
         retrieval_text = self._parser.build_retrieval_text(kis_query)
-
-        # Extract topic intent from query
         topic_res = self._parser.extract_topic(raw_text)
         query_topic = topic_res.topic if topic_res.confidence >= 0.3 else None
 
+        logger.info(f"[Step 1/4 - Query Analysis]")
+        logger.info(f"  • Scene: '{kis_query.parsed_scene}' | Objects: {kis_query.parsed_objects} | Colors: {kis_query.parsed_colors}")
+        logger.info(f"  • OCR Hints: {kis_query.ocr_keywords} | Spatial: {kis_query.spatial_hints}")
+        logger.info(f"  • Topic Intent: '{topic_res.topic}' (Confidence: {topic_res.confidence:.2f}, Keywords: {topic_res.matched_keywords})")
+        logger.info(f"  • Translated CLIP Prompt: '{retrieval_text}'")
+
+        # Step 2: Multimodal Candidate Retrieval
+        logger.info(f"[Step 2/4 - Candidate Retrieval]")
         vis_results  = self._vis_ret.retrieve(retrieval_text, top_k=self._top_k_ret, target_prefix=target_prefix)
+        logger.info(f"  • Visual Retrieval (CLIP): Retrived {len(vis_results)} candidates (Top 1 score: {vis_results[0].score:.4f} if vis_results else 'N/A')")
+
         all_lists    = [vis_results]
         all_weights  = [self._visual_weight]
 
@@ -260,8 +274,10 @@ class RetrievalPipeline:
             if txt:
                 all_lists.append(txt)
                 all_weights.append(self._text_weight)
+                logger.info(f"  • Text Retrieval ({getattr(text_ret, 'name', 'text')}): Retrived {len(txt)} candidates")
 
-        # Stage 1: Fusion with Topic Soft-Scoring
+        # Step 3: RRF Fusion & Topic Soft-Scoring
+        logger.info(f"[Step 3/4 - Fusion & Topic Soft-Scoring]")
         fused = self._rrf.fuse(
             all_lists,
             all_weights,
@@ -270,16 +286,25 @@ class RetrievalPipeline:
             topic_boost_weight=0.20,
         )
 
-        # Stage 2: Fallback check (if max score is too low or no results, fallback to unboosted global search)
+        # Fallback check
         if not fused or (fused[0].score < 0.005 and query_topic is not None):
-            logger.info(f"[KIS] Low confidence with topic '{query_topic}' (score={fused[0].score if fused else 0}) → Fallback to Global Unboosted Search")
+            logger.info(f"  [FallbackTrigger] Low confidence with topic '{query_topic}' (score={fused[0].score if fused else 0:.4f}) → Triggering Global Unboosted Search")
             fused = self._rrf.fuse(all_lists, all_weights, top_k=self._top_k_fus, query_topic=None)
+        else:
+            logger.info(f"  • Topic Soft-Scoring Applied: query_topic='{query_topic}' (Boost: +20%)")
 
         if not fused:
             logger.warning(f"[KIS] No results for query_id='{query_id}'")
             return None
 
-        return self._selector.select_best(fused, query_id=query_id)
+        # Step 4: Final Selection
+        logger.info(f"[Step 4/4 - Frame Selection]")
+        best_evidence = self._selector.select_best(fused, query_id=query_id)
+        if best_evidence:
+            logger.info(f"  FINAL RESULT: Video='{best_evidence.video_id}' | Frame={best_evidence.frame_idx} (PTS={best_evidence.pts_time:.2f}s) | Conf={best_evidence.confidence:.4f}")
+        logger.info(f"{'='*70}\n")
+
+        return best_evidence
 
     # ----------------------------------------------------------
     # Q&A Sub-Pipeline
