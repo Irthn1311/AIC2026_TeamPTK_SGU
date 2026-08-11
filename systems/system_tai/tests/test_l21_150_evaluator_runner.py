@@ -83,6 +83,21 @@ def _trake(query_id: str = "TR-X") -> L21150TRAKEQuery:
     )
 
 
+def _trake_with_overlapping_event_boundaries() -> L21150TRAKEQuery:
+    return L21150TRAKEQuery(
+        query_id="TR-STRICT-ORDER",
+        video_id="L21_V001",
+        events=(
+            L21150TRAKEEvent(1, "Event 1", "00:10", 100, FrameInterval(99, 100)),
+            L21150TRAKEEvent(2, "Event 2", "00:11", 101, FrameInterval(100, 101)),
+            L21150TRAKEEvent(3, "Event 3", "00:20", 200, FrameInterval(199, 200)),
+        ),
+        branch="Temporal + Mixed",
+        difficulty="Hard",
+        split="DEV",
+    )
+
+
 def _benchmark(*queries: Any) -> L21150Benchmark:
     return L21150Benchmark(
         schema_version=1,
@@ -238,6 +253,43 @@ def test_trake_does_not_reorder_prediction_events() -> None:
     query_report = report["query_reports"][0]
     assert query_report["r_at_k"]["1"] == pytest.approx(1 / 3)
     assert query_report["event_order_valid"] is False
+
+
+@pytest.mark.parametrize(
+    ("frame_ids", "expected_order"),
+    [
+        ([100, 100, 200], False),
+        ([100, 101, 200], True),
+    ],
+)
+def test_trake_event_order_requires_strict_monotonic_frames(
+    frame_ids: list[int], expected_order: bool
+) -> None:
+    query = _trake_with_overlapping_event_boundaries()
+    report = evaluate_l21_150(
+        _benchmark(query),
+        [_candidate(query.query_id, "trake", 1, frame_ids=frame_ids)],
+    )
+    query_report = report["query_reports"][0]
+
+    assert query_report["r_at_k"]["1"] == pytest.approx(1.0)
+    assert query_report["event_coverage"] == pytest.approx(1.0)
+    assert query_report["event_order_valid"] is expected_order
+
+
+def test_trake_equal_adjacent_full_hits_fail_chain_and_report_order_error() -> None:
+    query = _trake_with_overlapping_event_boundaries()
+    report = evaluate_l21_150(
+        _benchmark(query),
+        [_candidate(query.query_id, "trake", 1, frame_ids=[100, 100, 200])],
+    )
+    query_report = report["query_reports"][0]
+
+    assert query_report["r_at_k"]["1"] == pytest.approx(1.0)
+    assert query_report["per_event_accuracy"] == [1.0, 1.0, 1.0]
+    assert query_report["event_order_valid"] is False
+    assert query_report["full_chain_accuracy"] is False
+    assert "ORDER_FAIL" in classify_query_report(query_report)
 
 
 def test_trake_partial_chain_is_scored_without_fabricating_missing_events() -> None:

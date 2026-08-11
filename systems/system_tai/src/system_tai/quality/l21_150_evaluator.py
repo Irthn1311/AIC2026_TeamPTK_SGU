@@ -213,7 +213,7 @@ def _query_report(query: L21150Query, candidates: Sequence[dict[str, Any]]) -> d
             order_scores.append(
                 float(
                     len(frame_ids) == required_count
-                    and all(left <= right for left, right in zip(frame_ids, frame_ids[1:]))
+                    and all(left < right for left, right in zip(frame_ids, frame_ids[1:]))
                 )
             )
 
