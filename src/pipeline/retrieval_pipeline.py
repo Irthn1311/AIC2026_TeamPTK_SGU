@@ -240,11 +240,15 @@ class RetrievalPipeline:
         query_dict: Dict[str, Any],
         query_id: str,
     ) -> Optional[EvidenceResult]:
-        """Text → CLIP → FAISS → (Qdrant / InMemory OCR) → RRF → best frame."""
+        """Text → CLIP → FAISS → (Qdrant / InMemory OCR) → Topic-SoftScored RRF → best frame."""
         raw_text = query_dict.get("text") or query_dict.get("description", "")
         target_prefix = query_dict.get("target_prefix")
         kis_query = self._parser.parse_kis(raw_text, top_k=self._top_k_ret)
         retrieval_text = self._parser.build_retrieval_text(kis_query)
+
+        # Extract topic intent from query
+        topic_res = self._parser.extract_topic(raw_text)
+        query_topic = topic_res.topic if topic_res.confidence >= 0.3 else None
 
         vis_results  = self._vis_ret.retrieve(retrieval_text, top_k=self._top_k_ret, target_prefix=target_prefix)
         all_lists    = [vis_results]
@@ -257,7 +261,20 @@ class RetrievalPipeline:
                 all_lists.append(txt)
                 all_weights.append(self._text_weight)
 
-        fused = self._rrf.fuse(all_lists, all_weights, top_k=self._top_k_fus)
+        # Stage 1: Fusion with Topic Soft-Scoring
+        fused = self._rrf.fuse(
+            all_lists,
+            all_weights,
+            top_k=self._top_k_fus,
+            query_topic=query_topic,
+            topic_boost_weight=0.20,
+        )
+
+        # Stage 2: Fallback check (if max score is too low or no results, fallback to unboosted global search)
+        if not fused or (fused[0].score < 0.005 and query_topic is not None):
+            logger.info(f"[KIS] Low confidence with topic '{query_topic}' (score={fused[0].score if fused else 0}) → Fallback to Global Unboosted Search")
+            fused = self._rrf.fuse(all_lists, all_weights, top_k=self._top_k_fus, query_topic=None)
+
         if not fused:
             logger.warning(f"[KIS] No results for query_id='{query_id}'")
             return None

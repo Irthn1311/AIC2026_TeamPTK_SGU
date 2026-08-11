@@ -49,15 +49,16 @@ KEYFRAME_NAME_FORMAT = "{n:03d}.jpg"   # Standard 3-digit zero-padded filename (
 # Parquet Master Index Schema
 # ============================================================
 MASTER_PARQUET_COLS = [
-    "faiss_id",     # int: monotonic index for FAISS
-    "keyframe_id",  # str: "L21_V001_n5"
-    "video_id",     # str: "L21_V001"
-    "batch_id",     # str: "L21"
-    "n",            # int: 1-based keyframe number
-    "frame_idx",    # int: BTC submission value
-    "pts_time",     # float: timestamp seconds
-    "fps",          # float: video fps
-    "image_path",   # str: absolute path to .jpg
+    "faiss_id",        # int: monotonic index for FAISS
+    "keyframe_id",     # str: "L21_V001_n5"
+    "video_id",        # str: "L21_V001"
+    "batch_id",        # str: "L21"
+    "n",               # int: 1-based keyframe number
+    "frame_idx",       # int: BTC submission value
+    "pts_time",        # float: timestamp seconds
+    "fps",             # float: video fps
+    "image_path",      # str: absolute path to .jpg
+    "topic_category",  # str: classified topic category (e.g. "nau_an", "tin_tuc")
 ]
 
 # ============================================================

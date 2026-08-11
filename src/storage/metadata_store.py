@@ -45,10 +45,12 @@ class MetadataStore:
         self,
         map_keyframes_root: str,
         keyframes_image_root: str,
+        media_info_root: Optional[str] = None,
         dataset_slug: str = "aic-hcmc-data",
     ):
         self.map_keyframes_root = Path(map_keyframes_root)
         self.keyframes_image_root = Path(keyframes_image_root)
+        self.media_info_root = Path(media_info_root) if media_info_root else None
         self.dataset_slug = dataset_slug
 
         self._df: Optional[pd.DataFrame] = None
@@ -95,9 +97,27 @@ class MetadataStore:
 
         logger.info(f"Found {len(csv_files)} unique CSV files to process")
 
+        # Load MediaInfoStore if media_info_root is specified
+        media_info_map = {}
+        if self.media_info_root and self.media_info_root.exists():
+            try:
+                from src.storage.media_info_store import MediaInfoStore
+                from src.reasoning.topic_classifier import TopicClassifier
+
+                mi_store = MediaInfoStore(str(self.media_info_root)).load()
+                classifier = TopicClassifier()
+
+                for vid, info in mi_store.get_all_media_info().items():
+                    classifier.classify_media_info(info)
+                    media_info_map[vid] = info.topic_category
+                logger.info(f"Extracted topic categories for {len(media_info_map):,} videos from media-info")
+            except Exception as e:
+                logger.warning(f"Failed to process media-info during build: {e}")
+
         for csv_path in csv_files:
             video_id = csv_path.stem  # e.g. "L21_V001"
             batch_id = video_id.split("_")[0]  # e.g. "L21"
+            topic_category = media_info_map.get(video_id, "")
 
             try:
                 df_kf = pd.read_csv(csv_path)
@@ -124,15 +144,16 @@ class MetadataStore:
                 image_path = str(base_dir / img_name)
 
                 records.append({
-                    "faiss_id":    faiss_id,
-                    "keyframe_id": f"{video_id}_n{n}",
-                    "video_id":    video_id,
-                    "batch_id":    batch_id,
-                    "n":           n,
-                    "frame_idx":   int(row[CSV_COL_FRAME_IDX]),
-                    "pts_time":    float(row[CSV_COL_PTS_TIME]),
-                    "fps":         float(row[CSV_COL_FPS]),
-                    "image_path":  image_path,
+                    "faiss_id":       faiss_id,
+                    "keyframe_id":    f"{video_id}_n{n}",
+                    "video_id":       video_id,
+                    "batch_id":       batch_id,
+                    "n":              n,
+                    "frame_idx":      int(row[CSV_COL_FRAME_IDX]),
+                    "pts_time":       float(row[CSV_COL_PTS_TIME]),
+                    "fps":            float(row[CSV_COL_FPS]),
+                    "image_path":     image_path,
+                    "topic_category": topic_category,
                 })
                 faiss_id += 1
 
@@ -188,6 +209,7 @@ class MetadataStore:
                 pts_time=row.pts_time,
                 fps=row.fps,
                 image_path=row.image_path,
+                topic_category=getattr(row, "topic_category", ""),
             )
             self._faiss_id_to_meta[row.faiss_id] = meta
             self._keyframe_id_to_meta[row.keyframe_id] = meta

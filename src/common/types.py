@@ -13,6 +13,27 @@ from typing import List, Dict, Any, Optional
 # ============================================================
 
 @dataclass
+class MediaInfo:
+    """
+    Video-level YouTube metadata parsed from media-info JSON file.
+    Source: media-info-aic25-b1/media-info/{L}_{V}.json
+    """
+    video_id: str                   # e.g. "L21_V001"
+    author: str = ""                # Channel / Creator name
+    channel_id: str = ""
+    channel_url: str = ""
+    description: str = ""           # Full video description
+    keywords: List[str] = field(default_factory=list) # Video tags / keywords
+    topic_category: str = ""        # Classified topic (e.g. "tin_tuc", "the_thao")
+    topic_confidence: float = 0.0
+
+    def get_combined_text(self) -> str:
+        """Combine author, keywords, and description for topic classification & text search."""
+        kw_str = ", ".join(self.keywords) if isinstance(self.keywords, list) else str(self.keywords)
+        return f"{self.author} | Keywords: {kw_str} | {self.description}".strip()
+
+
+@dataclass
 class KeyframeMeta:
     """
     Single keyframe record parsed from map-keyframes CSV.
@@ -26,6 +47,7 @@ class KeyframeMeta:
     pts_time: float         # Timestamp in seconds
     fps: float              # Video FPS (typically 30.0)
     image_path: str         # Absolute path to keyframe .jpg
+    topic_category: str = "" # Associated video topic category
 
     @property
     def keyframe_id(self) -> str:

@@ -58,6 +58,11 @@ def parse_args():
         help="Root directory of keyframe images (Keyframes_{L}/keyframes/...)",
     )
     parser.add_argument(
+        "--media-info-dir",
+        default=None,
+        help="Optional directory containing media-info JSON files ({L}_{V}.json)",
+    )
+    parser.add_argument(
         "--output-dir",
         default="indexes",
         help="Output directory for index files (default: indexes/)",
@@ -105,6 +110,7 @@ def main():
     store = MetadataStore(
         map_keyframes_root=args.map_keyframes_dir,
         keyframes_image_root=args.keyframes_img_dir,
+        media_info_root=args.media_info_dir,
     )
     parquet_path = str(output_dir / "keyframe_master.parquet")
     store.build(save_path=parquet_path)

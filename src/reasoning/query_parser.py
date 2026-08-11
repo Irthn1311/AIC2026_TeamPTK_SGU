@@ -156,6 +156,14 @@ class QueryParser:
         qa_query  = parser.parse_qa("Trong video lễ trao giải...", "Có bao nhiêu người?")
     """
 
+    def __init__(self, topic_classifier: Optional[Any] = None):
+        from src.reasoning.topic_classifier import TopicClassifier
+        self.topic_classifier = topic_classifier or TopicClassifier()
+
+    def extract_topic(self, raw_text: str):
+        """Extract topic classification result for a query text."""
+        return self.topic_classifier.classify_text(raw_text)
+
     def parse_kis(
         self,
         raw_text: str,

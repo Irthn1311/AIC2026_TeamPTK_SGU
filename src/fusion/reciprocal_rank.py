@@ -56,9 +56,11 @@ class ReciprocalRankFusion:
         weights: Optional[List[float]] = None,
         top_k: int = 50,
         max_per_video: int = 3,
+        query_topic: Optional[str] = None,
+        topic_boost_weight: float = 0.20,
     ) -> List[SearchResult]:
         """
-        Fuse multiple ranked result lists into one.
+        Fuse multiple ranked result lists into one with optional topic soft-scoring boost.
 
         Args:
             result_lists: Each inner list is a ranked result set from one retriever.
@@ -67,6 +69,8 @@ class ReciprocalRankFusion:
                           If None, all retrievers are weighted equally (1.0).
             top_k:        Return at most this many results.
             max_per_video: Max keyframes per video_id in fused output (default: 3).
+            query_topic:   Optional classified topic of query (e.g. "nau_an", "tin_tuc").
+            topic_boost_weight: Bonus weight added to candidates matching query_topic (default: 0.20).
 
         Returns:
             Merged list of SearchResult sorted by fused score descending.
@@ -105,11 +109,21 @@ class ReciprocalRankFusion:
         if not rrf_scores:
             return []
 
+        # Apply Topic Soft-Scoring boost if query_topic is specified
+        final_scores: Dict[str, float] = {}
+        for kid, score in rrf_scores.items():
+            ref = best_result[kid]
+            candidate_topic = ref.metadata.get("topic_category", "")
+            if query_topic and candidate_topic and query_topic == candidate_topic:
+                final_scores[kid] = score * (1.0 + topic_boost_weight)
+            else:
+                final_scores[kid] = score
+
         # Build fused result list with optional video-level deduplication
         fused: List[SearchResult] = []
         video_counts: Dict[str, int] = {}
 
-        for kid, fused_score in sorted(rrf_scores.items(), key=lambda x: -x[1]):
+        for kid, fused_score in sorted(final_scores.items(), key=lambda x: -x[1]):
             ref = best_result[kid]
             if max_per_video > 0:
                 cnt = video_counts.get(ref.video_id, 0)
