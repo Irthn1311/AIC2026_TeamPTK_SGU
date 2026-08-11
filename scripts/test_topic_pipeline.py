@@ -87,9 +87,17 @@ def test_rrf_topic_soft_scoring():
     print("PASSED: Topic Soft-Scoring successfully boosted matching candidate!")
 
 
+def test_media_info_store():
+    print("\n--- 4. Testing MediaInfoStore ---")
+    store = MediaInfoStore("datasets/media-info")
+    store.load()
+    print(f"MediaInfoStore loaded successfully. Total videos: {store.total_videos}")
+
+
 if __name__ == "__main__":
     print("=== Running Topic Pipeline Unit Tests ===")
     test_topic_classifier()
     test_query_parser_topic_extraction()
     test_rrf_topic_soft_scoring()
+    test_media_info_store()
     print("\nALL UNIT TESTS PASSED SUCCESSFULLY!")

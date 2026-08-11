@@ -35,7 +35,7 @@ class MediaInfoStore:
         self.media_info_root = Path(media_info_root)
         self._store: Dict[str, MediaInfo] = {}
 
-    def load() -> "MediaInfoStore":
+    def load(self) -> "MediaInfoStore":
         """Load all JSON files from media_info_root."""
         if not self.media_info_root.exists():
             logger.warning(f"Media info directory does not exist: {self.media_info_root}")
@@ -97,7 +97,7 @@ class MediaInfoStore:
             return info.get_combined_text()
         return ""
 
-    def get_all_media_info() -> Dict[str, MediaInfo]:
+    def get_all_media_info(self) -> Dict[str, MediaInfo]:
         """Return full mapping of video_id → MediaInfo."""
         return self._store
 
