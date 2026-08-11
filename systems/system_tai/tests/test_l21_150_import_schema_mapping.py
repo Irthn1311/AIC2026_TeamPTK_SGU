@@ -71,13 +71,14 @@ def _kis(
     start: int = 90,
     end: int = 110,
     center: int = 100,
+    timestamp: str = "00:10",
     split: str = "DEV",
 ) -> L21150KISQuery:
     return L21150KISQuery(
         query_id=query_id,
         query_vi="Một sự kiện nhìn thấy được.",
         video_id=video_id,
-        reference_timestamp="00:10",
+        reference_timestamp=timestamp,
         proposed_frame_center=center,
         proposed_interval=FrameInterval(start, end),
         branch="Visual",
@@ -375,26 +376,67 @@ def _write_mapping(path: Path, rows: list[tuple[int, float]]) -> None:
             writer.writerow([index, pts_time, 10, frame_idx])
 
 
+def _write_raw_video_placeholder(root: Path, video_id: str = "L21_V001") -> Path:
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / f"{video_id}.mp4"
+    path.write_bytes(b"raw-video-fixture")
+    return path
+
+
 def test_mapping_validator_validates_nearest_frame_without_shift(tmp_path: Path) -> None:
     _write_mapping(tmp_path / "L21_V001.csv", [(0, 0.0), (100, 10.0), (100, 10.1)])
     report = validate_l21_150_mapping(_benchmark((_kis(),)), tmp_path)
     record = report["records"][0]
     assert record["status"] == "VALIDATED"
     assert record["nearest_mapping_frame_idx"] == 100
+    assert record["nearest_keyframe_inside_proposed_interval"] is True
+    assert record["keyframe_overlap_status"] == "IN_GT_INTERVAL"
     assert record["source_proposed_frame_center"] == 100
     assert record["frame_shift_applied"] == 0
 
 
-def test_mapping_validator_reports_mismatch(tmp_path: Path) -> None:
-    _write_mapping(tmp_path / "L21_V001.csv", [(0, 0.0), (150, 10.0)])
-    report = validate_l21_150_mapping(_benchmark((_kis(),)), tmp_path)
-    assert report["records"][0]["status"] == "MISMATCH"
+def test_sparse_keyframe_outside_gt_is_only_a_proximity_diagnostic(
+    tmp_path: Path,
+) -> None:
+    mapping_root = tmp_path / "mappings"
+    video_root = tmp_path / "videos"
+    video_path = _write_raw_video_placeholder(video_root)
+    _write_mapping(mapping_root / "L21_V001.csv", [(711, 23.7)])
+    query = _kis(start=720, end=780, center=750, timestamp="00:25")
+
+    report = validate_l21_150_mapping(
+        _benchmark((query,)),
+        mapping_root,
+        video_root=video_root,
+        video_probe=lambda path: VideoMetadata(30.0, 37_849, path),
+    )
+    record = report["records"][0]
+
+    assert report["schema_version"] == 2
+    assert record["status"] == "VALIDATED"
+    assert record["expected_frame_from_timestamp"] == 750
+    assert record["timestamp_coordinate_consistent"] is True
+    assert record["nearest_mapping_frame_idx"] == 711
+    assert record["nearest_mapping_pts_time"] == pytest.approx(23.7)
+    assert record["nearest_keyframe_inside_proposed_interval"] is False
+    assert record["keyframe_overlap_status"] == "OUTSIDE_GT_INTERVAL"
+    assert record["raw_video_path"] == str(video_path)
+    assert report["coordinate_status_counts"]["VALIDATED"] == 1
+    assert report["keyframe_overlap_counts"]["OUTSIDE_GT_INTERVAL"] == 1
 
 
 def test_mapping_validator_reports_out_of_range(tmp_path: Path) -> None:
-    _write_mapping(tmp_path / "L21_V001.csv", [(0, 0.0), (100, 10.0)])
+    mapping_root = tmp_path / "mappings"
+    video_root = tmp_path / "videos"
+    _write_raw_video_placeholder(video_root)
+    _write_mapping(mapping_root / "L21_V001.csv", [(0, 0.0), (100, 10.0)])
     query = _kis(start=200, end=220, center=210)
-    report = validate_l21_150_mapping(_benchmark((query,)), tmp_path)
+    report = validate_l21_150_mapping(
+        _benchmark((query,)),
+        mapping_root,
+        video_root=video_root,
+        video_probe=lambda path: VideoMetadata(10.0, 205, path),
+    )
     assert report["records"][0]["status"] == "OUT_OF_RANGE"
 
 
@@ -432,10 +474,82 @@ def test_mapping_validator_uses_raw_video_bounds(tmp_path: Path) -> None:
     assert report["records"][0]["status"] == "OUT_OF_RANGE"
 
 
+def test_whole_second_timestamp_tolerance_is_one_second(tmp_path: Path) -> None:
+    mapping_root = tmp_path / "mappings"
+    video_root = tmp_path / "videos"
+    _write_raw_video_placeholder(video_root)
+    _write_mapping(mapping_root / "L21_V001.csv", [(750, 25.0)])
+    within = _kis(
+        "KIS-WITHIN",
+        start=740,
+        end=780,
+        center=779,
+        timestamp="00:25",
+    )
+    outside = _kis(
+        "KIS-OUTSIDE",
+        start=740,
+        end=790,
+        center=781,
+        timestamp="00:25",
+    )
+
+    report = validate_l21_150_mapping(
+        _benchmark((within, outside)),
+        mapping_root,
+        video_root=video_root,
+        video_probe=lambda path: VideoMetadata(30.0, 1_000, path),
+    )
+
+    assert report["timestamp_coordinate_tolerance_seconds"] == 1.0
+    assert report["records"][0]["status"] == "VALIDATED"
+    assert report["records"][0]["center_timestamp_delta_frames"] == 29
+    assert report["records"][1]["status"] == "INVALID_COORDINATE"
+    assert report["records"][1]["center_timestamp_delta_frames"] == 31
+
+
+def test_trake_sparse_keyframes_do_not_invalidate_narrow_intervals(
+    tmp_path: Path,
+) -> None:
+    mapping_root = tmp_path / "mappings"
+    video_root = tmp_path / "videos"
+    _write_raw_video_placeholder(video_root)
+    _write_mapping(mapping_root / "L21_V001.csv", [(90, 10.0), (190, 20.0), (290, 30.0)])
+
+    report = validate_l21_150_mapping(
+        _benchmark((_trake(),)),
+        mapping_root,
+        video_root=video_root,
+        video_probe=lambda path: VideoMetadata(10.0, 1_000, path),
+    )
+
+    assert [record["status"] for record in report["records"]] == [
+        "VALIDATED",
+        "VALIDATED",
+        "VALIDATED",
+    ]
+    assert report["keyframe_overlap_counts"] == {
+        "IN_GT_INTERVAL": 0,
+        "OUTSIDE_GT_INTERVAL": 3,
+        "UNAVAILABLE": 0,
+    }
+
+
+def test_invalid_mapping_is_distinct_from_missing_mapping(tmp_path: Path) -> None:
+    mapping = tmp_path / "L21_V001.csv"
+    mapping.write_text("n,pts_time\n1,10\n", encoding="utf-8")
+
+    report = validate_l21_150_mapping(_benchmark((_kis(),)), tmp_path)
+
+    assert report["records"][0]["status"] == "INVALID_MAPPING"
+
+
 def test_mapping_validator_never_mutates_source_gt(tmp_path: Path) -> None:
     benchmark = _benchmark((_kis(),))
     before = serialize_l21_150_benchmark(benchmark)
     _write_mapping(tmp_path / "L21_V001.csv", [(0, 0.0), (101, 10.0)])
     report = validate_l21_150_mapping(benchmark, tmp_path)
     assert report["automatic_frame_shift_applied"] is False
+    assert report["records"][0]["source_proposed_start_frame_id"] == 90
+    assert report["records"][0]["source_proposed_end_frame_id"] == 110
     assert serialize_l21_150_benchmark(benchmark) == before

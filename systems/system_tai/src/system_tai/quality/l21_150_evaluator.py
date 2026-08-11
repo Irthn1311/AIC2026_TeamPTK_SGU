@@ -14,6 +14,7 @@ from .l21_150_schema import (
     L21150KISQuery,
     L21150QAQuery,
     L21150Query,
+    L21150TRAKEQuery,
 )
 
 OFFICIAL_K = (1, 5, 20, 50, 100)
@@ -35,13 +36,44 @@ def _percentile(values: Sequence[float], percentile: float) -> float | None:
     return ordered[lower] * (1.0 - fraction) + ordered[upper] * fraction
 
 
-def _validated_query_ids(mapping_report: Mapping[str, Any] | None) -> set[str]:
-    if mapping_report is None:
-        return set()
+def _validated_query_ids(
+    mapping_report: Mapping[str, Any], benchmark: L21150Benchmark
+) -> set[str]:
+    schema_version = mapping_report.get("schema_version")
+    if schema_version == 1:
+        raise ValueError(
+            "mapping validation schema_version 1 uses obsolete keyframe-overlap "
+            "semantics; regenerate the report with l21_150_validate_mapping.py"
+        )
+    if schema_version != 2:
+        raise ValueError("mapping validation report schema_version must be 2")
+    if mapping_report.get("benchmark_id") != benchmark.benchmark_id:
+        raise ValueError("mapping validation benchmark_id does not match benchmark")
+    if (
+        mapping_report.get("validation_role")
+        != "SOURCE_PROPOSED_GT_COORDINATE_EVIDENCE"
+        or mapping_report.get("gt_coordinate_validation_kind")
+        != "RAW_FRAME_STRUCTURAL"
+    ):
+        raise ValueError("mapping validation report is not raw-frame coordinate evidence")
+    if mapping_report.get("semantic_gt_authority") != "SOURCE_PROPOSED_INTERNAL":
+        raise ValueError("mapping validation report has unsupported semantic GT authority")
+    if mapping_report.get("source_gt_mutated") is not False:
+        raise ValueError("mapping validation report must not mutate source GT")
+    if mapping_report.get("automatic_frame_shift_applied") is not False:
+        raise ValueError("mapping validation report must not apply automatic frame shifts")
+
     records = mapping_report.get("records")
     if type(records) is not list:
         raise ValueError("mapping validation report must contain a records array")
-    statuses: dict[str, list[str]] = defaultdict(list)
+    expected: dict[str, set[int | None]] = {}
+    for query in benchmark.queries:
+        expected[query.query_id] = (
+            {event.event_index for event in query.events}
+            if isinstance(query, L21150TRAKEQuery)
+            else {None}
+        )
+    statuses: dict[str, dict[int | None, str]] = defaultdict(dict)
     for record in records:
         if type(record) is not dict:
             raise ValueError("mapping validation record must be an object")
@@ -49,11 +81,24 @@ def _validated_query_ids(mapping_report: Mapping[str, Any] | None) -> set[str]:
         status = record.get("status")
         if type(query_id) is not str or type(status) is not str:
             raise ValueError("mapping validation records require query_id and status")
-        statuses[query_id].append(status)
+        if query_id not in expected:
+            raise ValueError(f"mapping validation has unknown query_id: {query_id}")
+        event_index = record.get("event_index")
+        if event_index not in expected[query_id]:
+            raise ValueError(
+                f"mapping validation has unexpected event_index for {query_id}: "
+                f"{event_index}"
+            )
+        if event_index in statuses[query_id]:
+            raise ValueError(
+                f"mapping validation has duplicate coordinate record for {query_id}"
+            )
+        statuses[query_id][event_index] = status
     return {
         query_id
-        for query_id, query_statuses in statuses.items()
-        if query_statuses and all(status == "VALIDATED" for status in query_statuses)
+        for query_id, event_statuses in statuses.items()
+        if set(event_statuses) == expected[query_id]
+        and all(status == "VALIDATED" for status in event_statuses.values())
     }
 
 
@@ -321,7 +366,11 @@ def evaluate_l21_150(
     if task not in {"all", "kis", "qa", "trake"}:
         raise ValueError("task must be all, kis, qa, or trake")
 
-    validated_ids = _validated_query_ids(mapping_validation_report)
+    validated_ids: set[str] = set()
+    if gt_policy == "validated-only":
+        if mapping_validation_report is None:
+            raise ValueError("validated-only requires a mapping validation report")
+        validated_ids = _validated_query_ids(mapping_validation_report, benchmark)
     selected = [
         query
         for query in benchmark.queries
@@ -334,11 +383,11 @@ def evaluate_l21_150(
         if gt_policy == "validated-only" and query.query_id not in validated_ids
     ]
     if gt_policy == "validated-only":
-        if mapping_validation_report is None:
-            raise ValueError("validated-only requires a mapping validation report")
         selected = [query for query in selected if query.query_id in validated_ids]
         if not selected:
-            raise ValueError("validated-only selected zero MAPPING_VALIDATED_GT queries")
+            raise ValueError(
+                "validated-only selected zero RAW_FRAME_STRUCTURAL queries"
+            )
 
     benchmark_by_id = {query.query_id: query for query in selected}
     raw_by_query: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
@@ -473,8 +522,14 @@ def evaluate_l21_150(
         "official_ground_truth": False,
         "gt_policy": gt_policy,
         "gt_evidence_mode": (
-            "SOURCE_PROPOSED_GT" if gt_policy == "proposed" else "MAPPING_VALIDATED_GT"
+            "SOURCE_PROPOSED_GT"
+            if gt_policy == "proposed"
+            else "SOURCE_PROPOSED_RAW_FRAME_COORDINATE_VALIDATED"
         ),
+        "gt_coordinate_validation_kind": (
+            "NOT_APPLIED" if gt_policy == "proposed" else "RAW_FRAME_STRUCTURAL"
+        ),
+        "semantic_gt_authority": "SOURCE_PROPOSED_INTERNAL",
         "semantic_accuracy_claim": False,
         "selected_query_count": len(selected),
         "excluded_unvalidated_query_count": len(excluded_gt),

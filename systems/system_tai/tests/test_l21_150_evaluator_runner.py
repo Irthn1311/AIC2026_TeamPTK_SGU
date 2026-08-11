@@ -111,6 +111,19 @@ def _benchmark(*queries: Any) -> L21150Benchmark:
     )
 
 
+def _coordinate_validation_report(*records: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": 2,
+        "benchmark_id": BENCHMARK_ID,
+        "validation_role": "SOURCE_PROPOSED_GT_COORDINATE_EVIDENCE",
+        "gt_coordinate_validation_kind": "RAW_FRAME_STRUCTURAL",
+        "semantic_gt_authority": "SOURCE_PROPOSED_INTERNAL",
+        "source_gt_mutated": False,
+        "automatic_frame_shift_applied": False,
+        "records": list(records),
+    }
+
+
 def _candidate(
     query_id: str,
     task: str,
@@ -306,21 +319,71 @@ def test_trake_partial_chain_is_scored_without_fabricating_missing_events() -> N
 def test_validated_only_excludes_unvalidated_queries() -> None:
     first = _kis("KIS-1")
     second = _kis("KIS-2")
-    validation = {
-        "records": [
-            {"query_id": "KIS-1", "status": "VALIDATED"},
-            {"query_id": "KIS-2", "status": "MISMATCH"},
-        ]
-    }
+    validation = _coordinate_validation_report(
+        {
+            "query_id": "KIS-1",
+            "event_index": None,
+            "status": "VALIDATED",
+            "nearest_keyframe_inside_proposed_interval": False,
+        },
+        {"query_id": "KIS-2", "event_index": None, "status": "OUT_OF_RANGE"},
+    )
     report = evaluate_l21_150(
         _benchmark(first, second),
         [_candidate("KIS-1", "kis", 1)],
         gt_policy="validated-only",
         mapping_validation_report=validation,
     )
-    assert report["gt_evidence_mode"] == "MAPPING_VALIDATED_GT"
+    assert report["gt_evidence_mode"] == (
+        "SOURCE_PROPOSED_RAW_FRAME_COORDINATE_VALIDATED"
+    )
+    assert report["gt_coordinate_validation_kind"] == "RAW_FRAME_STRUCTURAL"
+    assert report["semantic_gt_authority"] == "SOURCE_PROPOSED_INTERNAL"
     assert report["selected_query_count"] == 1
     assert report["excluded_unvalidated_query_ids"] == ["KIS-2"]
+
+
+def test_validated_only_trake_requires_all_coordinate_records_not_overlap() -> None:
+    valid = _trake("TR-VALID")
+    invalid = _trake("TR-INVALID")
+    records = [
+        {
+            "query_id": valid.query_id,
+            "event_index": event_index,
+            "status": "VALIDATED",
+            "nearest_keyframe_inside_proposed_interval": False,
+        }
+        for event_index in (1, 2, 3)
+    ]
+    records.extend(
+        {
+            "query_id": invalid.query_id,
+            "event_index": event_index,
+            "status": "OUT_OF_RANGE" if event_index == 2 else "VALIDATED",
+            "nearest_keyframe_inside_proposed_interval": True,
+        }
+        for event_index in (1, 2, 3)
+    )
+
+    report = evaluate_l21_150(
+        _benchmark(valid, invalid),
+        [_candidate(valid.query_id, "trake", 1)],
+        gt_policy="validated-only",
+        mapping_validation_report=_coordinate_validation_report(*records),
+    )
+
+    assert report["selected_query_count"] == 1
+    assert report["excluded_unvalidated_query_ids"] == ["TR-INVALID"]
+
+
+def test_validated_only_rejects_obsolete_schema_v1_mapping_report() -> None:
+    with pytest.raises(ValueError, match="obsolete keyframe-overlap semantics"):
+        evaluate_l21_150(
+            _benchmark(_kis()),
+            [],
+            gt_policy="validated-only",
+            mapping_validation_report={"schema_version": 1, "records": []},
+        )
 
 
 def test_validated_only_requires_mapping_evidence() -> None:
@@ -331,6 +394,8 @@ def test_validated_only_requires_mapping_evidence() -> None:
 def test_proposed_policy_is_prominently_marked_unverified() -> None:
     report = evaluate_l21_150(_benchmark(_kis()), [], gt_policy="proposed")
     assert report["gt_evidence_mode"] == "SOURCE_PROPOSED_GT"
+    assert report["gt_coordinate_validation_kind"] == "NOT_APPLIED"
+    assert report["semantic_gt_authority"] == "SOURCE_PROPOSED_INTERNAL"
     assert report["official_ground_truth"] is False
     assert report["semantic_accuracy_claim"] is False
 

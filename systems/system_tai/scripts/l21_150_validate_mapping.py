@@ -1,4 +1,4 @@
-"""Validate proposed L21-150 frame intervals against BTC mapping evidence."""
+"""Validate L21-150 raw-frame coordinates and report keyframe proximity."""
 
 from __future__ import annotations
 
@@ -48,7 +48,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     print(
         "L21-150 mapping validation complete: "
-        f"records={report['record_count']} statuses={report['status_counts']}"
+        f"records={report['record_count']} "
+        f"coordinate_statuses={report['coordinate_status_counts']} "
+        f"keyframe_overlap={report['keyframe_overlap_counts']}"
     )
     return 0
 

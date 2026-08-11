@@ -19,11 +19,18 @@ from .l21_150_schema import (
 
 VALIDATION_STATUSES = {
     "VALIDATED",
-    "MISMATCH",
+    "INVALID_MAPPING",
     "OUT_OF_RANGE",
     "MISSING_MAPPING",
     "MISSING_VIDEO_METADATA",
+    "INVALID_COORDINATE",
 }
+KEYFRAME_OVERLAP_STATUSES = {
+    "IN_GT_INTERVAL",
+    "OUTSIDE_GT_INTERVAL",
+    "UNAVAILABLE",
+}
+TIMESTAMP_COORDINATE_TOLERANCE_SECONDS = 1.0
 VIDEO_EXTENSIONS = {".mp4", ".avi", ".mkv", ".mov", ".webm"}
 
 
@@ -128,48 +135,79 @@ def _entry(
     event_index: int | None,
     mapping_rows: tuple[tuple[int, float | None], ...] | None,
     mapping_path: Path | None,
+    mapping_failure_status: str | None,
     mapping_error: str | None,
     metadata: VideoMetadata | None,
     metadata_required: bool,
     metadata_error: str | None,
 ) -> dict[str, Any]:
+    reference_seconds: float | None = None
+    timestamp_error: str | None = None
     nearest_frame: int | None = None
     nearest_pts: float | None = None
-    timestamp_delta: float | None = None
-    status = "VALIDATED"
-    reason = "proposed interval contains the nearest timestamp-mapped original frame"
+    keyframe_timestamp_delta: float | None = None
+    nearest_keyframe_inside: bool | None = None
+    keyframe_overlap_status = "UNAVAILABLE"
+    expected_frame: int | None = None
+    center_delta_frames: int | None = None
+    center_delta_seconds: float | None = None
+    timestamp_coordinate_consistent: bool | None = None
+    try:
+        reference_seconds = timestamp_seconds(timestamp)
+    except ValueError as exc:
+        timestamp_error = str(exc)
 
-    if mapping_rows is None:
-        status = "MISSING_MAPPING" if mapping_path is None else "MISMATCH"
-        reason = mapping_error or "mapping is unavailable"
-    else:
+    if mapping_rows is not None:
         with_pts = [(frame_idx, pts) for frame_idx, pts in mapping_rows if pts is not None]
-        if not with_pts:
-            status = "MISMATCH"
-            reason = "mapping has no pts_time values for timestamp comparison"
-        else:
-            reference_seconds = timestamp_seconds(timestamp)
+        if reference_seconds is not None and with_pts:
             nearest_frame, nearest_pts = min(
                 with_pts,
                 key=lambda item: (abs(float(item[1]) - reference_seconds), item[0]),
             )
-            timestamp_delta = abs(float(nearest_pts) - reference_seconds)
-            if not interval.start_frame_id <= nearest_frame <= interval.end_frame_id:
-                status = "MISMATCH"
-                reason = "nearest timestamp-mapped frame is outside the proposed interval"
+            keyframe_timestamp_delta = abs(float(nearest_pts) - reference_seconds)
+            nearest_keyframe_inside = (
+                interval.start_frame_id <= nearest_frame <= interval.end_frame_id
+            )
+            keyframe_overlap_status = (
+                "IN_GT_INTERVAL"
+                if nearest_keyframe_inside
+                else "OUTSIDE_GT_INTERVAL"
+            )
 
-        max_mapping_frame = max(frame_idx for frame_idx, _ in mapping_rows)
-        if interval.start_frame_id > max_mapping_frame:
-            status = "OUT_OF_RANGE"
-            reason = "proposed interval begins after the maximum mapped frame"
+    if metadata is not None and reference_seconds is not None:
+        expected_frame = int(math.floor(reference_seconds * metadata.fps + 0.5))
+        center_delta_frames = center - expected_frame
+        center_delta_seconds = center / metadata.fps - reference_seconds
+        timestamp_coordinate_consistent = (
+            abs(center_delta_seconds) <= TIMESTAMP_COORDINATE_TOLERANCE_SECONDS
+        )
 
-    if metadata is not None:
-        if interval.end_frame_id >= metadata.total_frames:
-            status = "OUT_OF_RANGE"
-            reason = "proposed interval exceeds raw-video frame bounds"
-    elif metadata_required and status == "VALIDATED":
+    status = "VALIDATED"
+    reason = "source-proposed raw-frame coordinate is structurally valid"
+    if mapping_rows is None:
+        status = mapping_failure_status or "INVALID_MAPPING"
+        reason = mapping_error or "mapping is unavailable"
+    elif metadata is None and metadata_required:
         status = "MISSING_VIDEO_METADATA"
         reason = metadata_error or "raw-video metadata is unavailable"
+    elif not interval.start_frame_id <= center <= interval.end_frame_id:
+        status = "INVALID_COORDINATE"
+        reason = "source-proposed center is outside the proposed interval"
+    elif metadata is not None and (
+        interval.start_frame_id < 0
+        or interval.end_frame_id >= metadata.total_frames
+    ):
+        status = "OUT_OF_RANGE"
+        reason = "proposed interval exceeds raw-video frame bounds"
+    elif timestamp_error is not None:
+        status = "INVALID_COORDINATE"
+        reason = timestamp_error
+    elif metadata is not None and not timestamp_coordinate_consistent:
+        status = "INVALID_COORDINATE"
+        reason = (
+            "source-proposed center is inconsistent with the whole-second "
+            "reference timestamp"
+        )
 
     return {
         "query_id": query_id,
@@ -180,15 +218,26 @@ def _entry(
         "source_proposed_frame_center": center,
         "source_proposed_start_frame_id": interval.start_frame_id,
         "source_proposed_end_frame_id": interval.end_frame_id,
+        "reference_timestamp_seconds": reference_seconds,
+        "expected_frame_from_timestamp": expected_frame,
+        "center_timestamp_delta_frames": center_delta_frames,
+        "center_timestamp_delta_seconds": center_delta_seconds,
+        "timestamp_coordinate_tolerance_seconds": (
+            TIMESTAMP_COORDINATE_TOLERANCE_SECONDS
+        ),
+        "timestamp_coordinate_consistent": timestamp_coordinate_consistent,
         "nearest_mapping_frame_idx": nearest_frame,
         "nearest_mapping_pts_time": nearest_pts,
-        "timestamp_delta_seconds": timestamp_delta,
+        "keyframe_timestamp_delta_seconds": keyframe_timestamp_delta,
+        "nearest_keyframe_inside_proposed_interval": nearest_keyframe_inside,
+        "keyframe_overlap_status": keyframe_overlap_status,
         "mapping_path": str(mapping_path) if mapping_path is not None else None,
         "raw_video_path": str(metadata.path) if metadata is not None else None,
         "raw_video_fps": metadata.fps if metadata is not None else None,
         "raw_video_total_frames": metadata.total_frames if metadata is not None else None,
         "status": status,
         "reason": reason,
+        "semantic_label_origin": "SOURCE_PROPOSED_INTERNAL_DIAGNOSTIC",
         "frame_shift_applied": 0,
     }
 
@@ -209,16 +258,20 @@ def validate_l21_150_mapping(
         mapping_matches = _exact_matches(mapping_base, video_id, {".csv"})
         mapping_path: Path | None = None
         mapping_rows: tuple[tuple[int, float | None], ...] | None = None
+        mapping_failure_status: str | None = None
         mapping_error: str | None = None
         if len(mapping_matches) == 1:
             mapping_path = mapping_matches[0]
             try:
                 mapping_rows = _load_mapping(mapping_path)
             except ValueError as exc:
+                mapping_failure_status = "INVALID_MAPPING"
                 mapping_error = str(exc)
         elif not mapping_matches:
+            mapping_failure_status = "MISSING_MAPPING"
             mapping_error = "no exact-stem mapping CSV found"
         else:
+            mapping_failure_status = "INVALID_MAPPING"
             mapping_error = f"ambiguous exact-stem mapping CSVs: {len(mapping_matches)}"
 
         metadata: VideoMetadata | None = None
@@ -237,6 +290,7 @@ def validate_l21_150_mapping(
         resources[video_id] = (
             mapping_rows,
             mapping_path,
+            mapping_failure_status,
             mapping_error,
             metadata,
             metadata_error,
@@ -244,9 +298,14 @@ def validate_l21_150_mapping(
 
     records: list[dict[str, Any]] = []
     for query in benchmark.queries:
-        mapping_rows, mapping_path, mapping_error, metadata, metadata_error = resources[
-            query.video_id
-        ]
+        (
+            mapping_rows,
+            mapping_path,
+            mapping_failure_status,
+            mapping_error,
+            metadata,
+            metadata_error,
+        ) = resources[query.video_id]
         if isinstance(query, (L21150KISQuery, L21150QAQuery)):
             records.append(
                 _entry(
@@ -259,6 +318,7 @@ def validate_l21_150_mapping(
                     event_index=None,
                     mapping_rows=mapping_rows,
                     mapping_path=mapping_path,
+                    mapping_failure_status=mapping_failure_status,
                     mapping_error=mapping_error,
                     metadata=metadata,
                     metadata_required=video_base is not None,
@@ -278,6 +338,7 @@ def validate_l21_150_mapping(
                         event_index=event.event_index,
                         mapping_rows=mapping_rows,
                         mapping_path=mapping_path,
+                        mapping_failure_status=mapping_failure_status,
                         mapping_error=mapping_error,
                         metadata=metadata,
                         metadata_required=video_base is not None,
@@ -285,17 +346,28 @@ def validate_l21_150_mapping(
                     )
                 )
 
-    status_counts = {status: 0 for status in sorted(VALIDATION_STATUSES)}
+    coordinate_status_counts = {status: 0 for status in sorted(VALIDATION_STATUSES)}
+    keyframe_overlap_counts = {
+        status: 0 for status in sorted(KEYFRAME_OVERLAP_STATUSES)
+    }
     for record in records:
-        status_counts[record["status"]] += 1
+        coordinate_status_counts[record["status"]] += 1
+        keyframe_overlap_counts[record["keyframe_overlap_status"]] += 1
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "benchmark_id": benchmark.benchmark_id,
-        "validation_role": "PROPOSED_GT_MAPPING_EVIDENCE",
+        "validation_role": "SOURCE_PROPOSED_GT_COORDINATE_EVIDENCE",
+        "gt_coordinate_validation_kind": "RAW_FRAME_STRUCTURAL",
+        "semantic_gt_authority": "SOURCE_PROPOSED_INTERNAL",
         "source_gt_mutated": False,
         "automatic_frame_shift_applied": False,
+        "timestamp_coordinate_tolerance_seconds": (
+            TIMESTAMP_COORDINATE_TOLERANCE_SECONDS
+        ),
+        "raw_video_validation_requested": video_base is not None,
         "video_count": len(video_ids),
         "record_count": len(records),
-        "status_counts": status_counts,
+        "coordinate_status_counts": coordinate_status_counts,
+        "keyframe_overlap_counts": keyframe_overlap_counts,
         "records": records,
     }

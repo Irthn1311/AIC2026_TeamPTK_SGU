@@ -32,6 +32,11 @@ videos are DEV and the remaining four are HOLDOUT. All tasks for one video stay 
 same split. Do not tune on HOLDOUT. Q1-B remains a separate human-verified benchmark and
 provenance workflow.
 
+For this harness, raw video is the coordinate source of truth. BTC mapping CSVs are
+sparse supplied-keyframe metadata: `frame_idx` is the original/raw frame ID for that
+keyframe, but absence of a supplied keyframe inside a source interval does not invalidate
+the raw-frame coordinate. `n`, CLIP row, and filename are not raw frame IDs.
+
 Re-import the source document without committing the DOCX:
 
 ```bash
@@ -51,6 +56,14 @@ python systems/system_tai/scripts/l21_150_validate_mapping.py \
   --output <outside-git>/l21_150_mapping_validation.json
 ```
 
+The schema-v2 report separates raw-frame structural status from keyframe proximity.
+`coordinate_status_counts` covers mapping/resource validity, optional raw-video bounds,
+and timestamp/center consistency using a +/-1-second tolerance appropriate to the
+whole-second source timestamps. `keyframe_overlap_counts` reports whether the nearest
+supplied keyframe falls inside the interval; `OUTSIDE_GT_INTERVAL` is diagnostic only.
+Neither dimension validates semantic correctness, and the labels remain
+`SOURCE_PROPOSED_INTERNAL`, not BTC official GT. Schema-v1 reports must be regenerated.
+
 Run E0 through the existing `OperationalKISRuntime` task handlers. The harness does not
 duplicate CLIP retrieval or change production ranking, Q&A, or TRAKE behavior:
 
@@ -64,13 +77,16 @@ python systems/system_tai/scripts/l21_150_run_baseline.py \
   --device auto --allow-model-download
 ```
 
-Evaluate either explicitly proposed GT or mapping-validated GT only:
+Evaluate either explicitly proposed GT or coordinate-validated source GT only. For
+`validated-only`, every required TRAKE event must have coordinate status `VALIDATED`;
+keyframe overlap is not a gate:
 
 ```bash
 python systems/system_tai/scripts/l21_150_evaluate.py \
   --benchmark systems/system_tai/benchmarks/l21_150_diagnostic/benchmark.json \
   --predictions /kaggle/working/system_tai_outputs/l21_150_e0/predictions.jsonl \
-  --gt-policy proposed \
+  --gt-policy validated-only \
+  --mapping-validation /kaggle/working/system_tai_outputs/l21_150_mapping_validation.json \
   --output /kaggle/working/system_tai_outputs/l21_150_e0/evaluation.json \
   --csv-output /kaggle/working/system_tai_outputs/l21_150_e0/evaluation.csv \
   --markdown-output /kaggle/working/system_tai_outputs/l21_150_e0/evaluation.md
@@ -78,8 +94,9 @@ python systems/system_tai/scripts/l21_150_evaluate.py \
 
 KIS and Q&A use inclusive video/frame tuple hits; Q&A additionally requires a
 conservatively normalized source-provided answer. TRAKE scores corresponding event
-indexes without prediction reordering. For every task, R@k is the maximum candidate
-score in the prefix and Final Score is the mean of R@1/5/20/50/100. Run
+indexes without prediction reordering. Its diagnostic order check requires strict
+`F1 < F2 < ... < FN`. For every task, R@k is the maximum candidate score in the prefix
+and Final Score is the mean of R@1/5/20/50/100. Run
 `l21_150_error_analysis.py` for mechanical error categories by task, branch, difficulty,
 video, and split. Branch labels are slices, not causal diagnoses. Generated E0 artifacts
 must remain outside Git. This harness measures the current baseline as-is and does not
