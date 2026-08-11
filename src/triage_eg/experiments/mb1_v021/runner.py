@@ -22,7 +22,7 @@ from triage_eg.experiments.mb1_v02.signals import (
     ShotSegment,
     continuous_shot_segments,
 )
-from triage_eg.experiments.moment_m1 import OpenCVRawVideoDecoder
+from triage_eg.experiments.moment_m1 import DecodedFrame, OpenCVRawVideoDecoder
 from triage_eg.retrieval.stage1b.writers import write_json, write_jsonl
 
 from .signals import (
@@ -83,6 +83,8 @@ FORBIDDEN_SUFFIXES = {
     ".npy",
     ".npz",
 }
+RENDER_DECODE_BATCH_SIZE = 4
+CONTACT_SHEET_TILE_SIZE = (320, 180)
 
 
 @dataclass(frozen=True)
@@ -261,6 +263,41 @@ def _summary(values: np.ndarray) -> dict[str, float]:
         "peak": float(np.max(vector)),
         "median": float(np.median(vector)),
     }
+
+
+def _decode_resized_frames(
+    decoder: Any, frame_indices: list[int]
+) -> list[DecodedFrame]:
+    """Decode exact raw coordinates in bounded batches and retain only sheet tiles."""
+
+    from PIL import Image, ImageOps
+
+    requested = [int(value) for value in frame_indices]
+    if requested != sorted(set(requested)):
+        raise ValueError("MB1 v0.2.1 render frame IDs must be unique and chronological")
+    resized: list[DecodedFrame] = []
+    for start in range(0, len(requested), RENDER_DECODE_BATCH_SIZE):
+        batch_indices = requested[start : start + RENDER_DECODE_BATCH_SIZE]
+        frames = decoder.decode_indices(batch_indices)
+        identities = [int(frame.actual_frame_idx) for frame in frames]
+        if identities != batch_indices:
+            raise RuntimeError("MB1_V021_RENDER_FRAME_IDENTITY_MISMATCH")
+        for frame in frames:
+            image = Image.fromarray(np.asarray(frame.image, dtype=np.uint8), mode="RGB")
+            fitted = ImageOps.fit(
+                image,
+                CONTACT_SHEET_TILE_SIZE,
+                method=Image.Resampling.LANCZOS,
+            )
+            resized.append(
+                DecodedFrame(
+                    video_id=str(frame.video_id),
+                    actual_frame_idx=int(frame.actual_frame_idx),
+                    image=np.asarray(fitted, dtype=np.uint8).copy(),
+                )
+            )
+        del frames
+    return resized
 
 
 def _proposal_features(
@@ -862,7 +899,7 @@ def prepare_mb1_v021_candidates(
         decoder = decoder_factory(proposal.video_id, video_assets[proposal.video_id])
         render_started = monotonic()
         try:
-            frames = decoder.decode_indices(requested)
+            frames = _decode_resized_frames(decoder, requested)
         finally:
             decoder.close()
         if [int(frame.actual_frame_idx) for frame in frames] != requested:

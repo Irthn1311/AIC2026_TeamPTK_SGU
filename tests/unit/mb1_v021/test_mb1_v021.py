@@ -195,7 +195,11 @@ def test_soft_crossfade_run_detector_on_gradual_transition() -> None:
 class _LocalDecoder:
     info = VideoInfo(fps=10.0, total_frames=20)
 
+    def __init__(self) -> None:
+        self.requests: list[list[int]] = []
+
     def decode_indices(self, frame_indices: list[int]) -> list[DecodedFrame]:
+        self.requests.append(frame_indices)
         return [
             DecodedFrame(
                 "L01_V001",
@@ -220,8 +224,10 @@ def test_candidate_local_guard_catches_cut_missed_by_coarse(
     assert not hard_cut_mask(
         coarse.pixel_percentiles, coarse.histogram_percentiles
     ).any()
-    _, local = scan_local_video(_LocalDecoder(), 0, 12, coarse)
+    decoder = _LocalDecoder()
+    _, local = scan_local_video(decoder, 0, 12, coarse)
     assert 6 in local.hard_cut_frames
+    assert max(map(len, decoder.requests)) <= signals.SCAN_DECODE_BATCH_SIZE
 
 
 def test_adaptive_window_shrinks_to_clean_three_to_four_seconds() -> None:
@@ -303,12 +309,27 @@ def test_overview_dense_manifest_ids_match_rendered_labels(tmp_path: Path) -> No
     overview_ids = signals.overview_displayed_frames(100, 220)
     dense_ids = dense_displayed_frames(100, 220, 160, 30.0)
     requested = sorted(set(overview_ids + dense_ids))
-    frames = {
-        value: DecodedFrame(
-            "L01_V001", value, np.full((24, 32, 3), value % 255, dtype=np.uint8)
-        )
-        for value in requested
-    }
+
+    class RenderDecoder:
+        def __init__(self) -> None:
+            self.requests: list[list[int]] = []
+
+        def decode_indices(self, frame_indices: list[int]) -> list[DecodedFrame]:
+            self.requests.append(frame_indices)
+            return [
+                DecodedFrame(
+                    "L01_V001",
+                    value,
+                    np.full((480, 640, 3), value % 255, dtype=np.uint8),
+                )
+                for value in frame_indices
+            ]
+
+    decoder = RenderDecoder()
+    resized = runner._decode_resized_frames(decoder, requested)
+    assert max(map(len, decoder.requests)) <= runner.RENDER_DECODE_BATCH_SIZE
+    assert all(frame.image.shape == (180, 320, 3) for frame in resized)
+    frames = {int(frame.actual_frame_idx): frame for frame in resized}
     overview_labels = render_contact_sheet(
         tmp_path / "overview.jpg",
         candidate_id="mb1v021_c001",

@@ -25,6 +25,7 @@ OVERVIEW_FRAME_COUNT = 32
 DENSE_FRAME_COUNT = 32
 DENSE_SECONDS = 2.0
 EPSILON = 1e-9
+SCAN_DECODE_BATCH_SIZE = 4
 
 
 @dataclass(frozen=True)
@@ -185,36 +186,46 @@ def spatial_activity_concentration(
 def _decode_series(decoder: Any, indices: list[int], stride: int) -> SignalSeries:
     if not indices:
         raise ValueError("MB1 v0.2.1 cannot scan an empty frame range")
-    decode_started = monotonic()
-    frames = decoder.decode_indices(indices)
-    decode_ms = (monotonic() - decode_started) * 1000
-    identities = [int(frame.actual_frame_idx) for frame in frames]
-    if identities != indices:
-        raise RuntimeError("MB1_V021_SCAN_FRAME_IDENTITY_MISMATCH")
-    pixel = np.zeros(len(frames), dtype=np.float64)
-    histogram_difference = np.zeros(len(frames), dtype=np.float64)
-    concentration = np.zeros(len(frames), dtype=np.float64)
-    histograms = np.empty((len(frames), 32), dtype=np.float64)
+    pixel = np.zeros(len(indices), dtype=np.float64)
+    histogram_difference = np.zeros(len(indices), dtype=np.float64)
+    concentration = np.zeros(len(indices), dtype=np.float64)
+    histograms = np.empty((len(indices), 32), dtype=np.float64)
     previous_gray: np.ndarray | None = None
     previous_histogram: np.ndarray | None = None
-    signal_started = monotonic()
-    for index, frame in enumerate(frames):
-        gray, histogram = _small_frame_features(frame.image)
-        histograms[index] = histogram
-        if previous_gray is not None and previous_histogram is not None:
-            pixel[index] = float(
-                np.mean(
-                    np.abs(gray.astype(np.float32) - previous_gray.astype(np.float32))
+    decode_ms = 0.0
+    signal_ms = 0.0
+    for batch_start in range(0, len(indices), SCAN_DECODE_BATCH_SIZE):
+        batch_indices = indices[batch_start : batch_start + SCAN_DECODE_BATCH_SIZE]
+        decode_started = monotonic()
+        frames = decoder.decode_indices(batch_indices)
+        decode_ms += (monotonic() - decode_started) * 1000
+        identities = [int(frame.actual_frame_idx) for frame in frames]
+        if identities != batch_indices:
+            raise RuntimeError("MB1_V021_SCAN_FRAME_IDENTITY_MISMATCH")
+        signal_started = monotonic()
+        for offset, frame in enumerate(frames):
+            index = batch_start + offset
+            gray, histogram = _small_frame_features(frame.image)
+            histograms[index] = histogram
+            if previous_gray is not None and previous_histogram is not None:
+                pixel[index] = float(
+                    np.mean(
+                        np.abs(
+                            gray.astype(np.float32) - previous_gray.astype(np.float32)
+                        )
+                    )
+                    / 255.0
                 )
-                / 255.0
-            )
-            histogram_difference[index] = float(
-                0.5 * np.abs(histogram - previous_histogram).sum()
-            )
-            concentration[index] = spatial_activity_concentration(gray, previous_gray)
-        previous_gray = gray
-        previous_histogram = histogram
-    signal_ms = (monotonic() - signal_started) * 1000
+                histogram_difference[index] = float(
+                    0.5 * np.abs(histogram - previous_histogram).sum()
+                )
+                concentration[index] = spatial_activity_concentration(
+                    gray, previous_gray
+                )
+            previous_gray = gray
+            previous_histogram = histogram
+        signal_ms += (monotonic() - signal_started) * 1000
+        del frames
     pixel_baseline = robust_baseline(pixel[1:] if len(pixel) > 1 else pixel)
     histogram_baseline = robust_baseline(
         histogram_difference[1:] if len(histogram_difference) > 1 else histogram_difference
