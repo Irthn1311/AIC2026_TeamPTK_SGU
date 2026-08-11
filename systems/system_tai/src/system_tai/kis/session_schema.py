@@ -104,6 +104,7 @@ class QueryRequest:
     top_k_per_variant: int = 100
     output_top_k: int = 100
     refine_top_n: int = 3
+    include_vi_variant: bool = True
     type: str = "query"
 
     def __post_init__(self) -> None:
@@ -113,6 +114,14 @@ class QueryRequest:
             raise ValueError("query_id must be non-empty")
         if not self.query_vi or not self.query_vi.strip():
             raise ValueError("query_vi must be non-empty")
+        if type(self.include_vi_variant) is not bool:
+            raise ValueError("include_vi_variant must be a boolean")
+        if not self.include_vi_variant and not (
+            self.query_en and self.query_en.strip()
+        ):
+            raise ValueError(
+                "query_en must be non-empty when include_vi_variant is false"
+            )
         if not math.isfinite(self.weight_vi) or self.weight_vi <= 0:
             raise ValueError("weight_vi must be finite and > 0")
         if self.query_en and self.query_en.strip():
@@ -129,15 +138,17 @@ class QueryRequest:
             raise ValueError("refine_top_n must be in range [0, output_top_k]")
 
     def variants(self) -> tuple[QueryVariant, ...]:
-        result: list[QueryVariant] = [
-            QueryVariant(
-                variant_id=f"{self.query_id}::v1_vi",
-                text=self.query_vi.strip(),
-                language=QueryLanguage.VIETNAMESE,
-                variant_type=QueryVariantType.VIETNAMESE_DIRECT,
-                weight=self.weight_vi,
+        result: list[QueryVariant] = []
+        if self.include_vi_variant:
+            result.append(
+                QueryVariant(
+                    variant_id=f"{self.query_id}::v1_vi",
+                    text=self.query_vi.strip(),
+                    language=QueryLanguage.VIETNAMESE,
+                    variant_type=QueryVariantType.VIETNAMESE_DIRECT,
+                    weight=self.weight_vi,
+                )
             )
-        ]
         if self.query_en and self.query_en.strip():
             result.append(
                 QueryVariant(
@@ -347,6 +358,7 @@ def parse_session_request(
                 top_k_per_variant=int(data.get("top_k_per_variant", default_top_k_per_variant)),
                 output_top_k=int(data.get("output_top_k", default_output_top_k)),
                 refine_top_n=int(data.get("refine_top_n", default_refine_top_n)),
+                include_vi_variant=data.get("include_vi_variant", True),
             )
         except (TypeError, ValueError) as exc:
             raise InvalidRequestError(f"invalid query request fields: {exc}") from exc

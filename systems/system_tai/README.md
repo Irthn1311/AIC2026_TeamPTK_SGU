@@ -113,10 +113,13 @@ python systems/system_tai/scripts/l21_150_stage_analysis.py \
   --output <outside-git>/l21_150_e0/stage_analysis.json
 ```
 
-The first Q2 KIS arm is prepared but not run. Its 38-record DEV-only English sidecar is
-reviewed and frozen as `REVIEWED_FROZEN`. The opt-in command preserves the existing
-Vietnamese query, adds the English translation, and uses existing equal-weight Weighted
-RRF; it does not use HOLDOUT or English expansion:
+Q2 KIS uses three opt-in `SOURCE_PROPOSED_INTERNAL` DEV diagnostic arms. Arm A is
+`VI_ONLY`. Arm B is `TRANSLATION_AUGMENTED_RRF`: it preserves the Vietnamese query,
+adds the 38-record `REVIEWED_FROZEN` English translation sidecar, and uses the existing
+equal-weight Weighted RRF. Arm C is `EN_ONLY`: it reuses those exact frozen English
+strings as one English-translation variant, emits no Vietnamese retrieval variant, and
+uses no English expansion. Arm C is prepared in code but has not been GPU-run. No arm
+uses HOLDOUT or establishes official BTC accuracy.
 
 ```bash
 python systems/system_tai/scripts/l21_150_validate_kis_translation.py \
@@ -132,11 +135,24 @@ python systems/system_tai/scripts/l21_150_run_baseline.py \
   --kis-query-sidecar systems/system_tai/benchmarks/l21_150_diagnostic/q2_kis_dev_en_translation.json \
   --output-dir /kaggle/working/system_tai_outputs/l21_150_q2_arm_b \
   --device auto --allow-model-download
+
+python systems/system_tai/scripts/l21_150_run_baseline.py \
+  --benchmark systems/system_tai/benchmarks/l21_150_diagnostic/benchmark.json \
+  --input-root /kaggle/input \
+  --reuse-manifest /kaggle/input/system-tai-manifest/feature_manifest.json \
+  --split dev --task kis --top-k 100 --refine-top-n 3 \
+  --kis-query-policy en_only \
+  --kis-query-sidecar systems/system_tai/benchmarks/l21_150_diagnostic/q2_kis_dev_en_translation.json \
+  --output-dir /kaggle/working/system_tai_outputs/l21_150_q2_arm_c \
+  --device auto --allow-model-download
 ```
 
 Arm B is named `TRANSLATION_AUGMENTED_RRF`; it is not an English-only or causal
-translation experiment. Compare its evaluation with frozen E0-A using
-`l21_150_compare_kis_q2.py`.
+translation experiment. The existing pairwise `l21_150_compare_kis_q2.py` remains
+unchanged. After Arm C is evaluated, use `l21_150_compare_kis_q2_abc.py` to distinguish
+English-representation evidence from possible VI+EN fusion complementarity. This A/B/C
+comparison is diagnostic only and makes no causal translation or official accuracy
+claim.
 
 The source Q&A table provides one combined event/question cell, not two independently
 authored fields. The benchmark preserves it as `question_vi`; the E0 adapter supplies

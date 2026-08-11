@@ -41,6 +41,10 @@ from system_tai.quality.l21_150_translation import (  # noqa: E402
     load_kis_dev_translation_sidecar,
 )
 
+FROZEN_Q2_KIS_DEV_EN_SIDECAR_SHA256 = (
+    "fa48d7af2001d8d5eca178301736d1409916961f256b4ccb779490d78495ccea"
+)
+
 
 class L21150Runtime(Protocol):
     output_root: Path
@@ -247,7 +251,7 @@ def _runtime_request(
     request_id = f"{experiment_id}:{query.query_id}"
     if isinstance(query, L21150KISQuery):
         query_en = None
-        if kis_query_policy == "translation_augmented_rrf":
+        if kis_query_policy in {"translation_augmented_rrf", "en_only"}:
             if kis_translations is None or query.query_id not in kis_translations:
                 raise ValueError(
                     f"missing frozen English translation for {query.query_id}"
@@ -260,6 +264,7 @@ def _runtime_request(
             query_id=query.query_id,
             query_vi=query.query_vi,
             query_en=query_en,
+            include_vi_variant=kis_query_policy != "en_only",
             top_k_per_variant=top_k,
             output_top_k=top_k,
             refine_top_n=refine_top_n,
@@ -321,18 +326,37 @@ def run_l21_150_baseline(
         raise ValueError("split must be dev, holdout, or all")
     if task not in {"kis", "qa", "trake", "all"}:
         raise ValueError("task must be kis, qa, trake, or all")
-    if kis_query_policy not in {"vi_only", "translation_augmented_rrf"}:
+    supported_kis_policies = {
+        "vi_only",
+        "translation_augmented_rrf",
+        "en_only",
+    }
+    if kis_query_policy not in supported_kis_policies:
         raise ValueError(
-            "kis_query_policy must be vi_only or translation_augmented_rrf"
+            "kis_query_policy must be vi_only, translation_augmented_rrf, or en_only"
         )
-    if kis_query_policy == "translation_augmented_rrf":
+    if kis_query_policy in {"translation_augmented_rrf", "en_only"}:
         if kis_query_sidecar is None:
             raise ValueError(
-                "translation_augmented_rrf requires a validated KIS query sidecar"
+                f"{kis_query_policy} requires a validated KIS query sidecar"
             )
         if split != "dev" or task != "kis":
             raise ValueError(
-                "translation_augmented_rrf is restricted to the KIS DEV experiment"
+                f"{kis_query_policy} is restricted to the KIS DEV experiment"
+            )
+        if kis_query_sidecar_path is None or kis_query_sidecar_sha256 is None:
+            raise ValueError(
+                f"{kis_query_policy} requires frozen sidecar path and SHA256 provenance"
+            )
+        actual_sidecar_sha256 = hashlib.sha256(
+            Path(kis_query_sidecar_path).read_bytes()
+        ).hexdigest()
+        if (
+            kis_query_sidecar_sha256 != actual_sidecar_sha256
+            or actual_sidecar_sha256 != FROZEN_Q2_KIS_DEV_EN_SIDECAR_SHA256
+        ):
+            raise ValueError(
+                "KIS query sidecar SHA256 does not match the frozen Q2 DEV artifact"
             )
     elif kis_query_sidecar is not None:
         raise ValueError("a KIS query sidecar is not valid with vi_only policy")
@@ -442,11 +466,11 @@ def run_l21_150_baseline(
     success_count = sum(summary["status"] == "SUCCESS" for summary in query_summaries)
     runtime_manifest = getattr(runtime, "manifest", None)
     runtime_encoder = getattr(runtime, "shared_encoder", None)
-    resolved_kis_query_policy = (
-        "TRANSLATION_AUGMENTED_RRF"
-        if kis_query_policy == "translation_augmented_rrf"
-        else "VI_ONLY"
-    )
+    resolved_kis_query_policy = {
+        "vi_only": "VI_ONLY",
+        "translation_augmented_rrf": "TRANSLATION_AUGMENTED_RRF",
+        "en_only": "EN_ONLY",
+    }[kis_query_policy]
     query_policy_changed_from_e0 = kis_query_policy != "vi_only"
     metadata = {
         "schema_version": 2,
@@ -487,10 +511,10 @@ def run_l21_150_baseline(
         },
         "queries": query_summaries,
     }
-    if kis_query_policy == "translation_augmented_rrf":
+    if kis_query_policy in {"translation_augmented_rrf", "en_only"}:
         assert kis_query_sidecar is not None
-        metadata["kis_query_experiment"] = {
-            "query_policy": "TRANSLATION_AUGMENTED_RRF",
+        experiment_metadata = {
+            "query_policy": resolved_kis_query_policy,
             "sidecar_path": (
                 str(kis_query_sidecar_path) if kis_query_sidecar_path is not None else None
             ),
@@ -502,10 +526,25 @@ def run_l21_150_baseline(
             "sidecar_sha256": kis_query_sidecar_sha256,
             "sidecar_schema_version": kis_query_sidecar.schema_version,
             "translation_status": kis_query_sidecar.translation_status,
-            "variant_count_policy": "2_VARIANTS_VI_PLUS_EN",
-            "variant_weights": {"vi": 1.0, "en": 1.0},
             "query_en_expansion_used": False,
         }
+        if kis_query_policy == "translation_augmented_rrf":
+            experiment_metadata.update(
+                {
+                    "variant_count_policy": "2_VARIANTS_VI_PLUS_EN",
+                    "variant_weights": {"vi": 1.0, "en": 1.0},
+                }
+            )
+        else:
+            experiment_metadata.update(
+                {
+                    "variant_count_policy": "1_VARIANT_EN_ONLY",
+                    "variant_weights": {"en": 1.0},
+                    "source_vi_used_for_retrieval": False,
+                    "translation_en_used_for_retrieval": True,
+                }
+            )
+        metadata["kis_query_experiment"] = experiment_metadata
     metadata = _write_json_document(output / "experiment_manifest.json", metadata)
     (output / "run_summary.md").write_text(
         "\n".join(
@@ -536,6 +575,18 @@ def run_l21_150_baseline(
                 (
                     "- Query policy changed from E0: "
                     f"`{str(query_policy_changed_from_e0).lower()}`"
+                ),
+                *(
+                    [
+                        "- English translation input: `REVIEWED_FROZEN`",
+                        (
+                            "- Vietnamese source retained in benchmark provenance "
+                            "but used for retrieval: `false`"
+                        ),
+                        "- Causal or official accuracy claim: `false`",
+                    ]
+                    if kis_query_policy == "en_only"
+                    else []
                 ),
                 "- Semantic quality claim: `false` until evaluator output is reviewed",
                 "",
@@ -568,7 +619,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--manifest-sha256")
     parser.add_argument(
         "--kis-query-policy",
-        choices=("vi_only", "translation_augmented_rrf"),
+        choices=("vi_only", "translation_augmented_rrf", "en_only"),
         default="vi_only",
     )
     parser.add_argument("--kis-query-sidecar", type=Path)
@@ -582,10 +633,10 @@ def main(argv: list[str] | None = None) -> int:
         benchmark_sha = hashlib.sha256(args.benchmark.read_bytes()).hexdigest()
         kis_sidecar = None
         kis_sidecar_sha = None
-        if args.kis_query_policy == "translation_augmented_rrf":
+        if args.kis_query_policy in {"translation_augmented_rrf", "en_only"}:
             if args.kis_query_sidecar is None:
                 raise ValueError(
-                    "--kis-query-sidecar is required for translation_augmented_rrf"
+                    f"--kis-query-sidecar is required for {args.kis_query_policy}"
                 )
             kis_sidecar = load_kis_dev_translation_sidecar(
                 args.kis_query_sidecar,
@@ -595,10 +646,14 @@ def main(argv: list[str] | None = None) -> int:
             kis_sidecar_sha = hashlib.sha256(
                 args.kis_query_sidecar.read_bytes()
             ).hexdigest()
+            if kis_sidecar_sha != FROZEN_Q2_KIS_DEV_EN_SIDECAR_SHA256:
+                raise ValueError(
+                    "--kis-query-sidecar does not match the frozen Q2 DEV SHA256"
+                )
         elif args.kis_query_sidecar is not None:
             raise ValueError(
                 "--kis-query-sidecar requires --kis-query-policy "
-                "translation_augmented_rrf"
+                "translation_augmented_rrf or en_only"
             )
         experiment_id = args.experiment_id or datetime.now(UTC).strftime(
             "l21-150-e0-%Y%m%dT%H%M%SZ"

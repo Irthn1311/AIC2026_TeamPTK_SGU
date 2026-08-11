@@ -569,6 +569,7 @@ class OperationalKISRuntime:
             "query_vi": request.query_vi,
             "query_en": request.query_en,
             "query_en_expansion": request.query_en_expansion,
+            "include_vi_variant": request.include_vi_variant,
             "weights": {
                 "weight_vi": request.weight_vi,
                 "weight_en": request.weight_en,
