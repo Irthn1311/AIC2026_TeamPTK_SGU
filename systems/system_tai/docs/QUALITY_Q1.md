@@ -26,15 +26,64 @@ These values are internal diagnostic evidence with
 `semantic_gt_authority = SOURCE_PROPOSED_INTERNAL`. They are not official BTC ground
 truth or leaderboard scores. Technical end-to-end completion does not establish
 competition semantic accuracy. The observed result establishes a severe retrieval/video
-ranking bottleneck for the frozen baseline on this internal DEV set, but it does not by
-itself establish a cause. Language handling, query formulation, aggregation, diversity,
-and evidence integration remain hypotheses until controlled experiments measure them.
+ranking symptom for the frozen baseline on this internal DEV set, but it does not by
+itself identify the stage or establish a cause. Language handling, query formulation,
+aggregation, diversity, evidence integration, and task-specific finalization remain
+hypotheses until controlled experiments measure them.
 
-## E0 roadmap before Q2
+## Combined E0 internal DEV diagnosis
 
-E0-A KIS DEV is complete through recovered evaluation. Next run E0-B Q&A DEV, then E0-C
-TRAKE DEV, and only then produce the combined E0 diagnosis. Q2 one-change experiments
-must not begin before that three-task baseline is complete.
+### A. Directly measured facts
+
+Combined E0 is complete as an internal diagnostic. Measured final-output coverage is:
+
+| Task | Output coverage | Zero output | Target video in final output | Target video among non-empty outputs |
+|---|---:|---:|---:|---:|
+| KIS | 38/38 | 0/38 | 2/38 | 2/38 |
+| Q&A | 12/38 | 26/38 | 0/38 | 0/12 |
+| TRAKE | 28/38 | 10/38 | 0/38 | 0/28 |
+
+TRAKE `event_order_accuracy = 0.710526` and
+`chain_completeness = 0.736842` are structural diagnostics. They can be non-zero even
+when every predicted video is wrong; they are not semantic event-grounding success.
+Likewise, `PARTIAL_CHAIN` means no evaluated candidate reached the required structural
+frame count. It must not be described as partial semantic event success.
+
+### B. Unresolved stage attribution
+
+The largest directly measured issue on internal L21 DEV is low target-video inclusion
+in final task outputs. This is a final-output observation, not a stage attribution.
+Q&A can produce no final answer because of question classification, retrieval,
+refinement, evidence decode/filtering, or answer generation. A TRAKE target video can
+be present in one or more event pools and still fail to survive complete-video planning,
+temporal chain construction, refinement, deduplication, or finalization. Therefore the
+current evidence does not prove Vietnamese text, CLIP, exact retrieval, or the TRAKE
+planner is the sole cause.
+
+The relation between the ten `PARTIAL_CHAIN` queries and the ten zero-output queries is
+not established unless the two query-ID sets are compared explicitly.
+
+The runtime now records target-agnostic QA fused/refined/usable-evidence identities and
+TRAKE event-pool/C1/final-path identities. The offline L21 analyzer compares these
+artifacts to internal benchmark video IDs. Missing historical stage artifacts are
+reported as `UNAVAILABLE`; they are never reconstructed by inference.
+
+### C. Q2 hypothesis and KIS DEV Arm B preparation
+
+The first controlled Q2 input is `TRANSLATION_AUGMENTED_RRF`: frozen benchmark
+Vietnamese plus a separately reviewed English translation, fused by the existing
+Weighted RRF policy. It is not an English-only arm and not a causal translation
+experiment. The reviewed 38-record DEV-only sidecar is `REVIEWED_FROZEN`, contains no
+HOLDOUT query, and was authored without retrieval feedback. Arm B is implementation
+ready; its GPU experiment has not yet run.
+
+The L21 runner remains VI-only by default. Arm B requires both
+`--kis-query-policy translation_augmented_rrf` and `--kis-query-sidecar`; it keeps
+Top-K 100, refine Top-N 3, equal existing variant weights, and no English expansion.
+If Arm B improves primary target-video recall, an EN-only Arm C may be added later as an
+ablation. No HOLDOUT run is authorized in Q2 preparation.
+
+## Earlier Q2 roadmap
 
 Later KIS candidates, not implemented by this change, are: E1 Vietnamese normalization,
 E2 Vietnamese-to-English query translation, E3 cue decomposition/query expansion, E4

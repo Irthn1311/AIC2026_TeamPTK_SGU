@@ -99,8 +99,44 @@ indexes without prediction reordering. Its diagnostic order check requires stric
 and Final Score is the mean of R@1/5/20/50/100. Run
 `l21_150_error_analysis.py` for mechanical error categories by task, branch, difficulty,
 video, and split. Branch labels are slices, not causal diagnoses. Generated E0 artifacts
-must remain outside Git. This harness measures the current baseline as-is and does not
-start Q2 optimization.
+must remain outside Git. Combined E0 is complete as an internal diagnostic; it does not
+establish official BTC accuracy or identify a sole failing stage.
+
+Saved QA and TRAKE request artifacts can be analyzed offline without exposing benchmark
+targets to runtime code:
+
+```bash
+python systems/system_tai/scripts/l21_150_stage_analysis.py \
+  --benchmark systems/system_tai/benchmarks/l21_150_diagnostic/benchmark.json \
+  --run-directory <outside-git>/l21_150_e0 \
+  --error-analysis <outside-git>/l21_150_e0/error_analysis.json \
+  --output <outside-git>/l21_150_e0/stage_analysis.json
+```
+
+The first Q2 KIS arm is prepared but not run. Its 38-record DEV-only English sidecar is
+reviewed and frozen as `REVIEWED_FROZEN`. The opt-in command preserves the existing
+Vietnamese query, adds the English translation, and uses existing equal-weight Weighted
+RRF; it does not use HOLDOUT or English expansion:
+
+```bash
+python systems/system_tai/scripts/l21_150_validate_kis_translation.py \
+  --benchmark systems/system_tai/benchmarks/l21_150_diagnostic/benchmark.json \
+  --sidecar systems/system_tai/benchmarks/l21_150_diagnostic/q2_kis_dev_en_translation.json
+
+python systems/system_tai/scripts/l21_150_run_baseline.py \
+  --benchmark systems/system_tai/benchmarks/l21_150_diagnostic/benchmark.json \
+  --input-root /kaggle/input \
+  --reuse-manifest /kaggle/input/system-tai-manifest/feature_manifest.json \
+  --split dev --task kis --top-k 100 --refine-top-n 3 \
+  --kis-query-policy translation_augmented_rrf \
+  --kis-query-sidecar systems/system_tai/benchmarks/l21_150_diagnostic/q2_kis_dev_en_translation.json \
+  --output-dir /kaggle/working/system_tai_outputs/l21_150_q2_arm_b \
+  --device auto --allow-model-download
+```
+
+Arm B is named `TRANSLATION_AUGMENTED_RRF`; it is not an English-only or causal
+translation experiment. Compare its evaluation with frozen E0-A using
+`l21_150_compare_kis_q2.py`.
 
 The source Q&A table provides one combined event/question cell, not two independently
 authored fields. The benchmark preserves it as `question_vi`; the E0 adapter supplies

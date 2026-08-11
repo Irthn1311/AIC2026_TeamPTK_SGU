@@ -687,6 +687,16 @@ def test_z_aa_ab_ac_artifacts_and_response_payload(tmp_path: Path):
     assert (req_dir / "trake_refinement.json").exists()
     assert (req_dir / "trake_request_manifest.json").exists()
     assert (req_dir / "trake_timings.json").exists()
+    refinement = json.loads(
+        (req_dir / "trake_refinement.json").read_text(encoding="utf-8")
+    )
+    assert refinement["c1_paths"] == [
+        {
+            "rank": 1,
+            "video_id": "V1",
+            "frame_ids": [10, 20],
+        }
+    ]
 
 
 def test_e_duplicate_request_id_across_types(tmp_path: Path):

@@ -35,6 +35,11 @@ from system_tai.quality.l21_150_schema import (  # noqa: E402
     L21150TRAKEQuery,
     load_l21_150_benchmark,
 )
+from system_tai.quality.l21_150_translation import (  # noqa: E402
+    KISDevTranslationSidecar,
+    KISTranslationSidecarError,
+    load_kis_dev_translation_sidecar,
+)
 
 
 class L21150Runtime(Protocol):
@@ -230,13 +235,31 @@ def _response_predictions(response: dict[str, Any], task: str) -> list[dict[str,
     return converted
 
 
-def _runtime_request(query: Any, experiment_id: str, top_k: int, refine_top_n: int):
+def _runtime_request(
+    query: Any,
+    experiment_id: str,
+    top_k: int,
+    refine_top_n: int,
+    *,
+    kis_query_policy: str = "vi_only",
+    kis_translations: Mapping[str, str] | None = None,
+):
     request_id = f"{experiment_id}:{query.query_id}"
     if isinstance(query, L21150KISQuery):
+        query_en = None
+        if kis_query_policy == "translation_augmented_rrf":
+            if kis_translations is None or query.query_id not in kis_translations:
+                raise ValueError(
+                    f"missing frozen English translation for {query.query_id}"
+                )
+            query_en = kis_translations[query.query_id]
+        elif kis_query_policy != "vi_only":
+            raise ValueError(f"unsupported KIS query policy: {kis_query_policy}")
         return QueryRequest(
             request_id=request_id,
             query_id=query.query_id,
             query_vi=query.query_vi,
+            query_en=query_en,
             top_k_per_variant=top_k,
             output_top_k=top_k,
             refine_top_n=refine_top_n,
@@ -287,6 +310,10 @@ def run_l21_150_baseline(
     benchmark_sha256: str,
     manifest_sha256: str | None,
     gt_policy: str,
+    kis_query_policy: str = "vi_only",
+    kis_query_sidecar: KISDevTranslationSidecar | None = None,
+    kis_query_sidecar_path: Path | None = None,
+    kis_query_sidecar_sha256: str | None = None,
 ) -> dict[str, Any]:
     if not 1 <= top_k <= 100:
         raise ValueError("top_k must be in [1, 100]")
@@ -294,6 +321,21 @@ def run_l21_150_baseline(
         raise ValueError("split must be dev, holdout, or all")
     if task not in {"kis", "qa", "trake", "all"}:
         raise ValueError("task must be kis, qa, trake, or all")
+    if kis_query_policy not in {"vi_only", "translation_augmented_rrf"}:
+        raise ValueError(
+            "kis_query_policy must be vi_only or translation_augmented_rrf"
+        )
+    if kis_query_policy == "translation_augmented_rrf":
+        if kis_query_sidecar is None:
+            raise ValueError(
+                "translation_augmented_rrf requires a validated KIS query sidecar"
+            )
+        if split != "dev" or task != "kis":
+            raise ValueError(
+                "translation_augmented_rrf is restricted to the KIS DEV experiment"
+            )
+    elif kis_query_sidecar is not None:
+        raise ValueError("a KIS query sidecar is not valid with vi_only policy")
 
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
@@ -313,10 +355,20 @@ def run_l21_150_baseline(
     predictions = list(existing_predictions)
     failures = list(existing_failures)
     query_summaries: list[dict[str, Any]] = []
+    kis_translations = (
+        kis_query_sidecar.translations if kis_query_sidecar is not None else None
+    )
     for query in selected:
         if query.query_id in completed_ids:
             continue
-        request = _runtime_request(query, experiment_id, top_k, refine_top_n)
+        request = _runtime_request(
+            query,
+            experiment_id,
+            top_k,
+            refine_top_n,
+            kis_query_policy=kis_query_policy,
+            kis_translations=kis_translations,
+        )
         try:
             response = _run_request(runtime, query, request)
             if response.get("status") != "SUCCESS":
@@ -425,6 +477,25 @@ def run_l21_150_baseline(
         },
         "queries": query_summaries,
     }
+    if kis_query_policy == "translation_augmented_rrf":
+        assert kis_query_sidecar is not None
+        metadata["kis_query_experiment"] = {
+            "query_policy": "TRANSLATION_AUGMENTED_RRF",
+            "sidecar_path": (
+                str(kis_query_sidecar_path) if kis_query_sidecar_path is not None else None
+            ),
+            "sidecar_basename": (
+                kis_query_sidecar_path.name
+                if kis_query_sidecar_path is not None
+                else None
+            ),
+            "sidecar_sha256": kis_query_sidecar_sha256,
+            "sidecar_schema_version": kis_query_sidecar.schema_version,
+            "translation_status": kis_query_sidecar.translation_status,
+            "variant_count_policy": "2_VARIANTS_VI_PLUS_EN",
+            "variant_weights": {"vi": 1.0, "en": 1.0},
+            "query_en_expansion_used": False,
+        }
     metadata = _write_json_document(output / "experiment_manifest.json", metadata)
     (output / "run_summary.md").write_text(
         "\n".join(
@@ -480,6 +551,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--gt-policy", choices=("proposed", "validated-only"), default="proposed")
     parser.add_argument("--experiment-id")
     parser.add_argument("--manifest-sha256")
+    parser.add_argument(
+        "--kis-query-policy",
+        choices=("vi_only", "translation_augmented_rrf"),
+        default="vi_only",
+    )
+    parser.add_argument("--kis-query-sidecar", type=Path)
     return parser
 
 
@@ -488,6 +565,26 @@ def main(argv: list[str] | None = None) -> int:
     try:
         benchmark = load_l21_150_benchmark(args.benchmark)
         benchmark_sha = hashlib.sha256(args.benchmark.read_bytes()).hexdigest()
+        kis_sidecar = None
+        kis_sidecar_sha = None
+        if args.kis_query_policy == "translation_augmented_rrf":
+            if args.kis_query_sidecar is None:
+                raise ValueError(
+                    "--kis-query-sidecar is required for translation_augmented_rrf"
+                )
+            kis_sidecar = load_kis_dev_translation_sidecar(
+                args.kis_query_sidecar,
+                benchmark,
+                args.benchmark,
+            )
+            kis_sidecar_sha = hashlib.sha256(
+                args.kis_query_sidecar.read_bytes()
+            ).hexdigest()
+        elif args.kis_query_sidecar is not None:
+            raise ValueError(
+                "--kis-query-sidecar requires --kis-query-policy "
+                "translation_augmented_rrf"
+            )
         experiment_id = args.experiment_id or datetime.now(UTC).strftime(
             "l21-150-e0-%Y%m%dT%H%M%SZ"
         )
@@ -518,10 +615,21 @@ def main(argv: list[str] | None = None) -> int:
                 benchmark_sha256=benchmark_sha,
                 manifest_sha256=args.manifest_sha256,
                 gt_policy=args.gt_policy,
+                kis_query_policy=args.kis_query_policy,
+                kis_query_sidecar=kis_sidecar,
+                kis_query_sidecar_path=args.kis_query_sidecar,
+                kis_query_sidecar_sha256=kis_sidecar_sha,
             )
         finally:
             runtime.close(shutdown_reason="l21_150_baseline_complete")
-    except (FileNotFoundError, L21150FormatError, OSError, RuntimeError, ValueError) as exc:
+    except (
+        FileNotFoundError,
+        KISTranslationSidecarError,
+        L21150FormatError,
+        OSError,
+        RuntimeError,
+        ValueError,
+    ) as exc:
         print(f"L21-150 baseline run failed: {exc}", file=sys.stderr)
         return 2
     print(

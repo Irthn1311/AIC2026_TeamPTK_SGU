@@ -1,0 +1,205 @@
+{
+  "schema_version": 1,
+  "sidecar_role": "EXPERIMENT_INPUT",
+  "benchmark_id": "system_tai-l21-150-diagnostic-v1",
+  "benchmark_sha256": "02f0bfc27053a9e532abb8c2cba9ead8f9923d7600993145c57b315f5e55ad1a",
+  "task": "kis",
+  "split": "dev",
+  "query_count": 38,
+  "translation_policy": "FAITHFUL_ENGLISH_TRANSLATION_WITHOUT_RETRIEVAL_FEEDBACK",
+  "translation_version": "q2-kis-dev-en-v1",
+  "translation_status": "REVIEWED_FROZEN",
+  "retrieval_feedback_used": false,
+  "records": [
+    {
+      "query_id": "KIS-01",
+      "source_vi": "Tìm cảnh cháy rừng lớn vào ban đêm, lửa lan dọc sườn đồi và khói dày phủ bầu trời.",
+      "translation_en": "Find a scene of a large forest fire at night, with flames spreading along a hillside and thick smoke covering the sky."
+    },
+    {
+      "query_id": "KIS-02",
+      "source_vi": "Tìm cảnh một người đàn ông ngồi xổm bên một cột nước trắng phun mạnh thẳng lên từ mặt đất ở khu vực nông thôn.",
+      "translation_en": "Find a scene of a man squatting beside a powerful white column of water shooting straight up from the ground in a rural area."
+    },
+    {
+      "query_id": "KIS-03",
+      "source_vi": "Tìm cảnh một người đàn ông tóc bạc, đeo kính, phát biểu tại bục với cờ Mỹ và biểu tượng ngân hàng trung ương ở phía sau.",
+      "translation_en": "Find a scene of a gray-haired man wearing glasses speaking at a podium, with a United States flag and a central bank emblem behind him."
+    },
+    {
+      "query_id": "KIS-07",
+      "source_vi": "Tìm đồ họa nền xanh liệt kê số cửa xả đang mở của các hồ thủy điện Hòa Bình, Sơn La và Tuyên Quang.",
+      "translation_en": "Find a blue-background graphic listing the number of open spillway gates at the Hòa Bình, Sơn La, and Tuyên Quang hydropower reservoirs."
+    },
+    {
+      "query_id": "KIS-08",
+      "source_vi": "Tìm cận cảnh một thau/chậu tròn chứa rất nhiều cá nhỏ màu bạc.",
+      "translation_en": "Find a close-up of a round basin or bowl containing a large number of small silver fish."
+    },
+    {
+      "query_id": "KIS-09",
+      "source_vi": "Tìm cảnh một chiếc xe mui trần cổ màu đỏ chở nhiều người đi qua đám đông.",
+      "translation_en": "Find a scene of a red vintage convertible carrying several people as it passes through a crowd."
+    },
+    {
+      "query_id": "KIS-10",
+      "source_vi": "Tìm cảnh một phụ nữ mặc áo xanh họa tiết được phỏng vấn, phía sau có các gói sản phẩm và giấy chứng nhận.",
+      "translation_en": "Find a scene of a woman in a patterned blue shirt being interviewed, with product packages and certificates behind her."
+    },
+    {
+      "query_id": "KIS-11",
+      "source_vi": "Tìm cảnh một người đàn ông đội mũ rơm được phỏng vấn cạnh bờ biển nhiều đá.",
+      "translation_en": "Find a scene of a man wearing a straw hat being interviewed beside a rocky seashore."
+    },
+    {
+      "query_id": "KIS-12",
+      "source_vi": "Tìm cảnh núi lửa đang phun, tạo cột khói rất lớn trên nền trời xanh.",
+      "translation_en": "Find a scene of an erupting volcano producing a very large column of smoke against a blue sky."
+    },
+    {
+      "query_id": "KIS-16",
+      "source_vi": "Tìm cảnh đoàn cán bộ đứng kiểm tra khu vực bờ bị sạt lở, phía sau có các khối bê tông chắn sóng.",
+      "translation_en": "Find a scene of a group of officials inspecting an eroded shoreline, with concrete breakwater blocks behind them."
+    },
+    {
+      "query_id": "KIS-17",
+      "source_vi": "Tìm cảnh nhiều người đội mũ bảo hộ đang làm việc hoặc tham quan trong một nhà xưởng/công trình lớn.",
+      "translation_en": "Find a scene of many people wearing safety helmets while working or touring inside a large factory or construction facility."
+    },
+    {
+      "query_id": "KIS-18",
+      "source_vi": "Tìm cảnh một người đàn ông đứng trong vườn chuối và cầm/kiểm tra một buồng hoặc hoa chuối.",
+      "translation_en": "Find a scene of a man standing in a banana plantation while holding or inspecting a bunch of bananas or a banana flower."
+    },
+    {
+      "query_id": "KIS-19",
+      "source_vi": "Tìm cảnh nhiều con bò trong chuồng, một số con nằm trên nền đất.",
+      "translation_en": "Find a scene of many cows in a pen, with some of them lying on the dirt floor."
+    },
+    {
+      "query_id": "KIS-20",
+      "source_vi": "Tìm cảnh hai người dẫn chương trình đứng cạnh nhau trong trường quay, nam mặc áo xanh và nữ mặc áo be.",
+      "translation_en": "Find a scene of two presenters standing next to each other in a studio, with the man wearing blue and the woman wearing beige."
+    },
+    {
+      "query_id": "KIS-21",
+      "source_vi": "Tìm cận cảnh một thiết bị tròn màu đen trong bối cảnh tối, bên phải có nhiều tia lửa bắn ra.",
+      "translation_en": "Find a close-up of a black circular device in a dark setting, with many sparks shooting out on the right."
+    },
+    {
+      "query_id": "KIS-22",
+      "source_vi": "Tìm cận cảnh nhiều túi lưới chứa các quả trứng màu nhạt xếp chồng lên nhau.",
+      "translation_en": "Find a close-up of many mesh bags filled with pale-colored eggs stacked on top of one another."
+    },
+    {
+      "query_id": "KIS-23",
+      "source_vi": "Tìm cảnh một đàn vịt rất đông đang đứng và di chuyển trên cánh đồng ngập nước.",
+      "translation_en": "Find a scene of a very large flock of ducks standing and moving across a flooded field."
+    },
+    {
+      "query_id": "KIS-24",
+      "source_vi": "Tìm cảnh một người đeo mặt nạ có khuôn mặt giống Donald Trump đứng giữa đám đông.",
+      "translation_en": "Find a scene of a person wearing a mask resembling Donald Trump's face while standing in a crowd."
+    },
+    {
+      "query_id": "KIS-25",
+      "source_vi": "Tìm cảnh một người lớn tuổi ngồi làm thủ tục tại quầy, giữa hai bên có tấm chắn trong suốt.",
+      "translation_en": "Find a scene of an older person seated at a counter completing a procedure, with a transparent partition between the two sides."
+    },
+    {
+      "query_id": "KIS-26",
+      "source_vi": "Tìm cảnh một công nhân mặc áo cam đang sơn/trát một bức tường trắng ngoài trời.",
+      "translation_en": "Find a scene of a worker wearing an orange shirt painting or plastering a white wall outdoors."
+    },
+    {
+      "query_id": "KIS-27",
+      "source_vi": "Tìm cảnh nữ MC mặc váy vàng đứng trong trường quay cạnh màn hình đang chiếu một đám đông ban đêm.",
+      "translation_en": "Find a scene of a female presenter in a yellow dress standing in a studio beside a screen showing a crowd at night."
+    },
+    {
+      "query_id": "KIS-28",
+      "source_vi": "Tìm cảnh bác sĩ đeo khẩu trang, mặc áo blouse trắng khám cho một em bé được người đàn ông bế.",
+      "translation_en": "Find a scene of a masked doctor in a white coat examining a baby being held by a man."
+    },
+    {
+      "query_id": "KIS-29",
+      "source_vi": "Tìm cảnh một người mặc áo đỏ thao tác trước dãy tủ gửi đồ tự động màu xám có chữ “Giảm CO2”.",
+      "translation_en": "Find a scene of a person in a red shirt operating a row of gray automated lockers bearing the words ‘Reduce CO2.’"
+    },
+    {
+      "query_id": "KIS-30",
+      "source_vi": "Tìm cảnh hai phụ nữ chạy thi trên bãi cỏ trong một cuộc đua vượt chướng ngại vật.",
+      "translation_en": "Find a scene of two women racing across a grassy field in an obstacle-course competition."
+    },
+    {
+      "query_id": "KIS-31",
+      "source_vi": "Tìm cảnh một sườn đồi bị sạt lở, đất đá trượt xuống tạo thành mảng nâu lớn.",
+      "translation_en": "Find a scene of a landslide on a hillside, with soil and rocks sliding down to form a large brown area."
+    },
+    {
+      "query_id": "KIS-32",
+      "source_vi": "Tìm cảnh một phòng học trống với nhiều dãy bàn ghế ngay ngắn.",
+      "translation_en": "Find a scene of an empty classroom with many neatly arranged rows of desks and chairs."
+    },
+    {
+      "query_id": "KIS-33",
+      "source_vi": "Tìm cảnh dòng thác/ghềnh nước đục chảy rất mạnh, phía dưới có đông khách tham quan.",
+      "translation_en": "Find a scene of muddy water rushing powerfully through a waterfall or rapids, with many visitors below."
+    },
+    {
+      "query_id": "KIS-40",
+      "source_vi": "Tìm cảnh quay từ trên cao một khu du lịch xanh mướt với hồ nước màu xanh ngọc giữa địa hình khô cằn ở Oman.",
+      "translation_en": "Find an aerial view of a lush green tourist area with a turquoise lake amid arid terrain in Oman."
+    },
+    {
+      "query_id": "KIS-41",
+      "source_vi": "Tìm cận cảnh một rổ nhựa đỏ chứa đầy cá nhỏ màu bạc.",
+      "translation_en": "Find a close-up of a red plastic basket filled with small silver fish."
+    },
+    {
+      "query_id": "KIS-42",
+      "source_vi": "Tìm cảnh một tay đua xe đạp đứng trên bục màu cam của Zwift và giơ cúp lên cao.",
+      "translation_en": "Find a scene of a cyclist standing on an orange Zwift podium and raising a trophy high."
+    },
+    {
+      "query_id": "KIS-43",
+      "source_vi": "Tìm cảnh một tuyến đường trung tâm thành phố có nhiều cây xanh và xe máy đang lưu thông.",
+      "translation_en": "Find a scene of a tree-lined road in a city center with motorcycles traveling along it."
+    },
+    {
+      "query_id": "KIS-44",
+      "source_vi": "Tìm cảnh trường quay có một nam MC ở bàn dẫn và một nữ MC đứng ở phía bên phải.",
+      "translation_en": "Find a studio scene with a male presenter at the anchor desk and a female presenter standing on the right."
+    },
+    {
+      "query_id": "KIS-45",
+      "source_vi": "Tìm cảnh một quảng trường châu Âu có thảm hoa khổng lồ nhiều màu trải trên mặt đất.",
+      "translation_en": "Find a scene of a European square with a giant multicolored flower carpet spread across the ground."
+    },
+    {
+      "query_id": "KIS-46",
+      "source_vi": "Tìm cảnh nhiều xe tải/xe thương mại đang ở bên trong một trung tâm đăng kiểm.",
+      "translation_en": "Find a scene of many trucks or commercial vehicles inside a vehicle inspection center."
+    },
+    {
+      "query_id": "KIS-47",
+      "source_vi": "Tìm cảnh quay từ trên cao một nút giao thông lớn với rất nhiều ô tô và xe máy di chuyển theo nhiều hướng.",
+      "translation_en": "Find an aerial view of a large traffic intersection with many cars and motorcycles moving in different directions."
+    },
+    {
+      "query_id": "KIS-48",
+      "source_vi": "Tìm cảnh nhiều khán giả đứng dọc hai bên một tuyến đường có cọc tiêu màu cam để xem sự kiện/đua xe.",
+      "translation_en": "Find a scene of many spectators standing along both sides of a road marked with orange traffic cones to watch an event or race."
+    },
+    {
+      "query_id": "KIS-49",
+      "source_vi": "Tìm cảnh một xe tải/xe cứu trợ màu trắng có biểu tượng chữ thập đỏ chạy hoặc dừng trước dãy cửa hàng vào ban đêm.",
+      "translation_en": "Find a scene of a white truck or relief vehicle bearing a red cross symbol driving or stopped in front of a row of shops at night."
+    },
+    {
+      "query_id": "KIS-50",
+      "source_vi": "Tìm cảnh một vận động viên trượt ván đang đứng trên ván tại một skatepark ngoài trời lớn.",
+      "translation_en": "Find a scene of a skateboarder standing on a skateboard at a large outdoor skatepark."
+    }
+  ]
+}

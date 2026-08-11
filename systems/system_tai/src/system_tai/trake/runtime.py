@@ -442,6 +442,14 @@ class TRAKERuntimePipeline:
 
         extra_diagnostics = {
             "c1_diagnostics": c1_result.diagnostics,
+            "c1_paths": [
+                {
+                    "rank": prediction.rank,
+                    "video_id": prediction.video_id,
+                    "frame_ids": list(prediction.frame_ids),
+                }
+                for prediction in c1_preds
+            ],
             "refinement_node_records": refinement_node_records,
             "path_diagnostics": path_diagnostics,
             "event_candidate_pools": event_candidate_pools,

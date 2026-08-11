@@ -638,6 +638,22 @@ def test_qa_request_directory_and_artifacts(tmp_path: Path):
 
     # Evidence audit verification
     ev_obj = json.loads((dir1 / "qa_evidence.json").read_text(encoding="utf-8"))
+    assert ev_obj["question_supported"] is True
+    assert ev_obj["fused_retrieval_candidates"] == [
+        {"rank": 1, "video_id": "V001", "frame_id": 100}
+    ]
+    assert ev_obj["refined_candidates"] == [
+        {
+            "original_rank": 1,
+            "video_id": "V001",
+            "candidate_frame_id": 100,
+            "refined_frame_id": 150,
+            "status": "REFINED",
+        }
+    ]
+    assert ev_obj["usable_evidence_candidates"] == [
+        {"rank": 1, "video_id": "V001", "frame_id": 150}
+    ]
     assert "evidence" in ev_obj
     records = ev_obj["evidence"]
     assert len(records) == 1
@@ -650,6 +666,14 @@ def test_qa_request_directory_and_artifacts(tmp_path: Path):
     assert rec["answer"] == "đỏ"
     assert isinstance(rec["answer_score"], float)
     assert rec["skip_reason"] is None
+    assert ev_obj["final_predictions"] == [
+        {
+            "rank": 1,
+            "video_id": "V001",
+            "frame_id": 150,
+            "answer": "đỏ",
+        }
+    ]
 
     timings_obj = json.loads((dir1 / "qa_timings.json").read_text(encoding="utf-8"))
     expected_timing_keys = {

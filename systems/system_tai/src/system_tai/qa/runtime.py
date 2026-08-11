@@ -118,17 +118,23 @@ class QARuntimePipeline:
             "query_id": request.query_id,
             "request_id": request.request_id,
             "question_type": None,
+            "question_supported": None,
             "retrieval_candidate_count": 0,
             "refined_candidate_count": 0,
             "evidence_candidate_count": 0,
             "decoded_frame_count": 0,
             "encoded_image_count": 0,
+            "fused_retrieval_candidates": [],
+            "refined_candidates": [],
+            "usable_evidence_candidates": [],
+            "final_predictions": [],
             "warnings": [],
         }
 
         # Step 1: Question classification
         q_type = classify_question_type(request.question, request.question_en)
         diagnostics["question_type"] = q_type.value
+        diagnostics["question_supported"] = q_type != QuestionType.UNSUPPORTED
 
         if q_type == QuestionType.UNSUPPORTED:
             msg = (
@@ -174,6 +180,14 @@ class QARuntimePipeline:
         )
         timings.fusion_seconds = self.clock() - t_fuse
         diagnostics["retrieval_candidate_count"] = len(fused_result.ranked_candidates)
+        diagnostics["fused_retrieval_candidates"] = [
+            {
+                "rank": candidate.rank,
+                "video_id": candidate.video_id,
+                "frame_id": candidate.frame_id,
+            }
+            for candidate in fused_result.ranked_candidates
+        ]
 
         if not fused_result.ranked_candidates:
             timings.total_seconds = self.clock() - t_start
@@ -222,6 +236,16 @@ class QARuntimePipeline:
         )
         timings.refinement_seconds = self.clock() - t_ref
         diagnostics["refined_candidate_count"] = len(ref_outcome.candidates)
+        diagnostics["refined_candidates"] = [
+            {
+                "original_rank": candidate.original_candidate_rank,
+                "video_id": candidate.video_id,
+                "candidate_frame_id": candidate.candidate_frame_id,
+                "refined_frame_id": candidate.refined_frame_id,
+                "status": candidate.status.value,
+            }
+            for candidate in ref_outcome.candidates
+        ]
 
         # Step 4: Filter usable candidates -> QAEvidenceCandidate
         cands_to_decode: list[tuple[QAEvidenceCandidate, RefinedCandidate, RawVideoRecord]] = []
@@ -451,6 +475,14 @@ class QARuntimePipeline:
 
         timings.evidence_decode_seconds = self.clock() - t_dec
         diagnostics["decoded_frame_count"] = len(decoded_images)
+        diagnostics["usable_evidence_candidates"] = [
+            {
+                "rank": evidence_candidate.rank,
+                "video_id": evidence_candidate.video_id,
+                "frame_id": evidence_candidate.frame_id,
+            }
+            for evidence_candidate, _refined_candidate in valid_evidence_cands
+        ]
 
         if not decoded_images:
             diagnostics["evidence"] = evidence_records
@@ -562,6 +594,15 @@ class QARuntimePipeline:
 
         evidence_records.sort(key=lambda r: r["rank"])
         diagnostics["evidence"] = evidence_records
+        diagnostics["final_predictions"] = [
+            {
+                "rank": prediction.rank,
+                "video_id": prediction.video_id,
+                "frame_id": prediction.frame_id,
+                "answer": prediction.answer,
+            }
+            for prediction in qa_result.predictions
+        ]
 
         timings.total_seconds = self.clock() - t_start
         return qa_result, timings, diagnostics

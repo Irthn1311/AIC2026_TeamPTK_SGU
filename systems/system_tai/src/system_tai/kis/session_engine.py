@@ -840,12 +840,25 @@ class OperationalKISRuntime:
             },
         )
 
+        c1_paths = extra_diag.get("c1_paths")
+        if type(c1_paths) is not list:
+            c1_paths = [
+                {
+                    "rank": record.get("c1_rank"),
+                    "video_id": record.get("video_id"),
+                    "frame_ids": record.get("original_frame_ids"),
+                }
+                for record in extra_diag.get("path_diagnostics", [])
+                if type(record) is dict
+            ]
+
         # Artifact 3: trake_refinement.json
         refinement_json = _write_json(
             query_dir / "trake_refinement.json",
             {
                 "query_id": request.query_id,
                 "c1_diagnostics": extra_diag["c1_diagnostics"],
+                "c1_paths": c1_paths,
                 "refinement_requested": trake_result.diagnostics["refinement_requested"],
                 "refine_top_n": request.refine_top_n,
                 "refinement_node_records": extra_diag["refinement_node_records"],
