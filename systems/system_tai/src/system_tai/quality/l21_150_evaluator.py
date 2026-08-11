@@ -206,6 +206,14 @@ def _prefix_max(values: Sequence[float], ranks: Sequence[int], cutoff: int) -> f
     )
 
 
+def _signed_interval_distance(frame_id: int, start: int, end: int) -> int:
+    if frame_id < start:
+        return frame_id - start
+    if frame_id > end:
+        return frame_id - end
+    return 0
+
+
 def _query_report(query: L21150Query, candidates: Sequence[dict[str, Any]]) -> dict[str, Any]:
     ranks = [candidate["rank"] for candidate in candidates]
     scores: list[float] = []
@@ -285,10 +293,57 @@ def _query_report(query: L21150Query, candidates: Sequence[dict[str, Any]]) -> d
         "full_hit": bool(max(scores, default=0.0) == 1.0),
     }
     if isinstance(query, L21150KISQuery):
-        common["video_recall_at_k"] = {
-            str(cutoff): _prefix_max(video_scores, ranks, cutoff) for cutoff in OFFICIAL_K
-        }
-        common["frame_recall_at_k"] = dict(r_at_k)
+        start = query.proposed_interval.start_frame_id
+        end = query.proposed_interval.end_frame_id
+        same_video = [
+            candidate for candidate in candidates if candidate["video_id"] == query.video_id
+        ]
+        first_video = min(same_video, key=lambda candidate: candidate["rank"], default=None)
+        nearest_video = min(
+            same_video,
+            key=lambda candidate: (
+                abs(_signed_interval_distance(candidate["actual_frame_id"], start, end)),
+                candidate["rank"],
+                candidate["actual_frame_id"],
+            ),
+            default=None,
+        )
+        first_video_frame = (
+            first_video["actual_frame_id"] if first_video is not None else None
+        )
+        nearest_video_frame = (
+            nearest_video["actual_frame_id"] if nearest_video is not None else None
+        )
+        common.update(
+            {
+                "video_recall_at_k": {
+                    str(cutoff): _prefix_max(video_scores, ranks, cutoff)
+                    for cutoff in OFFICIAL_K
+                },
+                "frame_recall_at_k": dict(r_at_k),
+                "first_video_hit_rank": (
+                    first_video["rank"] if first_video is not None else None
+                ),
+                "first_video_hit_actual_frame_id": first_video_frame,
+                "first_video_hit_signed_distance_to_gt_interval_frames": (
+                    _signed_interval_distance(first_video_frame, start, end)
+                    if first_video_frame is not None
+                    else None
+                ),
+                "first_frame_hit_rank": first_relevant_rank,
+                "gt_interval_start_frame_id": start,
+                "gt_interval_end_frame_id": end,
+                "nearest_same_video_candidate_frame_id": nearest_video_frame,
+                "nearest_same_video_candidate_rank": (
+                    nearest_video["rank"] if nearest_video is not None else None
+                ),
+                "nearest_same_video_frame_distance_frames": (
+                    abs(_signed_interval_distance(nearest_video_frame, start, end))
+                    if nearest_video_frame is not None
+                    else None
+                ),
+            }
+        )
     elif isinstance(query, L21150QAQuery):
         grounded_answers = [
             answer

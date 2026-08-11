@@ -5,9 +5,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import subprocess
 import sys
 from collections import Counter
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
@@ -43,6 +45,98 @@ class L21150Runtime(Protocol):
     def handle_qa_query(self, request: QAQueryRequest) -> dict[str, Any]: ...
 
     def handle_trake_query(self, request: TRAKEQueryRequest) -> dict[str, Any]: ...
+
+
+def _json_safe(value: Any, *, context: str = "metadata") -> Any:
+    if value is None or type(value) in {str, bool, int}:
+        return value
+    if type(value) is float:
+        if not math.isfinite(value):
+            raise TypeError(f"{context} contains a non-finite float")
+        return value
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, Mapping):
+        result: dict[str, Any] = {}
+        for key, nested in value.items():
+            if type(key) is not str:
+                raise TypeError(f"{context} contains a non-string mapping key")
+            result[key] = _json_safe(nested, context=f"{context}.{key}")
+        return result
+    if isinstance(value, (list, tuple)):
+        return [
+            _json_safe(nested, context=f"{context}[{index}]")
+            for index, nested in enumerate(value)
+        ]
+    raise TypeError(
+        f"{context} contains unsupported type {type(value).__name__}"
+    )
+
+
+def _write_json_document(path: Path, payload: Mapping[str, Any]) -> dict[str, Any]:
+    safe_payload = _json_safe(payload)
+    serialized = json.dumps(
+        safe_payload,
+        ensure_ascii=False,
+        indent=2,
+        allow_nan=False,
+    )
+    path.write_text(serialized + "\n", encoding="utf-8", newline="\n")
+    return safe_payload
+
+
+def _prediction_identity(prediction: Mapping[str, Any]) -> tuple[Any, ...]:
+    task = prediction.get("task")
+    common = (prediction.get("query_id"), task, prediction.get("video_id"))
+    if task == "kis":
+        return (*common, prediction.get("actual_frame_id"))
+    if task == "qa":
+        return (
+            *common,
+            prediction.get("actual_frame_id"),
+            prediction.get("answer"),
+        )
+    if task == "trake":
+        frame_ids = prediction.get("actual_frame_ids")
+        return (*common, tuple(frame_ids) if type(frame_ids) is list else frame_ids)
+    raise ValueError(f"unsupported prediction task for identity: {task!r}")
+
+
+def _output_depth_diagnostics(
+    predictions: list[dict[str, Any]],
+    successful_query_ids: set[str],
+    requested_top_k: int,
+) -> dict[str, Any]:
+    depth_by_query = Counter(str(record["query_id"]) for record in predictions)
+    all_successful_ids = successful_query_ids | set(depth_by_query)
+    over_depth = sorted(
+        query_id
+        for query_id in all_successful_ids
+        if depth_by_query[query_id] > requested_top_k
+    )
+    if over_depth:
+        raise ValueError(
+            "runtime output exceeds requested_top_k for queries: "
+            + ", ".join(over_depth)
+        )
+    depths = [depth_by_query[query_id] for query_id in sorted(all_successful_ids)]
+    depth_distribution = Counter(depths)
+    identities = [_prediction_identity(record) for record in predictions]
+    return {
+        "requested_top_k": requested_top_k,
+        "prediction_record_count": len(predictions),
+        "prediction_depth_min": min(depths) if depths else None,
+        "prediction_depth_max": max(depths) if depths else None,
+        "prediction_depth_distribution": {
+            str(depth): count for depth, count in sorted(depth_distribution.items())
+        },
+        "queries_below_requested_depth": sorted(
+            query_id
+            for query_id in all_successful_ids
+            if depth_by_query[query_id] < requested_top_k
+        ),
+        "duplicate_output_identity_count": len(identities) - len(set(identities)),
+    }
 
 
 def _git_sha() -> str | None:
@@ -231,6 +325,11 @@ def run_l21_150_baseline(
                 query_predictions = _kis_predictions(runtime, response)
             else:
                 query_predictions = _response_predictions(response, query.task_type)
+            if len(query_predictions) > top_k:
+                raise ValueError(
+                    f"runtime returned {len(query_predictions)} predictions, "
+                    f"exceeding requested_top_k={top_k}"
+                )
             latency = _response_latency(response)
             for prediction in query_predictions:
                 prediction.update(
@@ -269,6 +368,17 @@ def run_l21_150_baseline(
             if fail_fast:
                 break
 
+    successful_query_ids = {
+        str(summary["query_id"])
+        for summary in query_summaries
+        if summary["status"] == "SUCCESS"
+    }
+    output_diagnostics = _output_depth_diagnostics(
+        predictions,
+        successful_query_ids,
+        top_k,
+    )
+
     with predictions_path.open("w", encoding="utf-8", newline="") as stream:
         for prediction in predictions:
             stream.write(json.dumps(prediction, ensure_ascii=False) + "\n")
@@ -281,7 +391,7 @@ def run_l21_150_baseline(
     runtime_manifest = getattr(runtime, "manifest", None)
     runtime_encoder = getattr(runtime, "shared_encoder", None)
     metadata = {
-        "schema_version": 1,
+        "schema_version": 2,
         "experiment_id": experiment_id,
         "git_sha": _git_sha(),
         "benchmark_sha256": benchmark_sha256,
@@ -291,6 +401,7 @@ def run_l21_150_baseline(
         "index_identity": getattr(runtime_manifest, "schema_version", None),
         "model_identity": getattr(runtime_encoder, "identifiers", None),
         "top_k": top_k,
+        **output_diagnostics,
         "utc_timestamp": datetime.now(UTC).isoformat(),
         "device_runtime": getattr(getattr(runtime, "config", None), "device", None),
         "gt_policy": gt_policy,
@@ -314,11 +425,7 @@ def run_l21_150_baseline(
         },
         "queries": query_summaries,
     }
-    (output / "experiment_manifest.json").write_text(
-        json.dumps(metadata, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-        newline="\n",
-    )
+    metadata = _write_json_document(output / "experiment_manifest.json", metadata)
     (output / "run_summary.md").write_text(
         "\n".join(
             [
@@ -329,6 +436,20 @@ def run_l21_150_baseline(
                 f"- Executed queries: {len(query_summaries)}",
                 f"- Successful: {success_count}",
                 f"- Failed: {len(query_summaries) - success_count}",
+                f"- Prediction records: {metadata['prediction_record_count']}",
+                (
+                    "- Prediction depth range: "
+                    f"{metadata['prediction_depth_min']}.."
+                    f"{metadata['prediction_depth_max']}"
+                ),
+                (
+                    "- Queries below requested depth: "
+                    f"{len(metadata['queries_below_requested_depth'])}"
+                ),
+                (
+                    "- Duplicate output identities: "
+                    f"{metadata['duplicate_output_identity_count']}"
+                ),
                 "- Production retrieval/ranking policy changed: `false`",
                 "- Semantic quality claim: `false` until evaluator output is reviewed",
                 "",

@@ -5,7 +5,7 @@ import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 from typing import Any
 
 import pytest
@@ -186,6 +186,73 @@ def test_kis_prefix_max_and_final_score_mean_five_values() -> None:
     }
     assert report["overall"]["final_score"] == pytest.approx(0.8)
     assert report["task_metrics"]["kis"]["mrr"] == pytest.approx(0.2)
+
+
+@pytest.mark.parametrize(
+    ("frame_id", "expected_signed_distance"),
+    [(80, -10), (120, 10)],
+)
+def test_kis_video_hit_frame_miss_reports_signed_interval_distance(
+    frame_id: int, expected_signed_distance: int
+) -> None:
+    query = _kis()
+    report = evaluate_l21_150(
+        _benchmark(query),
+        [
+            _candidate(query.query_id, "kis", 1, video_id="L21_V002"),
+            _candidate(query.query_id, "kis", 2, frame_id=frame_id),
+        ],
+    )
+    query_report = report["query_reports"][0]
+
+    assert query_report["first_video_hit_rank"] == 2
+    assert query_report["first_video_hit_actual_frame_id"] == frame_id
+    assert (
+        query_report["first_video_hit_signed_distance_to_gt_interval_frames"]
+        == expected_signed_distance
+    )
+    assert query_report["first_frame_hit_rank"] is None
+    assert query_report["nearest_same_video_candidate_frame_id"] == frame_id
+    assert query_report["nearest_same_video_candidate_rank"] == 2
+    assert query_report["nearest_same_video_frame_distance_frames"] == 10
+
+
+def test_kis_frame_hit_reports_first_and_nearest_same_video_candidates() -> None:
+    query = _kis()
+    report = evaluate_l21_150(
+        _benchmark(query),
+        [
+            _candidate(query.query_id, "kis", 1, frame_id=80),
+            _candidate(query.query_id, "kis", 2, frame_id=100),
+        ],
+    )
+    query_report = report["query_reports"][0]
+
+    assert query_report["first_video_hit_rank"] == 1
+    assert query_report["first_video_hit_actual_frame_id"] == 80
+    assert query_report["first_frame_hit_rank"] == 2
+    assert query_report["first_relevant_rank"] == 2
+    assert query_report["nearest_same_video_candidate_frame_id"] == 100
+    assert query_report["nearest_same_video_candidate_rank"] == 2
+    assert query_report["nearest_same_video_frame_distance_frames"] == 0
+    assert query_report["gt_interval_start_frame_id"] == 90
+    assert query_report["gt_interval_end_frame_id"] == 110
+
+
+def test_kis_video_miss_has_no_same_video_frame_diagnostics() -> None:
+    query = _kis()
+    report = evaluate_l21_150(
+        _benchmark(query),
+        [_candidate(query.query_id, "kis", 1, video_id="L21_V002")],
+    )
+    query_report = report["query_reports"][0]
+
+    assert query_report["first_video_hit_rank"] is None
+    assert query_report["first_video_hit_actual_frame_id"] is None
+    assert query_report["first_frame_hit_rank"] is None
+    assert query_report["nearest_same_video_candidate_frame_id"] is None
+    assert query_report["nearest_same_video_candidate_rank"] is None
+    assert query_report["nearest_same_video_frame_distance_frames"] is None
 
 
 @pytest.mark.parametrize(
@@ -549,28 +616,46 @@ def test_every_error_taxonomy_category_is_mechanically_reachable(
 class _FakeRuntime:
     output_root: Path
     fail_query_id: str | None = None
+    kis_depth_by_query: dict[str, int] | None = None
+    duplicate_last_kis_identity: bool = False
 
     def __post_init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
         self.manifest = SimpleNamespace(fingerprint="fixture-corpus", schema_version=2)
-        self.shared_encoder = SimpleNamespace(identifiers={"model": "fake-clip"})
+        self.shared_encoder = SimpleNamespace(
+            identifiers=MappingProxyType(
+                {
+                    "library": "clip",
+                    "model": "fake-clip",
+                    "tokenization": MappingProxyType({"context_length": 77}),
+                }
+            )
+        )
         self.config = SimpleNamespace(device="cpu")
 
     def handle_query(self, request) -> dict[str, Any]:
         self.calls.append(("kis", request.query_id))
         if request.query_id == self.fail_query_id:
             raise RuntimeError("synthetic KIS failure")
+        depth = (
+            self.kis_depth_by_query.get(request.query_id, request.output_top_k)
+            if self.kis_depth_by_query is not None
+            else request.output_top_k
+        )
         target = self.output_root / "requests" / request.query_id / "top100.jsonl"
         target.parent.mkdir(parents=True, exist_ok=True)
         with target.open("w", encoding="utf-8", newline="") as stream:
-            for rank in range(1, request.output_top_k + 1):
+            for rank in range(1, depth + 1):
+                frame_id = 99 + rank
+                if self.duplicate_last_kis_identity and rank == depth and depth > 1:
+                    frame_id -= 1
                 stream.write(
                     json.dumps(
                         {
                             "query_id": request.query_id,
                             "rank": rank,
                             "video_id": "L21_V001",
-                            "frame_id": 99 + rank,
+                            "frame_id": frame_id,
                         }
                     )
                     + "\n"
@@ -625,9 +710,18 @@ def _run_fake(
     fail_query_id: str | None = None,
     fail_fast: bool = False,
     top_k: int = 3,
+    task: str = "all",
+    queries: tuple[Any, ...] | None = None,
+    kis_depth_by_query: dict[str, int] | None = None,
+    duplicate_last_kis_identity: bool = False,
 ) -> tuple[dict[str, Any], _FakeRuntime, Path]:
-    benchmark = _benchmark(_kis(), _qa(), _trake())
-    runtime = _FakeRuntime(tmp_path / "runtime", fail_query_id=fail_query_id)
+    benchmark = _benchmark(*(queries or (_kis(), _qa(), _trake())))
+    runtime = _FakeRuntime(
+        tmp_path / "runtime",
+        fail_query_id=fail_query_id,
+        kis_depth_by_query=kis_depth_by_query,
+        duplicate_last_kis_identity=duplicate_last_kis_identity,
+    )
     output = tmp_path / "output"
     report = RUNNER.run_l21_150_baseline(
         benchmark,
@@ -635,7 +729,7 @@ def _run_fake(
         output,
         experiment_id="fixture-e0",
         split="all",
-        task="all",
+        task=task,
         top_k=top_k,
         refine_top_n=0,
         resume=False,
@@ -645,6 +739,33 @@ def _run_fake(
         gt_policy="proposed",
     )
     return report, runtime, output
+
+
+def test_runner_json_safe_converts_top_level_mapping_proxy() -> None:
+    value = MappingProxyType({"model": "ViT-B/32", "device": "cuda"})
+
+    assert RUNNER._json_safe(value) == {"model": "ViT-B/32", "device": "cuda"}
+
+
+def test_runner_json_safe_converts_nested_immutable_containers() -> None:
+    value = MappingProxyType(
+        {
+            "model": MappingProxyType({"name": "ViT-B/32"}),
+            "preprocessing": ("resize", ["crop", MappingProxyType({"size": 224})]),
+            "cache": Path("clip-cache/model.pt"),
+        }
+    )
+
+    assert RUNNER._json_safe(value) == {
+        "model": {"name": "ViT-B/32"},
+        "preprocessing": ["resize", ["crop", {"size": 224}]],
+        "cache": str(Path("clip-cache/model.pt")),
+    }
+
+
+def test_runner_json_safe_rejects_unsupported_metadata_type() -> None:
+    with pytest.raises(TypeError, match="unsupported type SimpleNamespace"):
+        RUNNER._json_safe({"model": SimpleNamespace(name="clip")})
 
 
 def test_baseline_runner_uses_existing_runtime_contracts_and_top100_boundary(
@@ -660,6 +781,76 @@ def test_baseline_runner_uses_existing_runtime_contracts_and_top100_boundary(
     assert max(row["rank"] for row in predictions if row["query_id"] == "KIS-X") == 100
     assert report["production_algorithm_modified"] is False
     assert report["runtime_contract"] == "OperationalKISRuntime public task handlers"
+
+
+def test_baseline_depth_diagnostics_exact_requested_depth(tmp_path: Path) -> None:
+    report, _, _ = _run_fake(
+        tmp_path,
+        top_k=100,
+        task="kis",
+        queries=(_kis(),),
+    )
+
+    assert report["requested_top_k"] == 100
+    assert report["prediction_record_count"] == 100
+    assert report["prediction_depth_min"] == 100
+    assert report["prediction_depth_max"] == 100
+    assert report["prediction_depth_distribution"] == {"100": 1}
+    assert report["queries_below_requested_depth"] == []
+    assert report["duplicate_output_identity_count"] == 0
+
+
+def test_baseline_depth_diagnostics_mixed_99_and_100_are_not_failures(
+    tmp_path: Path,
+) -> None:
+    report, _, _ = _run_fake(
+        tmp_path,
+        top_k=100,
+        task="kis",
+        queries=(_kis("KIS-1"), _kis("KIS-2")),
+        kis_depth_by_query={"KIS-1": 100, "KIS-2": 99},
+    )
+
+    assert report["successful_query_count"] == 2
+    assert report["failed_query_count"] == 0
+    assert report["prediction_record_count"] == 199
+    assert report["prediction_depth_distribution"] == {"99": 1, "100": 1}
+    assert report["queries_below_requested_depth"] == ["KIS-2"]
+
+
+def test_baseline_reports_duplicate_output_identity_without_padding(
+    tmp_path: Path,
+) -> None:
+    report, _, _ = _run_fake(
+        tmp_path,
+        top_k=3,
+        task="kis",
+        queries=(_kis(),),
+        duplicate_last_kis_identity=True,
+    )
+
+    assert report["prediction_record_count"] == 3
+    assert report["duplicate_output_identity_count"] == 1
+
+
+def test_baseline_rejects_query_output_exceeding_requested_top_k(
+    tmp_path: Path,
+) -> None:
+    report, _, output = _run_fake(
+        tmp_path,
+        top_k=100,
+        task="kis",
+        queries=(_kis(),),
+        kis_depth_by_query={"KIS-X": 101},
+    )
+
+    assert report["successful_query_count"] == 0
+    assert report["failed_query_count"] == 1
+    failures = [
+        json.loads(line)
+        for line in (output / "failures.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert "exceeding requested_top_k=100" in failures[0]["failure_reason"]
 
 
 def test_baseline_runner_preserves_actual_frame_fields(tmp_path: Path) -> None:
@@ -721,9 +912,17 @@ def test_baseline_manifest_contains_reproducibility_fields(tmp_path: Path) -> No
     assert report["manifest_sha256"] == "m" * 64
     assert report["benchmark_id"] == BENCHMARK_ID
     assert report["corpus_fingerprint"] == "fixture-corpus"
-    assert report["model_identity"] == {"model": "fake-clip"}
+    assert report["model_identity"] == {
+        "library": "clip",
+        "model": "fake-clip",
+        "tokenization": {"context_length": 77},
+    }
     assert report["gt_policy"] == "proposed"
-    assert (output / "experiment_manifest.json").is_file()
+    manifest_path = output / "experiment_manifest.json"
+    assert manifest_path.is_file()
+    assert json.loads(manifest_path.read_text(encoding="utf-8"))["model_identity"] == (
+        report["model_identity"]
+    )
     assert (output / "run_summary.md").is_file()
 
 
