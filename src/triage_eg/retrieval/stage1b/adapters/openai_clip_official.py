@@ -25,6 +25,7 @@ TOKENIZER_ASSET = Path("clip/bpe_simple_vocab_16e6.txt.gz")
 KAGGLE_EXPANDED_TOKENIZER_ASSET = Path("clip/bpe_simple_vocab_16e6.txt")
 OFFLINE_DEPENDENCY_ROOT = Path("source/dependencies")
 REQUIRED_APIS = ("load", "tokenize")
+_MODULE_USER_COUNTS: dict[int, int] = {}
 
 
 class NetworkDownloadAttempted(RuntimeError):
@@ -487,6 +488,8 @@ class OfficialOpenAIClipAdapter:
         self._clip = module
         self._torch = torch
         self._image = Image
+        self._module_key = id(module)
+        self._closed = False
         self.device = str(provenance["selected_device"])
         checkpoint = paths.checkpoint_path.resolve(strict=True)
         if not checkpoint.is_absolute() or not checkpoint.is_file():
@@ -500,6 +503,7 @@ class OfficialOpenAIClipAdapter:
             raise
         except Exception as error:
             raise RuntimeError(f"ENCODER_CHECKPOINT_LOAD_FAILED: {error}") from error
+        _MODULE_USER_COUNTS[self._module_key] = _MODULE_USER_COUNTS.get(self._module_key, 0) + 1
         if hasattr(self._model, "eval"):
             self._model.eval()
         first_parameter = (
@@ -682,6 +686,20 @@ class OfficialOpenAIClipAdapter:
         }
 
     def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
         self._model = None
         if self.device.startswith("cuda") and self._torch.cuda.is_available():
             self._torch.cuda.empty_cache()
+        remaining = _MODULE_USER_COUNTS.get(self._module_key, 1) - 1
+        if remaining > 0:
+            _MODULE_USER_COUNTS[self._module_key] = remaining
+            return
+        _MODULE_USER_COUNTS.pop(self._module_key, None)
+        for name, loaded in list(sys.modules.items()):
+            if name != "clip" and not name.startswith("clip."):
+                continue
+            origin = _module_file(loaded)
+            if origin is not None and _is_within(origin, self.paths.source_root):
+                sys.modules.pop(name, None)

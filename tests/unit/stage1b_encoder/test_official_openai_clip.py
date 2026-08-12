@@ -523,6 +523,53 @@ def test_in_memory_rgb_rejects_non_rgb_or_non_uint8(tmp_path: Path) -> None:
     adapter.close()
 
 
+def test_close_releases_owned_clip_source_for_next_runtime_root(tmp_path: Path) -> None:
+    package_source = (
+        "class Model:\n"
+        "    def eval(self): return self\n"
+        "    def parameters(self): return iter([])\n"
+        "def load(*args, **kwargs): return Model(), (lambda image: image)\n"
+        "def tokenize(*args, **kwargs): return None\n"
+    )
+    first_asset, first_source, first_checkpoint = make_asset(
+        tmp_path / "first", package_source=package_source
+    )
+    first_paths = resolve_official_asset_paths(first_asset, first_source, first_checkpoint)
+    first_module, _, first_issues = controlled_import_clip(first_source)
+    assert first_module is not None and first_issues == []
+    first_contract = official_contract(first_source, first_checkpoint)
+    first = OfficialOpenAIClipAdapter(
+        first_contract,
+        first_paths,
+        first_module,
+        {
+            "selected_device": "cpu",
+            "checkpoint_sha256": sha256_file(first_checkpoint),
+            "module_file": str(first_source / "clip/__init__.py"),
+        },
+    )
+    first.close()
+    assert "clip" not in sys.modules
+
+    second_asset, second_source, second_checkpoint = make_asset(
+        tmp_path / "second", package_source=package_source
+    )
+    second_paths = resolve_official_asset_paths(second_asset, second_source, second_checkpoint)
+    second_module, _, second_issues = controlled_import_clip(second_source)
+    assert second_module is not None and second_issues == []
+    second = OfficialOpenAIClipAdapter(
+        official_contract(second_source, second_checkpoint),
+        second_paths,
+        second_module,
+        {
+            "selected_device": "cpu",
+            "checkpoint_sha256": sha256_file(second_checkpoint),
+            "module_file": str(second_source / "clip/__init__.py"),
+        },
+    )
+    second.close()
+
+
 def test_official_tokenize_and_text_normalization(tmp_path: Path) -> None:
     adapter, calls, _ = loaded_adapter(tmp_path)
     result = adapter.encode_texts(["hello", "xin chào"])
