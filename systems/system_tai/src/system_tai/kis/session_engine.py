@@ -54,6 +54,7 @@ from system_tai.refinement.runner import _write_json, _write_refined_csv
 from system_tai.refinement.video import OpenCVVideoDecoder, RawVideoRegistry
 from system_tai.retrieval.multi_query import QueryVariantType, WeightedRRFRetriever
 from system_tai.retrieval.vector_search import ExactNumpyRetriever
+from system_tai.retrieval.video_evidence import VideoRestrictedFeatureSearcher
 from system_tai.retrieval.video_restricted import (
     VIDEO_CONDITIONED_KEYFRAME_DIVERSITY,
     VideoConditionedKeyframeDiversity,
@@ -137,6 +138,10 @@ class OperationalKISRuntime:
             chunk_size=config.chunk_size,
         )
         self.weighted_rrf = WeightedRRFRetriever(self.exact_retriever)
+        self.video_restricted_searcher = VideoRestrictedFeatureSearcher(
+            self.registry,
+            chunk_size=config.chunk_size,
+        )
         self.video_conditioner = VideoConditionedKeyframeDiversity(
             self.registry,
             clock=self.clock,
@@ -164,6 +169,7 @@ class OperationalKISRuntime:
             weighted_rrf=self.weighted_rrf,
             refiner=self.refiner,
             shared_encoder=self.shared_encoder,
+            video_restricted_searcher=self.video_restricted_searcher,
             trake_engine=self.trake_engine,
             clock=self.clock,
         )
@@ -1021,10 +1027,15 @@ class OperationalKISRuntime:
             )
         query_dir.mkdir(parents=True, exist_ok=True)
 
+        trake_kwargs: dict[str, Any] = {
+            "refinement_config": self.config.refinement_config,
+            "rrf_constant": self.config.rrf_constant,
+        }
+        if self.config.trake_video_first_config.enabled:
+            trake_kwargs["video_first_config"] = self.config.trake_video_first_config
         trake_result, timings, extra_diag = self.trake_pipeline.process_trake_query(
             request,
-            refinement_config=self.config.refinement_config,
-            rrf_constant=self.config.rrf_constant,
+            **trake_kwargs,
         )
 
         # Artifact 1: trake_predictions.jsonl
@@ -1052,11 +1063,9 @@ class OperationalKISRuntime:
         )
 
         # Artifact 2: trake_event_candidates.json
-        candidates_json = _write_json(
-            query_dir / "trake_event_candidates.json",
-            {
-                "query_id": request.query_id,
-                "event_candidates": [
+        candidates_payload = {
+            "query_id": request.query_id,
+            "event_candidates": [
                     {
                         "event_index": idx,
                         "candidate_count": len(pool),
@@ -1072,8 +1081,13 @@ class OperationalKISRuntime:
                         ],
                     }
                     for idx, pool in enumerate(extra_diag["event_candidate_pools"])
-                ],
-            },
+            ],
+        }
+        if "tr_a1" in extra_diag:
+            candidates_payload["tr_a1"] = extra_diag["tr_a1"]
+        candidates_json = _write_json(
+            query_dir / "trake_event_candidates.json",
+            candidates_payload,
         )
 
         c1_paths = extra_diag.get("c1_paths")
@@ -1136,6 +1150,8 @@ class OperationalKISRuntime:
             "prediction_count": len(trake_result.predictions),
             "artifacts": artifacts_dict,
         }
+        if "tr_a1" in extra_diag:
+            req_manifest_payload["tr_a1"] = extra_diag["tr_a1"]
         _write_json(query_dir / "trake_request_manifest.json", req_manifest_payload)
 
         self._successful_query_count += 1
@@ -1256,6 +1272,10 @@ class OperationalKISRuntime:
             "malformed_request_count": self._malformed_request_count,
             "shutdown_reason": shutdown_reason,
         }
+        if self.config.trake_video_first_config.enabled:
+            manifest_payload["trake_video_first_config"] = dataclasses.asdict(
+                self.config.trake_video_first_config
+            )
         _write_json(self.output_root / "session_manifest.json", manifest_payload)
 
         summary_lines = [

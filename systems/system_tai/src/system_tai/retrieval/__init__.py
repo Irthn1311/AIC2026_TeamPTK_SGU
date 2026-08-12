@@ -8,6 +8,13 @@ from .multi_query import (
     WeightedRRFRetriever,
 )
 from .vector_search import ExactNumpyRetriever, VectorSearch
+from .video_evidence import (
+    FullCorpusVideoMaximaOutcome,
+    RestrictedFrameHit,
+    VideoMaximumHit,
+    VideoRestrictedFeatureSearcher,
+    VideoRestrictedSearchOutcome,
+)
 from .video_restricted import (
     VIDEO_CONDITIONED_KEYFRAME_DIVERSITY,
     VideoConditionedKeyframeConfig,
@@ -21,6 +28,11 @@ __all__ = [
     "QueryVariant",
     "QueryVariantType",
     "VectorSearch",
+    "FullCorpusVideoMaximaOutcome",
+    "RestrictedFrameHit",
+    "VideoMaximumHit",
+    "VideoRestrictedFeatureSearcher",
+    "VideoRestrictedSearchOutcome",
     "VIDEO_CONDITIONED_KEYFRAME_DIVERSITY",
     "VideoConditionedKeyframeConfig",
     "VideoConditionedKeyframeDiversity",

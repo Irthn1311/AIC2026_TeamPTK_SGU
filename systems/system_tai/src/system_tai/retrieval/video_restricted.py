@@ -13,6 +13,7 @@ from numpy.typing import NDArray
 
 from system_tai.common.schemas import CandidateFrame, KISResult
 from system_tai.features.btc_clip_store import FeatureStoreRegistry, LoadedVideoFeatureStore
+from system_tai.retrieval.video_evidence import rank_store_frames
 
 VIDEO_CONDITIONED_KEYFRAME_DIVERSITY = "VIDEO_CONDITIONED_KEYFRAME_DIVERSITY"
 
@@ -331,35 +332,14 @@ class VideoConditionedKeyframeDiversity:
         store: LoadedVideoFeatureStore,
         query_unit: NDArray[np.float32],
     ) -> tuple[RestrictedKeyframeCandidate, ...]:
-        matrix = np.asarray(store.matrix, dtype=np.float32)
-        if matrix.ndim != 2 or matrix.shape[0] != len(store.mappings):
-            raise ValueError(f"invalid feature/mapping shape for {store.descriptor.video_id}")
-        if not np.isfinite(matrix).all():
-            raise ValueError(f"non-finite feature row in {store.descriptor.video_id}")
-        norms = np.linalg.norm(matrix, axis=1)
-        if np.any(~np.isfinite(norms)) or np.any(norms <= 0):
-            raise ValueError(f"non-finite or zero-norm feature row in {store.descriptor.video_id}")
-        scores = (matrix @ query_unit) / norms
-        if not np.isfinite(scores).all():
-            raise ValueError("restricted cosine computation produced NaN or Infinity")
-
-        best_by_frame: dict[int, RestrictedKeyframeCandidate] = {}
-        for clip_row, mapping in enumerate(store.mappings):
-            candidate = RestrictedKeyframeCandidate(
-                video_id=store.descriptor.video_id,
-                frame_id=mapping.frame_id,
-                clip_row=clip_row,
-                keyframe_order=mapping.keyframe_order,
-                pts_time=mapping.pts_time,
-                cosine_score=float(scores[clip_row]),
-                restricted_rank=0,
-            )
-            existing = best_by_frame.get(candidate.frame_id)
-            if existing is None or _restricted_sort_key(candidate) < _restricted_sort_key(
-                existing
-            ):
-                best_by_frame[candidate.frame_id] = candidate
-        ordered = sorted(best_by_frame.values(), key=_restricted_sort_key)
+        ranked = rank_store_frames(
+            store,
+            query_ids=("video_conditioning",),
+            query_vectors=(query_unit,),
+            expected_dimension=store.descriptor.embedding_dimension,
+            chunk_size=max(1, store.descriptor.row_count),
+            query_vectors_are_normalized=True,
+        )["video_conditioning"]
         return tuple(
             RestrictedKeyframeCandidate(
                 video_id=item.video_id,
@@ -368,9 +348,9 @@ class VideoConditionedKeyframeDiversity:
                 keyframe_order=item.keyframe_order,
                 pts_time=item.pts_time,
                 cosine_score=item.cosine_score,
-                restricted_rank=rank,
+                restricted_rank=item.rank,
             )
-            for rank, item in enumerate(ordered, start=1)
+            for item in ranked
         )
 
     @staticmethod

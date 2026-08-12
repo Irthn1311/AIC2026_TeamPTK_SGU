@@ -15,6 +15,7 @@ from system_tai.retrieval.multi_query import (
     QueryVariantType,
 )
 from system_tai.retrieval.video_restricted import VideoConditionedKeyframeConfig
+from system_tai.trake.video_first import TRAKEVideoFirstConfig
 
 
 class SessionProtocolError(RuntimeError):
@@ -68,6 +69,9 @@ class SessionConfig:
     q3_anchor_refinement_config: Q3AnchorRefinementConfig = field(
         default_factory=Q3AnchorRefinementConfig
     )
+    trake_video_first_config: TRAKEVideoFirstConfig = field(
+        default_factory=TRAKEVideoFirstConfig
+    )
 
     def __post_init__(self) -> None:
         if self.reuse_manifest is not None and self.manifest_cache is not None:
@@ -103,6 +107,8 @@ class SessionConfig:
             and not self.video_conditioned_keyframe_config.enabled
         ):
             raise ValueError("Q3 anchor refinement requires Q3 keyframe conditioning")
+        if not isinstance(self.trake_video_first_config, TRAKEVideoFirstConfig):
+            raise ValueError("trake_video_first_config must be TRAKEVideoFirstConfig")
 
 
 @dataclass(frozen=True, slots=True)

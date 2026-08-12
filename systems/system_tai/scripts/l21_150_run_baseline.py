@@ -45,6 +45,10 @@ from system_tai.retrieval.video_restricted import (  # noqa: E402
     VIDEO_CONDITIONED_KEYFRAME_DIVERSITY,
     VideoConditionedKeyframeConfig,
 )
+from system_tai.trake.video_first import (  # noqa: E402
+    TRAKE_VIDEO_FIRST_RESTRICTED_EVENT_SEARCH,
+    TRAKEVideoFirstConfig,
+)
 
 FROZEN_Q2_KIS_DEV_EN_SIDECAR_SHA256 = (
     "fa48d7af2001d8d5eca178301736d1409916961f256b4ccb779490d78495ccea"
@@ -327,6 +331,7 @@ def run_l21_150_baseline(
     q3_temporal_policy: str = "none",
     q3_config: VideoConditionedKeyframeConfig | None = None,
     q3_anchor_refinement_config: Q3AnchorRefinementConfig | None = None,
+    trake_video_first_config: TRAKEVideoFirstConfig | None = None,
 ) -> dict[str, Any]:
     if not 1 <= top_k <= 100:
         raise ValueError("top_k must be in [1, 100]")
@@ -359,6 +364,11 @@ def run_l21_150_baseline(
     resolved_q3_anchor_config = (
         q3_anchor_refinement_config or Q3AnchorRefinementConfig()
     )
+    resolved_trake_video_first = (
+        trake_video_first_config or TRAKEVideoFirstConfig()
+    )
+    if resolved_trake_video_first.enabled and (split != "dev" or task != "trake"):
+        raise ValueError("TR-A1 is restricted to the TRAKE DEV diagnostic experiment")
     if resolved_q3_anchor_config.enabled and (
         not q3_enabled
         or split != "dev"
@@ -415,6 +425,19 @@ def run_l21_150_baseline(
     ):
         raise ValueError(
             "runtime Q3 anchor configuration does not match experiment configuration"
+        )
+    runtime_trake_video_first = getattr(
+        getattr(runtime, "config", None),
+        "trake_video_first_config",
+        None,
+    )
+    if resolved_trake_video_first.enabled and runtime_trake_video_first is None:
+        raise ValueError("runtime is missing the enabled TR-A1 production configuration")
+    if runtime_trake_video_first is not None and (
+        runtime_trake_video_first != resolved_trake_video_first
+    ):
+        raise ValueError(
+            "runtime TR-A1 configuration does not match experiment configuration"
         )
 
     output = Path(output_dir)
@@ -550,15 +573,21 @@ def run_l21_150_baseline(
         "successful_query_count": success_count,
         "failed_query_count": len(query_summaries) - success_count,
         "task_counts": dict(sorted(task_counts.items())),
-        "production_algorithm_modified": q3_enabled,
+        "production_algorithm_modified": (
+            q3_enabled or resolved_trake_video_first.enabled
+        ),
         "production_algorithm_modified_scope": (
-            "KIS_Q3_ANCHOR_AWARE_RAW_REFINEMENT"
+            TRAKE_VIDEO_FIRST_RESTRICTED_EVENT_SEARCH
+            if resolved_trake_video_first.enabled
+            else "KIS_Q3_ANCHOR_AWARE_RAW_REFINEMENT"
             if resolved_q3_anchor_config.enabled
             else "KIS_VIDEO_CONDITIONED_KEYFRAME_DIVERSITY"
             if q3_enabled
             else "CORE_PRODUCTION_IMPLEMENTATION"
         ),
-        "core_production_algorithm_modified": q3_enabled,
+        "core_production_algorithm_modified": (
+            q3_enabled or resolved_trake_video_first.enabled
+        ),
         "kis_query_policy": resolved_kis_query_policy,
         "query_policy_changed_from_e0": query_policy_changed_from_e0,
         "runtime_contract": "OperationalKISRuntime public task handlers",
@@ -595,6 +624,25 @@ def run_l21_150_baseline(
                     ),
                     "preserve_first_video_occurrence": (
                         resolved_q3_config.preserve_first_video_occurrence
+                    ),
+                },
+            }
+        )
+    if resolved_trake_video_first.enabled:
+        metadata.update(
+            {
+                "trake_video_first_policy": (
+                    TRAKE_VIDEO_FIRST_RESTRICTED_EVENT_SEARCH
+                ),
+                "trake_video_first_config": {
+                    "selected_video_cap": (
+                        resolved_trake_video_first.selected_video_cap
+                    ),
+                    "event_video_nomination_depth": (
+                        resolved_trake_video_first.event_video_nomination_depth
+                    ),
+                    "anchors_per_event_video": (
+                        resolved_trake_video_first.anchors_per_event_video
                     ),
                 },
             }
@@ -659,7 +707,7 @@ def run_l21_150_baseline(
                     f"{metadata['duplicate_output_identity_count']}"
                 ),
                 "- Core production retrieval/ranking implementation changed: "
-                f"`{str(q3_enabled).lower()}`",
+                f"`{str(q3_enabled or resolved_trake_video_first.enabled).lower()}`",
                 f"- KIS query policy: `{resolved_kis_query_policy}`",
                 "- Q3 temporal policy: "
                 f"`{VIDEO_CONDITIONED_KEYFRAME_DIVERSITY if q3_enabled else 'NONE'}`",
@@ -725,6 +773,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--q3-minimum-anchor-gap-seconds", type=float, default=5.0)
     parser.add_argument("--q3-anchor-raw-refinement", action="store_true")
     parser.add_argument("--q3-max-extra-raw-anchors", type=int, default=6)
+    parser.add_argument(
+        "--trake-video-first-restricted-search",
+        action="store_true",
+    )
+    parser.add_argument("--trake-selected-video-cap", type=int, default=32)
+    parser.add_argument(
+        "--trake-event-video-nomination-depth",
+        type=int,
+        default=100,
+    )
+    parser.add_argument("--trake-anchors-per-event-video", type=int, default=5)
     return parser
 
 
@@ -772,6 +831,12 @@ def main(argv: list[str] | None = None) -> int:
             enabled=args.q3_anchor_raw_refinement,
             max_extra_q3_anchors=args.q3_max_extra_raw_anchors,
         )
+        trake_video_first_config = TRAKEVideoFirstConfig(
+            enabled=args.trake_video_first_restricted_search,
+            selected_video_cap=args.trake_selected_video_cap,
+            event_video_nomination_depth=args.trake_event_video_nomination_depth,
+            anchors_per_event_video=args.trake_anchors_per_event_video,
+        )
         session_output = args.output_dir / "runtime"
         config = SessionConfig(
             input_root=args.input_root,
@@ -784,6 +849,7 @@ def main(argv: list[str] | None = None) -> int:
             default_refine_top_n=args.refine_top_n,
             video_conditioned_keyframe_config=q3_config,
             q3_anchor_refinement_config=q3_anchor_config,
+            trake_video_first_config=trake_video_first_config,
         )
         runtime = OperationalKISRuntime.bootstrap(config)
         try:
@@ -808,6 +874,7 @@ def main(argv: list[str] | None = None) -> int:
                 q3_temporal_policy=args.q3_temporal_policy,
                 q3_config=q3_config,
                 q3_anchor_refinement_config=q3_anchor_config,
+                trake_video_first_config=trake_video_first_config,
             )
         finally:
             runtime.close(shutdown_reason="l21_150_baseline_complete")

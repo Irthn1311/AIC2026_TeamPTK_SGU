@@ -25,9 +25,17 @@ from system_tai.retrieval.multi_query import (
     WeightedRRFRetriever,
 )
 from system_tai.retrieval.vector_search import ExactNumpyRetriever
+from system_tai.retrieval.video_evidence import VideoRestrictedFeatureSearcher
 
 from .engine import TRAKEEngine
 from .models import TRAKEEvent, TRAKEEventCandidate, TRAKEQuery, TRAKEResult
+from .video_first import (
+    TRAKE_VIDEO_FIRST_RESTRICTED_EVENT_SEARCH,
+    TRAKEVideoFirstConfig,
+    build_event_video_rankings,
+    build_restricted_event_pools,
+    nominate_videos,
+)
 
 
 @dataclass
@@ -40,9 +48,12 @@ class TRAKERuntimeTimings:
     refinement_seconds: float = 0.0
     finalization_seconds: float = 0.0
     validation_seconds: float = 0.0
+    video_nomination_seconds: float = 0.0
+    restricted_event_search_seconds: float = 0.0
+    video_first_enabled: bool = False
 
     def to_dict(self) -> dict[str, float]:
-        return {
+        payload = {
             "total_seconds": self.total_seconds,
             "text_encode_seconds": self.text_encode_seconds,
             "event_retrieval_seconds": self.event_retrieval_seconds,
@@ -52,6 +63,16 @@ class TRAKERuntimeTimings:
             "finalization_seconds": self.finalization_seconds,
             "validation_seconds": self.validation_seconds,
         }
+        if self.video_first_enabled:
+            payload.update(
+                {
+                    "video_nomination_seconds": self.video_nomination_seconds,
+                    "restricted_event_search_seconds": (
+                        self.restricted_event_search_seconds
+                    ),
+                }
+            )
+        return payload
 
 
 class TRAKERuntimePipeline:
@@ -64,6 +85,7 @@ class TRAKERuntimePipeline:
         weighted_rrf: WeightedRRFRetriever,
         refiner: ExactFrameRefiner,
         shared_encoder: SharedOpenAIClipEncoder,
+        video_restricted_searcher: VideoRestrictedFeatureSearcher | None = None,
         trake_engine: TRAKEEngine | None = None,
         clock: Callable[[], float] = time.perf_counter,
     ) -> None:
@@ -71,6 +93,7 @@ class TRAKERuntimePipeline:
         self.weighted_rrf = weighted_rrf
         self.refiner = refiner
         self.shared_encoder = shared_encoder
+        self.video_restricted_searcher = video_restricted_searcher
         self.trake_engine = trake_engine or TRAKEEngine()
         self.clock = clock
 
@@ -80,7 +103,9 @@ class TRAKERuntimePipeline:
         *,
         refinement_config: RefinementConfig,
         rrf_constant: float = 60.0,
+        video_first_config: TRAKEVideoFirstConfig | None = None,
     ) -> tuple[TRAKEResult, TRAKERuntimeTimings, dict[str, Any]]:
+        resolved_video_first = video_first_config or TRAKEVideoFirstConfig()
         t_total_start = self.clock()
         timings = TRAKERuntimeTimings()
 
@@ -149,56 +174,192 @@ class TRAKERuntimePipeline:
             all_variant_ids.append(var.variant_id)
             all_variant_vectors.append(vec)
 
-        # 3. Multi-Vector Retrieval & Per-Event Fusion
-        event_candidate_pools: list[list[TRAKEEventCandidate]] = []
-        total_fusion_sec = 0.0
+        # 3. Multi-Vector Retrieval & Per-Event Fusion. TR-A1 is opt-in; the
+        # disabled branch remains the frozen P0-C/OPT1/OPT2 implementation.
+        event_candidate_pools: list[list[TRAKEEventCandidate]] | tuple[
+            tuple[TRAKEEventCandidate, ...], ...
+        ]
+        tr_a1_trace: dict[str, Any] = {
+            "policy": TRAKE_VIDEO_FIRST_RESTRICTED_EVENT_SEARCH,
+            "enabled": False,
+        }
+        if not resolved_video_first.enabled:
+            event_candidate_pools = []
+            total_fusion_sec = 0.0
 
-        t_r = self.clock()
-        all_search_results = self.exact_retriever.search_vectors(
-            query_ids=all_variant_ids,
-            query_vectors=all_variant_vectors,
-            top_k=request.top_k_per_variant,
-        )
-        timings.event_retrieval_seconds = self.clock() - t_r
+            t_r = self.clock()
+            all_search_results = self.exact_retriever.search_vectors(
+                query_ids=all_variant_ids,
+                query_vectors=all_variant_vectors,
+                top_k=request.top_k_per_variant,
+            )
+            timings.event_retrieval_seconds = self.clock() - t_r
 
-        for e_idx in range(len(domain_events)):
-            e_vars = event_variants_map[e_idx]
-            variant_search_results: dict[str, Any] = {
-                var.variant_id: all_search_results[var.variant_id] for var in e_vars
-            }
+            for e_idx in range(len(domain_events)):
+                e_vars = event_variants_map[e_idx]
+                variant_search_results: dict[str, Any] = {
+                    var.variant_id: all_search_results[var.variant_id] for var in e_vars
+                }
 
-            t_f = self.clock()
-            fused_event_result = self.weighted_rrf.fuse_rankings(
-                query_id=f"{request.query_id}::e{e_idx}",
-                variants=tuple(e_vars),
-                rankings=variant_search_results,
-                output_top_k=request.event_candidate_top_k,
+                t_f = self.clock()
+                fused_event_result = self.weighted_rrf.fuse_rankings(
+                    query_id=f"{request.query_id}::e{e_idx}",
+                    variants=tuple(e_vars),
+                    rankings=variant_search_results,
+                    output_top_k=request.event_candidate_top_k,
+                    rrf_constant=rrf_constant,
+                )
+                total_fusion_sec += self.clock() - t_f
+
+                e_pool: list[TRAKEEventCandidate] = []
+                for fused_cand in fused_event_result.ranked_candidates:
+                    meta = fused_cand.diagnostic_metadata or {}
+                    tc = TRAKEEventCandidate(
+                        query_id=request.query_id,
+                        event_index=e_idx,
+                        rank=fused_cand.rank,
+                        video_id=fused_cand.video_id,
+                        frame_id=fused_cand.frame_id,
+                        retrieval_score=fused_cand.score,
+                        provenance={
+                            "fusion_score": fused_cand.score,
+                            "variant_hit_count": meta.get("variant_hit_count"),
+                            "best_individual_rank": meta.get("best_individual_rank"),
+                            "clip_row": fused_cand.clip_row,
+                            "keyframe_order": fused_cand.keyframe_order,
+                        },
+                    )
+                    e_pool.append(tc)
+                event_candidate_pools.append(e_pool)
+
+            timings.event_fusion_seconds = total_fusion_sec
+        else:
+            timings.video_first_enabled = True
+            searcher = self.video_restricted_searcher
+            if searcher is None:
+                registry = getattr(self.exact_retriever, "registry", None)
+                chunk_size = getattr(self.exact_retriever, "chunk_size", 4096)
+                if registry is None:
+                    raise ValueError(
+                        "TR-A1 requires a VideoRestrictedFeatureSearcher or exact "
+                        "retriever registry"
+                    )
+                searcher = VideoRestrictedFeatureSearcher(
+                    registry,
+                    chunk_size=chunk_size,
+                )
+
+            t_r = self.clock()
+            maxima = searcher.search_video_maxima(
+                query_ids=all_variant_ids,
+                query_vectors=all_variant_vectors,
+            )
+            timings.event_retrieval_seconds = self.clock() - t_r
+
+            t_nom = self.clock()
+            event_video_rankings = build_event_video_rankings(
+                event_variants=event_variants_map,
+                maxima=maxima,
                 rrf_constant=rrf_constant,
             )
-            total_fusion_sec += self.clock() - t_f
+            nominated = nominate_videos(
+                event_video_rankings=event_video_rankings,
+                config=resolved_video_first,
+                rrf_constant=rrf_constant,
+            )
+            timings.video_nomination_seconds = self.clock() - t_nom
+            selected_video_ids = tuple(item.video_id for item in nominated)
+            if not selected_video_ids:
+                raise ValueError("TR-A1 video nomination produced no selected videos")
 
-            e_pool: list[TRAKEEventCandidate] = []
-            for fused_cand in fused_event_result.ranked_candidates:
-                meta = fused_cand.diagnostic_metadata or {}
-                tc = TRAKEEventCandidate(
-                    query_id=request.query_id,
-                    event_index=e_idx,
-                    rank=fused_cand.rank,
-                    video_id=fused_cand.video_id,
-                    frame_id=fused_cand.frame_id,
-                    retrieval_score=fused_cand.score,
-                    provenance={
-                        "fusion_score": fused_cand.score,
-                        "variant_hit_count": meta.get("variant_hit_count"),
-                        "best_individual_rank": meta.get("best_individual_rank"),
-                        "clip_row": fused_cand.clip_row,
-                        "keyframe_order": fused_cand.keyframe_order,
-                    },
-                )
-                e_pool.append(tc)
-            event_candidate_pools.append(e_pool)
+            max_store_rows = max(
+                searcher.registry.get(video_id).descriptor.row_count
+                for video_id in selected_video_ids
+            )
+            t_restricted = self.clock()
+            restricted = searcher.search_selected_videos(
+                video_ids=selected_video_ids,
+                query_ids=all_variant_ids,
+                query_vectors=all_variant_vectors,
+                per_query_result_cap=max_store_rows,
+            )
+            event_candidate_pools = build_restricted_event_pools(
+                query_id=request.query_id,
+                event_variants=event_variants_map,
+                event_video_rankings=event_video_rankings,
+                nominated_videos=nominated,
+                restricted=restricted,
+                weighted_rrf=self.weighted_rrf,
+                anchors_per_event_video=resolved_video_first.anchors_per_event_video,
+                rrf_constant=rrf_constant,
+            )
+            timings.restricted_event_search_seconds = self.clock() - t_restricted
 
-        timings.event_fusion_seconds = total_fusion_sec
+            complete_coverage_count = sum(
+                item.coverage_count == len(domain_events) for item in nominated
+            )
+            tr_a1_trace = {
+                "policy": TRAKE_VIDEO_FIRST_RESTRICTED_EVENT_SEARCH,
+                "enabled": True,
+                "config": {
+                    "selected_video_cap": resolved_video_first.selected_video_cap,
+                    "event_video_nomination_depth": (
+                        resolved_video_first.event_video_nomination_depth
+                    ),
+                    "anchors_per_event_video": (
+                        resolved_video_first.anchors_per_event_video
+                    ),
+                },
+                "event_count": len(domain_events),
+                "full_corpus_video_count": len(searcher.registry.stores),
+                "variant_video_ranking_count": len(maxima.rankings),
+                "selected_video_count": len(nominated),
+                "complete_coverage_selected_video_count": complete_coverage_count,
+                "restricted_event_video_search_count": (
+                    len(nominated) * len(domain_events)
+                ),
+                "restricted_keyframe_rows_scored": restricted.physical_rows_scored,
+                "restricted_anchor_count": sum(
+                    len(pool) for pool in event_candidate_pools
+                ),
+                "candidate_pool_size_per_event": [
+                    len(pool) for pool in event_candidate_pools
+                ],
+                "full_corpus_physical_rows_scored": maxima.physical_rows_scored,
+                "full_corpus_store_scan_count": maxima.video_store_scan_count,
+                "restricted_store_scan_count": restricted.video_store_scan_count,
+                "nominated_videos": [
+                    {
+                        "video_id": item.video_id,
+                        "coverage_count": item.coverage_count,
+                        "event_video_ranks": list(item.event_video_ranks),
+                        "worst_event_rank": item.worst_event_rank,
+                        "reciprocal_event_rank_sum": item.reciprocal_event_rank_sum,
+                        "best_event_rank": item.best_event_rank,
+                    }
+                    for item in nominated
+                ],
+                "restricted_events": [
+                    {
+                        "event_index": event_index,
+                        "selected": [
+                            {
+                                "rank": candidate.rank,
+                                "video_id": candidate.video_id,
+                                "frame_id": candidate.frame_id,
+                                "event_video_rank": candidate.provenance.get(
+                                    "event_video_rank"
+                                ),
+                                "restricted_event_video_rank": candidate.provenance.get(
+                                    "restricted_event_video_rank"
+                                ),
+                            }
+                            for candidate in pool
+                        ],
+                    }
+                    for event_index, pool in enumerate(event_candidate_pools)
+                ],
+            }
 
         # 4. C1 Planner Integration
         t_p = self.clock()
@@ -418,26 +579,64 @@ class TRAKERuntimePipeline:
         timings.total_seconds = self.clock() - t_total_start
 
         # 8. Diagnostics & Result Construction
+        result_diagnostics = {
+            "query_id": request.query_id,
+            "event_count": len(domain_events),
+            "flattened_variant_count": len(flattened_variants),
+            "event_candidate_counts": [len(p) for p in event_candidate_pools],
+            "planner_prediction_count": len(c1_preds),
+            "refinement_requested": request.refine_top_n > 0,
+            "refine_top_n": request.refine_top_n,
+            "selected_path_count": refine_count,
+            "unique_refinement_node_count": len(refinement_node_records),
+            "temporal_fallback_path_count": temporal_fallback_path_count,
+            "duplicate_fallback_count": duplicate_fallback_count,
+            "skipped_duplicate_path_count": skipped_duplicate_path_count,
+            "final_prediction_count": len(final_predictions),
+            "zero_output_reason": c1_result.diagnostics.get("zero_output_reason"),
+        }
+        if resolved_video_first.enabled:
+            result_diagnostics.update(
+                {
+                    "tr_a1_enabled": True,
+                    "tr_a1_policy": TRAKE_VIDEO_FIRST_RESTRICTED_EVENT_SEARCH,
+                    "full_corpus_video_count": tr_a1_trace["full_corpus_video_count"],
+                    "variant_video_ranking_count": tr_a1_trace[
+                        "variant_video_ranking_count"
+                    ],
+                    "selected_video_count": tr_a1_trace["selected_video_count"],
+                    "selected_video_cap": resolved_video_first.selected_video_cap,
+                    "event_video_nomination_depth": (
+                        resolved_video_first.event_video_nomination_depth
+                    ),
+                    "complete_coverage_selected_video_count": tr_a1_trace[
+                        "complete_coverage_selected_video_count"
+                    ],
+                    "restricted_event_video_search_count": tr_a1_trace[
+                        "restricted_event_video_search_count"
+                    ],
+                    "restricted_keyframe_rows_scored": tr_a1_trace[
+                        "restricted_keyframe_rows_scored"
+                    ],
+                    "restricted_anchor_count": tr_a1_trace[
+                        "restricted_anchor_count"
+                    ],
+                    "candidate_pool_size_per_event": [
+                        len(pool) for pool in event_candidate_pools
+                    ],
+                    "complete_video_count_before_planner": c1_result.diagnostics.get(
+                        "complete_video_count", 0
+                    ),
+                    "planner_candidate_video_count": c1_result.diagnostics.get(
+                        "candidate_video_count", 0
+                    ),
+                }
+            )
         result = TRAKEResult(
             query_id=request.query_id,
             event_count=len(domain_events),
             predictions=tuple(final_predictions),
-            diagnostics={
-                "query_id": request.query_id,
-                "event_count": len(domain_events),
-                "flattened_variant_count": len(flattened_variants),
-                "event_candidate_counts": [len(p) for p in event_candidate_pools],
-                "planner_prediction_count": len(c1_preds),
-                "refinement_requested": request.refine_top_n > 0,
-                "refine_top_n": request.refine_top_n,
-                "selected_path_count": refine_count,
-                "unique_refinement_node_count": len(refinement_node_records),
-                "temporal_fallback_path_count": temporal_fallback_path_count,
-                "duplicate_fallback_count": duplicate_fallback_count,
-                "skipped_duplicate_path_count": skipped_duplicate_path_count,
-                "final_prediction_count": len(final_predictions),
-                "zero_output_reason": c1_result.diagnostics.get("zero_output_reason"),
-            },
+            diagnostics=result_diagnostics,
         )
 
         extra_diagnostics = {
@@ -466,5 +665,7 @@ class TRAKERuntimePipeline:
                 for idx, var in flattened_variants
             ],
         }
+        if resolved_video_first.enabled:
+            extra_diagnostics["tr_a1"] = tr_a1_trace
 
         return result, timings, extra_diagnostics
