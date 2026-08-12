@@ -1,0 +1,314 @@
+"""Opt-in video-conditioned multi-video evidence grounding for QA."""
+
+from __future__ import annotations
+
+import math
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+
+from system_tai.common.schemas import CandidateFrame, KISResult
+from system_tai.retrieval.multi_query import QueryVariant, WeightedRRFRetriever
+from system_tai.retrieval.video_evidence import (
+    FullCorpusVideoMaximaOutcome,
+    RestrictedFrameHit,
+    VideoRestrictedSearchOutcome,
+)
+
+QA_VIDEO_CONDITIONED_EVIDENCE_V1 = "QA_VIDEO_CONDITIONED_EVIDENCE_V1"
+
+
+@dataclass(frozen=True, slots=True)
+class QAVideoConditionedEvidenceConfig:
+    """Small, target-agnostic configuration for the QA-A1 grounding path."""
+
+    enabled: bool = False
+    selected_video_cap: int = 32
+    anchors_per_video: int = 5
+    video_rrf_constant: float = 60.0
+
+    def __post_init__(self) -> None:
+        if type(self.enabled) is not bool:
+            raise ValueError("enabled must be a boolean")
+        if type(self.selected_video_cap) is not int or self.selected_video_cap < 1:
+            raise ValueError("selected_video_cap must be an integer >= 1")
+        if type(self.anchors_per_video) is not int or self.anchors_per_video < 1:
+            raise ValueError("anchors_per_video must be an integer >= 1")
+        if (
+            type(self.video_rrf_constant) is bool
+            or not isinstance(self.video_rrf_constant, (int, float))
+            or not math.isfinite(float(self.video_rrf_constant))
+            or self.video_rrf_constant <= 0
+        ):
+            raise ValueError("video_rrf_constant must be finite and positive")
+
+
+@dataclass(frozen=True, slots=True)
+class QAVariantVideoRank:
+    variant_id: str
+    weight: float
+    video_rank: int
+    best_frame_id: int
+    best_frame_cosine: float
+
+
+@dataclass(frozen=True, slots=True)
+class QAVideoNomination:
+    video_id: str
+    nomination_rank: int
+    video_rrf_score: float
+    best_individual_variant_rank: int
+    per_variant: tuple[QAVariantVideoRank, ...]
+
+
+def nominate_qa_videos(
+    *,
+    variants: Sequence[QueryVariant],
+    maxima: FullCorpusVideoMaximaOutcome,
+    config: QAVideoConditionedEvidenceConfig,
+) -> tuple[QAVideoNomination, ...]:
+    """Fuse per-variant video ranks without mixing raw cross-language cosine."""
+
+    resolved_variants = tuple(variants)
+    if not resolved_variants:
+        raise ValueError("at least one localization variant is required")
+    expected_ids = {variant.variant_id for variant in resolved_variants}
+    if not expected_ids.issubset(maxima.rankings):
+        missing = sorted(expected_ids - set(maxima.rankings))
+        raise ValueError(f"missing video-maxima rankings: {missing}")
+
+    hits_by_variant = {
+        variant.variant_id: {hit.video_id: hit for hit in maxima.rankings[variant.variant_id]}
+        for variant in resolved_variants
+    }
+    video_sets = [set(hits) for hits in hits_by_variant.values()]
+    if not video_sets or any(video_ids != video_sets[0] for video_ids in video_sets[1:]):
+        raise ValueError("localization variant rankings must cover the same corpus videos")
+
+    unranked: list[QAVideoNomination] = []
+    for video_id in sorted(video_sets[0]):
+        provenance = tuple(
+            QAVariantVideoRank(
+                variant_id=variant.variant_id,
+                weight=float(variant.weight),
+                video_rank=hits_by_variant[variant.variant_id][video_id].rank,
+                best_frame_id=hits_by_variant[variant.variant_id][video_id].frame_id,
+                best_frame_cosine=float(
+                    hits_by_variant[variant.variant_id][video_id].cosine_score
+                ),
+            )
+            for variant in sorted(resolved_variants, key=lambda item: item.variant_id)
+        )
+        score = sum(
+            item.weight / (config.video_rrf_constant + item.video_rank)
+            for item in provenance
+        )
+        unranked.append(
+            QAVideoNomination(
+                video_id=video_id,
+                nomination_rank=0,
+                video_rrf_score=float(score),
+                best_individual_variant_rank=min(
+                    item.video_rank for item in provenance
+                ),
+                per_variant=provenance,
+            )
+        )
+
+    ordered = sorted(
+        unranked,
+        key=lambda item: (
+            -item.video_rrf_score,
+            item.best_individual_variant_rank,
+            item.video_id,
+        ),
+    )[: config.selected_video_cap]
+    return tuple(
+        QAVideoNomination(
+            video_id=item.video_id,
+            nomination_rank=rank,
+            video_rrf_score=item.video_rrf_score,
+            best_individual_variant_rank=item.best_individual_variant_rank,
+            per_variant=item.per_variant,
+        )
+        for rank, item in enumerate(ordered, start=1)
+    )
+
+
+def _candidate_from_restricted_hit(
+    *,
+    hit: RestrictedFrameHit,
+    variant: QueryVariant,
+) -> CandidateFrame:
+    return CandidateFrame(
+        video_id=hit.video_id,
+        frame_id=hit.frame_id,
+        clip_row=hit.clip_row,
+        keyframe_order=hit.keyframe_order,
+        score=float(hit.cosine_score),
+        rank=hit.rank,
+        source="qa_video_restricted_exact",
+        diagnostic_metadata={
+            "pts_time": hit.pts_time,
+            "variant_hit_count": 1,
+            "best_individual_rank": hit.rank,
+            "per_variant": [
+                {
+                    "variant_id": variant.variant_id,
+                    "language": variant.language.value,
+                    "variant_type": variant.variant_type.value,
+                    "weight": float(variant.weight),
+                    "rank": hit.rank,
+                    "cosine_score": float(hit.cosine_score),
+                }
+            ],
+        },
+    )
+
+
+def build_qa_grounding_result(
+    *,
+    query_id: str,
+    variants: Sequence[QueryVariant],
+    nominations: Sequence[QAVideoNomination],
+    restricted: VideoRestrictedSearchOutcome,
+    weighted_rrf: WeightedRRFRetriever,
+    config: QAVideoConditionedEvidenceConfig,
+    output_top_k: int,
+) -> KISResult:
+    """Build rank-slot evidence candidates diversified across nominated videos."""
+
+    resolved_variants = tuple(variants)
+    resolved_nominations = tuple(nominations)
+    if not query_id.strip():
+        raise ValueError("query_id must not be empty")
+    if not resolved_variants:
+        raise ValueError("at least one localization variant is required")
+    if not 1 <= output_top_k <= 100:
+        raise ValueError("output_top_k must be in [1, 100]")
+    if len({item.video_id for item in resolved_nominations}) != len(
+        resolved_nominations
+    ):
+        raise ValueError("nominated video_id values must be unique")
+
+    staged: list[tuple[int, int, CandidateFrame, QAVideoNomination]] = []
+    per_video_cap = min(config.anchors_per_video, output_top_k)
+    for nomination in resolved_nominations:
+        if len(resolved_variants) == 1:
+            variant = resolved_variants[0]
+            hits = restricted.rankings[variant.variant_id][nomination.video_id]
+            local_candidates = tuple(
+                _candidate_from_restricted_hit(hit=hit, variant=variant)
+                for hit in hits[:per_video_cap]
+            )
+        else:
+            rankings: dict[str, KISResult] = {}
+            for variant in resolved_variants:
+                hits = restricted.rankings[variant.variant_id][nomination.video_id]
+                rankings[variant.variant_id] = KISResult(
+                    query_id=variant.variant_id,
+                    ranked_candidates=tuple(
+                        _candidate_from_restricted_hit(hit=hit, variant=variant)
+                        for hit in hits
+                    ),
+                )
+            fused = weighted_rrf.fuse_rankings(
+                query_id=f"{query_id}::{nomination.video_id}",
+                variants=resolved_variants,
+                rankings=rankings,
+                output_top_k=per_video_cap,
+                rrf_constant=config.video_rrf_constant,
+            )
+            local_candidates = fused.ranked_candidates
+
+        for local_candidate in local_candidates:
+            staged.append(
+                (
+                    local_candidate.rank,
+                    nomination.nomination_rank,
+                    local_candidate,
+                    nomination,
+                )
+            )
+
+    staged.sort(
+        key=lambda item: (
+            item[0],
+            item[1],
+            item[2].video_id,
+            item[2].frame_id,
+            item[2].clip_row,
+        )
+    )
+    selected: list[CandidateFrame] = []
+    seen: set[tuple[str, int]] = set()
+    for local_rank, _video_rank, candidate, nomination in staged:
+        identity = (candidate.video_id, candidate.frame_id)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        metadata = dict(candidate.diagnostic_metadata or {})
+        per_variant = tuple(metadata.get("per_variant", ()))
+        metadata.update(
+            {
+                "grounding_policy": QA_VIDEO_CONDITIONED_EVIDENCE_V1,
+                "video_nomination_rank": nomination.nomination_rank,
+                "video_nomination_rrf_score": nomination.video_rrf_score,
+                "video_best_individual_variant_rank": (
+                    nomination.best_individual_variant_rank
+                ),
+                "local_anchor_rank": local_rank,
+                "localization_score": float(candidate.score),
+                "localization_score_kind": (
+                    "restricted_cosine"
+                    if len(resolved_variants) == 1
+                    else "weighted_rrf"
+                ),
+                "source_localization_variant_ids": [
+                    str(item["variant_id"]) for item in per_variant
+                ],
+            }
+        )
+        selected.append(
+            CandidateFrame(
+                video_id=candidate.video_id,
+                frame_id=candidate.frame_id,
+                clip_row=candidate.clip_row,
+                keyframe_order=candidate.keyframe_order,
+                score=float(candidate.score),
+                rank=len(selected) + 1,
+                source=QA_VIDEO_CONDITIONED_EVIDENCE_V1,
+                diagnostic_metadata=metadata,
+            )
+        )
+        if len(selected) >= output_top_k:
+            break
+    return KISResult(query_id=query_id, ranked_candidates=tuple(selected))
+
+
+def nomination_diagnostics(
+    nominations: Sequence[QAVideoNomination],
+    *,
+    anchor_counts: Mapping[str, int],
+) -> list[dict[str, object]]:
+    """Return a bounded JSON-safe summary without dumping corpus-wide rankings."""
+
+    return [
+        {
+            "video_id": item.video_id,
+            "video_nomination_rank": item.nomination_rank,
+            "video_nomination_rrf_score": item.video_rrf_score,
+            "best_individual_variant_rank": item.best_individual_variant_rank,
+            "anchor_count": int(anchor_counts.get(item.video_id, 0)),
+            "per_variant": [
+                {
+                    "variant_id": rank.variant_id,
+                    "weight": rank.weight,
+                    "video_rank": rank.video_rank,
+                    "best_frame_id": rank.best_frame_id,
+                    "best_frame_cosine": rank.best_frame_cosine,
+                }
+                for rank in item.per_variant
+            ],
+        }
+        for item in nominations
+    ]

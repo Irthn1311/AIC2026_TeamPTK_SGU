@@ -26,9 +26,17 @@ from system_tai.refinement.video import (
 )
 from system_tai.retrieval.multi_query import WeightedRRFRetriever
 from system_tai.retrieval.vector_search import ExactNumpyRetriever
+from system_tai.retrieval.video_evidence import VideoRestrictedFeatureSearcher
 
 from .answer_candidates import AnswerCandidateProvider, BaselineQuestionCandidateProvider
 from .engine import QABaselineEngine
+from .grounding import (
+    QA_VIDEO_CONDITIONED_EVIDENCE_V1,
+    QAVideoConditionedEvidenceConfig,
+    build_qa_grounding_result,
+    nominate_qa_videos,
+    nomination_diagnostics,
+)
 from .models import QAEvidenceCandidate, QAQuery, QAResult
 from .question_types import QuestionType, classify_question_type
 
@@ -71,6 +79,8 @@ class QARuntimePipeline:
         raw_video_registry: RawVideoRegistry,
         decoder: VideoDecoder,
         shared_encoder: SharedOpenAIClipEncoder,
+        video_restricted_searcher: VideoRestrictedFeatureSearcher | None = None,
+        video_conditioned_evidence_config: QAVideoConditionedEvidenceConfig | None = None,
         qa_engine: QABaselineEngine | None = None,
         candidate_provider: AnswerCandidateProvider | None = None,
         clock: Callable[[], float] = time.perf_counter,
@@ -81,6 +91,10 @@ class QARuntimePipeline:
         self.raw_video_registry = raw_video_registry
         self.decoder = decoder
         self.shared_encoder = shared_encoder
+        self.video_restricted_searcher = video_restricted_searcher
+        self.video_conditioned_evidence_config = (
+            video_conditioned_evidence_config or QAVideoConditionedEvidenceConfig()
+        )
         self.qa_engine = qa_engine or QABaselineEngine()
         self.candidate_provider = candidate_provider or BaselineQuestionCandidateProvider()
         self.clock = clock
@@ -119,6 +133,7 @@ class QARuntimePipeline:
             "request_id": request.request_id,
             "question_type": None,
             "question_supported": None,
+            "qa_grounding_enabled": self.video_conditioned_evidence_config.enabled,
             "retrieval_candidate_count": 0,
             "refined_candidate_count": 0,
             "evidence_candidate_count": 0,
@@ -130,13 +145,34 @@ class QARuntimePipeline:
             "final_predictions": [],
             "warnings": [],
         }
+        if self.video_conditioned_evidence_config.enabled:
+            diagnostics.update(
+                {
+                    "question_supported_by_current_provider": None,
+                    "question_capability_reason": None,
+                    "qa_grounding_policy": QA_VIDEO_CONDITIONED_EVIDENCE_V1,
+                    "localization_variant_count": 0,
+                    "full_corpus_video_count": 0,
+                    "full_corpus_store_scan_count": 0,
+                    "selected_video_count": 0,
+                    "selected_video_ids": [],
+                    "restricted_store_scan_count": 0,
+                    "restricted_rows_scored": 0,
+                    "grounding_candidate_count": 0,
+                    "selected_video_evidence": [],
+                    "grounding_candidates": [],
+                }
+            )
 
         # Step 1: Question classification
         q_type = classify_question_type(request.question, request.question_en)
         diagnostics["question_type"] = q_type.value
         diagnostics["question_supported"] = q_type != QuestionType.UNSUPPORTED
 
-        if q_type == QuestionType.UNSUPPORTED:
+        if (
+            q_type == QuestionType.UNSUPPORTED
+            and not self.video_conditioned_evidence_config.enabled
+        ):
             msg = (
                 "Question type is UNSUPPORTED; zero predictions generated without running "
                 "retrieval or refinement."
@@ -152,8 +188,21 @@ class QARuntimePipeline:
             )
             return result, timings, diagnostics
 
+        answer_hypotheses = ()
+        provider_supported = True
+        if self.video_conditioned_evidence_config.enabled:
+            answer_hypotheses = self.candidate_provider.get_candidates(q_type)
+            provider_supported = bool(answer_hypotheses)
+            diagnostics["question_supported_by_current_provider"] = provider_supported
+            if q_type == QuestionType.UNSUPPORTED:
+                diagnostics["question_capability_reason"] = "QUESTION_PATTERN_UNSUPPORTED"
+            elif not provider_supported:
+                diagnostics["question_capability_reason"] = "SUPPORTED_PATTERN_NO_PROVIDER"
+
         # Step 2: Event-only retrieval variants
         variants = request.variants()
+        if self.video_conditioned_evidence_config.enabled:
+            diagnostics["localization_variant_count"] = len(variants)
 
         t_text = self.clock()
         event_texts = [v.text for v in variants]
@@ -161,25 +210,108 @@ class QARuntimePipeline:
         timings.text_encode_seconds = self.clock() - t_text
 
         t_ret = self.clock()
-        rankings: dict[str, Any] = {}
-        for variant, vector in zip(variants, event_vectors):
-            rankings[variant.variant_id] = self.exact_retriever.search_vector(
-                query_id=f"{request.query_id}::{variant.variant_id}",
-                query_vector=vector,
-                top_k=request.top_k_per_variant,
+        if self.video_conditioned_evidence_config.enabled:
+            if self.video_restricted_searcher is None:
+                raise ValueError(
+                    "QA video-conditioned evidence requires a video-restricted searcher"
+                )
+            variant_ids = [variant.variant_id for variant in variants]
+            maxima = self.video_restricted_searcher.search_video_maxima(
+                query_ids=variant_ids,
+                query_vectors=event_vectors,
             )
-        timings.retrieval_seconds = self.clock() - t_ret
+            nominations = nominate_qa_videos(
+                variants=variants,
+                maxima=maxima,
+                config=self.video_conditioned_evidence_config,
+            )
+            selected_video_ids = [item.video_id for item in nominations]
+            diagnostics["full_corpus_video_count"] = (
+                len(maxima.rankings[variant_ids[0]]) if variant_ids else 0
+            )
+            diagnostics["full_corpus_store_scan_count"] = maxima.video_store_scan_count
+            diagnostics["selected_video_count"] = len(selected_video_ids)
+            diagnostics["selected_video_ids"] = selected_video_ids
 
-        t_fuse = self.clock()
-        fused_result = self.weighted_rrf.fuse_rankings(
-            query_id=request.query_id,
-            variants=variants,
-            rankings=rankings,
-            output_top_k=request.output_top_k,
-            rrf_constant=rrf_constant,
-        )
-        timings.fusion_seconds = self.clock() - t_fuse
+            largest_store_rows = max(
+                self.video_restricted_searcher.registry.get(video_id).descriptor.row_count
+                for video_id in selected_video_ids
+            )
+            restricted = self.video_restricted_searcher.search_selected_videos(
+                video_ids=selected_video_ids,
+                query_ids=variant_ids,
+                query_vectors=event_vectors,
+                per_query_result_cap=largest_store_rows,
+            )
+            diagnostics["restricted_store_scan_count"] = restricted.video_store_scan_count
+            diagnostics["restricted_rows_scored"] = restricted.physical_rows_scored
+            timings.retrieval_seconds = self.clock() - t_ret
+
+            t_fuse = self.clock()
+            fused_result = build_qa_grounding_result(
+                query_id=request.query_id,
+                variants=variants,
+                nominations=nominations,
+                restricted=restricted,
+                weighted_rrf=self.weighted_rrf,
+                config=self.video_conditioned_evidence_config,
+                output_top_k=request.output_top_k,
+            )
+            timings.fusion_seconds = self.clock() - t_fuse
+            anchor_counts: dict[str, int] = {video_id: 0 for video_id in selected_video_ids}
+            for candidate in fused_result.ranked_candidates:
+                anchor_counts[candidate.video_id] += 1
+            diagnostics["selected_video_evidence"] = nomination_diagnostics(
+                nominations,
+                anchor_counts=anchor_counts,
+            )
+            diagnostics["grounding_candidates"] = [
+                {
+                    "rank": candidate.rank,
+                    "video_id": candidate.video_id,
+                    "frame_id": candidate.frame_id,
+                    "video_nomination_rank": (candidate.diagnostic_metadata or {}).get(
+                        "video_nomination_rank"
+                    ),
+                    "local_anchor_rank": (candidate.diagnostic_metadata or {}).get(
+                        "local_anchor_rank"
+                    ),
+                    "localization_score": (candidate.diagnostic_metadata or {}).get(
+                        "localization_score"
+                    ),
+                    "localization_score_kind": (candidate.diagnostic_metadata or {}).get(
+                        "localization_score_kind"
+                    ),
+                    "source_localization_variant_ids": (
+                        candidate.diagnostic_metadata or {}
+                    ).get("source_localization_variant_ids", []),
+                }
+                for candidate in fused_result.ranked_candidates
+            ]
+        else:
+            rankings: dict[str, Any] = {}
+            for variant, vector in zip(variants, event_vectors):
+                rankings[variant.variant_id] = self.exact_retriever.search_vector(
+                    query_id=f"{request.query_id}::{variant.variant_id}",
+                    query_vector=vector,
+                    top_k=request.top_k_per_variant,
+                )
+            timings.retrieval_seconds = self.clock() - t_ret
+
+            t_fuse = self.clock()
+            fused_result = self.weighted_rrf.fuse_rankings(
+                query_id=request.query_id,
+                variants=variants,
+                rankings=rankings,
+                output_top_k=request.output_top_k,
+                rrf_constant=rrf_constant,
+            )
+            timings.fusion_seconds = self.clock() - t_fuse
         diagnostics["retrieval_candidate_count"] = len(fused_result.ranked_candidates)
+        if self.video_conditioned_evidence_config.enabled:
+            diagnostics["grounding_candidate_count"] = len(
+                fused_result.ranked_candidates
+            )
         diagnostics["fused_retrieval_candidates"] = [
             {
                 "rank": candidate.rank,
@@ -201,25 +333,29 @@ class QARuntimePipeline:
 
         # Step 3: Exact Frame Refinement
         t_ref = self.clock()
-        phase3_candidates = tuple(
-            Phase3Candidate(
-                query_id=request.query_id,
-                rank=c.rank,
-                video_id=c.video_id,
-                frame_id=c.frame_id,
-                retrieval_score=c.score,
-                retrieval_provenance={
-                    "fusion_score": c.score,
-                    "variant_hit_count": (c.diagnostic_metadata or {}).get("variant_hit_count"),
-                    "best_individual_rank": (c.diagnostic_metadata or {}).get(
-                        "best_individual_rank"
-                    ),
-                    "clip_row_diagnostic": c.clip_row,
-                    "keyframe_order_diagnostic": c.keyframe_order,
-                },
+        phase3_candidates_list: list[Phase3Candidate] = []
+        for candidate in fused_result.ranked_candidates:
+            metadata = dict(candidate.diagnostic_metadata or {})
+            metadata.update(
+                {
+                    "fusion_score": candidate.score,
+                    "variant_hit_count": metadata.get("variant_hit_count"),
+                    "best_individual_rank": metadata.get("best_individual_rank"),
+                    "clip_row_diagnostic": candidate.clip_row,
+                    "keyframe_order_diagnostic": candidate.keyframe_order,
+                }
             )
-            for c in fused_result.ranked_candidates
-        )
+            phase3_candidates_list.append(
+                Phase3Candidate(
+                    query_id=request.query_id,
+                    rank=candidate.rank,
+                    video_id=candidate.video_id,
+                    frame_id=candidate.frame_id,
+                    retrieval_score=candidate.score,
+                    retrieval_provenance=metadata,
+                )
+            )
+        phase3_candidates = tuple(phase3_candidates_list)
         ref_query = RefinementQuery(request.query_id, variants, phase3_candidates)
 
         exec_ref_config = refinement_config
@@ -250,6 +386,33 @@ class QARuntimePipeline:
         # Step 4: Filter usable candidates -> QAEvidenceCandidate
         cands_to_decode: list[tuple[QAEvidenceCandidate, RefinedCandidate, RawVideoRecord]] = []
         evidence_records: list[dict[str, Any]] = []
+
+        def store_evidence_records() -> None:
+            diagnostics["evidence"] = evidence_records
+            if self.video_conditioned_evidence_config.enabled:
+                diagnostics["evidence_bank"] = evidence_records
+
+        def grounding_fields(refined: RefinedCandidate) -> dict[str, Any]:
+            provenance = dict(refined.original_retrieval_provenance)
+            return {
+                "video_nomination_rank": provenance.get("video_nomination_rank"),
+                "local_anchor_rank": provenance.get("local_anchor_rank"),
+                "localization_score": provenance.get(
+                    "localization_score", provenance.get("fusion_score")
+                ),
+                "localization_score_kind": provenance.get(
+                    "localization_score_kind", "legacy_weighted_rrf"
+                ),
+                "source_localization_variant_ids": provenance.get(
+                    "source_localization_variant_ids", []
+                ),
+                "localization_provenance": provenance.get("per_variant", []),
+            }
+
+        def grounding_artifact_fields(refined: RefinedCandidate) -> dict[str, Any]:
+            if not self.video_conditioned_evidence_config.enabled:
+                return {}
+            return grounding_fields(refined)
 
         for ref_cand in ref_outcome.candidates:
             if ref_cand.refined_frame_id is None or ref_cand.status != RefinementStatus.REFINED:
@@ -329,6 +492,7 @@ class QARuntimePipeline:
                     "source_status": ref_cand.status.value,
                     "coarse_selected_frame_id": coarse_frame,
                     "candidate_frame_id": ref_cand.candidate_frame_id,
+                    **grounding_artifact_fields(ref_cand),
                 },
             )
             cands_to_decode.append((ev_cand, ref_cand, video_record))
@@ -336,7 +500,7 @@ class QARuntimePipeline:
         diagnostics["evidence_candidate_count"] = len(cands_to_decode)
 
         if not cands_to_decode:
-            diagnostics["evidence"] = evidence_records
+            store_evidence_records()
             timings.total_seconds = self.clock() - t_start
             result = QAResult(
                 query_id=request.query_id,
@@ -475,17 +639,28 @@ class QARuntimePipeline:
 
         timings.evidence_decode_seconds = self.clock() - t_dec
         diagnostics["decoded_frame_count"] = len(decoded_images)
-        diagnostics["usable_evidence_candidates"] = [
-            {
+        diagnostics["usable_evidence_candidates"] = []
+        for evidence_candidate, refined_candidate in valid_evidence_cands:
+            diagnostics["usable_evidence_candidates"].append(
+                {
                 "rank": evidence_candidate.rank,
                 "video_id": evidence_candidate.video_id,
                 "frame_id": evidence_candidate.frame_id,
-            }
-            for evidence_candidate, _refined_candidate in valid_evidence_cands
-        ]
+                **(
+                    {
+                        "candidate_frame_id": refined_candidate.candidate_frame_id,
+                        "timestamp_seconds": evidence_candidate.timestamp_seconds,
+                        "refinement_score": evidence_candidate.evidence_score,
+                        **grounding_fields(refined_candidate),
+                    }
+                    if self.video_conditioned_evidence_config.enabled
+                    else {}
+                ),
+                }
+            )
 
         if not decoded_images:
-            diagnostics["evidence"] = evidence_records
+            store_evidence_records()
             timings.total_seconds = self.clock() - t_start
             result = QAResult(
                 query_id=request.query_id,
@@ -494,6 +669,57 @@ class QARuntimePipeline:
                 warnings=diagnostics["warnings"],
             )
             return result, timings, diagnostics
+
+        if not provider_supported:
+            unsupported_reason = "UNSUPPORTED_NO_PROVIDER"
+            diagnostics["unsupported_reason"] = unsupported_reason
+            msg = (
+                "Evidence grounding completed, but no current answer provider supports "
+                f"question type {q_type.value}."
+            )
+            diagnostics["warnings"].append(msg)
+            for evidence_candidate, refined_candidate in valid_evidence_cands:
+                evidence_records.append(
+                    {
+                        "rank": evidence_candidate.rank,
+                        "video_id": evidence_candidate.video_id,
+                        "candidate_frame_id": refined_candidate.candidate_frame_id,
+                        "refined_frame_id": evidence_candidate.frame_id,
+                        "output_frame_id": None,
+                        "retrieval_score": float(evidence_candidate.retrieval_score),
+                        "refinement_score": (
+                            float(evidence_candidate.evidence_score)
+                            if evidence_candidate.evidence_score is not None
+                            else None
+                        ),
+                        "refinement_status": refined_candidate.status.value,
+                        "timestamp_seconds": evidence_candidate.timestamp_seconds,
+                        **grounding_artifact_fields(refined_candidate),
+                        "answer": None,
+                        "answer_score": None,
+                        "answer_confidence_level": "UNSUPPORTED",
+                        "warning": msg,
+                        "skip_reason": unsupported_reason,
+                    }
+                )
+            evidence_records.sort(key=lambda record: record["rank"])
+            store_evidence_records()
+            timings.total_seconds = self.clock() - t_start
+            return (
+                QAResult(
+                    query_id=request.query_id,
+                    question_type=q_type,
+                    predictions=[],
+                    unsupported_reason=unsupported_reason,
+                    warnings=diagnostics["warnings"],
+                    diagnostics={
+                        "confidence_level": "UNSUPPORTED",
+                        "grounding_completed": True,
+                    },
+                ),
+                timings,
+                diagnostics,
+            )
 
         t_img_enc = self.clock()
         img_embeddings_batch = self.shared_encoder.encode_images(decoded_images)
@@ -505,7 +731,9 @@ class QARuntimePipeline:
             image_embeddings_map[(ev_cand.video_id, ev_cand.frame_id)] = img_vec.astype(np.float32)
 
         # Step 6: Visual Prompts & Answer Scoring
-        hypotheses = self.candidate_provider.get_candidates(q_type)
+        if not self.video_conditioned_evidence_config.enabled:
+            answer_hypotheses = self.candidate_provider.get_candidates(q_type)
+        hypotheses = answer_hypotheses
         all_prompts: list[str] = []
         for hyp in hypotheses:
             for p in hyp.visual_prompts:
@@ -563,6 +791,7 @@ class QARuntimePipeline:
                         else None,
                         "refinement_status": ref_cand.status.value,
                         "timestamp_seconds": ev_cand.timestamp_seconds,
+                        **grounding_artifact_fields(ref_cand),
                         "answer": pred.answer,
                         "answer_score": float(ans_score) if ans_score is not None else None,
                         "answer_confidence_level": conf_level,
@@ -584,6 +813,7 @@ class QARuntimePipeline:
                         else None,
                         "refinement_status": ref_cand.status.value,
                         "timestamp_seconds": ev_cand.timestamp_seconds,
+                        **grounding_artifact_fields(ref_cand),
                         "answer": None,
                         "answer_score": float(ans_score) if ans_score is not None else None,
                         "answer_confidence_level": conf_level,
@@ -593,7 +823,7 @@ class QARuntimePipeline:
                 )
 
         evidence_records.sort(key=lambda r: r["rank"])
-        diagnostics["evidence"] = evidence_records
+        store_evidence_records()
         diagnostics["final_predictions"] = [
             {
                 "rank": prediction.rank,

@@ -160,6 +160,10 @@ class OperationalKISRuntime:
             raw_video_registry=self.raw_video_registry,
             decoder=self.decoder,
             shared_encoder=self.shared_encoder,
+            video_restricted_searcher=self.video_restricted_searcher,
+            video_conditioned_evidence_config=(
+                config.qa_video_conditioned_evidence_config
+            ),
             clock=self.clock,
         )
 
@@ -986,11 +990,28 @@ class OperationalKISRuntime:
             "warnings": qa_result.warnings,
             "artifacts": artifacts_dict,
         }
+        if self.config.qa_video_conditioned_evidence_config.enabled:
+            req_manifest_payload.update(
+                {
+                    "qa_grounding_policy": diagnostics["qa_grounding_policy"],
+                    "qa_video_conditioned_evidence_config": {
+                        "selected_video_cap": (
+                            self.config.qa_video_conditioned_evidence_config.selected_video_cap
+                        ),
+                        "anchors_per_video": (
+                            self.config.qa_video_conditioned_evidence_config.anchors_per_video
+                        ),
+                        "video_rrf_constant": (
+                            self.config.qa_video_conditioned_evidence_config.video_rrf_constant
+                        ),
+                    },
+                }
+            )
         _write_json(query_dir / "qa_request_manifest.json", req_manifest_payload)
 
         self._successful_query_count += 1
 
-        return {
+        response = {
             "type": "qa_result",
             "request_id": request.request_id,
             "query_id": request.query_id,
@@ -1011,6 +1032,16 @@ class OperationalKISRuntime:
             "timings": timings.to_dict(),
             "artifacts": artifacts_dict,
         }
+        if self.config.qa_video_conditioned_evidence_config.enabled:
+            response["qa_grounding_policy"] = diagnostics["qa_grounding_policy"]
+            response["grounding_candidate_count"] = diagnostics[
+                "grounding_candidate_count"
+            ]
+            response["question_supported_by_current_provider"] = diagnostics[
+                "question_supported_by_current_provider"
+            ]
+            response["unsupported_reason"] = diagnostics.get("unsupported_reason")
+        return response
 
     def handle_trake_query(self, request: TRAKEQueryRequest) -> dict[str, Any]:
         if request.request_id in self._seen_request_ids:

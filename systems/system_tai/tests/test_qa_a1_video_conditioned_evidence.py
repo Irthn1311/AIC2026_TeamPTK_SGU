@@ -1,0 +1,605 @@
+from __future__ import annotations
+
+import importlib.util
+import json
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
+import numpy as np
+import pytest
+
+from system_tai.common.schemas import CandidateFrame, KISResult
+from system_tai.kis.session_schema import QAQueryRequest, SessionConfig
+from system_tai.preliminary.schemas import QAPrediction
+from system_tai.qa.grounding import (
+    QA_VIDEO_CONDITIONED_EVIDENCE_V1,
+    QAVideoConditionedEvidenceConfig,
+    build_qa_grounding_result,
+    nominate_qa_videos,
+)
+from system_tai.qa.models import QAResult
+from system_tai.qa.question_types import QuestionType
+from system_tai.qa.runtime import QARuntimePipeline
+from system_tai.refinement.engine import QueryRefinementOutcome
+from system_tai.refinement.models import (
+    RefinedCandidate,
+    RefinementConfig,
+    RefinementStatus,
+)
+from system_tai.refinement.video import (
+    DecodedFrame,
+    DecodeRequest,
+    DecodeResult,
+    RawVideoRecord,
+    RawVideoRegistry,
+    VideoProbe,
+)
+from system_tai.retrieval.multi_query import (
+    QueryLanguage,
+    QueryVariant,
+    QueryVariantType,
+    WeightedRRFRetriever,
+)
+from system_tai.retrieval.video_evidence import (
+    FullCorpusVideoMaximaOutcome,
+    RestrictedFrameHit,
+    VideoMaximumHit,
+    VideoRestrictedSearchOutcome,
+)
+
+
+def _variant(identifier: str, text: str, language: QueryLanguage) -> QueryVariant:
+    return QueryVariant(
+        variant_id=identifier,
+        text=text,
+        language=language,
+        variant_type=(
+            QueryVariantType.VIETNAMESE_DIRECT
+            if language is QueryLanguage.VIETNAMESE
+            else QueryVariantType.ENGLISH_TRANSLATION
+        ),
+        weight=1.0,
+    )
+
+
+def _maximum(query_id: str, video_id: str, rank: int, score: float) -> VideoMaximumHit:
+    return VideoMaximumHit(
+        query_id=query_id,
+        video_id=video_id,
+        frame_id=rank * 10,
+        clip_row=rank - 1,
+        keyframe_order=rank,
+        cosine_score=score,
+        rank=rank,
+    )
+
+
+def _restricted(video_id: str, frame_id: int, rank: int, score: float) -> RestrictedFrameHit:
+    return RestrictedFrameHit(
+        video_id=video_id,
+        frame_id=frame_id,
+        clip_row=rank - 1,
+        keyframe_order=rank,
+        pts_time=frame_id / 30.0,
+        cosine_score=score,
+        rank=rank,
+    )
+
+
+def test_config_default_disabled_and_strict_validation() -> None:
+    config = QAVideoConditionedEvidenceConfig()
+    assert config.enabled is False
+    assert SessionConfig().qa_video_conditioned_evidence_config == config
+    for kwargs in (
+        {"enabled": 1},
+        {"selected_video_cap": 0},
+        {"anchors_per_video": 0},
+        {"video_rrf_constant": float("nan")},
+        {"video_rrf_constant": 0.0},
+    ):
+        with pytest.raises(ValueError):
+            QAVideoConditionedEvidenceConfig(**kwargs)
+
+
+def test_video_rrf_is_deterministic_and_cap_is_enforced() -> None:
+    vi = _variant("q::vi", "su kien", QueryLanguage.VIETNAMESE)
+    en = _variant("q::en", "event", QueryLanguage.ENGLISH)
+    maxima = FullCorpusVideoMaximaOutcome(
+        rankings={
+            vi.variant_id: (
+                _maximum(vi.variant_id, "V2", 1, 0.9),
+                _maximum(vi.variant_id, "V1", 2, 0.8),
+                _maximum(vi.variant_id, "V3", 3, 0.7),
+            ),
+            en.variant_id: (
+                _maximum(en.variant_id, "V1", 1, 0.9),
+                _maximum(en.variant_id, "V2", 2, 0.8),
+                _maximum(en.variant_id, "V3", 3, 0.7),
+            ),
+        },
+        physical_rows_scored=30,
+        video_store_scan_count=3,
+    )
+    config = QAVideoConditionedEvidenceConfig(enabled=True, selected_video_cap=2)
+    first = nominate_qa_videos(variants=(vi, en), maxima=maxima, config=config)
+    second = nominate_qa_videos(variants=(vi, en), maxima=maxima, config=config)
+
+    assert first == second
+    assert [item.video_id for item in first] == ["V1", "V2"]
+    assert [item.nomination_rank for item in first] == [1, 2]
+    assert first[0].video_rrf_score == pytest.approx(
+        1 / 61 + 1 / 62
+    )
+
+
+def test_anchor_bounds_cross_video_order_unique_frames_and_contiguous_ranks() -> None:
+    variant = _variant("q::vi", "su kien", QueryLanguage.VIETNAMESE)
+    maxima = FullCorpusVideoMaximaOutcome(
+        rankings={
+            variant.variant_id: (
+                _maximum(variant.variant_id, "V1", 1, 0.9),
+                _maximum(variant.variant_id, "V2", 2, 0.8),
+            )
+        },
+        physical_rows_scored=8,
+        video_store_scan_count=2,
+    )
+    config = QAVideoConditionedEvidenceConfig(
+        enabled=True,
+        selected_video_cap=2,
+        anchors_per_video=2,
+    )
+    nominations = nominate_qa_videos(
+        variants=(variant,),
+        maxima=maxima,
+        config=config,
+    )
+    restricted = VideoRestrictedSearchOutcome(
+        rankings={
+            variant.variant_id: {
+                "V1": (
+                    _restricted("V1", 100, 1, 0.95),
+                    _restricted("V1", 110, 2, 0.90),
+                    _restricted("V1", 110, 3, 0.89),
+                ),
+                "V2": (
+                    _restricted("V2", 200, 1, 0.94),
+                    _restricted("V2", 210, 2, 0.88),
+                    _restricted("V2", 220, 3, 0.80),
+                ),
+            }
+        },
+        physical_rows_scored=8,
+        video_store_scan_count=2,
+    )
+    result = build_qa_grounding_result(
+        query_id="q",
+        variants=(variant,),
+        nominations=nominations,
+        restricted=restricted,
+        weighted_rrf=WeightedRRFRetriever(object()),
+        config=config,
+        output_top_k=4,
+    )
+
+    assert [(item.video_id, item.frame_id) for item in result.ranked_candidates] == [
+        ("V1", 100),
+        ("V2", 200),
+        ("V1", 110),
+        ("V2", 210),
+    ]
+    assert [item.rank for item in result.ranked_candidates] == [1, 2, 3, 4]
+    assert len({(item.video_id, item.frame_id) for item in result.ranked_candidates}) == 4
+    assert result.ranked_candidates[0].score == pytest.approx(0.95)
+    assert [
+        (item.diagnostic_metadata or {})["local_anchor_rank"]
+        for item in result.ranked_candidates
+    ] == [1, 1, 2, 2]
+    assert all(item.source == QA_VIDEO_CONDITIONED_EVIDENCE_V1 for item in result.ranked_candidates)
+
+
+class _FakeEncoder:
+    dimension = 4
+    identifiers = {"device": "cpu", "model": "fake"}
+
+    def __init__(self) -> None:
+        self.text_calls: list[list[str]] = []
+        self.image_calls: list[int] = []
+
+    def encode_texts(self, texts: list[str]) -> np.ndarray:
+        self.text_calls.append(list(texts))
+        result = np.zeros((len(texts), 4), dtype=np.float32)
+        result[:, 0] = 1.0
+        return result
+
+    def encode_images(self, images: list[np.ndarray]) -> np.ndarray:
+        self.image_calls.append(len(images))
+        result = np.zeros((len(images), 4), dtype=np.float32)
+        result[:, 0] = 1.0
+        return result
+
+
+class _LegacyRetriever:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def search_vector(self, *, query_id: str, query_vector: np.ndarray, top_k: int):
+        self.calls += 1
+        return KISResult(
+            query_id=query_id,
+            ranked_candidates=(
+                CandidateFrame("V1", 100, 0, 1, 0.9, 1, "legacy"),
+            ),
+        )
+
+
+class _FakeRegistry:
+    embedding_dimension = 4
+    total_rows = 3
+
+    def get(self, video_id: str):
+        if video_id != "V1":
+            raise KeyError(video_id)
+        return SimpleNamespace(descriptor=SimpleNamespace(row_count=3))
+
+
+class _FakeVideoSearcher:
+    def __init__(self) -> None:
+        self.registry = _FakeRegistry()
+        self.maxima_calls: list[tuple[str, ...]] = []
+        self.restricted_calls: list[tuple[str, ...]] = []
+
+    def search_video_maxima(self, *, query_ids, query_vectors):
+        self.maxima_calls.append(tuple(query_ids))
+        return FullCorpusVideoMaximaOutcome(
+            rankings={
+                query_id: (_maximum(query_id, "V1", 1, 0.9),)
+                for query_id in query_ids
+            },
+            physical_rows_scored=3,
+            video_store_scan_count=1,
+        )
+
+    def search_selected_videos(
+        self, *, video_ids, query_ids, query_vectors, per_query_result_cap
+    ):
+        self.restricted_calls.append(tuple(video_ids))
+        return VideoRestrictedSearchOutcome(
+            rankings={
+                query_id: {
+                    "V1": (
+                        _restricted("V1", 100, 1, 0.9),
+                        _restricted("V1", 110, 2, 0.8),
+                    )
+                }
+                for query_id in query_ids
+            },
+            physical_rows_scored=3,
+            video_store_scan_count=1,
+        )
+
+
+class _EchoRefiner:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.last_query = None
+
+    def refine_query(self, query, config, precomputed_text_embeddings=None):
+        self.calls += 1
+        self.last_query = query
+        input_candidate = query.candidates[0]
+        refined = RefinedCandidate(
+            query_id=query.query_id,
+            original_candidate_rank=1,
+            video_id=input_candidate.video_id,
+            candidate_frame_id=input_candidate.frame_id,
+            refined_frame_id=input_candidate.frame_id,
+            candidate_timestamp_seconds=input_candidate.frame_id / 30.0,
+            refined_timestamp_seconds=input_candidate.frame_id / 30.0,
+            fps=30.0,
+            total_frame_count=1000,
+            window_start_frame=max(0, input_candidate.frame_id - 10),
+            window_end_frame=input_candidate.frame_id + 10,
+            coarse_frame_ids=(input_candidate.frame_id,),
+            fine_frame_ids=(input_candidate.frame_id,),
+            coarse_sample_count=1,
+            fine_sample_count=1,
+            decoded_frame_count=2,
+            encoded_image_count=2,
+            refinement_fusion_score=0.99,
+            variant_hit_count=1,
+            best_individual_rank=1,
+            per_variant_provenance=(),
+            decoder_backend="fake",
+            raw_video_path=Path("V1.mp4"),
+            status=RefinementStatus.REFINED,
+            warnings=(),
+            failure_reason=None,
+            original_retrieval_provenance=input_candidate.retrieval_provenance,
+            timings={},
+        )
+        result = KISResult(
+            query_id=query.query_id,
+            ranked_candidates=(
+                CandidateFrame(
+                    video_id="V1",
+                    frame_id=input_candidate.frame_id,
+                    clip_row=0,
+                    keyframe_order=1,
+                    score=0.99,
+                    rank=1,
+                    source="refined",
+                ),
+            ),
+        )
+        return QueryRefinementOutcome(query.query_id, result, (refined,), (), {})
+
+
+class _FakeDecoder:
+    backend_identifier = "fake"
+
+    def probe(self, record: RawVideoRecord) -> VideoProbe:
+        return VideoProbe(
+            video_id=record.video_id,
+            raw_video_path=record.raw_video_path,
+            decoder_backend="fake",
+            fps=30.0,
+            total_frame_count=1000,
+            width=10,
+            height=10,
+            duration_seconds=1000 / 30,
+        )
+
+    def decode(self, request: DecodeRequest) -> DecodeResult:
+        frame_id = request.frame_ids[0]
+        return DecodeResult(
+            frames=(
+                DecodedFrame(
+                    absolute_frame_id=frame_id,
+                    timestamp_seconds=frame_id / 30.0,
+                    image=np.zeros((2, 2, 3), dtype=np.uint8),
+                ),
+            ),
+            decoded_frame_count=1,
+            video_open_seconds=0.0,
+            decode_seconds=0.0,
+            decoder_backend="fake",
+            warnings=(),
+        )
+
+
+class _RecordingQAEngine:
+    def __init__(self) -> None:
+        self.evidence = ()
+
+    def answer(self, query, evidence_candidates, image_embeddings=None, prompt_embeddings=None):
+        self.evidence = tuple(evidence_candidates)
+        candidate = self.evidence[0]
+        return QAResult(
+            query_id=query.query_id,
+            question_type=QuestionType.COLOR,
+            predictions=[
+                QAPrediction(
+                    query_id=query.query_id,
+                    rank=candidate.rank,
+                    video_id=candidate.video_id,
+                    frame_id=candidate.frame_id,
+                    answer="red",
+                )
+            ],
+            diagnostics={"confidence_level": "BASELINE", "scores_by_rank": {1: 1.0}},
+        )
+
+
+class _NoProvider:
+    def get_candidates(self, question_type: QuestionType):
+        return ()
+
+
+def _pipeline(tmp_path: Path, *, qa_engine=None):
+    video_path = tmp_path / "V1.mp4"
+    video_path.touch()
+    encoder = _FakeEncoder()
+    legacy = _LegacyRetriever()
+    searcher = _FakeVideoSearcher()
+    refiner = _EchoRefiner()
+    pipeline = QARuntimePipeline(
+        exact_retriever=legacy,
+        weighted_rrf=WeightedRRFRetriever(legacy),
+        refiner=refiner,
+        raw_video_registry=RawVideoRegistry([RawVideoRecord("V1", video_path)]),
+        decoder=_FakeDecoder(),
+        shared_encoder=encoder,
+        video_restricted_searcher=searcher,
+        video_conditioned_evidence_config=QAVideoConditionedEvidenceConfig(
+            enabled=True,
+            selected_video_cap=1,
+            anchors_per_video=1,
+        ),
+        qa_engine=qa_engine,
+    )
+    return pipeline, encoder, legacy, searcher, refiner
+
+
+def test_enabled_unsupported_query_runs_grounding_without_inventing_answer(
+    tmp_path: Path,
+) -> None:
+    pipeline, encoder, legacy, searcher, refiner = _pipeline(tmp_path)
+    request = QAQueryRequest(
+        request_id="r1",
+        query_id="q1",
+        event_description="A person enters a shop",
+        event_description_en="A person enters a shop",
+        question="What happens after that?",
+        question_en="What happens after that?",
+        output_top_k=10,
+        refine_top_n=1,
+    )
+    result, _timings, diagnostics = pipeline.process_qa_query(
+        request,
+        RefinementConfig(),
+    )
+
+    assert result.predictions == []
+    assert result.unsupported_reason == "UNSUPPORTED_NO_PROVIDER"
+    assert diagnostics["question_capability_reason"] == "QUESTION_PATTERN_UNSUPPORTED"
+    assert diagnostics["grounding_candidate_count"] == 1
+    assert diagnostics["decoded_frame_count"] == 1
+    assert diagnostics["encoded_image_count"] == 0
+    assert legacy.calls == 0
+    assert len(searcher.maxima_calls) == 1
+    assert len(searcher.restricted_calls) == 1
+    assert refiner.calls == 1
+    assert encoder.text_calls[0] == [
+        "A person enters a shop",
+        "A person enters a shop",
+    ]
+    serialized = json.dumps(diagnostics)
+    assert "target_video" not in serialized
+    assert "ground_truth" not in serialized
+    assert "accepted_answer" not in serialized
+
+
+def test_supported_answer_engine_receives_refined_grounding_evidence(
+    tmp_path: Path,
+) -> None:
+    engine = _RecordingQAEngine()
+    pipeline, encoder, legacy, _searcher, _refiner = _pipeline(
+        tmp_path,
+        qa_engine=engine,
+    )
+    request = QAQueryRequest(
+        request_id="r2",
+        query_id="q2",
+        event_description="A car stops near a shop",
+        question="What color is the car?",
+        output_top_k=10,
+        refine_top_n=1,
+    )
+    result, _timings, diagnostics = pipeline.process_qa_query(request)
+
+    assert len(result.predictions) == 1
+    assert len(engine.evidence) == 1
+    evidence = engine.evidence[0]
+    assert evidence.frame_id == 100
+    assert evidence.provenance["video_nomination_rank"] == 1
+    assert evidence.provenance["local_anchor_rank"] == 1
+    assert diagnostics["question_supported_by_current_provider"] is True
+    assert legacy.calls == 0
+    assert encoder.text_calls[0] == ["A car stops near a shop"]
+    assert "What color is the car?" not in encoder.text_calls[0]
+
+
+def test_supported_pattern_without_provider_is_distinguished(tmp_path: Path) -> None:
+    pipeline, _encoder, _legacy, _searcher, _refiner = _pipeline(tmp_path)
+    pipeline.candidate_provider = _NoProvider()
+    result, _timings, diagnostics = pipeline.process_qa_query(
+        QAQueryRequest("r-provider", "q-provider", "A car stops", "What color is it?")
+    )
+    assert result.predictions == []
+    assert result.unsupported_reason == "UNSUPPORTED_NO_PROVIDER"
+    assert diagnostics["question_capability_reason"] == "SUPPORTED_PATTERN_NO_PROVIDER"
+
+
+def test_disabled_unsupported_path_preserves_legacy_early_return(tmp_path: Path) -> None:
+    encoder = _FakeEncoder()
+    retriever = _LegacyRetriever()
+    pipeline = QARuntimePipeline(
+        exact_retriever=retriever,
+        weighted_rrf=WeightedRRFRetriever(retriever),
+        refiner=_EchoRefiner(),
+        raw_video_registry=RawVideoRegistry(
+            [RawVideoRecord("V1", tmp_path / "missing.mp4")]
+        ),
+        decoder=_FakeDecoder(),
+        shared_encoder=encoder,
+    )
+    result, _timings, diagnostics = pipeline.process_qa_query(
+        QAQueryRequest("r3", "q3", "event only", "What happened next?")
+    )
+    assert result.predictions == []
+    assert diagnostics["qa_grounding_enabled"] is False
+    assert retriever.calls == 0
+    assert encoder.text_calls == []
+
+
+def test_disabled_supported_path_uses_legacy_global_retrieval(tmp_path: Path) -> None:
+    video_path = tmp_path / "V1.mp4"
+    video_path.touch()
+    encoder = _FakeEncoder()
+    retriever = _LegacyRetriever()
+    engine = _RecordingQAEngine()
+    pipeline = QARuntimePipeline(
+        exact_retriever=retriever,
+        weighted_rrf=WeightedRRFRetriever(retriever),
+        refiner=_EchoRefiner(),
+        raw_video_registry=RawVideoRegistry([RawVideoRecord("V1", video_path)]),
+        decoder=_FakeDecoder(),
+        shared_encoder=encoder,
+        qa_engine=engine,
+    )
+    result, _timings, diagnostics = pipeline.process_qa_query(
+        QAQueryRequest("r4", "q4", "A car stops", "What color is the car?")
+    )
+    assert retriever.calls == 1
+    assert result.predictions[0].frame_id == 100
+    assert diagnostics["qa_grounding_enabled"] is False
+    assert "grounding_candidates" not in diagnostics
+
+
+def test_l21_runner_flag_is_dev_qa_only() -> None:
+    runner_path = Path(__file__).parents[1] / "scripts" / "l21_150_run_baseline.py"
+    spec = importlib.util.spec_from_file_location("qa_a1_l21_runner", runner_path)
+    assert spec is not None and spec.loader is not None
+    runner = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = runner
+    spec.loader.exec_module(runner)
+
+    args = runner.build_parser().parse_args(
+        [
+            "--benchmark",
+            "benchmark.json",
+            "--reuse-manifest",
+            "manifest.json",
+            "--output-dir",
+            "out",
+            "--qa-video-conditioned-evidence",
+        ]
+    )
+    assert args.qa_video_conditioned_evidence is True
+    enabled = QAVideoConditionedEvidenceConfig(enabled=True)
+    with pytest.raises(ValueError, match="QA-A1 is restricted"):
+        runner.run_l21_150_baseline(
+            object(),
+            object(),
+            Path("out"),
+            experiment_id="qa-a1",
+            split="holdout",
+            task="qa",
+            top_k=100,
+            refine_top_n=3,
+            resume=False,
+            fail_fast=True,
+            benchmark_sha256="0" * 64,
+            manifest_sha256=None,
+            gt_policy="proposed",
+            qa_video_conditioned_evidence_config=enabled,
+        )
+    with pytest.raises(ValueError, match="QA-A1 is restricted"):
+        runner.run_l21_150_baseline(
+            object(),
+            object(),
+            Path("out"),
+            experiment_id="qa-a1",
+            split="dev",
+            task="kis",
+            top_k=100,
+            refine_top_n=3,
+            resume=False,
+            fail_fast=True,
+            benchmark_sha256="0" * 64,
+            manifest_sha256=None,
+            gt_policy="proposed",
+            qa_video_conditioned_evidence_config=enabled,
+        )

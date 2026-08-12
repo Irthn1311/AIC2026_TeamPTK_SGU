@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from system_tai.qa.grounding import QAVideoConditionedEvidenceConfig
 from system_tai.refinement.models import Q3AnchorRefinementConfig, RefinementConfig
 from system_tai.retrieval.multi_query import (
     QueryLanguage,
@@ -72,6 +73,9 @@ class SessionConfig:
     trake_video_first_config: TRAKEVideoFirstConfig = field(
         default_factory=TRAKEVideoFirstConfig
     )
+    qa_video_conditioned_evidence_config: QAVideoConditionedEvidenceConfig = field(
+        default_factory=QAVideoConditionedEvidenceConfig
+    )
 
     def __post_init__(self) -> None:
         if self.reuse_manifest is not None and self.manifest_cache is not None:
@@ -109,6 +113,14 @@ class SessionConfig:
             raise ValueError("Q3 anchor refinement requires Q3 keyframe conditioning")
         if not isinstance(self.trake_video_first_config, TRAKEVideoFirstConfig):
             raise ValueError("trake_video_first_config must be TRAKEVideoFirstConfig")
+        if not isinstance(
+            self.qa_video_conditioned_evidence_config,
+            QAVideoConditionedEvidenceConfig,
+        ):
+            raise ValueError(
+                "qa_video_conditioned_evidence_config must be "
+                "QAVideoConditionedEvidenceConfig"
+            )
 
 
 @dataclass(frozen=True, slots=True)

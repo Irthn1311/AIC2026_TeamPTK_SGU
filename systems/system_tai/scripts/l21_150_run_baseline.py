@@ -27,6 +27,10 @@ from system_tai.kis.session_schema import (  # noqa: E402
     SessionConfig,
     TRAKEQueryRequest,
 )
+from system_tai.qa.grounding import (  # noqa: E402
+    QA_VIDEO_CONDITIONED_EVIDENCE_V1,
+    QAVideoConditionedEvidenceConfig,
+)
 from system_tai.quality.l21_150_schema import (  # noqa: E402
     L21150Benchmark,
     L21150FormatError,
@@ -470,6 +474,7 @@ def run_l21_150_baseline(
     trake_query_sidecar: TRAKEDevTranslationSidecar | None = None,
     trake_query_sidecar_path: Path | None = None,
     trake_query_sidecar_sha256: str | None = None,
+    qa_video_conditioned_evidence_config: QAVideoConditionedEvidenceConfig | None = None,
 ) -> dict[str, Any]:
     if not 1 <= top_k <= 100:
         raise ValueError("top_k must be in [1, 100]")
@@ -505,6 +510,11 @@ def run_l21_150_baseline(
     resolved_trake_video_first = (
         trake_video_first_config or TRAKEVideoFirstConfig()
     )
+    resolved_qa_grounding = (
+        qa_video_conditioned_evidence_config or QAVideoConditionedEvidenceConfig()
+    )
+    if resolved_qa_grounding.enabled and (split != "dev" or task != "qa"):
+        raise ValueError("QA-A1 is restricted to the QA DEV diagnostic experiment")
     if resolved_trake_video_first.enabled and (split != "dev" or task != "trake"):
         raise ValueError("TR-A1 is restricted to the TRAKE DEV diagnostic experiment")
     if trake_language_policy not in {"vi_only", "en_only"}:
@@ -605,6 +615,17 @@ def run_l21_150_baseline(
     ):
         raise ValueError(
             "runtime TR-A1 configuration does not match experiment configuration"
+        )
+    runtime_qa_grounding = getattr(
+        getattr(runtime, "config", None),
+        "qa_video_conditioned_evidence_config",
+        None,
+    )
+    if resolved_qa_grounding.enabled and runtime_qa_grounding is None:
+        raise ValueError("runtime is missing the enabled QA-A1 production configuration")
+    if runtime_qa_grounding is not None and runtime_qa_grounding != resolved_qa_grounding:
+        raise ValueError(
+            "runtime QA-A1 configuration does not match experiment configuration"
         )
 
     output = Path(output_dir)
@@ -728,6 +749,11 @@ def run_l21_150_baseline(
         kis_query_policy != "vi_only" or trake_language_policy != "vi_only"
     )
     resolved_trake_query_policy = trake_language_policy.upper()
+    production_algorithm_modified = (
+        q3_enabled
+        or resolved_trake_video_first.enabled
+        or resolved_qa_grounding.enabled
+    )
     metadata = {
         "schema_version": 2,
         "experiment_id": experiment_id,
@@ -750,11 +776,11 @@ def run_l21_150_baseline(
         "successful_query_count": success_count,
         "failed_query_count": len(query_summaries) - success_count,
         "task_counts": dict(sorted(task_counts.items())),
-        "production_algorithm_modified": (
-            q3_enabled or resolved_trake_video_first.enabled
-        ),
+        "production_algorithm_modified": production_algorithm_modified,
         "production_algorithm_modified_scope": (
-            TRAKE_VIDEO_FIRST_RESTRICTED_EVENT_SEARCH
+            QA_VIDEO_CONDITIONED_EVIDENCE_V1
+            if resolved_qa_grounding.enabled
+            else TRAKE_VIDEO_FIRST_RESTRICTED_EVENT_SEARCH
             if resolved_trake_video_first.enabled
             else "KIS_Q3_ANCHOR_AWARE_RAW_REFINEMENT"
             if resolved_q3_anchor_config.enabled
@@ -762,9 +788,7 @@ def run_l21_150_baseline(
             if q3_enabled
             else "CORE_PRODUCTION_IMPLEMENTATION"
         ),
-        "core_production_algorithm_modified": (
-            q3_enabled or resolved_trake_video_first.enabled
-        ),
+        "core_production_algorithm_modified": production_algorithm_modified,
         "kis_query_policy": resolved_kis_query_policy,
         "trake_query_policy": resolved_trake_query_policy,
         "query_policy_changed_from_e0": query_policy_changed_from_e0,
@@ -822,6 +846,20 @@ def run_l21_150_baseline(
                     "anchors_per_event_video": (
                         resolved_trake_video_first.anchors_per_event_video
                     ),
+                },
+            }
+        )
+    if resolved_qa_grounding.enabled:
+        metadata.update(
+            {
+                "qa_grounding_policy": QA_VIDEO_CONDITIONED_EVIDENCE_V1,
+                "localization_input_contract": "QUESTION_AS_LOCALIZATION_FALLBACK",
+                "official_ground_truth": False,
+                "diagnostic_development_only": True,
+                "qa_video_conditioned_evidence_config": {
+                    "selected_video_cap": resolved_qa_grounding.selected_video_cap,
+                    "anchors_per_video": resolved_qa_grounding.anchors_per_video,
+                    "video_rrf_constant": resolved_qa_grounding.video_rrf_constant,
                 },
             }
         )
@@ -898,7 +936,7 @@ def run_l21_150_baseline(
                     f"{metadata['duplicate_output_identity_count']}"
                 ),
                 "- Core production retrieval/ranking implementation changed: "
-                f"`{str(q3_enabled or resolved_trake_video_first.enabled).lower()}`",
+                f"`{str(production_algorithm_modified).lower()}`",
                 f"- KIS query policy: `{resolved_kis_query_policy}`",
                 f"- TRAKE query policy: `{resolved_trake_query_policy}`",
                 "- Q3 temporal policy: "
@@ -984,12 +1022,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--trake-dev-en-sidecar", type=Path)
     parser.add_argument("--trake-rrf-constant", type=float, default=60.0)
+    parser.add_argument("--qa-video-conditioned-evidence", action="store_true")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
+        if args.qa_video_conditioned_evidence and (
+            args.split != "dev" or args.task != "qa"
+        ):
+            raise ValueError(
+                "--qa-video-conditioned-evidence is restricted to --split dev --task qa"
+            )
         benchmark = load_l21_150_benchmark(args.benchmark)
         benchmark_sha = hashlib.sha256(args.benchmark.read_bytes()).hexdigest()
         kis_sidecar = None
@@ -1117,6 +1162,9 @@ def main(argv: list[str] | None = None) -> int:
             event_video_nomination_depth=args.trake_event_video_nomination_depth,
             anchors_per_event_video=args.trake_anchors_per_event_video,
         )
+        qa_video_conditioned_evidence_config = QAVideoConditionedEvidenceConfig(
+            enabled=args.qa_video_conditioned_evidence,
+        )
         session_output = args.output_dir / "runtime"
         config = SessionConfig(
             input_root=args.input_root,
@@ -1130,6 +1178,9 @@ def main(argv: list[str] | None = None) -> int:
             video_conditioned_keyframe_config=q3_config,
             q3_anchor_refinement_config=q3_anchor_config,
             trake_video_first_config=trake_video_first_config,
+            qa_video_conditioned_evidence_config=(
+                qa_video_conditioned_evidence_config
+            ),
         )
         runtime = OperationalKISRuntime.bootstrap(config)
         try:
@@ -1174,6 +1225,9 @@ def main(argv: list[str] | None = None) -> int:
                     trake_query_sidecar=trake_sidecar,
                     trake_query_sidecar_path=args.trake_dev_en_sidecar,
                     trake_query_sidecar_sha256=trake_sidecar_sha,
+                    qa_video_conditioned_evidence_config=(
+                        qa_video_conditioned_evidence_config
+                    ),
                 )
         finally:
             runtime.close(shutdown_reason="l21_150_baseline_complete")
