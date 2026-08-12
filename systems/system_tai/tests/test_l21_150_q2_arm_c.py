@@ -24,6 +24,7 @@ from system_tai.quality.l21_150_schema import (
 )
 from system_tai.quality.l21_150_translation import load_kis_dev_translation_sidecar
 from system_tai.retrieval.multi_query import QueryLanguage, QueryVariantType
+from system_tai.retrieval.video_restricted import VideoConditionedKeyframeConfig
 
 SYSTEM_ROOT = Path(__file__).resolve().parents[1]
 BENCHMARK_PATH = SYSTEM_ROOT / "benchmarks/l21_150_diagnostic/benchmark.json"
@@ -368,6 +369,44 @@ def test_arm_c_rejects_non_frozen_sidecar_sha(tmp_path: Path) -> None:
             kis_query_sidecar_sha256="0" * 64,
         )
 
+
+@pytest.mark.parametrize(
+    ("split", "task", "policy"),
+    (
+        ("dev", "kis", "vi_only"),
+        ("holdout", "kis", "en_only"),
+        ("dev", "qa", "en_only"),
+    ),
+)
+def test_q3_runner_guard_rejects_non_dev_kis_en_only_use(
+    tmp_path: Path,
+    split: str,
+    task: str,
+    policy: str,
+) -> None:
+    benchmark = load_l21_150_benchmark(BENCHMARK_PATH)
+    with pytest.raises(
+        ValueError,
+        match="VIDEO_CONDITIONED_KEYFRAME_DIVERSITY is restricted to KIS DEV EN_ONLY",
+    ):
+        RUNNER.run_l21_150_baseline(
+            benchmark,
+            _FakeRuntime(tmp_path / "runtime"),
+            tmp_path / "run",
+            experiment_id="q3-invalid",
+            split=split,
+            task=task,
+            top_k=100,
+            refine_top_n=3,
+            resume=False,
+            fail_fast=True,
+            benchmark_sha256=hashlib.sha256(BENCHMARK_PATH.read_bytes()).hexdigest(),
+            manifest_sha256=None,
+            gt_policy="proposed",
+            kis_query_policy=policy,
+            q3_temporal_policy="video_conditioned_keyframe_diversity",
+            q3_config=VideoConditionedKeyframeConfig(enabled=True),
+        )
 
 def _abc_report(
     ranks: dict[str, int | None],

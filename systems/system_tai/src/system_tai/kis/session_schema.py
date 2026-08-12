@@ -14,6 +14,7 @@ from system_tai.retrieval.multi_query import (
     QueryVariant,
     QueryVariantType,
 )
+from system_tai.retrieval.video_restricted import VideoConditionedKeyframeConfig
 
 
 class SessionProtocolError(RuntimeError):
@@ -61,6 +62,9 @@ class SessionConfig:
     fail_fast_protocol: bool = False
     session_id: str | None = None
     refinement_config: RefinementConfig = field(default_factory=RefinementConfig)
+    video_conditioned_keyframe_config: VideoConditionedKeyframeConfig = field(
+        default_factory=VideoConditionedKeyframeConfig
+    )
 
     def __post_init__(self) -> None:
         if self.reuse_manifest is not None and self.manifest_cache is not None:
@@ -79,6 +83,14 @@ class SessionConfig:
             raise ValueError("default_refine_top_n must be between 0 and default_output_top_k")
         if self.max_requests is not None and self.max_requests <= 0:
             raise ValueError("max_requests must be positive if set")
+        if not isinstance(
+            self.video_conditioned_keyframe_config,
+            VideoConditionedKeyframeConfig,
+        ):
+            raise ValueError(
+                "video_conditioned_keyframe_config must be "
+                "VideoConditionedKeyframeConfig"
+            )
 
 
 @dataclass(frozen=True, slots=True)

@@ -8,6 +8,11 @@ from .multi_query import (
     WeightedRRFRetriever,
 )
 from .vector_search import ExactNumpyRetriever, VectorSearch
+from .video_restricted import (
+    VIDEO_CONDITIONED_KEYFRAME_DIVERSITY,
+    VideoConditionedKeyframeConfig,
+    VideoConditionedKeyframeDiversity,
+)
 
 __all__ = [
     "CandidateConstructor",
@@ -16,5 +21,8 @@ __all__ = [
     "QueryVariant",
     "QueryVariantType",
     "VectorSearch",
+    "VIDEO_CONDITIONED_KEYFRAME_DIVERSITY",
+    "VideoConditionedKeyframeConfig",
+    "VideoConditionedKeyframeDiversity",
     "WeightedRRFRetriever",
 ]

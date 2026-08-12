@@ -48,8 +48,12 @@ from system_tai.refinement.engine import ExactFrameRefiner
 from system_tai.refinement.models import Phase3Candidate, RefinementQuery
 from system_tai.refinement.runner import _write_json, _write_refined_csv
 from system_tai.refinement.video import OpenCVVideoDecoder, RawVideoRegistry
-from system_tai.retrieval.multi_query import WeightedRRFRetriever
+from system_tai.retrieval.multi_query import QueryVariantType, WeightedRRFRetriever
 from system_tai.retrieval.vector_search import ExactNumpyRetriever
+from system_tai.retrieval.video_restricted import (
+    VIDEO_CONDITIONED_KEYFRAME_DIVERSITY,
+    VideoConditionedKeyframeDiversity,
+)
 from system_tai.trake.engine import TRAKEEngine
 from system_tai.trake.runtime import TRAKERuntimePipeline
 from system_tai.validation.checkpoint_validator import CheckpointValidator
@@ -129,6 +133,10 @@ class OperationalKISRuntime:
             chunk_size=config.chunk_size,
         )
         self.weighted_rrf = WeightedRRFRetriever(self.exact_retriever)
+        self.video_conditioner = VideoConditionedKeyframeDiversity(
+            self.registry,
+            clock=self.clock,
+        )
         self.refiner = ExactFrameRefiner(
             raw_videos=self.raw_video_registry,
             decoder=self.decoder,
@@ -358,12 +366,66 @@ class OperationalKISRuntime:
         fusion_seconds = self.clock() - fusion_start
         retrieval_seconds = self.clock() - retrieval_start
 
+        conditioned_result = fused_result
+        q3_config = self.config.video_conditioned_keyframe_config
+        q3_enabled = q3_config.enabled
+        q3_trace: Mapping[str, Any] = {
+            "policy": VIDEO_CONDITIONED_KEYFRAME_DIVERSITY,
+            "enabled": False,
+        }
+        selected_video_count = 0
+        restricted_keyframe_rows_scored = 0
+        anchor_count = 0
+        substitution_count = 0
+        selected_videos_with_no_replacement_capacity = 0
+        total_same_video_replacement_slots = 0
+        restricted_search_seconds = 0.0
+        conditioning_seconds = 0.0
+        if q3_enabled:
+            if (
+                len(variants) != 1
+                or variants[0].variant_type is not QueryVariantType.ENGLISH_TRANSLATION
+            ):
+                raise ValueError(
+                    "VIDEO_CONDITIONED_KEYFRAME_DIVERSITY requires exactly one "
+                    "English translation variant"
+                )
+            q3_outcome = self.video_conditioner.condition(
+                global_result=fused_result,
+                query_vector=variant_embeddings[0],
+                config=q3_config,
+            )
+            conditioned_result = q3_outcome.result
+            q3_trace = q3_outcome.trace
+            selected_video_count = q3_outcome.selected_video_count
+            restricted_keyframe_rows_scored = q3_outcome.restricted_keyframe_rows_scored
+            anchor_count = q3_outcome.anchor_count
+            substitution_count = q3_outcome.substitution_count
+            selected_videos_with_no_replacement_capacity = (
+                q3_outcome.selected_videos_with_no_replacement_capacity
+            )
+            total_same_video_replacement_slots = (
+                q3_outcome.total_same_video_replacement_slots
+            )
+            restricted_search_seconds = q3_outcome.restricted_search_seconds
+            conditioning_seconds = q3_outcome.conditioning_seconds
+
         export_start = self.clock()
         top100_jsonl = query_dir / "top100.jsonl"
-        self.exporter.export(fused_result, top100_jsonl)
-        final_kis_result = fused_result
+        self.exporter.export(conditioned_result, top100_jsonl)
+        final_kis_result = conditioned_result
         final_prediction_artifact = top100_jsonl
-        _write_internal_csv((fused_result,), query_dir / "top100.csv")
+        _write_internal_csv((conditioned_result,), query_dir / "top100.csv")
+
+        global_top100_jsonl: Path | None = None
+        q3_trace_json: Path | None = None
+        if q3_enabled:
+            global_top100_jsonl = query_dir / "global_top100.jsonl"
+            self.exporter.export(fused_result, global_top100_jsonl)
+            q3_trace_json = _write_json(
+                query_dir / "video_conditioned_keyframe_trace.json",
+                q3_trace,
+            )
 
         candidates_json = query_dir / "candidates.json"
         candidates_data = {
@@ -371,7 +433,7 @@ class OperationalKISRuntime:
             "request_id": request.request_id,
             "records": [
                 {
-                    "query_id": fused_result.query_id,
+                    "query_id": conditioned_result.query_id,
                     "rank": candidate.rank,
                     "video_id": candidate.video_id,
                     "frame_id": candidate.frame_id,
@@ -384,8 +446,10 @@ class OperationalKISRuntime:
                     ),
                     "clip_row_diagnostic": candidate.clip_row,
                     "keyframe_order_diagnostic": candidate.keyframe_order,
+                    "source": candidate.source,
+                    "q3_policy": (candidate.diagnostic_metadata or {}).get("q3_policy"),
                 }
-                for candidate in fused_result.ranked_candidates
+                for candidate in conditioned_result.ranked_candidates
             ],
         }
         candidates_json.write_text(json.dumps(candidates_data, indent=2) + "\n", encoding="utf-8")
@@ -419,6 +483,17 @@ class OperationalKISRuntime:
                 val_report_path.relative_to(self.output_root)
             ).replace("\\", "/"),
         }
+        if global_top100_jsonl is not None and q3_trace_json is not None:
+            artifacts_dict.update(
+                {
+                    "global_top100_jsonl": str(
+                        global_top100_jsonl.relative_to(self.output_root)
+                    ).replace("\\", "/"),
+                    "video_conditioned_keyframe_trace_json": str(
+                        q3_trace_json.relative_to(self.output_root)
+                    ).replace("\\", "/"),
+                }
+            )
 
         refinement_requested = request.refine_top_n > 0
         refinement_valid: bool | None = None
@@ -464,9 +539,19 @@ class OperationalKISRuntime:
                         ),
                         "clip_row_diagnostic": c.clip_row,
                         "keyframe_order_diagnostic": c.keyframe_order,
+                        "q3_policy": (c.diagnostic_metadata or {}).get("q3_policy"),
+                        "q3_original_frame_id": (c.diagnostic_metadata or {}).get(
+                            "original_frame_id"
+                        ),
+                        "q3_restricted_cosine_score": (
+                            c.diagnostic_metadata or {}
+                        ).get("restricted_cosine_score"),
+                        "q3_restricted_rank": (c.diagnostic_metadata or {}).get(
+                            "restricted_rank"
+                        ),
                     },
                 )
-                for c in fused_result.ranked_candidates
+                for c in conditioned_result.ranked_candidates
             )
             ref_query = RefinementQuery(request.query_id, variants, phase3_candidates)
 
@@ -578,6 +663,11 @@ class OperationalKISRuntime:
             "top_k_per_variant": request.top_k_per_variant,
             "output_top_k": request.output_top_k,
             "refine_top_n": request.refine_top_n,
+            "q3_enabled": q3_enabled,
+            "q3_temporal_policy": (
+                VIDEO_CONDITIONED_KEYFRAME_DIVERSITY if q3_enabled else None
+            ),
+            "q3_config": dataclasses.asdict(q3_config),
             "retrieval_valid": validation.valid,
             "refinement_requested": refinement_requested,
             "refinement_valid": refinement_valid,
@@ -592,6 +682,17 @@ class OperationalKISRuntime:
             "fusion_seconds": fusion_seconds,
             "retrieval_export_seconds": retrieval_export_seconds,
             "retrieval_validation_seconds": retrieval_val_seconds,
+            "q3_enabled": q3_enabled,
+            "selected_video_count": selected_video_count,
+            "restricted_keyframe_rows_scored": restricted_keyframe_rows_scored,
+            "anchor_count": anchor_count,
+            "substitution_count": substitution_count,
+            "selected_videos_with_no_replacement_capacity": (
+                selected_videos_with_no_replacement_capacity
+            ),
+            "total_same_video_replacement_slots": total_same_video_replacement_slots,
+            "restricted_search_seconds": restricted_search_seconds,
+            "conditioning_seconds": conditioning_seconds,
             "refinement_seconds": refinement_seconds,
             "refinement_export_seconds": refinement_export_seconds,
             "refinement_validation_seconds": refinement_val_seconds,
@@ -625,7 +726,8 @@ class OperationalKISRuntime:
             f"- Retrieval valid: `{validation.valid}`",
             f"- Refinement requested: `{refinement_requested}`",
             f"- Refinement valid: `{refinement_valid}`",
-            f"- Result count: {len(fused_result.ranked_candidates)}",
+            f"- Q3 enabled: `{q3_enabled}`",
+            f"- Result count: {len(conditioned_result.ranked_candidates)}",
             f"- Total seconds: {total_seconds:.6f}s",
             "",
         ]
@@ -644,7 +746,7 @@ class OperationalKISRuntime:
             "retrieval_valid": validation.valid,
             "refinement_requested": refinement_requested,
             "refinement_valid": refinement_valid,
-            "result_count": len(fused_result.ranked_candidates),
+            "result_count": len(conditioned_result.ranked_candidates),
             "refined_count": refined_count,
             "artifacts": artifacts_dict,
             "timings": timings_payload,
@@ -999,6 +1101,14 @@ class OperationalKISRuntime:
             "model_load_count": 1,
             "registry_load_count": 1,
             "decoder_initialization_count": 1,
+            "q3_temporal_policy": (
+                VIDEO_CONDITIONED_KEYFRAME_DIVERSITY
+                if self.config.video_conditioned_keyframe_config.enabled
+                else None
+            ),
+            "q3_config": dataclasses.asdict(
+                self.config.video_conditioned_keyframe_config
+            ),
             "registry_load_seconds": self.bootstrap_timings.get("registry_load_seconds", 0.0),
             "model_load_seconds": self.bootstrap_timings.get("model_load_seconds", 0.0),
             "refinement_model_load_seconds": 0.0,

@@ -40,6 +40,10 @@ from system_tai.quality.l21_150_translation import (  # noqa: E402
     KISTranslationSidecarError,
     load_kis_dev_translation_sidecar,
 )
+from system_tai.retrieval.video_restricted import (  # noqa: E402
+    VIDEO_CONDITIONED_KEYFRAME_DIVERSITY,
+    VideoConditionedKeyframeConfig,
+)
 
 FROZEN_Q2_KIS_DEV_EN_SIDECAR_SHA256 = (
     "fa48d7af2001d8d5eca178301736d1409916961f256b4ccb779490d78495ccea"
@@ -319,6 +323,8 @@ def run_l21_150_baseline(
     kis_query_sidecar: KISDevTranslationSidecar | None = None,
     kis_query_sidecar_path: Path | None = None,
     kis_query_sidecar_sha256: str | None = None,
+    q3_temporal_policy: str = "none",
+    q3_config: VideoConditionedKeyframeConfig | None = None,
 ) -> dict[str, Any]:
     if not 1 <= top_k <= 100:
         raise ValueError("top_k must be in [1, 100]")
@@ -334,6 +340,19 @@ def run_l21_150_baseline(
     if kis_query_policy not in supported_kis_policies:
         raise ValueError(
             "kis_query_policy must be vi_only, translation_augmented_rrf, or en_only"
+        )
+    supported_q3_policies = {"none", "video_conditioned_keyframe_diversity"}
+    if q3_temporal_policy not in supported_q3_policies:
+        raise ValueError(
+            "q3_temporal_policy must be none or video_conditioned_keyframe_diversity"
+        )
+    q3_enabled = q3_temporal_policy == "video_conditioned_keyframe_diversity"
+    resolved_q3_config = q3_config or VideoConditionedKeyframeConfig(enabled=q3_enabled)
+    if resolved_q3_config.enabled != q3_enabled:
+        raise ValueError("q3_temporal_policy and q3_config.enabled disagree")
+    if q3_enabled and (split != "dev" or task != "kis" or kis_query_policy != "en_only"):
+        raise ValueError(
+            "VIDEO_CONDITIONED_KEYFRAME_DIVERSITY is restricted to KIS DEV EN_ONLY"
         )
     if kis_query_policy in {"translation_augmented_rrf", "en_only"}:
         if kis_query_sidecar is None:
@@ -360,6 +379,16 @@ def run_l21_150_baseline(
             )
     elif kis_query_sidecar is not None:
         raise ValueError("a KIS query sidecar is not valid with vi_only policy")
+
+    runtime_q3_config = getattr(
+        getattr(runtime, "config", None),
+        "video_conditioned_keyframe_config",
+        None,
+    )
+    if q3_enabled and runtime_q3_config is None:
+        raise ValueError("runtime is missing the enabled Q3 production configuration")
+    if runtime_q3_config is not None and runtime_q3_config != resolved_q3_config:
+        raise ValueError("runtime Q3 configuration does not match experiment Q3 configuration")
 
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
@@ -494,9 +523,13 @@ def run_l21_150_baseline(
         "successful_query_count": success_count,
         "failed_query_count": len(query_summaries) - success_count,
         "task_counts": dict(sorted(task_counts.items())),
-        "production_algorithm_modified": False,
-        "production_algorithm_modified_scope": "CORE_PRODUCTION_IMPLEMENTATION",
-        "core_production_algorithm_modified": False,
+        "production_algorithm_modified": q3_enabled,
+        "production_algorithm_modified_scope": (
+            "KIS_VIDEO_CONDITIONED_KEYFRAME_DIVERSITY"
+            if q3_enabled
+            else "CORE_PRODUCTION_IMPLEMENTATION"
+        ),
+        "core_production_algorithm_modified": q3_enabled,
         "kis_query_policy": resolved_kis_query_policy,
         "query_policy_changed_from_e0": query_policy_changed_from_e0,
         "runtime_contract": "OperationalKISRuntime public task handlers",
@@ -511,6 +544,25 @@ def run_l21_150_baseline(
         },
         "queries": query_summaries,
     }
+    if q3_enabled:
+        metadata.update(
+            {
+                "q3_temporal_policy": VIDEO_CONDITIONED_KEYFRAME_DIVERSITY,
+                "q3_config": {
+                    "selected_video_global_rank_cap": (
+                        resolved_q3_config.selected_video_global_rank_cap
+                    ),
+                    "max_selected_videos": resolved_q3_config.max_selected_videos,
+                    "max_anchors_per_video": resolved_q3_config.max_anchors_per_video,
+                    "minimum_anchor_gap_seconds": (
+                        resolved_q3_config.minimum_anchor_gap_seconds
+                    ),
+                    "preserve_first_video_occurrence": (
+                        resolved_q3_config.preserve_first_video_occurrence
+                    ),
+                },
+            }
+        )
     if kis_query_policy in {"translation_augmented_rrf", "en_only"}:
         assert kis_query_sidecar is not None
         experiment_metadata = {
@@ -570,8 +622,11 @@ def run_l21_150_baseline(
                     "- Duplicate output identities: "
                     f"{metadata['duplicate_output_identity_count']}"
                 ),
-                "- Core production retrieval/ranking implementation changed: `false`",
+                "- Core production retrieval/ranking implementation changed: "
+                f"`{str(q3_enabled).lower()}`",
                 f"- KIS query policy: `{resolved_kis_query_policy}`",
+                "- Q3 temporal policy: "
+                f"`{VIDEO_CONDITIONED_KEYFRAME_DIVERSITY if q3_enabled else 'NONE'}`",
                 (
                     "- Query policy changed from E0: "
                     f"`{str(query_policy_changed_from_e0).lower()}`"
@@ -623,6 +678,15 @@ def build_parser() -> argparse.ArgumentParser:
         default="vi_only",
     )
     parser.add_argument("--kis-query-sidecar", type=Path)
+    parser.add_argument(
+        "--q3-temporal-policy",
+        choices=("none", "video_conditioned_keyframe_diversity"),
+        default="none",
+    )
+    parser.add_argument("--q3-selected-video-global-rank-cap", type=int, default=50)
+    parser.add_argument("--q3-max-selected-videos", type=int, default=50)
+    parser.add_argument("--q3-max-anchors-per-video", type=int, default=3)
+    parser.add_argument("--q3-minimum-anchor-gap-seconds", type=float, default=5.0)
     return parser
 
 
@@ -658,6 +722,14 @@ def main(argv: list[str] | None = None) -> int:
         experiment_id = args.experiment_id or datetime.now(UTC).strftime(
             "l21-150-e0-%Y%m%dT%H%M%SZ"
         )
+        q3_config = VideoConditionedKeyframeConfig(
+            enabled=args.q3_temporal_policy == "video_conditioned_keyframe_diversity",
+            selected_video_global_rank_cap=args.q3_selected_video_global_rank_cap,
+            max_selected_videos=args.q3_max_selected_videos,
+            max_anchors_per_video=args.q3_max_anchors_per_video,
+            minimum_anchor_gap_seconds=args.q3_minimum_anchor_gap_seconds,
+            preserve_first_video_occurrence=True,
+        )
         session_output = args.output_dir / "runtime"
         config = SessionConfig(
             input_root=args.input_root,
@@ -668,6 +740,7 @@ def main(argv: list[str] | None = None) -> int:
             allow_model_download=args.allow_model_download,
             default_output_top_k=args.top_k,
             default_refine_top_n=args.refine_top_n,
+            video_conditioned_keyframe_config=q3_config,
         )
         runtime = OperationalKISRuntime.bootstrap(config)
         try:
@@ -689,6 +762,8 @@ def main(argv: list[str] | None = None) -> int:
                 kis_query_sidecar=kis_sidecar,
                 kis_query_sidecar_path=args.kis_query_sidecar,
                 kis_query_sidecar_sha256=kis_sidecar_sha,
+                q3_temporal_policy=args.q3_temporal_policy,
+                q3_config=q3_config,
             )
         finally:
             runtime.close(shutdown_reason="l21_150_baseline_complete")
