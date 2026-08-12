@@ -77,8 +77,16 @@ class VisualRetriever(BaseRetriever):
         # 1. Encode query text → CLIP vector
         query_vec = self._encoder.encode_text(query, normalize=True)
 
-        # 2. FAISS ANN search (fetch large pool to allow dedup to yield diverse results)
-        search_k = max(top_k * 50, 5000)
+        # 2. FAISS ANN search
+        # When filtering by target_prefix, we need a much larger pool because
+        # a single batch (e.g. L21) may be only ~6% of the full 177K-vector index.
+        # Without a large pool, sparse-match queries return 0 results → IndexError downstream.
+        if target_prefix:
+            # Fetch up to the full index to guarantee prefix coverage
+            n_total = self._faiss_db.total_vectors or 177321
+            search_k = min(n_total, max(top_k * 300, 50000))
+        else:
+            search_k = max(top_k * 50, 5000)
         faiss_ids, scores = self._faiss_db.search(query_vec, top_k=search_k)
 
         # 3. Map faiss_id → KeyframeMeta → SearchResult with Video & Batch Deduplication
@@ -100,8 +108,10 @@ class VisualRetriever(BaseRetriever):
             batch = meta.video_id.split("_")[0]  # e.g. "L25"
 
             # Video-level deduplication
-            if max_per_video > 0:
-                if video_counts.get(meta.video_id, 0) >= max_per_video:
+            # When target_prefix is active (small batch), allow more frames per video
+            effective_mpv = max_per_video if not target_prefix else max(max_per_video, 3)
+            if effective_mpv > 0:
+                if video_counts.get(meta.video_id, 0) >= effective_mpv:
                     continue
 
             # Batch-level deduplication (prevents L25/L26 from monopolising)

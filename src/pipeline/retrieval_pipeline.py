@@ -270,10 +270,14 @@ class RetrievalPipeline:
         # Step 2: Multimodal Candidate Retrieval
         logger.info(f"[Step 2/4 - Candidate Retrieval]")
         vis_results  = self._vis_ret.retrieve(retrieval_text, top_k=self._top_k_ret, target_prefix=target_prefix)
-        logger.info(f"  • Visual Retrieval (CLIP): Retrived {len(vis_results)} candidates (Top 1 score: {vis_results[0].score:.4f} if vis_results else 'N/A')")
+        top1_score = vis_results[0].score if vis_results else 0.0
+        logger.info(f"  • Visual Retrieval (CLIP): {len(vis_results)} candidates (Top 1 score: {top1_score:.4f})")
 
-        all_lists    = [vis_results]
-        all_weights  = [self._visual_weight]
+        all_lists   = []
+        all_weights = []
+        if vis_results:
+            all_lists.append(vis_results)
+            all_weights.append(self._visual_weight)
 
         for text_ret in self._text_rets:
             q_input = kis_query if getattr(text_ret, "name", "") == "ocr_inmemory" else raw_text
@@ -281,7 +285,7 @@ class RetrievalPipeline:
             if txt:
                 all_lists.append(txt)
                 all_weights.append(self._text_weight)
-                logger.info(f"  • Text Retrieval ({getattr(text_ret, 'name', 'text')}): Retrived {len(txt)} candidates")
+                logger.info(f"  • Text Retrieval ({getattr(text_ret, 'name', 'text')}): {len(txt)} candidates")
 
         # Step 3: RRF Fusion & Topic Soft-Scoring
         logger.info(f"[Step 3/4 - Fusion & Topic Soft-Scoring]")
@@ -293,15 +297,19 @@ class RetrievalPipeline:
             topic_boost_weight=0.20,
         )
 
-        # Fallback check
+        # Fallback check — if no candidates at all, bail early
+        if not all_lists:
+            logger.warning(f"[KIS] No retrieval candidates for query_id='{query_id}' (prefix='{target_prefix}') — check index coverage.")
+            return None
+
         if not fused or (fused[0].score < 0.005 and query_topic is not None):
-            logger.info(f"  [FallbackTrigger] Low confidence with topic '{query_topic}' (score={fused[0].score if fused else 0:.4f}) → Triggering Global Unboosted Search")
+            logger.info(f"  [FallbackTrigger] Low confidence (score={fused[0].score if fused else 0:.4f}) → Global Unboosted Search")
             fused = self._rrf.fuse(all_lists, all_weights, top_k=self._top_k_fus, query_topic=None)
         else:
             logger.info(f"  • Topic Soft-Scoring Applied: query_topic='{query_topic}' (Boost: +20%)")
 
         if not fused:
-            logger.warning(f"[KIS] No results for query_id='{query_id}'")
+            logger.warning(f"[KIS] No fused results for query_id='{query_id}'")
             return None
 
         # Step 4: Final Selection
