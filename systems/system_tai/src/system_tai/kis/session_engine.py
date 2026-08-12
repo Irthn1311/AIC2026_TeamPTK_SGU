@@ -394,6 +394,7 @@ class OperationalKISRuntime:
                 global_result=fused_result,
                 query_vector=variant_embeddings[0],
                 config=q3_config,
+                protected_prefix_rank=request.refine_top_n,
             )
             conditioned_result = q3_outcome.result
             q3_trace = q3_outcome.trace

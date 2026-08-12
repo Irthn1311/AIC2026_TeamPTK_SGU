@@ -151,11 +151,13 @@ def test_restricted_ranking_nms_and_slot_substitution_are_deterministic() -> Non
         global_result=original,
         query_vector=np.asarray([1.0, 0.0], dtype=np.float32),
         config=config,
+        protected_prefix_rank=0,
     )
     second = conditioner.condition(
         global_result=original,
         query_vector=np.asarray([1.0, 0.0], dtype=np.float32),
         config=config,
+        protected_prefix_rank=0,
     )
 
     assert first.result == second.result
@@ -187,6 +189,51 @@ def test_restricted_ranking_nms_and_slot_substitution_are_deterministic() -> Non
         anchor["frame_id"] for anchor in video_trace["anchors"]
     )
     assert video_trace["uninserted_anchor_count"] == 1
+
+
+def test_refinement_prefix_protects_top3_but_allows_rank4_substitution() -> None:
+    registry = FeatureStoreRegistry(
+        [
+            _store(
+                "A",
+                [
+                    (100, 0.0, (0.90, 0.10)),
+                    (200, 1.0, (0.80, 0.20)),
+                    (300, 6.0, (1.00, 0.00)),
+                    (700, 12.0, (0.70, 0.30)),
+                ],
+            ),
+            _store("B", [(10, 0.0, (0.10, 0.90))]),
+        ]
+    )
+    original = KISResult(
+        "q",
+        (
+            _candidate("A", 100, 0, 1),
+            _candidate("A", 200, 1, 2),
+            _candidate("B", 10, 0, 3),
+            _candidate("A", 700, 3, 4),
+        ),
+    )
+
+    outcome = VideoConditionedKeyframeDiversity(registry).condition(
+        global_result=original,
+        query_vector=np.asarray([1.0, 0.0], dtype=np.float32),
+        config=VideoConditionedKeyframeConfig(enabled=True),
+        protected_prefix_rank=3,
+    )
+
+    conditioned = outcome.result.ranked_candidates
+    assert conditioned[:3] == original.ranked_candidates[:3]
+    assert conditioned[3].frame_id == 300
+    assert conditioned[3].frame_id != original.ranked_candidates[3].frame_id
+    assert [item.rank for item in conditioned] == [1, 2, 3, 4]
+    assert [item.video_id for item in conditioned] == ["A", "A", "B", "A"]
+    assert len({(item.video_id, item.frame_id) for item in conditioned}) == 4
+    assert outcome.trace["protected_prefix_rank"] == 3
+    assert outcome.trace["protected_replacement_slot_count"] == 1
+    assert outcome.trace["videos"][0]["available_replacement_slot_count"] == 1
+    assert outcome.trace["videos"][0]["protected_replacement_slot_count"] == 1
 
 
 def test_insufficient_same_video_slots_never_steals_another_video_slot() -> None:
@@ -328,4 +375,5 @@ def test_operational_runtime_exports_global_conditioned_and_trace_artifacts(
     assert response["retrieval_valid"] is True
     assert response["timings"]["q3_enabled"] is True
     assert trace["substitution_count"] == 1
+    assert trace["protected_prefix_rank"] == 0
     assert "ground_truth" not in json.dumps(trace).casefold()

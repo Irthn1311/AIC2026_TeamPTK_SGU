@@ -112,14 +112,18 @@ class VideoConditionedKeyframeDiversity:
         global_result: KISResult,
         query_vector: Sequence[float] | NDArray[np.number],
         config: VideoConditionedKeyframeConfig,
+        protected_prefix_rank: int = 0,
     ) -> VideoConditioningOutcome:
         started = self.clock()
+        if type(protected_prefix_rank) is not int or protected_prefix_rank < 0:
+            raise ValueError("protected_prefix_rank must be a non-negative integer")
         if not config.enabled:
             return VideoConditioningOutcome(
                 result=global_result,
                 trace={
                     "policy": VIDEO_CONDITIONED_KEYFRAME_DIVERSITY,
                     "enabled": False,
+                    "protected_prefix_rank": protected_prefix_rank,
                 },
                 selected_video_count=0,
                 restricted_keyframe_rows_scored=0,
@@ -165,6 +169,7 @@ class VideoConditionedKeyframeDiversity:
         substitution_count = 0
         no_capacity_count = 0
         replacement_slot_count = 0
+        protected_replacement_slot_count = 0
 
         for video_id in selected_video_ids:
             store = self.registry.get(video_id)
@@ -175,7 +180,18 @@ class VideoConditionedKeyframeDiversity:
 
             slot_indexes = slots_by_video[video_id]
             first_candidate = global_candidates[slot_indexes[0]]
-            replacement_slots = slot_indexes[1:]
+            later_slots = slot_indexes[1:]
+            protected_replacement_slots = [
+                slot_index
+                for slot_index in later_slots
+                if global_candidates[slot_index].rank <= protected_prefix_rank
+            ]
+            replacement_slots = [
+                slot_index
+                for slot_index in later_slots
+                if global_candidates[slot_index].rank > protected_prefix_rank
+            ]
+            protected_replacement_slot_count += len(protected_replacement_slots)
             replacement_slot_count += len(replacement_slots)
             if not replacement_slots:
                 no_capacity_count += 1
@@ -236,6 +252,9 @@ class VideoConditionedKeyframeDiversity:
                     "restricted_keyframe_rows_scored": store.descriptor.row_count,
                     "output_slot_count": len(slot_indexes),
                     "available_replacement_slot_count": len(replacement_slots),
+                    "protected_replacement_slot_count": len(
+                        protected_replacement_slots
+                    ),
                     "anchors": [self._anchor_payload(anchor) for anchor in anchors],
                     "substitutions": substitutions,
                     "uninserted_anchor_count": max(0, len(anchors) - len(substitutions)),
@@ -263,11 +282,18 @@ class VideoConditionedKeyframeDiversity:
             first_index = slots_by_video[video_id][0]
             if conditioned.ranked_candidates[first_index] != global_candidates[first_index]:
                 raise AssertionError("video conditioning changed a first video occurrence")
+        for index, original in enumerate(global_candidates):
+            if (
+                original.rank <= protected_prefix_rank
+                and conditioned.ranked_candidates[index] != original
+            ):
+                raise AssertionError("video conditioning changed the protected prefix")
 
         conditioning_seconds = self.clock() - started
         trace = {
             "policy": VIDEO_CONDITIONED_KEYFRAME_DIVERSITY,
             "enabled": True,
+            "protected_prefix_rank": protected_prefix_rank,
             "config": {
                 "selected_video_global_rank_cap": config.selected_video_global_rank_cap,
                 "max_selected_videos": config.max_selected_videos,
@@ -282,6 +308,7 @@ class VideoConditionedKeyframeDiversity:
             "substitution_count": substitution_count,
             "selected_videos_with_no_replacement_capacity": no_capacity_count,
             "total_same_video_replacement_slots": replacement_slot_count,
+            "protected_replacement_slot_count": protected_replacement_slot_count,
             "restricted_search_seconds": restricted_seconds,
             "conditioning_seconds": conditioning_seconds,
             "videos": per_video_trace,
