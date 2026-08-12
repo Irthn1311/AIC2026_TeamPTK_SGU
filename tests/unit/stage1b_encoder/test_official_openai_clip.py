@@ -570,6 +570,32 @@ def test_close_releases_owned_clip_source_for_next_runtime_root(tmp_path: Path) 
     second.close()
 
 
+def test_numpy_output_moves_cuda_like_tensor_to_cpu_before_numpy() -> None:
+    from triage_eg.retrieval.stage1b.adapters.openai_clip_official import _numpy_output
+
+    matrix = np.ones((1, 512), dtype=np.float32)
+
+    class CudaLikeTensor:
+        dtype = "torch.float16"
+
+        def detach(self):
+            return self
+
+        def float(self):
+            return self
+
+        def cpu(self):
+            return SimpleNamespace(numpy=lambda: matrix)
+
+        def __array__(self, dtype=None):
+            raise TypeError("CUDA tensor must not be converted before cpu()")
+
+    result, original_dtype, norms = _numpy_output(CudaLikeTensor(), 1)
+    assert result.shape == (1, 512)
+    assert original_dtype == "torch.float16"
+    assert np.allclose(norms, np.sqrt(512.0))
+
+
 def test_official_tokenize_and_text_normalization(tmp_path: Path) -> None:
     adapter, calls, _ = loaded_adapter(tmp_path)
     result = adapter.encode_texts(["hello", "xin chào"])

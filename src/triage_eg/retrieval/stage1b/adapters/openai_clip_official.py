@@ -452,7 +452,10 @@ def _blocked_download_helpers(module: ModuleType) -> Iterator[None]:
 
 def _numpy_output(values: Any, rows: int) -> tuple[np.ndarray, str, np.ndarray]:
     detached = values.detach() if hasattr(values, "detach") else values
-    original_dtype = str(getattr(detached, "dtype", np.asarray(detached).dtype))
+    tensor_dtype = getattr(detached, "dtype", None)
+    original_dtype = (
+        str(tensor_dtype) if tensor_dtype is not None else str(np.asarray(detached).dtype)
+    )
     if hasattr(detached, "float"):
         detached = detached.float()
     if hasattr(detached, "cpu"):

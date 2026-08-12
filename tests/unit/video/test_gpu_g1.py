@@ -234,6 +234,20 @@ def test_audit_indices_cover_beginning_middle_and_end() -> None:
     assert 50 in values and values[-1] == 100
 
 
+def test_representative_video_discovery_ignores_large_keyframe_tree(tmp_path: Path) -> None:
+    from triage_eg.video.g1_audit import representative_videos
+
+    for index, size in enumerate((10, 20, 30)):
+        path = tmp_path / f"Videos_L{index:02d}_a/video/V{index}.mp4"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"x" * size)
+    ignored = tmp_path / "Keyframes_L00_a/keyframes/V0/001.jpg"
+    ignored.parent.mkdir(parents=True)
+    ignored.write_bytes(b"image")
+    selected = representative_videos(tmp_path, limit=2)
+    assert [path.name for path in selected] == ["V0.mp4", "V2.mp4"]
+
+
 def test_vector_parity_reports_ranking_and_numeric_difference() -> None:
     values = np.eye(3, 512, dtype=np.float32)
     result = vector_parity(values, values.copy(), top_k=3)

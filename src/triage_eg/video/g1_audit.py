@@ -20,8 +20,14 @@ from .decoder import OpenCVRawVideoDecoder, create_raw_video_decoder, sampled_fr
 
 def representative_videos(root: str | Path, *, limit: int = 4) -> list[Path]:
     """Select a deterministic bounded spread by file size from real raw videos."""
+    dataset = Path(root)
     paths = sorted(
-        path for path in Path(root).rglob("*") if path.suffix.lower() in {".mp4", ".avi", ".mkv"}
+        {
+            path
+            for pattern in ("Videos_*/video/*", "*/Videos_*/video/*")
+            for path in dataset.glob(pattern)
+            if path.is_file() and path.suffix.lower() in {".mp4", ".avi", ".mkv"}
+        }
     )
     if not paths:
         raise FileNotFoundError(f"NO_RAW_VIDEOS_FOUND: {root}")
