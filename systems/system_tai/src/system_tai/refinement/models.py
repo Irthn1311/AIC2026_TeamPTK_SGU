@@ -89,6 +89,22 @@ class RefinementConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class Q3AnchorRefinementConfig:
+    """Opt-in budget for refining only authoritative Q3 anchor substitutions."""
+
+    enabled: bool = False
+    max_extra_q3_anchors: int = 6
+
+    def __post_init__(self) -> None:
+        if type(self.enabled) is not bool:
+            raise ValueError("enabled must be a boolean")
+        if type(self.max_extra_q3_anchors) is not int or not (
+            1 <= self.max_extra_q3_anchors <= 100
+        ):
+            raise ValueError("max_extra_q3_anchors must be in [1, 100]")
+
+
+@dataclass(frozen=True, slots=True)
 class Phase3Candidate:
     query_id: str
     rank: int

@@ -23,6 +23,7 @@ from system_tai.quality.l21_150_schema import (
     load_l21_150_benchmark,
 )
 from system_tai.quality.l21_150_translation import load_kis_dev_translation_sidecar
+from system_tai.refinement.models import Q3AnchorRefinementConfig
 from system_tai.retrieval.multi_query import QueryLanguage, QueryVariantType
 from system_tai.retrieval.video_restricted import VideoConditionedKeyframeConfig
 
@@ -406,6 +407,49 @@ def test_q3_runner_guard_rejects_non_dev_kis_en_only_use(
             kis_query_policy=policy,
             q3_temporal_policy="video_conditioned_keyframe_diversity",
             q3_config=VideoConditionedKeyframeConfig(enabled=True),
+        )
+
+
+def test_q3_anchor_runner_flags_default_off_and_require_refinement_prefix(
+    tmp_path: Path,
+) -> None:
+    defaults = RUNNER.build_parser().parse_args(
+        [
+            "--benchmark",
+            str(BENCHMARK_PATH),
+            "--reuse-manifest",
+            str(tmp_path / "manifest.json"),
+            "--output-dir",
+            str(tmp_path),
+        ]
+    )
+    assert defaults.q3_anchor_raw_refinement is False
+    assert defaults.q3_max_extra_raw_anchors == 6
+
+    benchmark = load_l21_150_benchmark(BENCHMARK_PATH)
+    sidecar = load_kis_dev_translation_sidecar(SIDECAR_PATH, benchmark, BENCHMARK_PATH)
+    with pytest.raises(ValueError, match="refine_top_n > 0"):
+        RUNNER.run_l21_150_baseline(
+            benchmark,
+            _FakeRuntime(tmp_path / "runtime"),
+            tmp_path / "run",
+            experiment_id="q3-anchor-invalid",
+            split="dev",
+            task="kis",
+            top_k=100,
+            refine_top_n=0,
+            resume=False,
+            fail_fast=True,
+            benchmark_sha256=hashlib.sha256(BENCHMARK_PATH.read_bytes()).hexdigest(),
+            manifest_sha256=None,
+            gt_policy="proposed",
+            kis_query_policy="en_only",
+            kis_query_sidecar=sidecar,
+            kis_query_sidecar_path=SIDECAR_PATH,
+            kis_query_sidecar_sha256=hashlib.sha256(SIDECAR_PATH.read_bytes()).hexdigest(),
+            q3_temporal_policy="video_conditioned_keyframe_diversity",
+            q3_config=VideoConditionedKeyframeConfig(enabled=True),
+            q3_anchor_refinement_config=Q3AnchorRefinementConfig(enabled=True),
         )
 
 def _abc_report(

@@ -40,6 +40,7 @@ from system_tai.quality.l21_150_translation import (  # noqa: E402
     KISTranslationSidecarError,
     load_kis_dev_translation_sidecar,
 )
+from system_tai.refinement.models import Q3AnchorRefinementConfig  # noqa: E402
 from system_tai.retrieval.video_restricted import (  # noqa: E402
     VIDEO_CONDITIONED_KEYFRAME_DIVERSITY,
     VideoConditionedKeyframeConfig,
@@ -325,6 +326,7 @@ def run_l21_150_baseline(
     kis_query_sidecar_sha256: str | None = None,
     q3_temporal_policy: str = "none",
     q3_config: VideoConditionedKeyframeConfig | None = None,
+    q3_anchor_refinement_config: Q3AnchorRefinementConfig | None = None,
 ) -> dict[str, Any]:
     if not 1 <= top_k <= 100:
         raise ValueError("top_k must be in [1, 100]")
@@ -353,6 +355,20 @@ def run_l21_150_baseline(
     if q3_enabled and (split != "dev" or task != "kis" or kis_query_policy != "en_only"):
         raise ValueError(
             "VIDEO_CONDITIONED_KEYFRAME_DIVERSITY is restricted to KIS DEV EN_ONLY"
+        )
+    resolved_q3_anchor_config = (
+        q3_anchor_refinement_config or Q3AnchorRefinementConfig()
+    )
+    if resolved_q3_anchor_config.enabled and (
+        not q3_enabled
+        or split != "dev"
+        or task != "kis"
+        or kis_query_policy != "en_only"
+        or refine_top_n <= 0
+    ):
+        raise ValueError(
+            "Q3 anchor raw refinement requires KIS DEV EN_ONLY, enabled Q3, "
+            "and refine_top_n > 0"
         )
     if kis_query_policy in {"translation_augmented_rrf", "en_only"}:
         if kis_query_sidecar is None:
@@ -389,6 +405,17 @@ def run_l21_150_baseline(
         raise ValueError("runtime is missing the enabled Q3 production configuration")
     if runtime_q3_config is not None and runtime_q3_config != resolved_q3_config:
         raise ValueError("runtime Q3 configuration does not match experiment Q3 configuration")
+    runtime_q3_anchor_config = getattr(
+        getattr(runtime, "config", None),
+        "q3_anchor_refinement_config",
+        None,
+    )
+    if runtime_q3_anchor_config is not None and (
+        runtime_q3_anchor_config != resolved_q3_anchor_config
+    ):
+        raise ValueError(
+            "runtime Q3 anchor configuration does not match experiment configuration"
+        )
 
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
@@ -525,7 +552,9 @@ def run_l21_150_baseline(
         "task_counts": dict(sorted(task_counts.items())),
         "production_algorithm_modified": q3_enabled,
         "production_algorithm_modified_scope": (
-            "KIS_VIDEO_CONDITIONED_KEYFRAME_DIVERSITY"
+            "KIS_Q3_ANCHOR_AWARE_RAW_REFINEMENT"
+            if resolved_q3_anchor_config.enabled
+            else "KIS_VIDEO_CONDITIONED_KEYFRAME_DIVERSITY"
             if q3_enabled
             else "CORE_PRODUCTION_IMPLEMENTATION"
         ),
@@ -548,6 +577,13 @@ def run_l21_150_baseline(
         metadata.update(
             {
                 "q3_temporal_policy": VIDEO_CONDITIONED_KEYFRAME_DIVERSITY,
+                "q3_protected_prefix_rank": refine_top_n,
+                "q3_anchor_refinement": {
+                    "enabled": resolved_q3_anchor_config.enabled,
+                    "max_extra_q3_anchors": (
+                        resolved_q3_anchor_config.max_extra_q3_anchors
+                    ),
+                },
                 "q3_config": {
                     "selected_video_global_rank_cap": (
                         resolved_q3_config.selected_video_global_rank_cap
@@ -687,6 +723,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--q3-max-selected-videos", type=int, default=50)
     parser.add_argument("--q3-max-anchors-per-video", type=int, default=3)
     parser.add_argument("--q3-minimum-anchor-gap-seconds", type=float, default=5.0)
+    parser.add_argument("--q3-anchor-raw-refinement", action="store_true")
+    parser.add_argument("--q3-max-extra-raw-anchors", type=int, default=6)
     return parser
 
 
@@ -730,6 +768,10 @@ def main(argv: list[str] | None = None) -> int:
             minimum_anchor_gap_seconds=args.q3_minimum_anchor_gap_seconds,
             preserve_first_video_occurrence=True,
         )
+        q3_anchor_config = Q3AnchorRefinementConfig(
+            enabled=args.q3_anchor_raw_refinement,
+            max_extra_q3_anchors=args.q3_max_extra_raw_anchors,
+        )
         session_output = args.output_dir / "runtime"
         config = SessionConfig(
             input_root=args.input_root,
@@ -741,6 +783,7 @@ def main(argv: list[str] | None = None) -> int:
             default_output_top_k=args.top_k,
             default_refine_top_n=args.refine_top_n,
             video_conditioned_keyframe_config=q3_config,
+            q3_anchor_refinement_config=q3_anchor_config,
         )
         runtime = OperationalKISRuntime.bootstrap(config)
         try:
@@ -764,6 +807,7 @@ def main(argv: list[str] | None = None) -> int:
                 kis_query_sidecar_sha256=kis_sidecar_sha,
                 q3_temporal_policy=args.q3_temporal_policy,
                 q3_config=q3_config,
+                q3_anchor_refinement_config=q3_anchor_config,
             )
         finally:
             runtime.close(shutdown_reason="l21_150_baseline_complete")

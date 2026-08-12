@@ -3,6 +3,7 @@
 from system_tai.refinement.models import (
     CandidateFailurePolicy,
     MissingRawVideoPolicy,
+    Q3AnchorRefinementConfig,
     RefinementConfig,
     RefinementStatus,
 )
@@ -10,6 +11,7 @@ from system_tai.refinement.models import (
 __all__ = [
     "CandidateFailurePolicy",
     "MissingRawVideoPolicy",
+    "Q3AnchorRefinementConfig",
     "RefinementConfig",
     "RefinementStatus",
 ]

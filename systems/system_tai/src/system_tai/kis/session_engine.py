@@ -44,8 +44,12 @@ from system_tai.preliminary.runtime_bridge import (
     trake_predictions_to_top100_query,
 )
 from system_tai.qa.runtime import QARuntimePipeline
-from system_tai.refinement.engine import ExactFrameRefiner
+from system_tai.refinement.engine import ExactFrameRefiner, FrameEmbeddingCache
 from system_tai.refinement.models import Phase3Candidate, RefinementQuery
+from system_tai.refinement.q3_anchor import (
+    integrate_q3_anchor_refinements,
+    select_q3_anchor_candidates,
+)
 from system_tai.refinement.runner import _write_json, _write_refined_csv
 from system_tai.refinement.video import OpenCVVideoDecoder, RawVideoRegistry
 from system_tai.retrieval.multi_query import QueryVariantType, WeightedRRFRetriever
@@ -522,6 +526,26 @@ class OperationalKISRuntime:
         fine_score_seconds = 0.0
         fine_fusion_seconds = 0.0
         candidate_total_seconds = 0.0
+        q3_anchor_config = self.config.q3_anchor_refinement_config
+        q3_anchor_enabled = q3_anchor_config.enabled
+        eligible_q3_anchor_count = 0
+        selected_q3_anchor_count = 0
+        selected_q3_video_count = 0
+        q3_anchor_refined_count = 0
+        q3_anchor_kept_original_count = 0
+        q3_anchor_collision_skip_count = 0
+        q3_anchor_failure_count = 0
+        q3_anchor_refinement_seconds = 0.0
+        unique_q3_coarse_frame_count = 0
+        unique_q3_fine_frame_count = 0
+        frame_embedding_cache_hit_count = 0
+        frame_embedding_cache_miss_count = 0
+        merged_temporal_region_count = 0
+        q3_anchor_trace_json: Path | None = None
+        frame_embedding_cache: FrameEmbeddingCache = {}
+
+        if q3_anchor_enabled and not refinement_requested:
+            raise ValueError("Q3 anchor refinement requires refine_top_n > 0")
 
         if refinement_requested:
             ref_start = self.clock()
@@ -550,6 +574,7 @@ class OperationalKISRuntime:
                         "q3_restricted_rank": (c.diagnostic_metadata or {}).get(
                             "restricted_rank"
                         ),
+                        "candidate_source": c.source,
                     },
                 )
                 for c in conditioned_result.ranked_candidates
@@ -563,19 +588,106 @@ class OperationalKISRuntime:
                     top_candidates_to_refine=request.refine_top_n,
                 )
 
-            outcome = self.refiner.refine_query(
-                ref_query,
-                exec_ref_config,
-                precomputed_text_embeddings=variant_embeddings,
-            )
+            if q3_anchor_enabled:
+                outcome = self.refiner.refine_query(
+                    ref_query,
+                    exec_ref_config,
+                    precomputed_text_embeddings=variant_embeddings,
+                    frame_embedding_cache=frame_embedding_cache,
+                )
+            else:
+                outcome = self.refiner.refine_query(
+                    ref_query,
+                    exec_ref_config,
+                    precomputed_text_embeddings=variant_embeddings,
+                )
             refinement_seconds = self.clock() - ref_start
+
+            final_kis_result = outcome.result
+            if q3_anchor_enabled:
+                raw_available_candidates = tuple(
+                    candidate
+                    for candidate in phase3_candidates
+                    if (
+                        raw_path := self.raw_video_registry.get(
+                            candidate.video_id
+                        ).raw_video_path
+                    )
+                    is not None
+                    and raw_path.is_file()
+                )
+                selection = select_q3_anchor_candidates(
+                    raw_available_candidates,
+                    protected_prefix_rank=request.refine_top_n,
+                    max_extra_q3_anchors=q3_anchor_config.max_extra_q3_anchors,
+                )
+                eligible_q3_anchor_count = len(selection.eligible)
+                selected_q3_anchor_count = len(selection.selected)
+                selected_q3_video_count = len(
+                    {candidate.video_id for candidate in selection.selected}
+                )
+                selected_outcome = self.refiner.refine_selected_candidates(
+                    query_id=request.query_id,
+                    variants=variants,
+                    candidates=selection.selected,
+                    config=exec_ref_config,
+                    precomputed_text_embeddings=variant_embeddings,
+                    frame_embedding_cache=frame_embedding_cache,
+                )
+                integration = integrate_q3_anchor_refinements(
+                    outcome.result,
+                    selected_outcome.candidates,
+                )
+                final_kis_result = integration.result
+                q3_anchor_refined_count = integration.refined_count
+                q3_anchor_kept_original_count = integration.kept_original_count
+                q3_anchor_collision_skip_count = integration.collision_skip_count
+                q3_anchor_failure_count = integration.failure_count
+                q3_anchor_refinement_seconds = float(
+                    selected_outcome.timings["q3_anchor_refinement_seconds"]
+                )
+                unique_q3_coarse_frame_count = int(
+                    selected_outcome.timings["unique_q3_coarse_frame_count"]
+                )
+                unique_q3_fine_frame_count = int(
+                    selected_outcome.timings["unique_q3_fine_frame_count"]
+                )
+                frame_embedding_cache_hit_count = int(
+                    selected_outcome.timings["frame_embedding_cache_hit_count"]
+                )
+                frame_embedding_cache_miss_count = int(
+                    selected_outcome.timings["frame_embedding_cache_miss_count"]
+                )
+                merged_temporal_region_count = int(
+                    selected_outcome.timings["merged_temporal_region_count"]
+                )
+                q3_anchor_trace_json = _write_json(
+                    query_dir / "q3_anchor_refinement_trace.json",
+                    {
+                        "query_id": request.query_id,
+                        "enabled": True,
+                        "protected_prefix_rank": request.refine_top_n,
+                        "max_extra_q3_anchors": q3_anchor_config.max_extra_q3_anchors,
+                        "eligible_candidate_ranks": [
+                            candidate.rank for candidate in selection.eligible
+                        ],
+                        "selected_candidate_ranks": [
+                            candidate.rank for candidate in selection.selected
+                        ],
+                        "records": selected_outcome.candidates,
+                        "warnings": selected_outcome.warnings,
+                        "timings": selected_outcome.timings,
+                        "integration": integration,
+                    },
+                )
 
             ref_export_start = self.clock()
             refined_jsonl = query_dir / "refined_top100.jsonl"
-            self.exporter.export(outcome.result, refined_jsonl)
-            final_kis_result = outcome.result
+            self.exporter.export(final_kis_result, refined_jsonl)
             final_prediction_artifact = refined_jsonl
-            refined_csv = _write_refined_csv((outcome.result,), query_dir / "refined_top100.csv")
+            refined_csv = _write_refined_csv(
+                (final_kis_result,), query_dir / "refined_top100.csv"
+            )
             ref_cand_json = _write_json(
                 query_dir / "refinement_candidates.json",
                 outcome.candidates,
@@ -640,6 +752,10 @@ class OperationalKISRuntime:
                     ).replace("\\", "/"),
                 }
             )
+            if q3_anchor_trace_json is not None:
+                artifacts_dict["q3_anchor_refinement_trace_json"] = str(
+                    q3_anchor_trace_json.relative_to(self.output_root)
+                ).replace("\\", "/")
 
         canonical_kis_query = kis_result_to_top100_query(final_kis_result)
         audit_runtime_top100_artifact(
@@ -669,6 +785,7 @@ class OperationalKISRuntime:
                 VIDEO_CONDITIONED_KEYFRAME_DIVERSITY if q3_enabled else None
             ),
             "q3_config": dataclasses.asdict(q3_config),
+            "q3_anchor_refinement_config": dataclasses.asdict(q3_anchor_config),
             "retrieval_valid": validation.valid,
             "refinement_requested": refinement_requested,
             "refinement_valid": refinement_valid,
@@ -694,6 +811,20 @@ class OperationalKISRuntime:
             "total_same_video_replacement_slots": total_same_video_replacement_slots,
             "restricted_search_seconds": restricted_search_seconds,
             "conditioning_seconds": conditioning_seconds,
+            "q3_anchor_refinement_enabled": q3_anchor_enabled,
+            "eligible_q3_anchor_count": eligible_q3_anchor_count,
+            "selected_q3_anchor_count": selected_q3_anchor_count,
+            "selected_q3_video_count": selected_q3_video_count,
+            "q3_anchor_refined_count": q3_anchor_refined_count,
+            "q3_anchor_kept_original_count": q3_anchor_kept_original_count,
+            "q3_anchor_collision_skip_count": q3_anchor_collision_skip_count,
+            "q3_anchor_failure_count": q3_anchor_failure_count,
+            "q3_anchor_refinement_seconds": q3_anchor_refinement_seconds,
+            "unique_q3_coarse_frame_count": unique_q3_coarse_frame_count,
+            "unique_q3_fine_frame_count": unique_q3_fine_frame_count,
+            "frame_embedding_cache_hit_count": frame_embedding_cache_hit_count,
+            "frame_embedding_cache_miss_count": frame_embedding_cache_miss_count,
+            "merged_temporal_region_count": merged_temporal_region_count,
             "refinement_seconds": refinement_seconds,
             "refinement_export_seconds": refinement_export_seconds,
             "refinement_validation_seconds": refinement_val_seconds,
@@ -728,6 +859,7 @@ class OperationalKISRuntime:
             f"- Refinement requested: `{refinement_requested}`",
             f"- Refinement valid: `{refinement_valid}`",
             f"- Q3 enabled: `{q3_enabled}`",
+            f"- Q3 anchor refinement enabled: `{q3_anchor_enabled}`",
             f"- Result count: {len(conditioned_result.ranked_candidates)}",
             f"- Total seconds: {total_seconds:.6f}s",
             "",
@@ -1109,6 +1241,9 @@ class OperationalKISRuntime:
             ),
             "q3_config": dataclasses.asdict(
                 self.config.video_conditioned_keyframe_config
+            ),
+            "q3_anchor_refinement_config": dataclasses.asdict(
+                self.config.q3_anchor_refinement_config
             ),
             "registry_load_seconds": self.bootstrap_timings.get("registry_load_seconds", 0.0),
             "model_load_seconds": self.bootstrap_timings.get("model_load_seconds", 0.0),

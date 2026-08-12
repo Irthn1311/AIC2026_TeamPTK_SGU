@@ -16,6 +16,8 @@ from system_tai.data.corpus_discovery import CorpusManifest, DiscoveredVideo, _f
 from system_tai.features.btc_clip_store import FeatureStoreRegistry, LoadedVideoFeatureStore
 from system_tai.kis.session_engine import OperationalKISRuntime
 from system_tai.kis.session_schema import QueryRequest, SessionConfig
+from system_tai.refinement.models import Q3AnchorRefinementConfig, RefinementConfig
+from system_tai.refinement.video import DecodedFrame, DecodeResult, VideoProbe
 from system_tai.retrieval.video_restricted import (
     VIDEO_CONDITIONED_KEYFRAME_DIVERSITY,
     VideoConditionedKeyframeConfig,
@@ -271,10 +273,32 @@ class _Encoder:
         return np.asarray([[1.0, 0.0] for _ in texts], dtype=np.float32)
 
     def encode_images(self, images: list[Any], *, batch_size: int = 32) -> np.ndarray:
-        raise AssertionError((images, batch_size))
+        del batch_size
+        return np.asarray([[1.0, int(image) / 100.0] for image in images], dtype=np.float32)
 
 
 class _UnusedDecoder:
+    backend_identifier = "fake-absolute"
+
+    def probe(self, record):
+        return VideoProbe(
+            record.video_id,
+            record.raw_video_path,
+            self.backend_identifier,
+            1.0,
+            200,
+            8,
+            8,
+            200.0,
+        )
+
+    def decode(self, request):
+        frames = tuple(
+            DecodedFrame(frame_id, float(frame_id), frame_id)
+            for frame_id in request.frame_ids
+        )
+        return DecodeResult(frames, len(frames), 0.0, 0.0, self.backend_identifier, ())
+
     def close(self) -> None:
         pass
 
@@ -374,6 +398,107 @@ def test_operational_runtime_exports_global_conditioned_and_trace_artifacts(
     assert [row["rank"] for row in conditioned_records] == [1, 2, 3]
     assert response["retrieval_valid"] is True
     assert response["timings"]["q3_enabled"] is True
+    assert response["timings"]["q3_anchor_refinement_enabled"] is False
     assert trace["substitution_count"] == 1
     assert trace["protected_prefix_rank"] == 0
+    assert "q3_anchor_refinement_trace_json" not in artifacts
+    assert "ground_truth" not in json.dumps(trace).casefold()
+
+
+def test_operational_runtime_q3_anchor_refinement_is_opt_in_and_same_slot(
+    tmp_path: Path,
+) -> None:
+    mapping = tmp_path / "A.csv"
+    mapping.write_text(
+        "n,pts_time,fps,frame_idx\n"
+        "1,0,1,0\n"
+        "2,10,1,10\n"
+        "3,20,1,20\n"
+        "4,100,1,100\n",
+        encoding="utf-8",
+    )
+    clip = tmp_path / "A.npy"
+    np.save(
+        clip,
+        np.asarray([[1.0, 0.0], [0.9, 0.1], [0.8, 0.2], [0.7, 0.3]], dtype=np.float32),
+    )
+    keyframes = tmp_path / "keyframes"
+    keyframes.mkdir()
+    (keyframes / "1.jpg").touch()
+    raw_video = tmp_path / "A.mp4"
+    raw_video.touch()
+    discovered = DiscoveredVideo(
+        "A",
+        mapping,
+        clip,
+        keyframes,
+        raw_video,
+        1,
+        4,
+        mapping.stat().st_size,
+        clip.stat().st_size,
+        4,
+    )
+    manifest = CorpusManifest(tmp_path, tmp_path, _fingerprint((discovered,)), (discovered,))
+    manifest_path = tmp_path / "feature_manifest.json"
+    manifest.write(manifest_path)
+    output = tmp_path / "out"
+    runtime = OperationalKISRuntime.bootstrap(
+        SessionConfig(
+            input_root=tmp_path,
+            reuse_manifest=manifest_path,
+            output_root=output,
+            device="cpu",
+            refinement_config=RefinementConfig(
+                top_candidates_to_refine=1,
+                window_before_seconds=1,
+                window_after_seconds=1,
+                coarse_stride_frames=1,
+                coarse_top_n=1,
+                fine_radius_frames=0,
+                fine_stride_frames=1,
+                max_decoded_frames_per_candidate=10,
+            ),
+            video_conditioned_keyframe_config=VideoConditionedKeyframeConfig(enabled=True),
+            q3_anchor_refinement_config=Q3AnchorRefinementConfig(enabled=True),
+        ),
+        registry_loader=lambda path: FeatureStoreRegistry.from_manifest(
+            path, expected_dimension=2
+        ),
+        encoder_factory=lambda **_kwargs: _Encoder(),
+        decoder_factory=_UnusedDecoder,
+    )
+    try:
+        response = runtime.handle_query(
+            QueryRequest(
+                "request-q3-anchor",
+                "q",
+                "nguồn",
+                query_en="english",
+                include_vi_variant=False,
+                top_k_per_variant=3,
+                output_top_k=3,
+                refine_top_n=1,
+            )
+        )
+    finally:
+        runtime.close()
+
+    assert response["timings"]["q3_anchor_refinement_enabled"] is True
+    assert response["timings"]["selected_q3_anchor_count"] == 1
+    assert response["timings"]["q3_anchor_refined_count"] == 1
+    assert "q3_anchor_refinement_trace_json" in response["artifacts"]
+    records = [
+        json.loads(line)
+        for line in (
+            output / response["artifacts"]["refined_top100_jsonl"]
+        ).read_text(encoding="utf-8").splitlines()
+    ]
+    assert [item["rank"] for item in records] == [1, 2, 3]
+    assert [item["video_id"] for item in records] == ["A", "A", "A"]
+    trace = json.loads(
+        (
+            output / response["artifacts"]["q3_anchor_refinement_trace_json"]
+        ).read_text(encoding="utf-8")
+    )
     assert "ground_truth" not in json.dumps(trace).casefold()

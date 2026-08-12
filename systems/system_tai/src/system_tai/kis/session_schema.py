@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from system_tai.refinement.models import RefinementConfig
+from system_tai.refinement.models import Q3AnchorRefinementConfig, RefinementConfig
 from system_tai.retrieval.multi_query import (
     QueryLanguage,
     QueryVariant,
@@ -65,6 +65,9 @@ class SessionConfig:
     video_conditioned_keyframe_config: VideoConditionedKeyframeConfig = field(
         default_factory=VideoConditionedKeyframeConfig
     )
+    q3_anchor_refinement_config: Q3AnchorRefinementConfig = field(
+        default_factory=Q3AnchorRefinementConfig
+    )
 
     def __post_init__(self) -> None:
         if self.reuse_manifest is not None and self.manifest_cache is not None:
@@ -91,6 +94,15 @@ class SessionConfig:
                 "video_conditioned_keyframe_config must be "
                 "VideoConditionedKeyframeConfig"
             )
+        if not isinstance(self.q3_anchor_refinement_config, Q3AnchorRefinementConfig):
+            raise ValueError(
+                "q3_anchor_refinement_config must be Q3AnchorRefinementConfig"
+            )
+        if (
+            self.q3_anchor_refinement_config.enabled
+            and not self.video_conditioned_keyframe_config.enabled
+        ):
+            raise ValueError("Q3 anchor refinement requires Q3 keyframe conditioning")
 
 
 @dataclass(frozen=True, slots=True)

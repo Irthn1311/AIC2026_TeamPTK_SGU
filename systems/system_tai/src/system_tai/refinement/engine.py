@@ -105,6 +105,22 @@ class QueryRefinementOutcome:
     timings: Mapping[str, float | int]
 
 
+@dataclass(frozen=True, slots=True)
+class SelectedRefinementOutcome:
+    candidates: tuple[RefinedCandidate, ...]
+    warnings: tuple[str, ...]
+    timings: Mapping[str, float | int]
+
+
+@dataclass(frozen=True, slots=True)
+class _SelectedAnchorWork:
+    candidate: Phase3Candidate
+    probe: VideoProbe
+    window_start: int
+    window_end: int
+    coarse_ids: tuple[int, ...]
+
+
 def build_frame_window(
     candidate_frame_id: int,
     *,
@@ -378,6 +394,346 @@ class ExactFrameRefiner:
             warnings=tuple(sorted(set(warnings))),
             timings=timings,
         )
+
+    def refine_selected_candidates(
+        self,
+        *,
+        query_id: str,
+        variants: tuple[QueryVariant, ...],
+        candidates: tuple[Phase3Candidate, ...],
+        config: RefinementConfig,
+        precomputed_text_embeddings: NDArray[np.float32],
+        frame_embedding_cache: FrameEmbeddingCache,
+    ) -> SelectedRefinementOutcome:
+        """Refine an explicit bounded candidate set with grouped video regions."""
+        started = self.clock()
+        if not query_id.strip() or not variants:
+            raise ValueError("selected refinement requires query_id and variants")
+        if any(candidate.query_id != query_id for candidate in candidates):
+            raise ValueError("selected refinement candidate query_id mismatch")
+        ranks = [candidate.rank for candidate in candidates]
+        if len(ranks) != len(set(ranks)):
+            raise ValueError("selected refinement candidate ranks must be unique")
+        if precomputed_text_embeddings.dtype != np.float32:
+            raise ValueError("precomputed_text_embeddings must be float32")
+        if precomputed_text_embeddings.shape != (
+            len(variants),
+            self.encoder.dimension,
+        ):
+            raise ValueError("precomputed_text_embeddings shape mismatch")
+        if not np.isfinite(precomputed_text_embeddings).all() or np.any(
+            np.linalg.norm(precomputed_text_embeddings, axis=1) <= 0
+        ):
+            raise ValueError("precomputed_text_embeddings must be finite and non-zero")
+
+        records: list[RefinedCandidate] = []
+        warnings: list[str] = []
+        metrics: dict[str, float | int] = {
+            "q3_anchor_refinement_seconds": 0.0,
+            "unique_q3_coarse_frame_count": 0,
+            "unique_q3_fine_frame_count": 0,
+            "frame_embedding_cache_hit_count": 0,
+            "frame_embedding_cache_miss_count": 0,
+            "merged_temporal_region_count": 0,
+            "decoded_frame_count": 0,
+            "encoded_image_count": 0,
+        }
+        by_video: dict[str, list[Phase3Candidate]] = {}
+        for candidate in sorted(candidates, key=lambda item: item.rank):
+            by_video.setdefault(candidate.video_id, []).append(candidate)
+
+        for video_id in sorted(by_video):
+            video_candidates = tuple(by_video[video_id])
+            try:
+                raw_record = self.raw_videos.get(video_id)
+            except Exception as exc:
+                for candidate in video_candidates:
+                    records.append(self._handle_candidate_failure(candidate, exc, config))
+                continue
+            if raw_record.raw_video_path is None:
+                records.extend(
+                    self._handle_missing_raw(candidate, raw_record, config)
+                    for candidate in video_candidates
+                )
+                continue
+            try:
+                probe = self._probe_cache.get(video_id)
+                if probe is None:
+                    probe = self.decoder.probe(raw_record)
+                    self._probe_cache[video_id] = probe
+                works = tuple(
+                    self._selected_anchor_work(candidate, probe, config)
+                    for candidate in video_candidates
+                )
+            except Exception as exc:
+                records.extend(
+                    self._handle_candidate_failure(
+                        candidate,
+                        exc,
+                        config,
+                        raw_video_path=raw_record.raw_video_path,
+                    )
+                    for candidate in video_candidates
+                )
+                continue
+
+            regions = self._merge_selected_regions(
+                works,
+                max_span=config.max_decoded_frames_per_candidate,
+            )
+            metrics["merged_temporal_region_count"] += len(regions)
+            for region in regions:
+                try:
+                    region_records, region_metrics = self._refine_selected_region(
+                        region,
+                        variants=variants,
+                        text_embeddings=precomputed_text_embeddings,
+                        config=config,
+                        frame_embedding_cache=frame_embedding_cache,
+                    )
+                    records.extend(region_records)
+                    for key, value in region_metrics.items():
+                        metrics[key] += value
+                except Exception as exc:
+                    records.extend(
+                        self._handle_candidate_failure(
+                            work.candidate,
+                            exc,
+                            config,
+                            raw_video_path=work.probe.raw_video_path,
+                        )
+                        for work in region
+                    )
+
+        ordered_records = tuple(sorted(records, key=lambda item: item.original_candidate_rank))
+        for record in ordered_records:
+            warnings.extend(record.warnings)
+        metrics["q3_anchor_refinement_seconds"] = self.clock() - started
+        return SelectedRefinementOutcome(
+            candidates=ordered_records,
+            warnings=tuple(sorted(set(warnings))),
+            timings=metrics,
+        )
+
+    @staticmethod
+    def _selected_anchor_work(
+        candidate: Phase3Candidate,
+        probe: VideoProbe,
+        config: RefinementConfig,
+    ) -> _SelectedAnchorWork:
+        start, end = build_frame_window(
+            candidate.frame_id,
+            fps=probe.fps,
+            total_frame_count=probe.total_frame_count,
+            before_seconds=config.window_before_seconds,
+            after_seconds=config.window_after_seconds,
+        )
+        return _SelectedAnchorWork(
+            candidate=candidate,
+            probe=probe,
+            window_start=start,
+            window_end=end,
+            coarse_ids=coarse_frame_ids(
+                start,
+                end,
+                stride=config.coarse_stride_frames,
+                candidate_frame_id=candidate.frame_id,
+            ),
+        )
+
+    @staticmethod
+    def _merge_selected_regions(
+        works: tuple[_SelectedAnchorWork, ...],
+        *,
+        max_span: int,
+    ) -> tuple[tuple[_SelectedAnchorWork, ...], ...]:
+        regions: list[list[_SelectedAnchorWork]] = []
+        for work in sorted(
+            works,
+            key=lambda item: (
+                item.window_start,
+                item.window_end,
+                item.candidate.rank,
+            ),
+        ):
+            if not regions:
+                regions.append([work])
+                continue
+            current = regions[-1]
+            merged_start = min(item.window_start for item in current)
+            merged_end = max(item.window_end for item in current)
+            candidate_end = max(merged_end, work.window_end)
+            if (
+                work.window_start <= merged_end + 1
+                and candidate_end - merged_start + 1 <= max_span
+            ):
+                current.append(work)
+            else:
+                regions.append([work])
+        return tuple(tuple(region) for region in regions)
+
+    def _decode_selected_frames(
+        self,
+        *,
+        probe: VideoProbe,
+        frame_ids: tuple[int, ...],
+        config: RefinementConfig,
+        coarse: bool,
+    ) -> Any:
+        request = DecodeRequest(
+            probe=probe,
+            frame_ids=frame_ids,
+            max_decoded_frames=config.max_decoded_frames_per_candidate,
+        )
+        if (
+            coarse
+            and config.coarse_decode_strategy == "sparse-verified"
+            and hasattr(self.decoder, "decode_sparse_verified")
+        ):
+            return self.decoder.decode_sparse_verified(request, fallback_to_sequential=True)
+        return self.decoder.decode(request)
+
+    def _refine_selected_region(
+        self,
+        region: tuple[_SelectedAnchorWork, ...],
+        *,
+        variants: tuple[QueryVariant, ...],
+        text_embeddings: NDArray[np.float32],
+        config: RefinementConfig,
+        frame_embedding_cache: FrameEmbeddingCache,
+    ) -> tuple[tuple[RefinedCandidate, ...], dict[str, int]]:
+        probe = region[0].probe
+        video_id = region[0].candidate.video_id
+        coarse_ids = tuple(sorted({frame for work in region for frame in work.coarse_ids}))
+        coarse_decode = self._decode_selected_frames(
+            probe=probe,
+            frame_ids=coarse_ids,
+            config=config,
+            coarse=True,
+        )
+        coarse_hits = sum(
+            (video_id, frame.absolute_frame_id) in frame_embedding_cache
+            for frame in coarse_decode.frames
+        )
+        coarse_misses = len(coarse_decode.frames) - coarse_hits
+        coarse_embeddings = _encode_frames_with_cache(
+            video_id=video_id,
+            frames=coarse_decode.frames,
+            encoder=self.encoder,
+            batch_size=config.image_batch_size,
+            frame_embedding_cache=frame_embedding_cache,
+        )
+        coarse_by_id = {
+            frame.absolute_frame_id: coarse_embeddings[index]
+            for index, frame in enumerate(coarse_decode.frames)
+        }
+
+        fine_by_rank: dict[int, tuple[int, ...]] = {}
+        for work in region:
+            candidate_embeddings = np.vstack(
+                [coarse_by_id[frame_id] for frame_id in work.coarse_ids]
+            ).astype(np.float32)
+            coarse_ranked = fuse_local_frame_rankings(
+                work.coarse_ids,
+                candidate_embeddings,
+                variants,
+                text_embeddings,
+                rrf_constant=config.rrf_constant,
+            )
+            winners = tuple(
+                item.absolute_frame_id for item in coarse_ranked[: config.coarse_top_n]
+            )
+            fine_by_rank[work.candidate.rank] = fine_frame_ids(
+                winners,
+                window_start=work.window_start,
+                window_end=work.window_end,
+                radius=config.fine_radius_frames,
+                stride=config.fine_stride_frames,
+            )
+
+        fine_ids = tuple(sorted({frame for ids in fine_by_rank.values() for frame in ids}))
+        fine_decode = self._decode_selected_frames(
+            probe=probe,
+            frame_ids=fine_ids,
+            config=config,
+            coarse=False,
+        )
+        fine_hits = sum(
+            (video_id, frame.absolute_frame_id) in frame_embedding_cache
+            for frame in fine_decode.frames
+        )
+        fine_misses = len(fine_decode.frames) - fine_hits
+        fine_embeddings = _encode_frames_with_cache(
+            video_id=video_id,
+            frames=fine_decode.frames,
+            encoder=self.encoder,
+            batch_size=config.image_batch_size,
+            frame_embedding_cache=frame_embedding_cache,
+        )
+        fine_by_id = {
+            frame.absolute_frame_id: fine_embeddings[index]
+            for index, frame in enumerate(fine_decode.frames)
+        }
+
+        records: list[RefinedCandidate] = []
+        decode_warnings = tuple(
+            sorted(set((*coarse_decode.warnings, *fine_decode.warnings)))
+        )
+        for work in region:
+            candidate_fine_ids = fine_by_rank[work.candidate.rank]
+            candidate_fine_embeddings = np.vstack(
+                [fine_by_id[frame_id] for frame_id in candidate_fine_ids]
+            ).astype(np.float32)
+            fine_ranked = fuse_local_frame_rankings(
+                candidate_fine_ids,
+                candidate_fine_embeddings,
+                variants,
+                text_embeddings,
+                rrf_constant=config.rrf_constant,
+            )
+            winner = fine_ranked[0]
+            records.append(
+                RefinedCandidate(
+                    query_id=work.candidate.query_id,
+                    original_candidate_rank=work.candidate.rank,
+                    video_id=video_id,
+                    candidate_frame_id=work.candidate.frame_id,
+                    refined_frame_id=winner.absolute_frame_id,
+                    candidate_timestamp_seconds=work.candidate.frame_id / probe.fps,
+                    refined_timestamp_seconds=winner.absolute_frame_id / probe.fps,
+                    fps=probe.fps,
+                    total_frame_count=probe.total_frame_count,
+                    window_start_frame=work.window_start,
+                    window_end_frame=work.window_end,
+                    coarse_frame_ids=work.coarse_ids,
+                    fine_frame_ids=candidate_fine_ids,
+                    coarse_sample_count=len(work.coarse_ids),
+                    fine_sample_count=len(candidate_fine_ids),
+                    decoded_frame_count=len(work.coarse_ids) + len(candidate_fine_ids),
+                    encoded_image_count=len(work.coarse_ids) + len(candidate_fine_ids),
+                    refinement_fusion_score=winner.fusion_score,
+                    variant_hit_count=winner.variant_hit_count,
+                    best_individual_rank=winner.best_individual_rank,
+                    per_variant_provenance=winner.per_variant_provenance,
+                    decoder_backend=probe.decoder_backend,
+                    raw_video_path=probe.raw_video_path,
+                    status=RefinementStatus.REFINED,
+                    warnings=decode_warnings,
+                    failure_reason=None,
+                    original_retrieval_provenance=work.candidate.retrieval_provenance,
+                    timings=_empty_candidate_timings(),
+                )
+            )
+        return tuple(records), {
+            "unique_q3_coarse_frame_count": len(coarse_ids),
+            "unique_q3_fine_frame_count": len(fine_ids),
+            "frame_embedding_cache_hit_count": coarse_hits + fine_hits,
+            "frame_embedding_cache_miss_count": coarse_misses + fine_misses,
+            "decoded_frame_count": (
+                coarse_decode.decoded_frame_count + fine_decode.decoded_frame_count
+            ),
+            "encoded_image_count": coarse_misses + fine_misses,
+        }
 
     def _process_candidate(
         self,
