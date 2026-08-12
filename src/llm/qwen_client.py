@@ -106,9 +106,17 @@ class QwenVLClient:
     def load(self) -> "QwenVLClient":
         """Load Qwen2.5-VL model and processor."""
         global _QWEN_AVAILABLE, _QWEN_IMPORT_ERR
+
+        # Always import torch at the top so it is in scope for the entire method.
+        # This avoids Python 3.12 UnboundLocalError caused by 'import torch'
+        # appearing inside the inner try/except below.
+        try:
+            import torch
+        except ImportError:
+            raise ImportError("torch is required. Run: pip install torch")
+
         if not _QWEN_AVAILABLE:
             try:
-                import torch
                 from transformers import AutoProcessor
                 from qwen_vl_utils import process_vision_info
                 _QWEN_AVAILABLE = True

@@ -178,9 +178,16 @@ class RetrievalPipeline:
                     load_in_4bit=vlm_load_in_4bit,
                 )
                 vlm_client.load()
-                logger.info("Qwen2.5-VL client ready")
+                if vlm_client.is_loaded:
+                    logger.info("Qwen2.5-VL client ready")
+                else:
+                    logger.warning("VLM load() completed but model is None — disabling VLM")
+                    vlm_client = None
             except Exception as e:
-                logger.warning(f"VLM loading failed: {e} — QA will use retrieval-only")
+                logger.warning(
+                    f"VLM loading failed: {e} — disabling VLM, QA will use fallback heuristic"
+                )
+                vlm_client = None   # ← critical: ensure downstream code sees None, not broken object
 
         logger.info(
             f"RetrievalPipeline ready — "
@@ -329,27 +336,41 @@ class RetrievalPipeline:
 
         if self._vlm is None:
             logger.warning(
-                "[QA] VLM not loaded — using visual retrieval with heuristic fallback answer."
+                f"[QA] id='{query_id}' — VLM not loaded. Falling back to KIS + heuristic answer."
             )
             evidence = self._run_kis({
                 "text": f"{event_desc} {question}",
                 "target_prefix": target_prefix,
             }, query_id)
-            if evidence:
-                # Fill metadata["answer"] using fallback heuristic
-                from src.pipeline.qa_pipeline import QAPipeline
-                tmp_qa = QAPipeline(self._vis_ret, None, "", self._text_rets, self._rrf)
-                cand = SearchResult(
-                    keyframe_id=f"{evidence.video_id}_n{evidence.n}",
-                    video_id=evidence.video_id,
-                    n=evidence.n,
-                    frame_idx=evidence.frame_idx,
-                    pts_time=evidence.pts_time,
-                    score=evidence.confidence,
-                    retriever_source="fallback",
-                    metadata=evidence.metadata,
-                )
-                evidence.metadata["answer"] = tmp_qa._generate_fallback_answer(cand, qa_query)
+            if evidence is None:
+                logger.warning(f"[QA] id='{query_id}' — KIS fallback returned no results.")
+                return None
+            # Generate heuristic answer (no VLM call needed)
+            from src.pipeline.qa_pipeline import QAPipeline
+            tmp_qa = QAPipeline(
+                visual_retriever=self._vis_ret,
+                vlm_client=None,
+                keyframe_image_root=str(self._kf_root),
+                text_retrievers=self._text_rets,
+                rrf=self._rrf,
+            )
+            dummy_cand = SearchResult(
+                keyframe_id=f"{evidence.video_id}_n{evidence.n}",
+                video_id=evidence.video_id,
+                n=evidence.n,
+                frame_idx=evidence.frame_idx,
+                pts_time=evidence.pts_time,
+                score=evidence.confidence,
+                retriever_source="fallback",
+                metadata=evidence.metadata,
+            )
+            heuristic_answer = tmp_qa._generate_fallback_answer(dummy_cand, qa_query)
+            evidence.metadata["answer"] = heuristic_answer
+            logger.info(
+                f"[QA] id='{query_id}' Fallback: "
+                f"video={evidence.video_id} frame={evidence.frame_idx} "
+                f"answer='{heuristic_answer}'"
+            )
             return evidence
 
         # Lazy-init QA pipeline
