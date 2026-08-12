@@ -318,7 +318,11 @@ class QueryParser:
             if en not in color_en_terms:
                 color_en_terms.append(en)
         if color_en_terms:
-            en_parts.append("wearing " + " and ".join(color_en_terms))
+            clothing_words = ("mặc", "áo", "quần", "trang phục", "váy", "đầm", "shirt", "dress", "wearing", "clothes", "outfit")
+            if any(w in raw_lower for w in clothing_words):
+                en_parts.append("wearing " + " and ".join(color_en_terms))
+            else:
+                en_parts.append("color " + " and ".join(color_en_terms))
 
         # 5. Spatial hints (English)
         spatial_en = []

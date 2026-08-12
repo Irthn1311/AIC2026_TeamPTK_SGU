@@ -1,81 +1,242 @@
 {
-  "q001_kis_60g_morning": {
+  "q001_kis_01": {
     "type": "textual_kis",
     "video_id": "L21_V001",
-    "frame_idx": 150
+    "frame_idx": 750,
+    "pts_time": 25.0
   },
-  "q002_qa_60g_press": {
+  "q002_kis_02": {
+    "type": "textual_kis",
+    "video_id": "L21_V001",
+    "frame_idx": 6810,
+    "pts_time": 227.0
+  },
+  "q003_kis_03": {
+    "type": "textual_kis",
+    "video_id": "L21_V001",
+    "frame_idx": 23460,
+    "pts_time": 782.0
+  },
+  "q004_kis_04": {
+    "type": "textual_kis",
+    "video_id": "L21_V002",
+    "frame_idx": 630,
+    "pts_time": 21.0
+  },
+  "q005_kis_05": {
+    "type": "textual_kis",
+    "video_id": "L21_V002",
+    "frame_idx": 9510,
+    "pts_time": 317.0
+  },
+  "q006_kis_06": {
+    "type": "textual_kis",
+    "video_id": "L21_V002",
+    "frame_idx": 29790,
+    "pts_time": 993.0
+  },
+  "q007_kis_07": {
+    "type": "textual_kis",
+    "video_id": "L21_V003",
+    "frame_idx": 1775,
+    "pts_time": 71.0
+  },
+  "q008_kis_08": {
+    "type": "textual_kis",
+    "video_id": "L21_V003",
+    "frame_idx": 8975,
+    "pts_time": 359.0
+  },
+  "q009_kis_09": {
+    "type": "textual_kis",
+    "video_id": "L21_V003",
+    "frame_idx": 25750,
+    "pts_time": 1030.0
+  },
+  "q010_kis_10": {
+    "type": "textual_kis",
+    "video_id": "L21_V005",
+    "frame_idx": 2820,
+    "pts_time": 94.0
+  },
+  "q011_kis_11": {
+    "type": "textual_kis",
+    "video_id": "L21_V005",
+    "frame_idx": 7350,
+    "pts_time": 245.0
+  },
+  "q012_kis_12": {
+    "type": "textual_kis",
+    "video_id": "L21_V005",
+    "frame_idx": 19800,
+    "pts_time": 660.0
+  },
+  "q013_kis_13": {
+    "type": "textual_kis",
+    "video_id": "L21_V006",
+    "frame_idx": 3090,
+    "pts_time": 103.0
+  },
+  "q014_kis_14": {
+    "type": "textual_kis",
+    "video_id": "L21_V006",
+    "frame_idx": 8070,
+    "pts_time": 269.0
+  },
+  "q015_qa_01": {
+    "type": "qa",
+    "video_id": "L21_V001",
+    "frame_idx": 2250,
+    "answer": "Sạt lở nguy hiểm"
+  },
+  "q016_qa_02": {
+    "type": "qa",
+    "video_id": "L21_V001",
+    "frame_idx": 15870,
+    "answer": "Song sắt / khung cửa sắt"
+  },
+  "q017_qa_03": {
+    "type": "qa",
+    "video_id": "L21_V001",
+    "frame_idx": 34050,
+    "answer": "2"
+  },
+  "q018_qa_04": {
+    "type": "qa",
+    "video_id": "L21_V001",
+    "frame_idx": 26490,
+    "answer": "Một vụ cháy rừng/đám cháy lớn ban đêm"
+  },
+  "q019_qa_05": {
+    "type": "qa",
+    "video_id": "L21_V002",
+    "frame_idx": 3150,
+    "answer": "Trắng"
+  },
+  "q020_qa_06": {
+    "type": "qa",
+    "video_id": "L21_V002",
+    "frame_idx": 17100,
+    "answer": "Có"
+  },
+  "q021_qa_07": {
+    "type": "qa",
+    "video_id": "L21_V002",
+    "frame_idx": 26010,
+    "answer": "Cánh đồng/ruộng trồng theo luống"
+  },
+  "q022_qa_08": {
+    "type": "qa",
+    "video_id": "L21_V003",
+    "frame_idx": 575,
+    "answer": "Hà mã"
+  },
+  "q023_qa_09": {
+    "type": "qa",
+    "video_id": "L21_V003",
+    "frame_idx": 13775,
+    "answer": "Xe tải"
+  },
+  "q024_qa_10": {
+    "type": "qa",
+    "video_id": "L21_V003",
+    "frame_idx": 28125,
+    "answer": "Xích đu"
+  },
+  "q025_qa_11": {
     "type": "qa",
     "video_id": "L21_V005",
-    "frame_idx": 320,
-    "answer": "màu đen"
+    "frame_idx": 540,
+    "answer": "Lúa"
   },
-  "q003_kis_traffic_evening": {
-    "type": "textual_kis",
-    "video_id": "L22_V001",
-    "frame_idx": 480
-  },
-  "q004_trake_cycling_sprint": {
+  "q026_trake_01": {
     "type": "trake",
-    "video_id": "L23_V001",
+    "video_id": "L21_V001",
     "events": {
-      "1": 100,
-      "2": 350,
-      "3": 620,
-      "4": 890
+      "1": 750,
+      "2": 2250,
+      "3": 6810
     }
   },
-  "q005_trake_dragon_dance": {
+  "q027_trake_02": {
     "type": "trake",
-    "video_id": "L24_V001",
+    "video_id": "L21_V001",
     "events": {
-      "1": 120,
-      "2": 280,
-      "3": 450,
-      "4": 600
+      "1": 15870,
+      "2": 23460,
+      "3": 26490
     }
   },
-  "q006_kis_thpt_lecture": {
-    "type": "textual_kis",
-    "video_id": "L25_V001",
-    "frame_idx": 750
-  },
-  "q007_qa_cooking_crepe": {
-    "type": "qa",
-    "video_id": "L26_V002",
-    "frame_idx": 510,
-    "answer": "3"
-  },
-  "q008_trake_cooking_chicken": {
+  "q028_trake_03": {
     "type": "trake",
-    "video_id": "L26_V003",
+    "video_id": "L21_V001",
     "events": {
-      "1": 90,
-      "2": 210,
-      "3": 420,
-      "4": 630
+      "1": 26490,
+      "2": 34050,
+      "3": 37080
     }
   },
-  "q009_kis_mieu_ba_sam": {
-    "type": "textual_kis",
-    "video_id": "L27_V017",
-    "frame_idx": 240
+  "q029_trake_04": {
+    "type": "trake",
+    "video_id": "L21_V002",
+    "events": {
+      "1": 630,
+      "2": 3150,
+      "3": 9510
+    }
   },
-  "q010_qa_mekong_bamboo": {
-    "type": "qa",
-    "video_id": "L29_V003",
-    "frame_idx": 380,
-    "answer": "nan tre"
+  "q030_trake_05": {
+    "type": "trake",
+    "video_id": "L21_V002",
+    "events": {
+      "1": 9510,
+      "2": 17100,
+      "3": 26010
+    }
   },
-  "q011_kis_heron_sanctuary": {
-    "type": "textual_kis",
-    "video_id": "L29_V001",
-    "frame_idx": 180
+  "q031_trake_06": {
+    "type": "trake",
+    "video_id": "L21_V002",
+    "events": {
+      "1": 17100,
+      "2": 26010,
+      "3": 29790
+    }
   },
-  "q012_qa_positive_energy": {
-    "type": "qa",
-    "video_id": "L30_V001",
-    "frame_idx": 210,
-    "answer": "xe đạp"
+  "q032_trake_07": {
+    "type": "trake",
+    "video_id": "L21_V003",
+    "events": {
+      "1": 575,
+      "2": 1775,
+      "3": 8975
+    }
+  },
+  "q033_trake_08": {
+    "type": "trake",
+    "video_id": "L21_V003",
+    "events": {
+      "1": 8975,
+      "2": 13775,
+      "3": 25750
+    }
+  },
+  "q034_trake_09": {
+    "type": "trake",
+    "video_id": "L21_V003",
+    "events": {
+      "1": 13775,
+      "2": 25750,
+      "3": 28125
+    }
+  },
+  "q035_trake_10": {
+    "type": "trake",
+    "video_id": "L21_V005",
+    "events": {
+      "1": 540,
+      "2": 2820,
+      "3": 7350
+    }
   }
 }

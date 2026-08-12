@@ -223,7 +223,7 @@ class QAPipeline:
         all_weights = [1.0]
         for text_ret in self._text_rets:
             # Also search with just event_description for text retrievers
-            txt = text_ret.retrieve(qa_query.event_description, top_k=self._top_k_ret)
+            txt = text_ret.retrieve(qa_query.event_description, top_k=self._top_k_ret, target_prefix=target_prefix)
             if txt:
                 all_lists.append(txt)
                 all_weights.append(0.8)

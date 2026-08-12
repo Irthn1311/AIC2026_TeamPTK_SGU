@@ -78,6 +78,7 @@ class TextRetriever(BaseRetriever):
         self,
         query: str,
         top_k: int = 100,
+        target_prefix: Optional[str] = None,
     ) -> List[SearchResult]:
         """
         Search Qdrant for keyframes whose text (caption/ocr/asr) matches query.
@@ -100,7 +101,7 @@ class TextRetriever(BaseRetriever):
             hits = self._qdrant_db.search(
                 query_vec=query_vec,
                 collection=self.modality,
-                top_k=top_k,
+                top_k=top_k * 5 if target_prefix else top_k,
             )
         except Exception as e:
             logger.warning(f"[{self.name}] Qdrant search failed: {e}")
@@ -108,9 +109,13 @@ class TextRetriever(BaseRetriever):
 
         results: List[SearchResult] = []
         for hit in hits:
+            vid = hit.get("video_id", "")
+            if target_prefix and not vid.startswith(target_prefix):
+                continue
+
             results.append(SearchResult(
                 keyframe_id=hit.get("keyframe_id", ""),
-                video_id=hit.get("video_id", ""),
+                video_id=vid,
                 n=int(hit.get("n", 0)),
                 frame_idx=int(hit.get("frame_idx", 0)),
                 pts_time=float(hit.get("pts_time", 0.0)),
@@ -118,6 +123,8 @@ class TextRetriever(BaseRetriever):
                 retriever_source=self.name,
                 metadata={"text_snippet": hit.get("text", "")[:100]},
             ))
+            if len(results) >= top_k:
+                break
 
-        logger.debug(f"[{self.name}] '{query[:50]}' → {len(results)} results")
+        logger.debug(f"[{self.name}] '{query[:50]}' (prefix={target_prefix}) → {len(results)} results")
         return results

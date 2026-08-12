@@ -131,6 +131,7 @@ class InMemoryOCRRetriever(BaseRetriever):
         self,
         query: object,
         top_k: int = 100,
+        target_prefix: Optional[str] = None,
         max_per_video: int = 2,
         max_per_batch: int = 10,
     ) -> List[SearchResult]:
@@ -140,9 +141,9 @@ class InMemoryOCRRetriever(BaseRetriever):
         Args:
             query:         Text string or TextualKISQuery
             top_k:         Number of top results to return
+            target_prefix: Optional batch prefix filter (e.g. "L21", "L29")
             max_per_video: Max keyframes per video_id (default: 2)
             max_per_batch: Max keyframes per batch prefix L21..L30 (default: 10)
-                           This prevents large batches (L25/L26) from monopolising results.
         """
         if not self.is_configured:
             logger.debug("[InMemoryOCRRetriever] Not loaded or empty, returning empty list")
@@ -157,6 +158,9 @@ class InMemoryOCRRetriever(BaseRetriever):
         elif hasattr(query, "raw_text"):
             query_text = getattr(query, "raw_text", "")
             ocr_keywords = getattr(query, "ocr_keywords", [])
+            # Also extract target_prefix if query object has it
+            if not target_prefix and hasattr(query, "target_prefix"):
+                target_prefix = getattr(query, "target_prefix", None)
         else:
             query_text = str(query)
 
@@ -178,6 +182,10 @@ class InMemoryOCRRetriever(BaseRetriever):
         scored_results: List[Tuple[float, Dict[str, Any]]] = []
 
         for kid, record in self._records.items():
+            # Mandatory target_prefix filter
+            if target_prefix and not record["video_id"].startswith(target_prefix):
+                continue
+
             kf_text = record["clean_text"]
             kf_tokens = record["tokens"]
 
@@ -220,12 +228,14 @@ class InMemoryOCRRetriever(BaseRetriever):
             batch = vid.split("_")[0]  # e.g. "L25"
 
             # Video-level cap
-            if video_counts.get(vid, 0) >= max_per_video:
-                continue
+            if max_per_video > 0:
+                if video_counts.get(vid, 0) >= max_per_video:
+                    continue
 
-            # Batch-level cap (prevents L25/L26 dominance)
-            if batch_counts.get(batch, 0) >= max_per_batch:
-                continue
+            # Batch-level cap (prevents L25/L26 dominance when target_prefix is None)
+            if max_per_batch > 0 and not target_prefix:
+                if batch_counts.get(batch, 0) >= max_per_batch:
+                    continue
 
             video_counts[vid] = video_counts.get(vid, 0) + 1
             batch_counts[batch] = batch_counts.get(batch, 0) + 1
@@ -244,8 +254,7 @@ class InMemoryOCRRetriever(BaseRetriever):
             )
 
         logger.info(
-            f"[{self.name}] '{query_text[:50]}' -> {len(results)} results "
-            f"from {len(video_counts)} videos / {len(batch_counts)} batches "
-            f"(dedup: max_per_video={max_per_video}, max_per_batch={max_per_batch})"
+            f"[{self.name}] '{query_text[:50]}' (prefix={target_prefix}) -> {len(results)} results "
+            f"from {len(video_counts)} videos / {len(batch_counts)} batches"
         )
         return results

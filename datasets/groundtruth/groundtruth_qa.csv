@@ -1,5 +1,12 @@
 query_id,video_id,frame_idx,answer
-q002_qa_60g_press,L21_V005,320,màu đen
-q007_qa_cooking_crepe,L26_V002,510,3
-q010_qa_mekong_bamboo,L29_V003,380,nan tre
-q012_qa_positive_energy,L30_V001,210,xe đạp
+q015_qa_01,L21_V001,2250,Sạt lở nguy hiểm
+q016_qa_02,L21_V001,15870,Song sắt / khung cửa sắt
+q017_qa_03,L21_V001,34050,2
+q018_qa_04,L21_V001,26490,Một vụ cháy rừng/đám cháy lớn ban đêm
+q019_qa_05,L21_V002,3150,Trắng
+q020_qa_06,L21_V002,17100,Có
+q021_qa_07,L21_V002,26010,Cánh đồng/ruộng trồng theo luống
+q022_qa_08,L21_V003,575,Hà mã
+q023_qa_09,L21_V003,13775,Xe tải
+q024_qa_10,L21_V003,28125,Xích đu
+q025_qa_11,L21_V005,540,Lúa

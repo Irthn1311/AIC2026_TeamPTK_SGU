@@ -248,9 +248,9 @@ class TRAKEPipeline:
         all_lists   = [vis_results_compact, vis_results_desc]
         all_weights = [1.0, 0.8]
 
-        # Text retrieval (if Qdrant available)
+        # Text retrieval (if Qdrant or OCR available)
         for text_ret in self._text_rets:
-            txt = text_ret.retrieve(compact_query, top_k=global_top_k)
+            txt = text_ret.retrieve(compact_query, top_k=global_top_k, target_prefix=target_prefix)
             if txt:
                 all_lists.append(txt)
                 all_weights.append(0.6)

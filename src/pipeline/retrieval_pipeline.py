@@ -277,7 +277,7 @@ class RetrievalPipeline:
 
         for text_ret in self._text_rets:
             q_input = kis_query if getattr(text_ret, "name", "") == "ocr_inmemory" else raw_text
-            txt = text_ret.retrieve(q_input, top_k=self._top_k_ret)
+            txt = text_ret.retrieve(q_input, top_k=self._top_k_ret, target_prefix=target_prefix)
             if txt:
                 all_lists.append(txt)
                 all_weights.append(self._text_weight)
