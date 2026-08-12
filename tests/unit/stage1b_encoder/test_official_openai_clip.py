@@ -499,6 +499,30 @@ def test_official_preprocess_and_image_batching_are_used(tmp_path: Path) -> None
     adapter.close()
 
 
+def test_file_and_in_memory_rgb_paths_have_exact_embedding_parity(tmp_path: Path) -> None:
+    from PIL import Image
+
+    adapter, calls, _ = loaded_adapter(tmp_path)
+    array = np.arange(12, dtype=np.uint8).reshape(2, 2, 3)
+    path = tmp_path / "frame.png"
+    Image.fromarray(array, mode="RGB").save(path)
+    file_embedding = adapter.encode_images([path])
+    memory_embedding = adapter.encode_rgb_arrays([array])
+    assert np.array_equal(file_embedding, memory_embedding)
+    assert calls.preprocess == 2
+    assert adapter.last_image_metrics["input_kind"] == "rgb_array"
+    adapter.close()
+
+
+def test_in_memory_rgb_rejects_non_rgb_or_non_uint8(tmp_path: Path) -> None:
+    adapter, _, _ = loaded_adapter(tmp_path)
+    with pytest.raises(ValueError, match="RGB_ARRAY_INVALID"):
+        adapter.encode_rgb_arrays([np.ones((2, 2), dtype=np.uint8)])
+    with pytest.raises(ValueError, match="RGB_ARRAY_INVALID"):
+        adapter.encode_rgb_arrays([np.ones((2, 2, 3), dtype=np.float32)])
+    adapter.close()
+
+
 def test_official_tokenize_and_text_normalization(tmp_path: Path) -> None:
     adapter, calls, _ = loaded_adapter(tmp_path)
     result = adapter.encode_texts(["hello", "xin chào"])

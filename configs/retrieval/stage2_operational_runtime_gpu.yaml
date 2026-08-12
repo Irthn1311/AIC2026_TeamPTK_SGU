@@ -1,0 +1,27 @@
+stage2_version: "0.1.0"
+
+runtime:
+  default_language: auto
+  default_top_k: 100
+
+hardware:
+  mode: auto
+
+video:
+  backend: auto
+  # G1 remains conservative until the real Kaggle parity and >=1.5x gate passes.
+  auto_nvdec_promoted: false
+
+clip:
+  device: auto
+  batch_size: 64
+
+translator:
+  device: auto
+  batch_size: 16
+  lazy_load: true
+
+search:
+  backend: existing_stage1_exact
+  max_top_k: 100
+  chunk_rows: 16384

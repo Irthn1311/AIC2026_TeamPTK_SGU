@@ -303,3 +303,5 @@ def test_m1_source_has_no_forbidden_model_or_network_downloads() -> None:
     for forbidden in ("requests.get", "urlopen(", "hf_hub_download", "snapshot_download"):
         assert forbidden not in source
     assert "SigLIP" not in source and "optical_flow" not in source
+    assert "TemporaryDirectory" not in source and "Image.fromarray" not in source
+    assert "encode_rgb_arrays" in source

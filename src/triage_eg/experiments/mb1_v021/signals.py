@@ -123,9 +123,7 @@ def robust_z(values: np.ndarray, baseline: SignalBaseline) -> np.ndarray:
     )
 
 
-def empirical_percentiles(
-    values: np.ndarray, reference: np.ndarray | None = None
-) -> np.ndarray:
+def empirical_percentiles(values: np.ndarray, reference: np.ndarray | None = None) -> np.ndarray:
     source = np.asarray(values, dtype=np.float64)
     population = np.sort(
         np.asarray(reference if reference is not None else values, dtype=np.float64)
@@ -136,16 +134,12 @@ def empirical_percentiles(
     return ranks.astype(np.float64) / float(len(population))
 
 
-def hard_cut_mask(
-    pixel_percentiles: np.ndarray, histogram_percentiles: np.ndarray
-) -> np.ndarray:
+def hard_cut_mask(pixel_percentiles: np.ndarray, histogram_percentiles: np.ndarray) -> np.ndarray:
     pixel = np.asarray(pixel_percentiles, dtype=np.float64)
     histogram = np.asarray(histogram_percentiles, dtype=np.float64)
     if pixel.shape != histogram.shape:
         raise ValueError("hard-cut percentile signals must have matching shapes")
-    strong_dual = ((pixel >= 0.99) & (histogram >= 0.95)) | (
-        (histogram >= 0.99) & (pixel >= 0.95)
-    )
+    strong_dual = ((pixel >= 0.99) & (histogram >= 0.95)) | ((histogram >= 0.99) & (pixel >= 0.95))
     extreme_supported = ((pixel >= 0.998) & (histogram >= 0.80)) | (
         (histogram >= 0.998) & (pixel >= 0.80)
     )
@@ -165,12 +159,8 @@ def _small_frame_features(image: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return gray, histogram
 
 
-def spatial_activity_concentration(
-    current_gray: np.ndarray, previous_gray: np.ndarray
-) -> float:
-    difference = np.abs(
-        current_gray.astype(np.float32) - previous_gray.astype(np.float32)
-    )
+def spatial_activity_concentration(current_gray: np.ndarray, previous_gray: np.ndarray) -> float:
+    difference = np.abs(current_gray.astype(np.float32) - previous_gray.astype(np.float32))
     rows = np.array_split(difference, GRID_SHAPE[0], axis=0)
     cell_values = np.asarray(
         [float(cell.mean()) for row in rows for cell in np.array_split(row, GRID_SHAPE[1], axis=1)],
@@ -183,7 +173,9 @@ def spatial_activity_concentration(
     return float(np.sort(cell_values)[-top_count:].sum() / total)
 
 
-def _decode_series(decoder: Any, indices: list[int], stride: int) -> SignalSeries:
+def _signal_series(
+    frames: Any, indices: list[int], stride: int, decode_ms: float | None
+) -> SignalSeries:
     if not indices:
         raise ValueError("MB1 v0.2.1 cannot scan an empty frame range")
     pixel = np.zeros(len(indices), dtype=np.float64)
@@ -192,40 +184,28 @@ def _decode_series(decoder: Any, indices: list[int], stride: int) -> SignalSerie
     histograms = np.empty((len(indices), 32), dtype=np.float64)
     previous_gray: np.ndarray | None = None
     previous_histogram: np.ndarray | None = None
-    decode_ms = 0.0
     signal_ms = 0.0
-    for batch_start in range(0, len(indices), SCAN_DECODE_BATCH_SIZE):
-        batch_indices = indices[batch_start : batch_start + SCAN_DECODE_BATCH_SIZE]
-        decode_started = monotonic()
-        frames = decoder.decode_indices(batch_indices)
-        decode_ms += (monotonic() - decode_started) * 1000
-        identities = [int(frame.actual_frame_idx) for frame in frames]
-        if identities != batch_indices:
-            raise RuntimeError("MB1_V021_SCAN_FRAME_IDENTITY_MISMATCH")
+    total_started = monotonic()
+    identities = []
+    for index, frame in enumerate(frames):
+        identities.append(int(frame.actual_frame_idx))
         signal_started = monotonic()
-        for offset, frame in enumerate(frames):
-            index = batch_start + offset
-            gray, histogram = _small_frame_features(frame.image)
-            histograms[index] = histogram
-            if previous_gray is not None and previous_histogram is not None:
-                pixel[index] = float(
-                    np.mean(
-                        np.abs(
-                            gray.astype(np.float32) - previous_gray.astype(np.float32)
-                        )
-                    )
-                    / 255.0
-                )
-                histogram_difference[index] = float(
-                    0.5 * np.abs(histogram - previous_histogram).sum()
-                )
-                concentration[index] = spatial_activity_concentration(
-                    gray, previous_gray
-                )
-            previous_gray = gray
-            previous_histogram = histogram
+        gray, histogram = _small_frame_features(frame.image)
+        histograms[index] = histogram
+        if previous_gray is not None and previous_histogram is not None:
+            pixel[index] = float(
+                np.mean(np.abs(gray.astype(np.float32) - previous_gray.astype(np.float32))) / 255.0
+            )
+            histogram_difference[index] = float(0.5 * np.abs(histogram - previous_histogram).sum())
+            concentration[index] = spatial_activity_concentration(gray, previous_gray)
+        previous_gray = gray
+        previous_histogram = histogram
         signal_ms += (monotonic() - signal_started) * 1000
-        del frames
+    total_ms = (monotonic() - total_started) * 1000
+    if decode_ms is None:
+        decode_ms = max(0.0, total_ms - signal_ms)
+    if identities != indices:
+        raise RuntimeError("MB1_V021_SCAN_FRAME_IDENTITY_MISMATCH")
     pixel_baseline = robust_baseline(pixel[1:] if len(pixel) > 1 else pixel)
     histogram_baseline = robust_baseline(
         histogram_difference[1:] if len(histogram_difference) > 1 else histogram_difference
@@ -248,11 +228,31 @@ def _decode_series(decoder: Any, indices: list[int], stride: int) -> SignalSerie
     )
 
 
+def _decode_series(decoder: Any, indices: list[int], stride: int) -> SignalSeries:
+    if not indices:
+        raise ValueError("MB1 v0.2.1 cannot scan an empty frame range")
+    decoded = []
+    decode_ms = 0.0
+    for batch_start in range(0, len(indices), SCAN_DECODE_BATCH_SIZE):
+        batch_indices = indices[batch_start : batch_start + SCAN_DECODE_BATCH_SIZE]
+        decode_started = monotonic()
+        decoded.extend(decoder.decode_indices(batch_indices))
+        decode_ms += (monotonic() - decode_started) * 1000
+    return _signal_series(decoded, indices, stride, decode_ms)
+
+
 def scan_coarse_video(decoder: Any) -> SignalSeries:
     total_frames = int(decoder.info.total_frames)
     if total_frames <= 0:
         raise ValueError("MB1 v0.2.1 video contains no frames")
     stride = scan_stride_frames(float(decoder.info.fps))
+    iterator = getattr(decoder, "iter_sampled_frames", None)
+    if callable(iterator):
+        indices = list(range(0, total_frames, stride))
+        if indices[-1] != total_frames - 1:
+            indices.append(total_frames - 1)
+        frames = iterator(stride=stride, include_final=True)
+        return _signal_series(frames, indices, stride, None)
     indices = list(range(0, total_frames, stride))
     if indices[-1] != total_frames - 1:
         indices.append(total_frames - 1)
@@ -273,12 +273,8 @@ def scan_local_video(
         indices.append(end_frame)
     local = _decode_series(decoder, indices, stride)
     pixel_z = robust_z(local.pixel_differences, coarse.pixel_baseline)
-    histogram_z = robust_z(
-        local.histogram_differences, coarse.histogram_baseline
-    )
-    pixel_percentile = empirical_percentiles(
-        local.pixel_differences, coarse.pixel_differences[1:]
-    )
+    histogram_z = robust_z(local.histogram_differences, coarse.histogram_baseline)
+    pixel_percentile = empirical_percentiles(local.pixel_differences, coarse.pixel_differences[1:])
     histogram_percentile = empirical_percentiles(
         local.histogram_differences, coarse.histogram_differences[1:]
     )
@@ -305,9 +301,7 @@ def scan_local_video(
         fps=float(decoder.info.fps),
         reference_histogram_p95=coarse.histogram_baseline.percentile_95,
     )
-    soft_frames = tuple(
-        int(local.frame_indices[(start + end) // 2]) for start, end in soft_runs
-    )
+    soft_frames = tuple(int(local.frame_indices[(start + end) // 2]) for start, end in soft_runs)
     usable = slice(1, None) if len(local.frame_indices) > 1 else slice(None)
     result = LocalContinuityResult(
         frame_indices=tuple(int(value) for value in local.frame_indices),
@@ -332,9 +326,7 @@ def detect_soft_transition_runs(
     rate = fps / series.stride_frames
     minimum_steps = max(3, int(math.ceil(0.20 * rate)))
     maximum_steps = max(minimum_steps, int(math.ceil(0.45 * rate)))
-    elevated = (series.pixel_robust_z >= 2.5) & (
-        series.histogram_robust_z >= 2.5
-    )
+    elevated = (series.pixel_robust_z >= 2.5) & (series.histogram_robust_z >= 2.5)
     runs: list[tuple[int, int]] = []
     start: int | None = None
     for index in range(1, len(elevated) + 1):
@@ -347,8 +339,7 @@ def detect_soft_transition_runs(
             before = max(0, start - 1)
             after = min(len(series.histograms) - 1, end + 1)
             appearance_change = float(
-                0.5
-                * np.abs(series.histograms[after] - series.histograms[before]).sum()
+                0.5 * np.abs(series.histograms[after] - series.histograms[before]).sum()
             )
             if (
                 minimum_steps <= length <= maximum_steps
@@ -430,9 +421,7 @@ def adaptive_window(
     )
 
 
-def temporal_iou(
-    first_start: int, first_end: int, second_start: int, second_end: int
-) -> float:
+def temporal_iou(first_start: int, first_end: int, second_start: int, second_end: int) -> float:
     intersection = max(0, min(first_end, second_end) - max(first_start, second_start) + 1)
     union = max(first_end, second_end) - min(first_start, second_start) + 1
     return float(intersection / union) if union else 0.0
@@ -465,9 +454,7 @@ def is_seed_near_duplicate(
     return False
 
 
-def dense_focus_frame(
-    series: SignalSeries, start_frame: int, end_frame: int
-) -> int:
+def dense_focus_frame(series: SignalSeries, start_frame: int, end_frame: int) -> int:
     mask = (series.frame_indices >= start_frame) & (series.frame_indices <= end_frame)
     positions = np.flatnonzero(mask)
     if not len(positions):
@@ -496,9 +483,7 @@ def overview_displayed_frames(start: int, end: int) -> list[int]:
     return uniform_frame_indices(start, end, OVERVIEW_FRAME_COUNT)
 
 
-def dense_displayed_frames(
-    start: int, end: int, focus_frame: int, fps: float
-) -> list[int]:
+def dense_displayed_frames(start: int, end: int, focus_frame: int, fps: float) -> list[int]:
     half_span = max(1, int(round(DENSE_SECONDS * fps)) // 2)
     dense_start = max(start, focus_frame - half_span)
     dense_end = min(end, dense_start + 2 * half_span)

@@ -36,6 +36,10 @@ openai_clip_vit_b32_asset_bundle.zip
 /.tmp_opus_mt_vi_en_download/
 /.tmp_opus_mt_vi_en_runtime/
 
+# Optional offline PyNvVideoCodec wheel asset
+/aic2026-pynvvideocodec-wheel/
+/aic2026-pynvvideocodec-wheel.zip
+
 # To commit a deliberately tiny image fixture, add a narrow !tests/fixtures/... exception.
 .env
 kaggle.json

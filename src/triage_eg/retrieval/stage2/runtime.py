@@ -30,6 +30,7 @@ from triage_eg.retrieval.stage1d.translator import (
     OfflineViEnTranslator,
     translator_dependency_versions,
 )
+from triage_eg.video import HardwareConfig, resolve_hardware
 
 from .artifacts import write_operational_query_artifacts
 from .contracts import (
@@ -92,9 +93,7 @@ def _validate_contracts(config: Stage2RuntimeConfig) -> dict[str, Any]:
         stage1e = config.stage1e_root.expanduser().resolve(strict=True)
     except FileNotFoundError as error:
         raise Stage2RuntimeError("STAGE1E_CONTRACT_INVALID", str(error)) from error
-    stage1_summary = _json(
-        stage1 / "stage1_summary.json", error_code="STAGE1_INDEX_NOT_READY"
-    )
+    stage1_summary = _json(stage1 / "stage1_summary.json", error_code="STAGE1_INDEX_NOT_READY")
     index_manifest = _json(
         stage1 / "index/index_manifest.json", error_code="STAGE1_INDEX_NOT_READY"
     )
@@ -122,9 +121,7 @@ def _validate_contracts(config: Stage2RuntimeConfig) -> dict[str, Any]:
         raise Stage2RuntimeError("STAGE1B_ENCODER_NOT_VERIFIED")
     if adapter.get("model_space_status") != "MODEL_SPACE_VERIFIED":
         raise Stage2RuntimeError("STAGE1B_MODEL_SPACE_NOT_VERIFIED")
-    stage1e_summary = _json(
-        stage1e / "stage1e_summary.json", error_code="STAGE1E_CONTRACT_INVALID"
-    )
+    stage1e_summary = _json(stage1e / "stage1e_summary.json", error_code="STAGE1E_CONTRACT_INVALID")
     contract_path = stage1e / "language_path_contract.json"
     language_contract = _json(contract_path, error_code="STAGE1E_CONTRACT_INVALID")
     if (
@@ -280,23 +277,36 @@ class OperationalRetrievalRuntime:
         self.load_latencies_ms: dict[str, float] = {}
         self.completed: list[dict[str, Any]] = []
         self.loaded = False
+        self.effective_hardware: dict[str, Any] = {}
 
     def load(self) -> OperationalRetrievalRuntime:
         if self.loaded:
             return self
         total_started = monotonic()
+        hardware = resolve_hardware(
+            HardwareConfig(
+                mode=self.config.hardware_mode,
+                video_backend=self.config.video_backend,
+                clip_device=self.config.clip_device,
+                translator_device=self.config.translator_device,
+                auto_nvdec_promoted=self.config.auto_nvdec_promoted,
+            )
+        )
+        self.effective_hardware = hardware.as_dict()
+        self.config = replace(
+            self.config,
+            clip_device=hardware.clip_device,
+            translator_device=hardware.translator_device,
+        )
         inputs = _validate_contracts(self.config)
         try:
             translator_started = monotonic()
             inputs["translator_asset"] = self.translator_validator(
                 self.config.translator_asset_root
             )
-            translator_contract = inputs["language_contract"]["vietnamese_path"][
-                "translator"
-            ]
+            translator_contract = inputs["language_contract"]["vietnamese_path"]["translator"]
             if (
-                inputs["translator_asset"].get("model_id")
-                != translator_contract["model_id"]
+                inputs["translator_asset"].get("model_id") != translator_contract["model_id"]
                 or inputs["translator_asset"].get("exact_revision")
                 != translator_contract["exact_revision"]
             ):
@@ -377,9 +387,7 @@ class OperationalRetrievalRuntime:
     def search_one(self, request: QueryRequest) -> QueryResult:
         return self.search_many([request])[0]
 
-    def search(
-        self, request: QueryRequest | list[QueryRequest]
-    ) -> QueryResult | list[QueryResult]:
+    def search(self, request: QueryRequest | list[QueryRequest]) -> QueryResult | list[QueryResult]:
         """Search one request or an explicitly bounded in-process batch."""
 
         return self.search_many(request) if isinstance(request, list) else self.search_one(request)
@@ -573,6 +581,7 @@ class OperationalRetrievalRuntime:
                 "translator": self.config.translator_device,
                 "index": "cpu_numpy_exact",
             },
+            "hardware": dict(self.effective_hardware),
             "load_latencies_ms": dict(self.load_latencies_ms),
             "assets_loaded_once": True,
             "network_required": False,

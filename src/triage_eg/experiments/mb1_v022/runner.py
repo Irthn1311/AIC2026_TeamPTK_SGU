@@ -28,8 +28,8 @@ from triage_eg.experiments.mb1_v021.signals import (
     scan_coarse_video,
     temporal_iou,
 )
-from triage_eg.experiments.moment_m1 import OpenCVRawVideoDecoder
 from triage_eg.retrieval.stage1b.writers import write_json, write_jsonl
+from triage_eg.video import OpenCVRawVideoDecoder
 
 from .signals import (
     CUT_SAFETY_MARGIN_SECONDS,

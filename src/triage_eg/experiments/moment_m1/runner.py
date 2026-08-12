@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-import tempfile
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
@@ -29,6 +28,12 @@ from triage_eg.retrieval.stage2 import (
     OperationalRetrievalRuntime,
     QueryRequest,
     Stage2RuntimeConfig,
+)
+from triage_eg.video import (
+    DecodedFrame,
+    OpenCVRawVideoDecoder,
+    RawVideoDecoder,
+    VideoInfo,
 )
 
 from .metrics import build_m1_metrics, failure_diagnostics
@@ -74,82 +79,8 @@ class M1RunnerConfig:
     settings: M1Settings
 
 
-@dataclass(frozen=True)
-class VideoInfo:
-    fps: float
-    total_frames: int
-
-
-@dataclass(frozen=True)
-class DecodedFrame:
-    video_id: str
-    actual_frame_idx: int
-    image: np.ndarray
-
-
-class RawVideoDecoder(Protocol):
-    info: VideoInfo
-
-    def decode_indices(self, frame_indices: list[int]) -> list[DecodedFrame]: ...
-
-    def close(self) -> None: ...
-
-
 class LocalImageEncoder(Protocol):
     def encode(self, frames: list[DecodedFrame]) -> np.ndarray: ...
-
-
-class OpenCVRawVideoDecoder:
-    """Small exact-frame-coordinate decoder over a single raw video."""
-
-    def __init__(self, video_id: str, video_path: Path) -> None:
-        try:
-            import cv2
-        except ImportError as error:
-            raise ImportError("M1 requires OpenCV (cv2) for raw-video decoding") from error
-        self.video_id = video_id
-        self.video_path = Path(video_path).expanduser().resolve(strict=True)
-        self._cv2 = cv2
-        self._capture = cv2.VideoCapture(str(self.video_path))
-        if not self._capture.isOpened():
-            raise RuntimeError(f"RAW_VIDEO_OPEN_FAILED: {self.video_path}")
-        fps = float(self._capture.get(cv2.CAP_PROP_FPS))
-        total_frames = int(round(float(self._capture.get(cv2.CAP_PROP_FRAME_COUNT))))
-        if not math.isfinite(fps) or fps <= 0 or total_frames <= 0:
-            self.close()
-            raise RuntimeError(f"RAW_VIDEO_METADATA_INVALID: {self.video_path}")
-        self.info = VideoInfo(fps=fps, total_frames=total_frames)
-
-    def decode_indices(self, frame_indices: list[int]) -> list[DecodedFrame]:
-        requested = sorted(set(int(value) for value in frame_indices))
-        if not requested:
-            return []
-        if requested[0] < 0 or requested[-1] >= self.info.total_frames:
-            raise IndexError("raw frame index is outside the video")
-        requested_set = set(requested)
-        start, stop = requested[0], requested[-1]
-        self._capture.set(self._cv2.CAP_PROP_POS_FRAMES, start)
-        frames = []
-        for expected in range(start, stop + 1):
-            ok, bgr = self._capture.read()
-            if not ok or bgr is None:
-                raise RuntimeError(f"RAW_FRAME_DECODE_FAILED: {self.video_id} frame={expected}")
-            actual = int(round(float(self._capture.get(self._cv2.CAP_PROP_POS_FRAMES)))) - 1
-            if actual != expected:
-                raise RuntimeError(
-                    f"RAW_FRAME_COORDINATE_MISMATCH: requested={expected} actual={actual}"
-                )
-            if expected in requested_set:
-                rgb = self._cv2.cvtColor(bgr, self._cv2.COLOR_BGR2RGB)
-                frames.append(DecodedFrame(self.video_id, expected, rgb))
-        if [frame.actual_frame_idx for frame in frames] != requested:
-            raise RuntimeError("RAW_FRAME_DECODE_INCOMPLETE")
-        return frames
-
-    def close(self) -> None:
-        capture = getattr(self, "_capture", None)
-        if capture is not None:
-            capture.release()
 
 
 class VerifiedClipLocalImageEncoder:
@@ -159,18 +90,15 @@ class VerifiedClipLocalImageEncoder:
         self.adapter = adapter
 
     def encode(self, frames: list[DecodedFrame]) -> np.ndarray:
-        from PIL import Image
-
         if not frames:
             return np.empty((0, 512), dtype=np.float32)
-        with tempfile.TemporaryDirectory(prefix="triage_eg_m1_frames_") as temp_dir:
-            root = Path(temp_dir)
-            paths = []
-            for frame in frames:
-                path = root / f"{frame.actual_frame_idx:09d}.png"
-                Image.fromarray(np.asarray(frame.image, dtype=np.uint8), mode="RGB").save(path)
-                paths.append(path)
-            matrix = np.asarray(self.adapter.encode_images(paths), dtype=np.float32)
+        encoder = getattr(self.adapter, "encode_rgb_arrays", None)
+        if not callable(encoder):
+            raise RuntimeError("M1_IN_MEMORY_CLIP_API_UNAVAILABLE")
+        matrix = np.asarray(
+            encoder([np.asarray(frame.image, dtype=np.uint8) for frame in frames]),
+            dtype=np.float32,
+        )
         if matrix.shape != (len(frames), 512) or not np.isfinite(matrix).all():
             raise RuntimeError("M1 local CLIP image encoding returned invalid embeddings")
         return matrix

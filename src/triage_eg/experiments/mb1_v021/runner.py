@@ -22,8 +22,8 @@ from triage_eg.experiments.mb1_v02.signals import (
     ShotSegment,
     continuous_shot_segments,
 )
-from triage_eg.experiments.moment_m1 import DecodedFrame, OpenCVRawVideoDecoder
 from triage_eg.retrieval.stage1b.writers import write_json, write_jsonl
+from triage_eg.video import DecodedFrame, OpenCVRawVideoDecoder
 
 from .signals import (
     COARSE_SAMPLES_PER_SECOND,
@@ -166,8 +166,7 @@ def load_and_validate_qc(path: str | Path) -> list[dict[str, Any]]:
     actual = sha256_file(path)
     if actual != EXPECTED_QC_SHA256:
         raise ValueError(
-            "MB1_V021_AI_QC_HASH_MISMATCH: "
-            f"expected={EXPECTED_QC_SHA256} actual={actual}"
+            f"MB1_V021_AI_QC_HASH_MISMATCH: expected={EXPECTED_QC_SHA256} actual={actual}"
         )
     rows = _read_jsonl(path)
     if len(rows) != 41:
@@ -265,9 +264,7 @@ def _summary(values: np.ndarray) -> dict[str, float]:
     }
 
 
-def _decode_resized_frames(
-    decoder: Any, frame_indices: list[int]
-) -> list[DecodedFrame]:
+def _decode_resized_frames(decoder: Any, frame_indices: list[int]) -> list[DecodedFrame]:
     """Decode exact raw coordinates in bounded batches and retain only sheet tiles."""
 
     from PIL import Image, ImageOps
@@ -384,10 +381,7 @@ def _initial_proposals(
             if window is None:
                 counts["rejected_insufficient_clean_window"] += 1
                 continue
-            if any(
-                window.start_frame < cut <= window.end_frame
-                for cut in coarse_cut_frames
-            ):
+            if any(window.start_frame < cut <= window.end_frame for cut in coarse_cut_frames):
                 counts["rejected_coarse_cut_overlap"] += 1
                 continue
             try:
@@ -432,8 +426,7 @@ def _initial_proposals(
     shortlist: list[Proposal] = []
     for proposal in ordered:
         if any(
-            abs(proposal.center_frame - existing.center_frame) / fps < 1.0
-            for existing in shortlist
+            abs(proposal.center_frame - existing.center_frame) / fps < 1.0 for existing in shortlist
         ):
             counts["rejected_pre_local_peak_dedup"] += 1
             continue
@@ -489,9 +482,7 @@ def _local_verify_proposals(
     for proposal in proposals:
         expansion = int(round(LOCAL_EXPANSION_SECONDS * proposal.fps))
         local_start = max(0, proposal.window.start_frame - expansion)
-        local_end = min(
-            int(decoder.info.total_frames) - 1, proposal.window.end_frame + expansion
-        )
+        local_end = min(int(decoder.info.total_frames) - 1, proposal.window.end_frame + expansion)
         local_series, result = scan_local_video(decoder, local_start, local_end, series)
         local_frames += len(result.frame_indices)
         local_ms += result.decode_ms + result.signal_ms
@@ -556,21 +547,21 @@ def _local_verify_proposals(
         )
         _overlapping_old_region(proposal, old_rows, qc_by_id)
         retained.append(proposal)
-    return retained, counts, {
-        "local_verification_frames": local_frames,
-        "candidate_local_verification_ms": local_ms,
-        "adaptive_window_ms": adaptive_ms,
-    }
+    return (
+        retained,
+        counts,
+        {
+            "local_verification_frames": local_frames,
+            "candidate_local_verification_ms": local_ms,
+            "adaptive_window_ms": adaptive_ms,
+        },
+    )
 
 
-def _nms_and_cap(
-    proposals: list[Proposal], fps: float
-) -> tuple[list[Proposal], Counter[str]]:
+def _nms_and_cap(proposals: list[Proposal], fps: float) -> tuple[list[Proposal], Counter[str]]:
     selected: list[Proposal] = []
     counts: Counter[str] = Counter()
-    for proposal in sorted(
-        proposals, key=lambda item: (-item.proposal_score, item.center_frame)
-    ):
+    for proposal in sorted(proposals, key=lambda item: (-item.proposal_score, item.center_frame)):
         if any(
             abs(proposal.center_frame - existing.center_frame) / fps < NMS_SECONDS
             for existing in selected
@@ -637,19 +628,13 @@ def cut_guard_regression_audit(
         "threshold_tuning_from_audit": False,
         "old_candidate_count": len(rows),
         "old_ai_qc_hard_cut_count": len(old_hard),
-        "old_hard_cut_vetoed_by_hard_cut": sum(
-            bool(row["hard_cut_veto"]) for row in old_hard
-        ),
-        "old_hard_cut_vetoed_by_soft_cut": sum(
-            bool(row["soft_cut_veto"]) for row in old_hard
-        ),
+        "old_hard_cut_vetoed_by_hard_cut": sum(bool(row["hard_cut_veto"]) for row in old_hard),
+        "old_hard_cut_vetoed_by_soft_cut": sum(bool(row["soft_cut_veto"]) for row in old_hard),
         "old_hard_cut_vetoed_by_either": hard_caught,
         "OLD_HARD_CUT_RECALL": hard_caught / len(old_hard) if old_hard else None,
         "old_usable_count": len(old_usable),
         "old_usable_falsely_vetoed": usable_vetoed,
-        "OLD_USABLE_FALSE_VETO_RATE": (
-            usable_vetoed / len(old_usable) if old_usable else None
-        ),
+        "OLD_USABLE_FALSE_VETO_RATE": (usable_vetoed / len(old_usable) if old_usable else None),
         "candidate_results": rows,
     }
 
@@ -676,9 +661,7 @@ def preflight_mb1_v021(config: MB1V021Config) -> dict[str, Any]:
     video_partitions, keyframe_partitions = discover_layout(dataset)
     missing = []
     for source in pool:
-        assets = resolve_assets(
-            dataset, source["video_id"], video_partitions, keyframe_partitions
-        )
+        assets = resolve_assets(dataset, source["video_id"], video_partitions, keyframe_partitions)
         if not assets.video.is_file():
             missing.append(source["video_id"])
     if missing:
@@ -720,9 +703,7 @@ annotation begins only after the merged pool is sufficiently rich. Use the print
 """
 
 
-def _render_montages(
-    output: Path, manifest_rows: list[dict[str, Any]], view: str
-) -> list[Path]:
+def _render_montages(output: Path, manifest_rows: list[dict[str, Any]], view: str) -> list[Path]:
     from PIL import Image, ImageDraw
 
     key = f"{view}_sheet_path"
@@ -776,9 +757,7 @@ def prepare_mb1_v021_candidates(
         decoder = decoder_factory(video_id, assets.video)
         try:
             coarse = scan_coarse_video(decoder)
-            cut_mask = hard_cut_mask(
-                coarse.pixel_percentiles, coarse.histogram_percentiles
-            )
+            cut_mask = hard_cut_mask(coarse.pixel_percentiles, coarse.histogram_percentiles)
             cuts = tuple(
                 int(value)
                 for value in coarse.frame_indices[np.flatnonzero(cut_mask)]
@@ -822,8 +801,7 @@ def prepare_mb1_v021_candidates(
     all_selected: list[Proposal] = []
     global_counts: Counter[str] = Counter()
     source_by_video = {
-        str(row["video_id"]): str(row["source_pool_origin"])
-        for row in preflight["source_videos"]
+        str(row["video_id"]): str(row["source_pool_origin"]) for row in preflight["source_videos"]
     }
     for source in preflight["source_videos"]:
         video_id = str(source["video_id"])
@@ -852,9 +830,7 @@ def prepare_mb1_v021_candidates(
             )
             if verified:
                 _assign_proposal_scores(verified)
-            selected, selection_counts = _nms_and_cap(
-                verified, float(decoder.info.fps)
-            )
+            selected, selection_counts = _nms_and_cap(verified, float(decoder.info.fps))
             all_selected.extend(selected)
             counts.update(local_counts)
             counts.update(selection_counts)
@@ -949,31 +925,20 @@ def prepare_mb1_v021_candidates(
                 "dense_sheet_path": dense_path.as_posix(),
                 "proposal_score": proposal.proposal_score,
                 "transition_strength": proposal.transition_strength,
-                "before_after_visual_difference": (
-                    proposal.before_after_visual_difference
-                ),
-                "spatial_activity_concentration": (
-                    proposal.spatial_activity_concentration
-                ),
+                "before_after_visual_difference": (proposal.before_after_visual_difference),
+                "spatial_activity_concentration": (proposal.spatial_activity_concentration),
                 "overall_activity": proposal.overall_activity,
                 "continuity_status": "PASS_LOCAL_HARD_AND_SOFT_CUT_GUARD",
                 "window_adjustment_reason": proposal.window.reason,
                 "candidate_origin": proposal.candidate_origin,
-                "overlapping_prior_candidate_id": (
-                    proposal.overlapping_prior_candidate_id
-                ),
+                "overlapping_prior_candidate_id": (proposal.overlapping_prior_candidate_id),
                 "prior_qc_status": proposal.prior_qc_status,
                 "prior_reason_code": proposal.prior_reason_code,
                 "source_pool_origin": proposal.source_pool_origin,
             }
         )
         all_cut_frames = tuple(
-            sorted(
-                set(
-                    coarse_cuts_by_video[proposal.video_id]
-                    + proposal.local_result.veto_frames
-                )
-            )
+            sorted(set(coarse_cuts_by_video[proposal.video_id] + proposal.local_result.veto_frames))
         )
         distances = [
             min(
@@ -989,9 +954,7 @@ def prepare_mb1_v021_candidates(
                 "video_id": proposal.video_id,
                 "coarse_scan_signal_summaries": {
                     "pixel": coarse_by_video[proposal.video_id].pixel_baseline.as_dict(),
-                    "histogram": coarse_by_video[
-                        proposal.video_id
-                    ].histogram_baseline.as_dict(),
+                    "histogram": coarse_by_video[proposal.video_id].histogram_baseline.as_dict(),
                 },
                 "max_pixel_percentile": proposal.local_result.max_pixel_percentile,
                 "max_hist_percentile": proposal.local_result.max_hist_percentile,
@@ -999,32 +962,20 @@ def prepare_mb1_v021_candidates(
                 "max_hist_robust_z": proposal.local_result.max_hist_robust_z,
                 "hard_cut_veto": False,
                 "soft_cut_veto": False,
-                "minimum_distance_to_detected_cut_seconds": (
-                    min(distances) if distances else None
-                ),
+                "minimum_distance_to_detected_cut_seconds": (min(distances) if distances else None),
                 "pre_activity": proposal.pre_activity,
                 "center_activity": proposal.center_activity,
                 "post_activity": proposal.post_activity,
                 "transition_strength": proposal.transition_strength,
-                "before_after_visual_difference": (
-                    proposal.before_after_visual_difference
-                ),
-                "spatial_activity_concentration": (
-                    proposal.spatial_activity_concentration
-                ),
-                "requested_window_duration_seconds": (
-                    proposal.window.requested_duration_seconds
-                ),
-                "final_window_duration_seconds": (
-                    proposal.window.final_duration_seconds
-                ),
+                "before_after_visual_difference": (proposal.before_after_visual_difference),
+                "spatial_activity_concentration": (proposal.spatial_activity_concentration),
+                "requested_window_duration_seconds": (proposal.window.requested_duration_seconds),
+                "final_window_duration_seconds": (proposal.window.final_duration_seconds),
                 "window_adjustment_reason": proposal.window.reason,
             }
         )
 
-    per_video_counts = dict(
-        sorted(Counter(row["video_id"] for row in manifest_rows).items())
-    )
+    per_video_counts = dict(sorted(Counter(row["video_id"] for row in manifest_rows).items()))
     if any(value > MAX_NEW_CANDIDATES_PER_VIDEO for value in per_video_counts.values()):
         raise RuntimeError("MB1 v0.2.1 per-video cap was exceeded")
     if any(
@@ -1063,13 +1014,9 @@ def prepare_mb1_v021_candidates(
         "version": MB1_V021_VERSION,
         "mode": MB1_V021_MODE,
         "semantic_labels_assigned": False,
-        "source_videos_available": [
-            row["video_id"] for row in preflight["source_videos"]
-        ],
+        "source_videos_available": [row["video_id"] for row in preflight["source_videos"]],
         "source_video_count_available": len(preflight["source_videos"]),
-        "source_videos_considered": [
-            row["video_id"] for row in preflight["source_videos"]
-        ],
+        "source_videos_considered": [row["video_id"] for row in preflight["source_videos"]],
         "source_video_count_considered": len(preflight["source_videos"]),
         "source_videos_with_retained_candidates": sorted(per_video_counts),
         "source_video_count_with_retained_candidates": len(per_video_counts),
@@ -1078,32 +1025,23 @@ def prepare_mb1_v021_candidates(
         "rejected": {
             "activity_floor": global_counts["rejected_activity_floor"],
             "coarse_cut_overlap": global_counts["rejected_coarse_cut_overlap"],
-            "candidate_local_HARD_CUT": global_counts[
-                "rejected_candidate_local_hard_cut"
-            ],
-            "candidate_local_SOFT_CUT": global_counts[
-                "rejected_candidate_local_soft_cut"
-            ],
+            "candidate_local_HARD_CUT": global_counts["rejected_candidate_local_hard_cut"],
+            "candidate_local_SOFT_CUT": global_counts["rejected_candidate_local_soft_cut"],
             "insufficient_clean_3_second_window": global_counts[
                 "rejected_insufficient_clean_window"
             ],
             "seed_duplicate": global_counts["rejected_seed_duplicate"],
             "temporal_NMS": global_counts["rejected_temporal_nms"],
             "per_video_cap": global_counts["rejected_per_video_cap"],
-            "pre_local_peak_dedup": global_counts[
-                "rejected_pre_local_peak_dedup"
-            ],
-            "pre_local_verification_budget": global_counts[
-                "rejected_pre_local_budget"
-            ],
+            "pre_local_peak_dedup": global_counts["rejected_pre_local_peak_dedup"],
+            "pre_local_verification_budget": global_counts["rejected_pre_local_budget"],
             "global_preferred_target": global_counts["rejected_global_target"],
         },
         "retained_NEW_candidate_count": len(manifest_rows),
         "combined_potential_pool_count": len(seeds) + len(manifest_rows),
         "per_video_retained_counts": per_video_counts,
         "rescued_prior_region_count": sum(
-            row["candidate_origin"] == "RESCUED_PRIOR_REGION"
-            for row in manifest_rows
+            row["candidate_origin"] == "RESCUED_PRIOR_REGION" for row in manifest_rows
         ),
         "candidate_ordering_rule": (
             "video_id ASC, window_start_frame ASC, proposal_center_frame ASC"
@@ -1166,15 +1104,9 @@ def prepare_mb1_v021_candidates(
         },
         "preflight": preflight,
         "prior_artifact_hashes": {
-            "old_candidate_manifest": sha256_file(
-                config.old_candidate_manifest_path
-            ),
-            "old_candidate_diagnostics": sha256_file(
-                config.old_candidate_diagnostics_path
-            ),
-            "old_candidate_selection": sha256_file(
-                config.old_candidate_selection_path
-            ),
+            "old_candidate_manifest": sha256_file(config.old_candidate_manifest_path),
+            "old_candidate_diagnostics": sha256_file(config.old_candidate_diagnostics_path),
+            "old_candidate_selection": sha256_file(config.old_candidate_selection_path),
             "ai_qc_pass1": sha256_file(config.ai_qc_path),
             "ai_qc_summary": sha256_file(config.ai_qc_summary_path),
             "rt2_benchmark": sha256_file(config.rt2_benchmark_path),
@@ -1192,18 +1124,13 @@ def prepare_mb1_v021_candidates(
         "network_required": False,
         "performance": {
             "source_pool_resolution_ms": source_pool_ms,
-            "videos": [
-                performance_by_video[row["video_id"]]
-                for row in preflight["source_videos"]
-            ],
+            "videos": [performance_by_video[row["video_id"]] for row in preflight["source_videos"]],
             "overall_runtime_ms": (monotonic() - overall_started) * 1000,
             "coarse_scan_frames": sum(
-                int(row["coarse_scan_frames"])
-                for row in performance_by_video.values()
+                int(row["coarse_scan_frames"]) for row in performance_by_video.values()
             ),
             "local_verification_frames": sum(
-                int(row["local_verification_frames"])
-                for row in performance_by_video.values()
+                int(row["local_verification_frames"]) for row in performance_by_video.values()
             ),
             "full_resolution_rendered_frames": rendered_frame_count,
         },
@@ -1216,8 +1143,7 @@ def prepare_mb1_v021_candidates(
             "per_video_new_cap_valid": True,
             "zero_frozen_seed_near_duplicates": True,
             "previous_semantic_interval_used": False,
-            "candidate_count_quality_target_met": len(manifest_rows)
-            >= ACCEPTABLE_NEW_MIN,
+            "candidate_count_quality_target_met": len(manifest_rows) >= ACCEPTABLE_NEW_MIN,
         },
         "MB1_V021_REAL_STATUS": "COMPLETE",
         "MB1_V021_AI_QC_STATUS": "WAITING_FOR_AI",

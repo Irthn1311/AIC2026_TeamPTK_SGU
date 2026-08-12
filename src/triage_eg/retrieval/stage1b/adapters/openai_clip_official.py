@@ -544,35 +544,51 @@ class OfficialOpenAIClipAdapter:
             np.linalg.norm(result, axis=1),
         )
 
-    def encode_images(self, paths: list[Path]) -> np.ndarray:
+    def _synchronize(self) -> None:
+        cuda = getattr(self._torch, "cuda", None)
+        if self.device.startswith("cuda") and cuda is not None and hasattr(cuda, "synchronize"):
+            cuda.synchronize()
+
+    def _encode_image_inputs(self, inputs: Sequence[Any], *, kind: str) -> np.ndarray:
         outputs, raw_norms, normalized_norms, latencies = [], [], [], []
         input_dtype = None
         output_dtype = None
+        preprocessing_seconds = 0.0
+        inference_seconds = 0.0
         batch_size = max(1, self.contract.batch_size)
-        for start in range(0, len(paths), batch_size):
-            batch_paths = paths[start : start + batch_size]
+        for start in range(0, len(inputs), batch_size):
+            batch_inputs = inputs[start : start + batch_size]
             tensors = []
-            batch_started = monotonic()
-            for path in batch_paths:
+            preprocess_started = monotonic()
+            for value in batch_inputs:
                 try:
-                    with self._image.open(path) as image:
-                        tensors.append(self._preprocess(image))
+                    if kind == "path":
+                        with self._image.open(value) as image:
+                            tensors.append(self._preprocess(image))
+                    else:
+                        tensors.append(self._preprocess(value))
                 except Exception as error:
-                    raise ValueError(f"IMAGE_PREPROCESS_FAILED: {path}: {error}") from error
+                    raise ValueError(f"IMAGE_PREPROCESS_FAILED: {value}: {error}") from error
+            preprocessing_seconds += monotonic() - preprocess_started
+            batch_started = monotonic()
             stacked = self._torch.stack(tensors).to(self.device)
             input_dtype = str(stacked.dtype)
+            self._synchronize()
             with self._torch.no_grad():
                 raw = self._model.encode_image(stacked)
-            matrix, output_dtype, norms = _numpy_output(raw, len(batch_paths))
+            self._synchronize()
+            elapsed = monotonic() - batch_started
+            inference_seconds += elapsed
+            matrix, output_dtype, norms = _numpy_output(raw, len(batch_inputs))
             normalized, final_norms = self._normalize(
                 matrix, self.contract.image_embedding_normalization
             )
-            elapsed = monotonic() - batch_started
             outputs.append(normalized)
             raw_norms.extend(norms.tolist())
             normalized_norms.extend(final_norms.tolist())
-            latencies.extend([elapsed / len(batch_paths)] * len(batch_paths))
+            latencies.extend([elapsed / len(batch_inputs)] * len(batch_inputs))
         result = np.concatenate(outputs) if outputs else np.empty((0, 512), dtype=np.float32)
+        total_seconds = preprocessing_seconds + inference_seconds
         self.last_image_metrics = {
             "raw_norms": raw_norms,
             "normalized_norms": normalized_norms,
@@ -581,8 +597,35 @@ class OfficialOpenAIClipAdapter:
             "model_output_dtype": output_dtype,
             "output_dtype": str(result.dtype),
             "normalized_output": self.contract.image_embedding_normalization,
+            "input_kind": kind,
+            "image_count": len(inputs),
+            "preprocessing_seconds": preprocessing_seconds,
+            "inference_seconds": inference_seconds,
+            "total_seconds": total_seconds,
+            "images_per_second": len(inputs) / total_seconds if total_seconds > 0 else None,
         }
         return result
+
+    def encode_images(self, paths: list[Path]) -> np.ndarray:
+        return self._encode_image_inputs(paths, kind="path")
+
+    def encode_pil_images(self, images: Sequence[Any]) -> np.ndarray:
+        return self._encode_image_inputs(images, kind="pil")
+
+    def encode_rgb_arrays(self, images: Sequence[np.ndarray]) -> np.ndarray:
+        pil_images = []
+        for index, image in enumerate(images):
+            value = np.asarray(image)
+            if value.dtype != np.uint8 or value.ndim != 3 or value.shape[-1] != 3:
+                raise ValueError(
+                    f"RGB_ARRAY_INVALID: index={index} shape={value.shape} dtype={value.dtype}"
+                )
+            pil_images.append(self._image.fromarray(value, mode="RGB"))
+        try:
+            return self._encode_image_inputs(pil_images, kind="rgb_array")
+        finally:
+            for image in pil_images:
+                image.close()
 
     def _tokenize(self, texts: Sequence[str]) -> tuple[Any, list[bool]]:
         truncated = [False] * len(texts)

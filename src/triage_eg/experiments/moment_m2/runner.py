@@ -28,14 +28,12 @@ from triage_eg.experiments.mb1_e1.runner import (
     refine_inside_candidate_window,
     sha256_file,
 )
-from triage_eg.experiments.moment_m1 import (
-    OpenCVRawVideoDecoder,
-    VerifiedClipLocalImageEncoder,
-)
+from triage_eg.experiments.moment_m1 import VerifiedClipLocalImageEncoder
 from triage_eg.retrieval.stage1b.adapters.openai_clip_official import (
     resolve_official_asset_paths,
 )
 from triage_eg.retrieval.stage1b.writers import write_json, write_jsonl
+from triage_eg.video import OpenCVRawVideoDecoder
 
 from .plateau import (
     EXTREMUM_TYPE,
@@ -49,9 +47,7 @@ from .plateau import (
 )
 
 M2_VERSION = "0.1.0"
-EXPECTED_ANNOTATION_SHA256 = (
-    "4d3f47b5fcc727a8eea893e93420c8db51b4301e966eac6d69508f530515cbbe"
-)
+EXPECTED_ANNOTATION_SHA256 = "4d3f47b5fcc727a8eea893e93420c8db51b4301e966eac6d69508f530515cbbe"
 BENCHMARK_SEMANTICS = "AI_CURATED_INTERNAL_INTERVAL_PSEUDO_GT"
 A0_METHOD = "FROZEN_M1_COARSE_TO_FINE"
 A1_METHOD = "DENSE_CLIP_PEAK"
@@ -151,12 +147,17 @@ def score_dense_window(
     if scores.shape != frame_indices.shape or not np.isfinite(scores).all():
         raise RuntimeError("M2_DENSE_SCORE_SEQUENCE_INVALID")
     images = {int(frame.actual_frame_idx): frame.image for frame in frames}
-    return frame_indices, scores, images, {
-        "raw_decode_ms": decode_ms,
-        "dense_image_encoding_ms": encoding_ms,
-        "dense_frame_count": len(frame_indices),
-        "dense_image_encoding_calls": 1,
-    }
+    return (
+        frame_indices,
+        scores,
+        images,
+        {
+            "raw_decode_ms": decode_ms,
+            "dense_image_encoding_ms": encoding_ms,
+            "dense_frame_count": len(frame_indices),
+            "dense_image_encoding_calls": 1,
+        },
+    )
 
 
 def _blinded_mapping(moment_id: str, seed: int) -> dict[str, str]:
@@ -222,9 +223,7 @@ def render_blinded_m2_sheet(
         "moment_id": moment_id,
         "seed": seed,
         "mapping": mapping,
-        "frames": {
-            side: method_frames[mapping[side]] for side in ("METHOD_A", "METHOD_B")
-        },
+        "frames": {side: method_frames[mapping[side]] for side in ("METHOD_A", "METHOD_B")},
     }
 
 
@@ -239,9 +238,7 @@ def _arm_metrics(rows: list[dict[str, Any]], arm: str) -> dict[str, Any]:
         "MEAN_DISTANCE_TO_INTERVAL": mean(distances),
         "MEDIAN_DISTANCE_TO_INTERVAL": median(distances),
         **{
-            f"WITHIN_{tolerance}_FRAMES_RATE": mean(
-                value <= tolerance for value in distances
-            )
+            f"WITHIN_{tolerance}_FRAMES_RATE": mean(value <= tolerance for value in distances)
             for tolerance in TOLERANCES
         },
         "preferred_frame_MAE": mean(preferred_errors),
@@ -251,13 +248,11 @@ def _arm_metrics(rows: list[dict[str, Any]], arm: str) -> dict[str, Any]:
 
 def _pairwise(rows: list[dict[str, Any]], baseline: str) -> dict[str, int]:
     wins = sum(
-        int(row["a2_distance_to_interval"])
-        < int(row[f"{baseline}_distance_to_interval"])
+        int(row["a2_distance_to_interval"]) < int(row[f"{baseline}_distance_to_interval"])
         for row in rows
     )
     losses = sum(
-        int(row["a2_distance_to_interval"])
-        > int(row[f"{baseline}_distance_to_interval"])
+        int(row["a2_distance_to_interval"]) > int(row[f"{baseline}_distance_to_interval"])
         for row in rows
     )
     ties = len(rows) - wins - losses
@@ -296,9 +291,7 @@ def build_m2_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
     action = [row for row in rows if row["moment_type"] == "ACTION_VISIBILITY"]
     slices = {
         "ALL_MOMENTS": rows,
-        "HIGH_CONFIDENCE_ONLY": [
-            row for row in rows if row["annotation_confidence"] == "HIGH"
-        ],
+        "HIGH_CONFIDENCE_ONLY": [row for row in rows if row["annotation_confidence"] == "HIGH"],
         "ACTION_VISIBILITY": action,
         "BOUNDARY_LIKE": [row for row in rows if row["moment_type"] in BOUNDARY_LIKE_TYPES],
         "EXTREMUM": [row for row in rows if row["moment_type"] == EXTREMUM_TYPE],
@@ -314,8 +307,7 @@ def build_m2_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
                 for row in action
             ),
             "ACTION_VISIBILITY_LOST_INTERVAL_HITS": sum(
-                bool(row["a1_interval_hit"]) and not bool(row["a2_interval_hit"])
-                for row in action
+                bool(row["a1_interval_hit"]) and not bool(row["a2_interval_hit"]) for row in action
             ),
         },
         "DIAGNOSTIC_COUNTS": dict(
@@ -340,9 +332,7 @@ def _result_row(
         "a1": int(a1_frame),
         "a2": int(solution.prediction),
     }
-    distances = {
-        arm: distance_to_interval(frame, start, end) for arm, frame in frames.items()
-    }
+    distances = {arm: distance_to_interval(frame, start, end) for arm, frame in frames.items()}
     diagnostics = list(solution.diagnostics)
     if distances["a2"] == 0:
         diagnostics.append("A2_INTERVAL_HIT")
@@ -457,9 +447,7 @@ def run_m2(
         f"{annotation_hash}  mb1_ai_semantic_moments.jsonl\n", encoding="utf-8"
     )
     candidate_copy = output / "benchmark/mb1_candidate_manifest.jsonl"
-    candidate_hash = copy_benchmark_preserving_hash(
-        config.candidate_manifest_path, candidate_copy
-    )
+    candidate_hash = copy_benchmark_preserving_hash(config.candidate_manifest_path, candidate_copy)
     (output / "benchmark/mb1_candidate_manifest.sha256").write_text(
         f"{candidate_hash}  mb1_candidate_manifest.jsonl\n", encoding="utf-8"
     )
@@ -500,9 +488,7 @@ def run_m2(
             try:
                 candidate_fps = float(candidate["fps"])
                 if not np.isclose(decoder.info.fps, candidate_fps, rtol=0.0, atol=1e-3):
-                    raise RuntimeError(
-                        f"M2_CANDIDATE_FPS_MISMATCH: {annotation['moment_id']}"
-                    )
+                    raise RuntimeError(f"M2_CANDIDATE_FPS_MISMATCH: {annotation['moment_id']}")
                 window_start = int(candidate["window_start_frame"])
                 window_end = int(candidate["window_end_frame"])
                 a0_search, _ = refine_inside_candidate_window(
@@ -535,9 +521,7 @@ def run_m2(
                     width,
                 )
                 plateau_ms = (monotonic() - plateau_started) * 1000
-                row = _result_row(
-                    annotation, candidate, a0_search, a1_frame, a1_score, solution
-                )
+                row = _result_row(annotation, candidate, a0_search, a1_frame, a1_score, solution)
                 results.append(row)
                 curves.append(
                     {

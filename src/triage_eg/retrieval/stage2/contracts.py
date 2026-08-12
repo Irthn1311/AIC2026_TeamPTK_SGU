@@ -82,6 +82,9 @@ class Stage2RuntimeConfig:
     max_top_k: int = MAX_TOP_K
     search_chunk_rows: int = 16_384
     build_git_commit: str | None = None
+    hardware_mode: str = "auto"
+    video_backend: str = "auto"
+    auto_nvdec_promoted: bool = False
 
     def __post_init__(self) -> None:
         if self.default_language not in SUPPORTED_LANGUAGES:
@@ -96,6 +99,10 @@ class Stage2RuntimeConfig:
             raise ValueError("batch sizes must be positive")
         if self.search_backend != "existing_stage1_exact" or self.search_chunk_rows <= 0:
             raise ValueError("Stage 2A requires the existing exact Stage 1 backend")
+        if self.hardware_mode not in {"auto", "cpu", "gpu"}:
+            raise ValueError("invalid hardware mode")
+        if self.video_backend not in {"auto", "opencv", "nvdec"}:
+            raise ValueError("invalid video backend")
 
 
 def load_stage2_settings(path: str | Path) -> dict[str, Any]:
@@ -103,7 +110,7 @@ def load_stage2_settings(path: str | Path) -> dict[str, Any]:
     value = yaml.safe_load(source.read_text(encoding="utf-8"))
     if not isinstance(value, dict) or value.get("stage2_version") != STAGE2_VERSION:
         raise ValueError("Invalid Stage 2 runtime configuration")
-    allowed = {"stage2_version", "runtime", "clip", "translator", "search"}
+    allowed = {"stage2_version", "runtime", "hardware", "video", "clip", "translator", "search"}
     if set(value) - allowed:
         raise ValueError(f"Unsupported Stage 2 config keys: {sorted(set(value) - allowed)}")
     return value
@@ -124,6 +131,7 @@ def config_from_yaml(
     value = load_stage2_settings(path)
     runtime, clip = value.get("runtime", {}), value.get("clip", {})
     translator, search = value.get("translator", {}), value.get("search", {})
+    hardware, video = value.get("hardware", {}), value.get("video", {})
     return Stage2RuntimeConfig(
         stage1_root=stage1_root,
         stage1b_root=stage1b_root,
@@ -143,6 +151,9 @@ def config_from_yaml(
         max_top_k=int(search.get("max_top_k", 100)),
         search_chunk_rows=int(search.get("chunk_rows", 16_384)),
         build_git_commit=build_git_commit,
+        hardware_mode=hardware.get("mode", "auto"),
+        video_backend=video.get("backend", "auto"),
+        auto_nvdec_promoted=bool(video.get("auto_nvdec_promoted", False)),
     )
 
 
