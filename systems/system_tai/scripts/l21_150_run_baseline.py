@@ -35,6 +35,18 @@ from system_tai.quality.l21_150_schema import (  # noqa: E402
     L21150TRAKEQuery,
     load_l21_150_benchmark,
 )
+from system_tai.quality.l21_150_trake_nomination import (  # noqa: E402
+    TRAKELanguagePolicy,
+    TRAKENominationError,
+    build_nomination_inputs,
+    run_nomination_only,
+    write_json_document,
+)
+from system_tai.quality.l21_150_trake_translation import (  # noqa: E402
+    TRAKEDevTranslationSidecar,
+    TRAKETranslationSidecarError,
+    load_trake_dev_translation_sidecar,
+)
 from system_tai.quality.l21_150_translation import (  # noqa: E402
     KISDevTranslationSidecar,
     KISTranslationSidecarError,
@@ -52,6 +64,9 @@ from system_tai.trake.video_first import (  # noqa: E402
 
 FROZEN_Q2_KIS_DEV_EN_SIDECAR_SHA256 = (
     "fa48d7af2001d8d5eca178301736d1409916961f256b4ccb779490d78495ccea"
+)
+FROZEN_TR_A2_D0_TRAKE_DEV_EN_SIDECAR_SHA256 = (
+    "021980a96f8a59677b143df556abd407f7d70588bd98d8d413bc25741754fcf7"
 )
 
 
@@ -307,6 +322,91 @@ def _run_request(runtime: L21150Runtime, query: Any, request: Any) -> dict[str, 
     if isinstance(query, L21150QAQuery):
         return runtime.handle_qa_query(request)
     return runtime.handle_trake_query(request)
+
+
+def run_trake_nomination_diagnostic(
+    benchmark: L21150Benchmark,
+    runtime: Any,
+    output_dir: Path,
+    *,
+    experiment_id: str,
+    language_policy: str,
+    sidecar: TRAKEDevTranslationSidecar | None,
+    sidecar_sha256: str | None,
+    rrf_constant: float = 60.0,
+    event_video_nomination_depth: int = 100,
+) -> dict[str, Any]:
+    """Run target-agnostic D0 nomination and stop before restricted search."""
+
+    policy = TRAKELanguagePolicy(language_policy)
+    safe_queries = build_nomination_inputs(
+        benchmark,
+        language_policy=policy,
+        sidecar=sidecar,
+    )
+    searcher = getattr(runtime, "video_restricted_searcher", None)
+    encoder = getattr(runtime, "shared_encoder", None)
+    if searcher is None or encoder is None:
+        raise ValueError("D0 runtime requires the shared encoder and video searcher")
+    runtime_manifest = getattr(runtime, "manifest", None)
+    artifact = run_nomination_only(
+        safe_queries,
+        benchmark_id=benchmark.benchmark_id,
+        experiment_id=experiment_id,
+        git_sha=_git_sha(),
+        corpus_fingerprint=getattr(runtime_manifest, "fingerprint", None),
+        model_identity=getattr(encoder, "identifiers", None),
+        language_policy=policy,
+        translation_sidecar_sha256=sidecar_sha256,
+        translation_status=(sidecar.translation_status if sidecar else None),
+        encoder=encoder,
+        searcher=searcher,
+        rrf_constant=rrf_constant,
+        event_video_nomination_depth=event_video_nomination_depth,
+    )
+    output = Path(output_dir)
+    output.mkdir(parents=True, exist_ok=True)
+    ranking_path = output / "trake_nomination_rankings.json"
+    write_json_document(ranking_path, artifact)
+    manifest = {
+        "schema_version": 1,
+        "experiment_id": experiment_id,
+        "git_sha": artifact["git_sha"],
+        "corpus_fingerprint": artifact["corpus_fingerprint"],
+        "diagnostic_mode": "TR_A2_D0_NOMINATION_ONLY",
+        "language_policy": policy.value,
+        "translation_sidecar_sha256": sidecar_sha256,
+        "translation_status": sidecar.translation_status if sidecar else None,
+        "retrieval_feedback_used": False,
+        "GT_USED_IN_RUNTIME": False,
+        "query_count": artifact["query_count"],
+        "video_count": artifact["video_count"],
+        "physical_rows_scored": artifact["physical_rows_scored"],
+        "store_scan_count": artifact["store_scan_count"],
+        "runtime_duration_seconds": artifact["runtime_duration_seconds"],
+        "outputs": {"nomination_rankings": ranking_path.name},
+    }
+    write_json_document(output / "experiment_manifest.json", manifest)
+    (output / "run_summary.md").write_text(
+        "\n".join(
+            [
+                "# TR-A2-D0 Nomination-Only Run",
+                "",
+                f"- Language policy: `{policy.value}`",
+                f"- Queries: {artifact['query_count']}",
+                f"- Videos/query: {artifact['video_count']}",
+                "- GT used in runtime: `false`",
+                "- Restricted selected-video search: `not executed`",
+                "- Planner: `not executed`",
+                "- Raw refinement: `not executed`",
+                "- Semantic quality claim: `false` until offline DEV join",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+        newline="\n",
+    )
+    return artifact
 
 
 def run_l21_150_baseline(
@@ -784,6 +884,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=100,
     )
     parser.add_argument("--trake-anchors-per-event-video", type=int, default=5)
+    parser.add_argument("--trake-nomination-only", action="store_true")
+    parser.add_argument(
+        "--trake-language-policy",
+        choices=tuple(policy.value for policy in TRAKELanguagePolicy),
+        default=TRAKELanguagePolicy.VI_ONLY.value,
+    )
+    parser.add_argument("--trake-dev-en-sidecar", type=Path)
+    parser.add_argument("--trake-rrf-constant", type=float, default=60.0)
     return parser
 
 
@@ -816,6 +924,55 @@ def main(argv: list[str] | None = None) -> int:
                 "--kis-query-sidecar requires --kis-query-policy "
                 "translation_augmented_rrf or en_only"
             )
+        trake_sidecar = None
+        trake_sidecar_sha = None
+        trake_policy = TRAKELanguagePolicy(args.trake_language_policy)
+        if args.trake_nomination_only:
+            if args.split != "dev" or args.task != "trake":
+                raise ValueError(
+                    "--trake-nomination-only is restricted to --split dev --task trake"
+                )
+            if args.trake_video_first_restricted_search:
+                raise ValueError(
+                    "--trake-nomination-only conflicts with "
+                    "--trake-video-first-restricted-search"
+                )
+            if args.resume:
+                raise ValueError("--resume is not supported in nomination-only mode")
+            if trake_policy is TRAKELanguagePolicy.VI_ONLY:
+                if args.trake_dev_en_sidecar is not None:
+                    raise ValueError(
+                        "--trake-dev-en-sidecar must not be supplied for VI_ONLY"
+                    )
+            else:
+                if args.trake_dev_en_sidecar is None:
+                    raise ValueError(
+                        f"--trake-dev-en-sidecar is required for {trake_policy.value}"
+                    )
+                trake_sidecar = load_trake_dev_translation_sidecar(
+                    args.trake_dev_en_sidecar,
+                    benchmark,
+                    args.benchmark,
+                )
+                trake_sidecar_sha = hashlib.sha256(
+                    args.trake_dev_en_sidecar.read_bytes()
+                ).hexdigest()
+                if (
+                    trake_sidecar_sha
+                    != FROZEN_TR_A2_D0_TRAKE_DEV_EN_SIDECAR_SHA256
+                ):
+                    raise ValueError(
+                        "--trake-dev-en-sidecar does not match the frozen D0 DEV SHA256"
+                    )
+        else:
+            if args.trake_dev_en_sidecar is not None:
+                raise ValueError(
+                    "--trake-dev-en-sidecar requires --trake-nomination-only"
+                )
+            if trake_policy is not TRAKELanguagePolicy.VI_ONLY:
+                raise ValueError(
+                    "--trake-language-policy only applies to --trake-nomination-only"
+                )
         experiment_id = args.experiment_id or datetime.now(UTC).strftime(
             "l21-150-e0-%Y%m%dT%H%M%SZ"
         )
@@ -853,29 +1010,44 @@ def main(argv: list[str] | None = None) -> int:
         )
         runtime = OperationalKISRuntime.bootstrap(config)
         try:
-            report = run_l21_150_baseline(
-                benchmark,
-                runtime,
-                args.output_dir,
-                experiment_id=experiment_id,
-                split=args.split,
-                task=args.task,
-                top_k=args.top_k,
-                refine_top_n=args.refine_top_n,
-                resume=args.resume,
-                fail_fast=args.fail_fast,
-                benchmark_sha256=benchmark_sha,
-                manifest_sha256=args.manifest_sha256,
-                gt_policy=args.gt_policy,
-                kis_query_policy=args.kis_query_policy,
-                kis_query_sidecar=kis_sidecar,
-                kis_query_sidecar_path=args.kis_query_sidecar,
-                kis_query_sidecar_sha256=kis_sidecar_sha,
-                q3_temporal_policy=args.q3_temporal_policy,
-                q3_config=q3_config,
-                q3_anchor_refinement_config=q3_anchor_config,
-                trake_video_first_config=trake_video_first_config,
-            )
+            if args.trake_nomination_only:
+                report = run_trake_nomination_diagnostic(
+                    benchmark,
+                    runtime,
+                    args.output_dir,
+                    experiment_id=experiment_id,
+                    language_policy=trake_policy.value,
+                    sidecar=trake_sidecar,
+                    sidecar_sha256=trake_sidecar_sha,
+                    rrf_constant=args.trake_rrf_constant,
+                    event_video_nomination_depth=(
+                        args.trake_event_video_nomination_depth
+                    ),
+                )
+            else:
+                report = run_l21_150_baseline(
+                    benchmark,
+                    runtime,
+                    args.output_dir,
+                    experiment_id=experiment_id,
+                    split=args.split,
+                    task=args.task,
+                    top_k=args.top_k,
+                    refine_top_n=args.refine_top_n,
+                    resume=args.resume,
+                    fail_fast=args.fail_fast,
+                    benchmark_sha256=benchmark_sha,
+                    manifest_sha256=args.manifest_sha256,
+                    gt_policy=args.gt_policy,
+                    kis_query_policy=args.kis_query_policy,
+                    kis_query_sidecar=kis_sidecar,
+                    kis_query_sidecar_path=args.kis_query_sidecar,
+                    kis_query_sidecar_sha256=kis_sidecar_sha,
+                    q3_temporal_policy=args.q3_temporal_policy,
+                    q3_config=q3_config,
+                    q3_anchor_refinement_config=q3_anchor_config,
+                    trake_video_first_config=trake_video_first_config,
+                )
         finally:
             runtime.close(shutdown_reason="l21_150_baseline_complete")
     except (
@@ -884,10 +1056,18 @@ def main(argv: list[str] | None = None) -> int:
         L21150FormatError,
         OSError,
         RuntimeError,
+        TRAKENominationError,
+        TRAKETranslationSidecarError,
         ValueError,
     ) as exc:
         print(f"L21-150 baseline run failed: {exc}", file=sys.stderr)
         return 2
+    if args.trake_nomination_only:
+        print(
+            "TR-A2-D0 nomination-only run complete: "
+            f"queries={report['query_count']} videos={report['video_count']}"
+        )
+        return 0
     print(
         "L21-150 baseline run complete: "
         f"success={report['successful_query_count']} failed={report['failed_query_count']}"
