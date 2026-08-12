@@ -84,6 +84,8 @@ class Stage2RuntimeConfig:
     build_git_commit: str | None = None
     hardware_mode: str = "auto"
     video_backend: str = "auto"
+    auto_clip_promoted: bool = False
+    auto_translator_promoted: bool = True
     auto_nvdec_promoted: bool = False
 
     def __post_init__(self) -> None:
@@ -154,6 +156,8 @@ def config_from_yaml(
         hardware_mode=hardware.get("mode", "auto"),
         video_backend=video.get("backend", "auto"),
         auto_nvdec_promoted=bool(video.get("auto_nvdec_promoted", False)),
+        auto_clip_promoted=bool(hardware.get("auto_clip_promoted", False)),
+        auto_translator_promoted=bool(hardware.get("auto_translator_promoted", True)),
     )
 
 

@@ -289,6 +289,8 @@ class OperationalRetrievalRuntime:
                 video_backend=self.config.video_backend,
                 clip_device=self.config.clip_device,
                 translator_device=self.config.translator_device,
+                auto_clip_promoted=self.config.auto_clip_promoted,
+                auto_translator_promoted=self.config.auto_translator_promoted,
                 auto_nvdec_promoted=self.config.auto_nvdec_promoted,
             )
         )

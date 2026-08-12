@@ -15,6 +15,8 @@ class HardwareConfig:
     video_backend: str = "auto"
     clip_device: str = "auto"
     translator_device: str = "auto"
+    auto_clip_promoted: bool = False
+    auto_translator_promoted: bool = True
     auto_nvdec_promoted: bool = False
 
     def __post_init__(self) -> None:
@@ -67,7 +69,7 @@ def resolve_hardware(
     if config.mode == "gpu" and not cuda:
         raise RuntimeError("GPU_MODE_REQUESTED_BUT_CUDA_UNAVAILABLE")
 
-    def neural(requested: str, component: str) -> str:
+    def neural(requested: str, component: str, promoted: bool) -> str:
         if config.mode == "gpu":
             return "cuda:0"
         if requested == "cpu":
@@ -76,10 +78,16 @@ def resolve_hardware(
             if not cuda:
                 raise RuntimeError(f"{component.upper()}_CUDA_REQUESTED_BUT_UNAVAILABLE")
             return "cuda:0"
-        return "cuda:0" if cuda else "cpu"
+        if cuda and promoted:
+            return "cuda:0"
+        if cuda and not promoted:
+            reasons.append(f"AUTO_{component.upper()}_NOT_PROMOTED")
+        return "cpu"
 
-    clip = neural(config.clip_device, "clip")
-    translator = neural(config.translator_device, "translator")
+    clip = neural(config.clip_device, "clip", config.auto_clip_promoted)
+    translator = neural(
+        config.translator_device, "translator", config.auto_translator_promoted
+    )
     if config.video_backend == "opencv":
         video = "opencv"
     elif config.video_backend == "nvdec":
@@ -87,9 +95,8 @@ def resolve_hardware(
             raise RuntimeError(f"NVDEC_REQUESTED_BUT_UNAVAILABLE: {nvdec.get('reason')}")
         video = "nvdec"
     elif config.mode == "gpu":
-        video = "nvdec" if nvdec_available else "opencv"
-        if not nvdec_available:
-            reasons.append(f"NVDEC_UNAVAILABLE_OPENCV_FALLBACK: {nvdec.get('reason')}")
+        video = "opencv"
+        reasons.append("GPU_MODE_VIDEO_AUTO_REMAINS_OPENCV_UNLESS_NVDEC_EXPLICIT")
     elif config.auto_nvdec_promoted and nvdec_available:
         video = "nvdec"
     else:

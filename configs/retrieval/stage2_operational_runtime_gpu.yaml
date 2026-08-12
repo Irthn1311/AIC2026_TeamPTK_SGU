@@ -6,6 +6,8 @@ runtime:
 
 hardware:
   mode: auto
+  auto_clip_promoted: false
+  auto_translator_promoted: true
 
 video:
   backend: auto

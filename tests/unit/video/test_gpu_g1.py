@@ -85,8 +85,10 @@ def test_auto_is_conservative_even_when_nvdec_exists() -> None:
         HardwareConfig(), torch_module=fake_torch(True), nvdec_probe=probe(True)
     )
     assert result.video_backend == "opencv"
-    assert result.clip_device == result.translator_device == "cuda:0"
-    assert "AUTO_NVDEC_NOT_PROMOTED" in result.reasons[0]
+    assert result.clip_device == "cpu"
+    assert result.translator_device == "cuda:0"
+    assert "AUTO_CLIP_NOT_PROMOTED" in result.reasons
+    assert any(reason.startswith("AUTO_NVDEC_NOT_PROMOTED") for reason in result.reasons)
 
 
 def test_auto_can_promote_nvdec_after_static_gate() -> None:
@@ -259,6 +261,8 @@ def test_gpu_stage2_yaml_keeps_exact_numpy_backend(tmp_path: Path) -> None:
     source = Path("configs/retrieval/stage2_operational_runtime_gpu.yaml")
     settings = load_stage2_settings(source)
     assert settings["hardware"]["mode"] == "auto"
+    assert settings["hardware"]["auto_clip_promoted"] is False
+    assert settings["hardware"]["auto_translator_promoted"] is True
     assert settings["video"]["auto_nvdec_promoted"] is False
     config = config_from_yaml(
         source,
