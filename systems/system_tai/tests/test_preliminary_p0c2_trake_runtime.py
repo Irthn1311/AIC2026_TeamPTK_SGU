@@ -425,6 +425,110 @@ def test_h_bilingual_event_variants():
     assert extra["flattened_variants"][1]["variant_id"] == "TH::e0::v2_en"
 
 
+def test_trake_include_vi_variant_defaults_true_and_parser_preserves_default():
+    direct = TRAKEQueryRequest(
+        request_id="req-default",
+        query_id="T-DEFAULT",
+        events=({"description": "sự kiện"},),
+    )
+    parsed = parse_session_request(
+        json.dumps(
+            {
+                "type": "trake_query",
+                "request_id": "req-parsed-default",
+                "query_id": "T-PARSED-DEFAULT",
+                "events": [{"description": "sự kiện"}],
+            }
+        )
+    )
+    assert direct.include_vi_variant is True
+    assert isinstance(parsed, TRAKEQueryRequest)
+    assert parsed.include_vi_variant is True
+
+
+def test_trake_en_only_contract_requires_translation_for_every_event():
+    request = TRAKEQueryRequest(
+        request_id="req-en",
+        query_id="T-EN",
+        events=(
+            {"description": "sự kiện một", "description_en": "event one"},
+            {"description": "sự kiện hai", "description_en": "event two"},
+        ),
+        include_vi_variant=False,
+    )
+    assert request.include_vi_variant is False
+
+    with pytest.raises(ValueError, match="every event requires.*description_en"):
+        TRAKEQueryRequest(
+            request_id="req-missing-en",
+            query_id="T-MISSING-EN",
+            events=(
+                {"description": "sự kiện một", "description_en": "event one"},
+                {"description": "sự kiện hai"},
+            ),
+            include_vi_variant=False,
+        )
+
+
+def test_trake_include_vi_variant_is_strict_bool_in_constructor_and_parser():
+    with pytest.raises(ValueError, match="include_vi_variant must be a boolean"):
+        TRAKEQueryRequest(
+            request_id="req-bad-bool",
+            query_id="T-BAD-BOOL",
+            events=({"description": "sự kiện", "description_en": "event"},),
+            include_vi_variant=1,  # type: ignore[arg-type]
+        )
+    with pytest.raises(InvalidRequestError, match="include_vi_variant must be a boolean"):
+        parse_session_request(
+            json.dumps(
+                {
+                    "type": "trake_query",
+                    "request_id": "req-bad-parser-bool",
+                    "query_id": "T-BAD-PARSER-BOOL",
+                    "events": [
+                        {"description": "sự kiện", "description_en": "event"}
+                    ],
+                    "include_vi_variant": 1,
+                }
+            )
+        )
+
+
+def test_trake_runtime_en_only_encodes_only_en_and_retains_vi_provenance():
+    pipeline, encoder, _, _, _, _ = make_test_pipeline()
+    request = parse_session_request(
+        json.dumps(
+            {
+                "type": "trake_query",
+                "request_id": "req-runtime-en",
+                "query_id": "T-RUNTIME-EN",
+                "events": [
+                    {"description": "nguồn vi một", "description_en": "event1"},
+                    {"description": "nguồn vi hai", "description_en": "event2"},
+                ],
+                "include_vi_variant": False,
+                "refine_top_n": 0,
+            }
+        )
+    )
+    assert isinstance(request, TRAKEQueryRequest)
+    _, _, extra = pipeline.process_trake_query(
+        request,
+        refinement_config=RefinementConfig(),
+    )
+
+    assert encoder.encode_texts_calls == [["event1", "event2"]]
+    assert [item["variant_id"] for item in extra["flattened_variants"]] == [
+        "T-RUNTIME-EN::e0::v2_en",
+        "T-RUNTIME-EN::e1::v2_en",
+    ]
+    assert {item["language"] for item in extra["flattened_variants"]} == {"en"}
+    assert request.events[0]["description"] == "nguồn vi một"
+    assert request.events[1]["description"] == "nguồn vi hai"
+    assert extra["include_vi_variant"] is False
+    assert extra["source_vi_retained_for_provenance"] is True
+
+
 def test_k_refine_top_n_zero_bypasses_refiner():
     cands = [
         [{"rank": 1, "video_id": "V1", "frame_id": 10, "score": 0.9}],

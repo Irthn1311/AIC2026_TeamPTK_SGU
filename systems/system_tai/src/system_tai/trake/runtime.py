@@ -126,15 +126,16 @@ class TRAKERuntimePipeline:
             )
             domain_events.append(domain_ev)
 
-            # VI variant
-            v_vi = QueryVariant(
-                variant_id=f"{request.query_id}::e{idx}::v1_vi",
-                text=desc,
-                language=QueryLanguage.VIETNAMESE,
-                variant_type=QueryVariantType.VIETNAMESE_DIRECT,
-                weight=1.0,
-            )
-            flattened_variants.append((idx, v_vi))
+            event_variant_start = len(flattened_variants)
+            if request.include_vi_variant:
+                v_vi = QueryVariant(
+                    variant_id=f"{request.query_id}::e{idx}::v1_vi",
+                    text=desc,
+                    language=QueryLanguage.VIETNAMESE,
+                    variant_type=QueryVariantType.VIETNAMESE_DIRECT,
+                    weight=1.0,
+                )
+                flattened_variants.append((idx, v_vi))
 
             # Optional EN variant
             if desc_en:
@@ -146,6 +147,8 @@ class TRAKERuntimePipeline:
                     weight=1.0,
                 )
                 flattened_variants.append((idx, v_en))
+            if len(flattened_variants) == event_variant_start:
+                raise ValueError(f"event at index {idx} produced no retrieval variants")
 
         trake_query = TRAKEQuery(query_id=request.query_id, events=tuple(domain_events))
 
@@ -582,6 +585,7 @@ class TRAKERuntimePipeline:
         result_diagnostics = {
             "query_id": request.query_id,
             "event_count": len(domain_events),
+            "include_vi_variant": request.include_vi_variant,
             "flattened_variant_count": len(flattened_variants),
             "event_candidate_counts": [len(p) for p in event_candidate_pools],
             "planner_prediction_count": len(c1_preds),
@@ -640,6 +644,8 @@ class TRAKERuntimePipeline:
         )
 
         extra_diagnostics = {
+            "include_vi_variant": request.include_vi_variant,
+            "source_vi_retained_for_provenance": True,
             "c1_diagnostics": c1_result.diagnostics,
             "c1_paths": [
                 {

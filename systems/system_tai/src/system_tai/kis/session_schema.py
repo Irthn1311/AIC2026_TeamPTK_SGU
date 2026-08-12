@@ -280,6 +280,7 @@ class TRAKEQueryRequest:
     request_id: str
     query_id: str
     events: tuple[dict[str, Any], ...]
+    include_vi_variant: bool = True
     top_k_per_variant: int = 100
     event_candidate_top_k: int = 100
     output_top_k: int = 100
@@ -294,6 +295,8 @@ class TRAKEQueryRequest:
             raise ValueError("query_id must be non-empty")
         if not isinstance(self.events, (tuple, list)) or len(self.events) == 0:
             raise ValueError("events must be a non-empty list of event objects")
+        if type(self.include_vi_variant) is not bool:
+            raise ValueError("include_vi_variant must be a boolean")
 
         for idx, ev in enumerate(self.events):
             if not isinstance(ev, dict):
@@ -307,6 +310,11 @@ class TRAKEQueryRequest:
                     raise ValueError(
                         f"event at index {idx} 'description_en' must be non-empty string"
                     )
+            if not self.include_vi_variant and desc_en is None:
+                raise ValueError(
+                    "every event requires non-empty 'description_en' when "
+                    "include_vi_variant is false"
+                )
 
         if type(self.top_k_per_variant) is not int or not (1 <= self.top_k_per_variant <= 1000):
             raise ValueError("top_k_per_variant must be integer in range [1, 1000]")
@@ -458,6 +466,7 @@ def parse_session_request(
                 request_id=request_id.strip(),
                 query_id=query_id.strip(),
                 events=tuple(events_raw),
+                include_vi_variant=data.get("include_vi_variant", True),
                 top_k_per_variant=top_k_pv_raw,
                 event_candidate_top_k=event_cand_k_raw,
                 output_top_k=out_k_raw,

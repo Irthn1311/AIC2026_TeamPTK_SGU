@@ -1141,6 +1141,8 @@ class OperationalKISRuntime:
             "request_id": request.request_id,
             "query_id": request.query_id,
             "events": list(request.events),
+            "include_vi_variant": request.include_vi_variant,
+            "source_vi_retained_for_provenance": True,
             "event_variants": extra_diag["flattened_variants"],
             "top_k_per_variant": request.top_k_per_variant,
             "event_candidate_top_k": request.event_candidate_top_k,

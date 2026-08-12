@@ -271,6 +271,8 @@ def _runtime_request(
     *,
     kis_query_policy: str = "vi_only",
     kis_translations: Mapping[str, str] | None = None,
+    trake_language_policy: str = "vi_only",
+    trake_translations: Mapping[tuple[str, int], str] | None = None,
 ):
     request_id = f"{experiment_id}:{query.query_id}"
     if isinstance(query, L21150KISQuery):
@@ -304,10 +306,42 @@ def _runtime_request(
             refine_top_n=max(1, refine_top_n),
         )
     if isinstance(query, L21150TRAKEQuery):
+        if trake_language_policy == "vi_only":
+            if trake_translations is not None:
+                raise ValueError("TRAKE VI_ONLY must not receive English translations")
+            events = tuple(
+                {"description": event.description_vi} for event in query.events
+            )
+            include_vi_variant = True
+        elif trake_language_policy == "en_only":
+            if trake_translations is None:
+                raise ValueError("TRAKE EN_ONLY requires frozen English translations")
+            events_list: list[dict[str, str]] = []
+            for event in query.events:
+                key = (query.query_id, event.event_index)
+                translation = trake_translations.get(key)
+                if translation is None:
+                    raise ValueError(
+                        "missing frozen English translation for "
+                        f"{query.query_id}/event {event.event_index}"
+                    )
+                events_list.append(
+                    {
+                        "description": event.description_vi,
+                        "description_en": translation,
+                    }
+                )
+            events = tuple(events_list)
+            include_vi_variant = False
+        else:
+            raise ValueError(
+                "normal TRAKE E2E supports only vi_only or en_only language policy"
+            )
         return TRAKEQueryRequest(
             request_id=request_id,
             query_id=query.query_id,
-            events=tuple({"description": event.description_vi} for event in query.events),
+            events=events,
+            include_vi_variant=include_vi_variant,
             top_k_per_variant=top_k,
             event_candidate_top_k=top_k,
             output_top_k=top_k,
@@ -432,6 +466,10 @@ def run_l21_150_baseline(
     q3_config: VideoConditionedKeyframeConfig | None = None,
     q3_anchor_refinement_config: Q3AnchorRefinementConfig | None = None,
     trake_video_first_config: TRAKEVideoFirstConfig | None = None,
+    trake_language_policy: str = "vi_only",
+    trake_query_sidecar: TRAKEDevTranslationSidecar | None = None,
+    trake_query_sidecar_path: Path | None = None,
+    trake_query_sidecar_sha256: str | None = None,
 ) -> dict[str, Any]:
     if not 1 <= top_k <= 100:
         raise ValueError("top_k must be in [1, 100]")
@@ -469,6 +507,35 @@ def run_l21_150_baseline(
     )
     if resolved_trake_video_first.enabled and (split != "dev" or task != "trake"):
         raise ValueError("TR-A1 is restricted to the TRAKE DEV diagnostic experiment")
+    if trake_language_policy not in {"vi_only", "en_only"}:
+        raise ValueError("normal TRAKE E2E supports only vi_only or en_only policy")
+    if trake_language_policy == "en_only":
+        if not resolved_trake_video_first.enabled or split != "dev" or task != "trake":
+            raise ValueError("TRAKE EN_ONLY is restricted to DEV TRAKE with TR-A1 enabled")
+        if trake_query_sidecar is None:
+            raise ValueError("TRAKE EN_ONLY requires a validated frozen D0 sidecar")
+        if trake_query_sidecar_path is None or trake_query_sidecar_sha256 is None:
+            raise ValueError("TRAKE EN_ONLY requires frozen sidecar path and SHA256")
+        actual_trake_sidecar_sha256 = hashlib.sha256(
+            Path(trake_query_sidecar_path).read_bytes()
+        ).hexdigest()
+        if (
+            trake_query_sidecar_sha256 != actual_trake_sidecar_sha256
+            or actual_trake_sidecar_sha256
+            != FROZEN_TR_A2_D0_TRAKE_DEV_EN_SIDECAR_SHA256
+        ):
+            raise ValueError(
+                "TRAKE sidecar SHA256 does not match the frozen D0 DEV artifact"
+            )
+    elif any(
+        value is not None
+        for value in (
+            trake_query_sidecar,
+            trake_query_sidecar_path,
+            trake_query_sidecar_sha256,
+        )
+    ):
+        raise ValueError("TRAKE VI_ONLY must not receive a translation sidecar")
     if resolved_q3_anchor_config.enabled and (
         not q3_enabled
         or split != "dev"
@@ -561,6 +628,11 @@ def run_l21_150_baseline(
     kis_translations = (
         kis_query_sidecar.translations if kis_query_sidecar is not None else None
     )
+    trake_translations = (
+        trake_query_sidecar.translations
+        if trake_query_sidecar is not None
+        else None
+    )
     for query in selected:
         if query.query_id in completed_ids:
             continue
@@ -571,6 +643,8 @@ def run_l21_150_baseline(
             refine_top_n,
             kis_query_policy=kis_query_policy,
             kis_translations=kis_translations,
+            trake_language_policy=trake_language_policy,
+            trake_translations=trake_translations,
         )
         try:
             response = _run_request(runtime, query, request)
@@ -650,7 +724,10 @@ def run_l21_150_baseline(
         "translation_augmented_rrf": "TRANSLATION_AUGMENTED_RRF",
         "en_only": "EN_ONLY",
     }[kis_query_policy]
-    query_policy_changed_from_e0 = kis_query_policy != "vi_only"
+    query_policy_changed_from_e0 = (
+        kis_query_policy != "vi_only" or trake_language_policy != "vi_only"
+    )
+    resolved_trake_query_policy = trake_language_policy.upper()
     metadata = {
         "schema_version": 2,
         "experiment_id": experiment_id,
@@ -689,6 +766,7 @@ def run_l21_150_baseline(
             q3_enabled or resolved_trake_video_first.enabled
         ),
         "kis_query_policy": resolved_kis_query_policy,
+        "trake_query_policy": resolved_trake_query_policy,
         "query_policy_changed_from_e0": query_policy_changed_from_e0,
         "runtime_contract": "OperationalKISRuntime public task handlers",
         "known_current_limitations": [
@@ -747,6 +825,19 @@ def run_l21_150_baseline(
                 },
             }
         )
+    if trake_language_policy == "en_only":
+        assert trake_query_sidecar is not None
+        metadata["trake_query_experiment"] = {
+            "trake_query_policy": "EN_ONLY",
+            "translation_sidecar_sha256": trake_query_sidecar_sha256,
+            "translation_status": trake_query_sidecar.translation_status,
+            "source_vi_retained_for_provenance": True,
+            "source_vi_used_for_retrieval": False,
+            "translation_en_used_for_retrieval": True,
+            "include_vi_variant": False,
+            "variant_count_policy": "1_VARIANT_EN_ONLY_PER_EVENT",
+            "retrieval_feedback_used": False,
+        }
     if kis_query_policy in {"translation_augmented_rrf", "en_only"}:
         assert kis_query_sidecar is not None
         experiment_metadata = {
@@ -809,6 +900,7 @@ def run_l21_150_baseline(
                 "- Core production retrieval/ranking implementation changed: "
                 f"`{str(q3_enabled or resolved_trake_video_first.enabled).lower()}`",
                 f"- KIS query policy: `{resolved_kis_query_policy}`",
+                f"- TRAKE query policy: `{resolved_trake_query_policy}`",
                 "- Q3 temporal policy: "
                 f"`{VIDEO_CONDITIONED_KEYFRAME_DIVERSITY if q3_enabled else 'NONE'}`",
                 (
@@ -965,13 +1057,44 @@ def main(argv: list[str] | None = None) -> int:
                         "--trake-dev-en-sidecar does not match the frozen D0 DEV SHA256"
                     )
         else:
-            if args.trake_dev_en_sidecar is not None:
-                raise ValueError(
-                    "--trake-dev-en-sidecar requires --trake-nomination-only"
+            if trake_policy is TRAKELanguagePolicy.VI_ONLY:
+                if args.trake_dev_en_sidecar is not None:
+                    raise ValueError(
+                        "--trake-dev-en-sidecar must not be supplied for VI_ONLY"
+                    )
+            elif trake_policy is TRAKELanguagePolicy.EN_ONLY:
+                if (
+                    args.split != "dev"
+                    or args.task != "trake"
+                    or not args.trake_video_first_restricted_search
+                ):
+                    raise ValueError(
+                        "normal TRAKE EN_ONLY requires --split dev --task trake "
+                        "--trake-video-first-restricted-search"
+                    )
+                if args.trake_dev_en_sidecar is None:
+                    raise ValueError(
+                        "--trake-dev-en-sidecar is required for normal TRAKE EN_ONLY"
+                    )
+                trake_sidecar = load_trake_dev_translation_sidecar(
+                    args.trake_dev_en_sidecar,
+                    benchmark,
+                    args.benchmark,
                 )
-            if trake_policy is not TRAKELanguagePolicy.VI_ONLY:
+                trake_sidecar_sha = hashlib.sha256(
+                    args.trake_dev_en_sidecar.read_bytes()
+                ).hexdigest()
+                if (
+                    trake_sidecar_sha
+                    != FROZEN_TR_A2_D0_TRAKE_DEV_EN_SIDECAR_SHA256
+                ):
+                    raise ValueError(
+                        "--trake-dev-en-sidecar does not match the frozen D0 DEV SHA256"
+                    )
+            else:
                 raise ValueError(
-                    "--trake-language-policy only applies to --trake-nomination-only"
+                    "normal TRAKE E2E supports only vi_only or en_only; "
+                    "vi_plus_en_weighted_rrf remains nomination-only"
                 )
         experiment_id = args.experiment_id or datetime.now(UTC).strftime(
             "l21-150-e0-%Y%m%dT%H%M%SZ"
@@ -1047,6 +1170,10 @@ def main(argv: list[str] | None = None) -> int:
                     q3_config=q3_config,
                     q3_anchor_refinement_config=q3_anchor_config,
                     trake_video_first_config=trake_video_first_config,
+                    trake_language_policy=trake_policy.value,
+                    trake_query_sidecar=trake_sidecar,
+                    trake_query_sidecar_path=args.trake_dev_en_sidecar,
+                    trake_query_sidecar_sha256=trake_sidecar_sha,
                 )
         finally:
             runtime.close(shutdown_reason="l21_150_baseline_complete")
