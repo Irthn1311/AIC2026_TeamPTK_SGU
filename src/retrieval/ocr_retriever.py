@@ -127,16 +127,22 @@ class InMemoryOCRRetriever(BaseRetriever):
         )
         return self
 
-    def retrieve(self, query: object, top_k: int = 100) -> List[SearchResult]:
+    def retrieve(
+        self,
+        query: object,
+        top_k: int = 100,
+        max_per_video: int = 2,
+        max_per_batch: int = 10,
+    ) -> List[SearchResult]:
         """
         Search OCR text in memory for query matches.
 
         Args:
-            query: Either a text string (e.g. "VTV1 bản tin") or TextualKISQuery
-            top_k: Number of top results to return
-
-        Returns:
-            List of SearchResult objects sorted by relevance score descending.
+            query:         Text string or TextualKISQuery
+            top_k:         Number of top results to return
+            max_per_video: Max keyframes per video_id (default: 2)
+            max_per_batch: Max keyframes per batch prefix L21..L30 (default: 10)
+                           This prevents large batches (L25/L26) from monopolising results.
         """
         if not self.is_configured:
             logger.debug("[InMemoryOCRRetriever] Not loaded or empty, returning empty list")
@@ -159,8 +165,8 @@ class InMemoryOCRRetriever(BaseRetriever):
 
         # Filter out common stop words in Vietnamese & English for token scoring
         stop_words = {
-            "có", "là", "trong", "ở", "trên", "dưới", "và", "cùng", "với", "một",
-            "người", "hình", "cảnh", "video", "nhìn", "thấy", "cho", "đang", "được",
+            "co", "la", "trong", "o", "tren", "duoi", "va", "cung", "voi", "mot",
+            "nguoi", "hinh", "canh", "video", "nhin", "thay", "cho", "dang", "duoc",
             "a", "an", "the", "in", "on", "at", "with", "is", "are", "and", "of",
         }
         substantive_tokens = query_tokens - stop_words
@@ -201,8 +207,29 @@ class InMemoryOCRRetriever(BaseRetriever):
         # Sort by score descending
         scored_results.sort(key=lambda x: x[0], reverse=True)
 
+        # Apply video-level + batch-level deduplication
         results: List[SearchResult] = []
-        for score, rec in scored_results[:top_k]:
+        video_counts: Dict[str, int] = {}
+        batch_counts: Dict[str, int] = {}
+
+        for score, rec in scored_results:
+            if len(results) >= top_k:
+                break
+
+            vid = rec["video_id"]
+            batch = vid.split("_")[0]  # e.g. "L25"
+
+            # Video-level cap
+            if video_counts.get(vid, 0) >= max_per_video:
+                continue
+
+            # Batch-level cap (prevents L25/L26 dominance)
+            if batch_counts.get(batch, 0) >= max_per_batch:
+                continue
+
+            video_counts[vid] = video_counts.get(vid, 0) + 1
+            batch_counts[batch] = batch_counts.get(batch, 0) + 1
+
             results.append(
                 SearchResult(
                     keyframe_id=rec["keyframe_id"],
@@ -216,5 +243,9 @@ class InMemoryOCRRetriever(BaseRetriever):
                 )
             )
 
-        logger.debug(f"[{self.name}] '{query_text[:50]}' -> {len(results)} results")
+        logger.info(
+            f"[{self.name}] '{query_text[:50]}' -> {len(results)} results "
+            f"from {len(video_counts)} videos / {len(batch_counts)} batches "
+            f"(dedup: max_per_video={max_per_video}, max_per_batch={max_per_batch})"
+        )
         return results

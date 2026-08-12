@@ -59,31 +59,32 @@ class VisualRetriever(BaseRetriever):
         query: str,
         top_k: int = 100,
         target_prefix: Optional[str] = None,
-        max_per_video: int = 3,
+        max_per_video: int = 1,
+        max_per_batch: int = 15,
     ) -> List[SearchResult]:
         """
         Search FAISS for keyframes visually similar to the text query.
-        Applies Video-Level Deduplication to prevent long videos (like L25) from saturating results.
+        Applies Video-Level AND Batch-Level Deduplication to prevent large batches
+        (L25 with 37K keyframes, L26 with 79K keyframes) from saturating results.
 
         Args:
             query: Natural language description (Vietnamese or English)
             top_k: Number of candidates to return
             target_prefix: e.g. "L21", "L23" (optional prefix filter)
-            max_per_video: Maximum keyframes to accept per video_id (default: 3)
-
-        Returns:
-            List[SearchResult] sorted by cosine similarity score descending
+            max_per_video: Maximum keyframes per video_id (default: 1 for max diversity)
+            max_per_batch: Maximum keyframes per batch prefix L21..L30 (default: 15)
         """
         # 1. Encode query text → CLIP vector
         query_vec = self._encoder.encode_text(query, normalize=True)
 
-        # 2. FAISS ANN search (fetch a large pool so deduplication yields diverse videos)
-        search_k = max(top_k * 30, 3000)
+        # 2. FAISS ANN search (fetch large pool to allow dedup to yield diverse results)
+        search_k = max(top_k * 50, 5000)
         faiss_ids, scores = self._faiss_db.search(query_vec, top_k=search_k)
 
-        # 3. Map faiss_id → KeyframeMeta → SearchResult with Video-Level Deduplication
+        # 3. Map faiss_id → KeyframeMeta → SearchResult with Video & Batch Deduplication
         results: List[SearchResult] = []
         video_counts: Dict[str, int] = {}
+        batch_counts: Dict[str, int] = {}
 
         for fid, score in zip(faiss_ids, scores):
             if fid < 0:  # FAISS returns -1 for empty slots
@@ -96,12 +97,20 @@ class VisualRetriever(BaseRetriever):
             if target_prefix and not meta.video_id.startswith(target_prefix):
                 continue
 
-            # Video-level deduplication: prevent any single video from monopolizing candidate list
+            batch = meta.video_id.split("_")[0]  # e.g. "L25"
+
+            # Video-level deduplication
             if max_per_video > 0:
-                count = video_counts.get(meta.video_id, 0)
-                if count >= max_per_video:
+                if video_counts.get(meta.video_id, 0) >= max_per_video:
                     continue
-                video_counts[meta.video_id] = count + 1
+
+            # Batch-level deduplication (prevents L25/L26 from monopolising)
+            if max_per_batch > 0 and not target_prefix:
+                if batch_counts.get(batch, 0) >= max_per_batch:
+                    continue
+
+            video_counts[meta.video_id] = video_counts.get(meta.video_id, 0) + 1
+            batch_counts[batch] = batch_counts.get(batch, 0) + 1
 
             results.append(SearchResult(
                 keyframe_id=meta.keyframe_id,
@@ -111,11 +120,15 @@ class VisualRetriever(BaseRetriever):
                 pts_time=meta.pts_time,
                 score=float(score),
                 retriever_source=self.name,
+                metadata={"topic_category": getattr(meta, "topic_category", "")},
             ))
             if len(results) >= top_k:
                 break
 
-        logger.debug(f"[{self.name}] query='{query[:50]}' (prefix={target_prefix}) → {len(results)} results from {len(video_counts)} videos")
+        logger.info(
+            f"[{self.name}] query='{query[:50]}' (prefix={target_prefix}) "
+            f"-> {len(results)} results from {len(video_counts)} videos / {len(batch_counts)} batches"
+        )
         return results
 
     def retrieve_by_vector(
