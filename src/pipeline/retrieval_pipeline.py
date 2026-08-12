@@ -16,6 +16,7 @@ from src.common.enums import QueryType
 from src.common.types import EvidenceResult, QASubmission, TRAKESubmission, TRAKEEventResult
 from src.reasoning.query_classifier import QueryClassifier
 from src.reasoning.query_parser import QueryParser
+from src.reasoning.batch_router import BatchRouter
 from src.retrieval.visual_retriever import VisualRetriever
 from src.retrieval.text_retriever import TextRetriever
 from src.fusion.reciprocal_rank import ReciprocalRankFusion
@@ -75,6 +76,12 @@ class RetrievalPipeline:
         self._text_rets   = text_retrievers or []
         self._rrf         = ReciprocalRankFusion(k=rrf_k)
         self._selector    = FrameSelector()
+
+        # BatchRouter: predicts which batch(es) to search when target_prefix is absent
+        self._batch_router = BatchRouter(
+            known_batches=self._meta_store.known_batches if hasattr(meta_store, 'known_batches') else None,
+            media_info_dir=kwargs.pop("media_info_dir", None) if kwargs else None,
+        )
 
         self._visual_weight = visual_weight
         self._text_weight   = text_weight
@@ -247,13 +254,18 @@ class RetrievalPipeline:
         query_dict: Dict[str, Any],
         query_id: str,
     ) -> Optional[EvidenceResult]:
-        """Text → CLIP → FAISS → (Qdrant / InMemory OCR) → Topic-SoftScored RRF → best frame."""
+        """Text → CLIP → FAISS → (Qdrant / InMemory OCR) → Topic-SoftScored RRF → best frame.
+
+        Pillar 2+3: When target_prefix is absent (real competition), BatchRouter predicts
+        likely batch(es), then balanced retrieval prevents L25/L26 from dominating.
+        """
         raw_text = query_dict.get("text") or query_dict.get("description", "")
-        target_prefix = query_dict.get("target_prefix")
+        target_prefix = query_dict.get("target_prefix") or ""
 
         logger.info(f"\n{'='*70}")
         logger.info(f"PROCESSING QUERY [id='{query_id}']")
         logger.info(f"Raw Input: '{raw_text}'")
+        logger.info(f"Target Prefix: '{target_prefix}' ('' = global balanced search)")
 
         # Step 1: Query Parsing & Intent Extraction
         kis_query = self._parser.parse_kis(raw_text, top_k=self._top_k_ret)
@@ -264,14 +276,43 @@ class RetrievalPipeline:
         logger.info(f"[Step 1/4 - Query Analysis]")
         logger.info(f"  • Scene: '{kis_query.parsed_scene}' | Objects: {kis_query.parsed_objects} | Colors: {kis_query.parsed_colors}")
         logger.info(f"  • OCR Hints: {kis_query.ocr_keywords} | Spatial: {kis_query.spatial_hints}")
-        logger.info(f"  • Topic Intent: '{topic_res.topic}' (Confidence: {topic_res.confidence:.2f}, Keywords: {topic_res.matched_keywords})")
+        logger.info(f"  • Topic Intent: '{topic_res.topic}' (Conf: {topic_res.confidence:.2f}, Kw: {topic_res.matched_keywords})")
         logger.info(f"  • Translated CLIP Prompt: '{retrieval_text}'")
 
         # Step 2: Multimodal Candidate Retrieval
         logger.info(f"[Step 2/4 - Candidate Retrieval]")
-        vis_results  = self._vis_ret.retrieve(retrieval_text, top_k=self._top_k_ret, target_prefix=target_prefix)
+
+        if target_prefix:
+            # Known batch: restrict to that prefix (highest precision)
+            vis_results = self._vis_ret.retrieve(
+                retrieval_text, top_k=self._top_k_ret, target_prefix=target_prefix
+            )
+            logger.info(f"  • Mode: Prefix-Scoped ('{target_prefix}')")
+        else:
+            # Pillar 3: BatchRouter predicts likely batches WITHOUT knowing prefix
+            predicted_batches = self._batch_router.predict(raw_text, top_n=3)
+            n_all = len(self._batch_router._batches)
+            logger.info(f"  • Mode: Global — BatchRouter predicted: {predicted_batches} ({len(predicted_batches)}/{n_all} batches)")
+
+            if len(predicted_batches) < n_all:
+                # High-confidence routing: search within predicted batches only
+                all_vis: List = []
+                slots = max(self._top_k_ret // max(len(predicted_batches), 1), 20)
+                for batch in predicted_batches:
+                    batch_vis = self._vis_ret.retrieve(
+                        retrieval_text, top_k=slots, target_prefix=batch
+                    )
+                    all_vis.extend(batch_vis)
+                all_vis.sort(key=lambda r: r.score, reverse=True)
+                vis_results = all_vis[:self._top_k_ret]
+            else:
+                # Low-confidence: use Pillar 2 balanced retrieval (inverse-sqrt slots)
+                vis_results = self._vis_ret.retrieve_balanced(
+                    retrieval_text, top_k=self._top_k_ret, max_per_video=2
+                )
+
         top1_score = vis_results[0].score if vis_results else 0.0
-        logger.info(f"  • Visual Retrieval (CLIP): {len(vis_results)} candidates (Top 1 score: {top1_score:.4f})")
+        logger.info(f"  • Visual Retrieval (CLIP): {len(vis_results)} candidates (Top 1 cosine: {top1_score:.4f})")
 
         all_lists   = []
         all_weights = []
@@ -287,38 +328,44 @@ class RetrievalPipeline:
                 all_weights.append(self._text_weight)
                 logger.info(f"  • Text Retrieval ({getattr(text_ret, 'name', 'text')}): {len(txt)} candidates")
 
+        # Guard: if no candidates at all, bail early
+        if not all_lists:
+            logger.warning(f"[KIS] No retrieval candidates for query_id='{query_id}' — check index coverage.")
+            return None
+
         # Step 3: RRF Fusion & Topic Soft-Scoring
         logger.info(f"[Step 3/4 - Fusion & Topic Soft-Scoring]")
         fused = self._rrf.fuse(
-            all_lists,
-            all_weights,
+            all_lists, all_weights,
             top_k=self._top_k_fus,
             query_topic=query_topic,
             topic_boost_weight=0.20,
         )
 
-        # Fallback check — if no candidates at all, bail early
-        if not all_lists:
-            logger.warning(f"[KIS] No retrieval candidates for query_id='{query_id}' (prefix='{target_prefix}') — check index coverage.")
-            return None
-
         if not fused or (fused[0].score < 0.005 and query_topic is not None):
-            logger.info(f"  [FallbackTrigger] Low confidence (score={fused[0].score if fused else 0:.4f}) → Global Unboosted Search")
+            logger.info(f"  [FallbackTrigger] Low conf (score={fused[0].score if fused else 0:.4f}) → Unboosted Search")
             fused = self._rrf.fuse(all_lists, all_weights, top_k=self._top_k_fus, query_topic=None)
         else:
-            logger.info(f"  • Topic Soft-Scoring Applied: query_topic='{query_topic}' (Boost: +20%)")
+            logger.info(f"  • Topic Soft-Scoring Applied: '{query_topic}' (+20%)")
 
         if not fused:
             logger.warning(f"[KIS] No fused results for query_id='{query_id}'")
             return None
 
-        # Step 4: Final Selection
+        # Step 4: Final Selection + Pillar 1 Score Normalization
         logger.info(f"[Step 4/4 - Frame Selection]")
         best_evidence = self._selector.select_best(fused, query_id=query_id)
         if best_evidence:
-            logger.info(f"  FINAL RESULT: Video='{best_evidence.video_id}' | Frame={best_evidence.frame_idx} (PTS={best_evidence.pts_time:.2f}s) | Conf={best_evidence.confidence:.4f}")
+            # Pillar 1: Use real CLIP cosine similarity [0.0–1.0] as confidence
+            # instead of the raw RRF score (which is always ~0.01–0.03)
+            clip_conf = round(float(top1_score), 4)
+            logger.info(
+                f"  FINAL RESULT: Video='{best_evidence.video_id}' | "
+                f"Frame={best_evidence.frame_idx} (PTS={best_evidence.pts_time:.2f}s) | "
+                f"CLIP Confidence={clip_conf:.4f}"
+            )
+            best_evidence.confidence = clip_conf
         logger.info(f"{'='*70}\n")
-
         return best_evidence
 
     # ----------------------------------------------------------
@@ -408,12 +455,13 @@ class RetrievalPipeline:
             return None
 
         # Wrap in EvidenceResult so the run_queries.py runner can handle uniformly
+        # Pillar 1: QA confidence = 0.85 (VLM-verified answer, higher than pure CLIP retrieval)
         return EvidenceResult(
             video_id=qa_result.video_id,
             frame_idx=qa_result.frame_idx,
             n=0,
             pts_time=0.0,
-            confidence=1.0,
+            confidence=0.85,   # VLM-verified answer, not hardcoded 1.0
             explanation=f"QA answer: {qa_result.answer}",
             metadata={"answer": qa_result.answer, "query_type": "qa"},
         )
@@ -474,15 +522,21 @@ class RetrievalPipeline:
 
         # Return first event's frame as the EvidenceResult (for uniform handling)
         first_event = trake_result.events[0] if trake_result.events else None
+
+        # Pillar 1: TRAKE confidence reflects how many events were successfully aligned
+        n_events = len(trake_result.events)
+        trake_conf = round(min(0.65 + n_events * 0.10, 0.95), 2)  # 0.75 (1ev), 0.85 (2ev), 0.95 (3+ev)
+
         return EvidenceResult(
             video_id=trake_result.video_id,
             frame_idx=first_event.frame_idx if first_event else 0,
             n=0,
             pts_time=first_event.pts_time if first_event else 0.0,
-            confidence=1.0,
-            explanation=f"TRAKE: {len(trake_result.events)} events aligned",
+            confidence=trake_conf,
+            explanation=f"TRAKE: {n_events} events aligned (conf={trake_conf:.2f})",
             metadata={
                 "query_type": "trake",
                 "trake_submission": trake_result,
             },
         )
+

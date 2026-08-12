@@ -13,7 +13,9 @@ This retriever works entirely with the pre-extracted .npy features:
 
 from __future__ import annotations
 
-from typing import List, Optional
+import math
+from collections import defaultdict
+from typing import Dict, List, Optional, Tuple
 import numpy as np
 
 from src.retrieval.base import BaseRetriever
@@ -138,6 +140,125 @@ class VisualRetriever(BaseRetriever):
         logger.info(
             f"[{self.name}] query='{query[:50]}' (prefix={target_prefix}) "
             f"-> {len(results)} results from {len(video_counts)} videos / {len(batch_counts)} batches"
+        )
+        return results
+
+    def retrieve_balanced(
+        self,
+        query: str,
+        top_k: int = 100,
+        slots_per_batch: Optional[int] = None,
+        max_per_video: int = 2,
+    ) -> List[SearchResult]:
+        """
+        Balanced retrieval across ALL batches — solves the L25/L26 dominance problem.
+
+        When there is NO target_prefix (real competition scenario), a naive FAISS
+        search returns mostly L25/L26 results because they contain 65% of all vectors.
+        This method ensures EVERY batch gets a fair allocation of result slots.
+
+        Strategy:
+          1. Search full FAISS index for a large candidate pool.
+          2. For each result, compute its batch-slot allocation.
+             Batches get slots proportional to 1/sqrt(batch_size) so large
+             batches (L26: 79K) don't dominate over small ones (L21: 6K).
+          3. Stop filling a batch's slot once it reaches its allocation.
+          4. Re-sort final results by CLIP score descending.
+
+        Args:
+            query:          Natural language query (Vietnamese or English)
+            top_k:          Total candidates to return
+            slots_per_batch: Fixed slots per batch. If None, uses inverse-sqrt weighting.
+            max_per_video:  Maximum keyframes per video in the balanced output
+        """
+        # 1. Encode query
+        query_vec = self._encoder.encode_text(query, normalize=True)
+
+        # 2. Large FAISS search to get diverse pool
+        n_total = self._faiss_db.total_vectors or 177321
+        search_k = min(n_total, max(top_k * 200, 30000))
+        faiss_ids, scores = self._faiss_db.search(query_vec, top_k=search_k)
+
+        # 3. Compute batch sizes from what we've seen in metadata
+        batch_size_map: Dict[str, int] = defaultdict(int)
+        for fid in faiss_ids:
+            if fid < 0:
+                continue
+            meta = self._meta_store.get_by_faiss_id(int(fid))
+            if meta:
+                batch_size_map[meta.video_id.split('_')[0]] += 1
+
+        # 4. Compute slot allocation per batch using inverse-sqrt weighting
+        known_batches = list(batch_size_map.keys()) if batch_size_map else [f"L{i}" for i in range(21, 31)]
+        n_batches = max(len(known_batches), 1)
+
+        if slots_per_batch is not None:
+            slot_map: Dict[str, int] = {b: slots_per_batch for b in known_batches}
+        else:
+            # Inverse-sqrt weighting: smaller batch → more slots per unit
+            inv_sqrt = {b: 1.0 / math.sqrt(max(s, 1)) for b, s in batch_size_map.items()}
+            total_weight = sum(inv_sqrt.values()) or 1.0
+            slot_map = {
+                b: max(2, int(round(top_k * inv_sqrt[b] / total_weight)))
+                for b in known_batches
+            }
+            # Ensure total slots >= top_k (add remainder to smallest batch)
+            while sum(slot_map.values()) < top_k:
+                min_batch = min(slot_map, key=slot_map.get)
+                slot_map[min_batch] += 1
+
+        logger.info(
+            f"[{self.name}] Balanced retrieval | search_k={search_k:,} | "
+            f"slot_map={dict(list(slot_map.items())[:5])}{'...' if len(slot_map) > 5 else ''}"
+        )
+
+        # 5. Fill slots batch-by-batch
+        results: List[SearchResult] = []
+        batch_counts: Dict[str, int] = defaultdict(int)
+        video_counts: Dict[str, int] = defaultdict(int)
+
+        for fid, score in zip(faiss_ids, scores):
+            if fid < 0:
+                continue
+            meta = self._meta_store.get_by_faiss_id(int(fid))
+            if meta is None:
+                continue
+
+            batch = meta.video_id.split("_")[0]
+            slot_limit = slot_map.get(batch, max(2, top_k // n_batches))
+
+            # Check batch slot
+            if batch_counts[batch] >= slot_limit:
+                continue
+            # Check video dedup
+            if video_counts[meta.video_id] >= max_per_video:
+                continue
+
+            batch_counts[batch] += 1
+            video_counts[meta.video_id] += 1
+
+            results.append(SearchResult(
+                keyframe_id=meta.keyframe_id,
+                video_id=meta.video_id,
+                n=meta.n,
+                frame_idx=meta.frame_idx,
+                pts_time=meta.pts_time,
+                score=float(score),
+                retriever_source=f"{self.name}_balanced",
+                metadata={"topic_category": getattr(meta, "topic_category", "")},
+            ))
+
+            if len(results) >= top_k:
+                break
+
+        # 6. Re-sort by CLIP cosine score (highest first)
+        results.sort(key=lambda r: r.score, reverse=True)
+
+        filled = dict(batch_counts)
+        logger.info(
+            f"[{self.name}] Balanced result: {len(results)} candidates from "
+            f"{len(filled)} batches | top score={results[0].score:.4f} | "
+            f"batch_fill={filled}"
         )
         return results
 

@@ -283,68 +283,92 @@ class QueryParser:
     # Build CLIP retrieval text (KIS)
     # ============================================================
 
-    def build_retrieval_text(self, kis_query: "TextualKISQuery") -> str:
+    def _build_en_sentence(self, kis_query: "TextualKISQuery") -> str:
         """
-        Build retrieval prompt for CLIP (v3 — English-First Strategy).
+        Pillar 4: Build a complete, natural English sentence for CLIP.
 
-        Puts high-precision English visual terms FIRST to ensure they fall within
-        CLIP's 77-token context limit, followed by concise raw Vietnamese text.
+        CLIP ViT-B/32 was pre-trained on English image captions.
+        Full sentences like "A photo of a news anchor in a TV studio, wearing blue"
+        outperform keyword fragments like "news indoor wearing blue anchor".
+
+        Template: "A photo of [subject] [action] in [location], [colors], [spatial]."
         """
-        en_parts = []
-
-        # 1. Scene translation (English)
         raw_lower = kis_query.raw_text.lower()
-        if kis_query.parsed_scene:
-            scene_en = kis_query.parsed_scene
-            for vi, en in _VI_TO_EN_SCENES.items():
-                if vi in raw_lower:
-                    scene_en = en
-                    break
-            en_parts.append(scene_en)
 
-        # 2. Action translation (English)
-        for vi_action, en_action in _VI_TO_EN_ACTIONS.items():
-            if vi_action in raw_lower:
-                en_parts.append(en_action)
-
-        # 3. Object labels (English)
-        if kis_query.parsed_objects:
-            en_parts.append(", ".join(kis_query.parsed_objects))
-
-        # 4. Colors (English)
-        color_en_terms = []
-        for vi_color in kis_query.parsed_colors:
-            en = _VI_TO_EN_COLORS.get(vi_color, vi_color)
-            if en not in color_en_terms:
-                color_en_terms.append(en)
-        if color_en_terms:
-            clothing_words = ("mặc", "áo", "quần", "trang phục", "váy", "đầm", "shirt", "dress", "wearing", "clothes", "outfit")
-            if any(w in raw_lower for w in clothing_words):
-                en_parts.append("wearing " + " and ".join(color_en_terms))
+        # 1. Subject/role from objects
+        subject = "a scene"
+        if "person" in kis_query.parsed_objects:
+            if any(w in raw_lower for w in ("mc", "dẫn chương trình", "phát thanh", "anchor", "phát biểu")):
+                subject = "a news anchor or TV host"
+            elif any(w in raw_lower for w in ("phụ nữ", "nữ", "woman", "cô")):
+                subject = "a woman"
+            elif any(w in raw_lower for w in ("đàn ông", "nam", "man", "ông", "anh")):
+                subject = "a man"
             else:
-                en_parts.append("color " + " and ".join(color_en_terms))
+                subject = "a person"
 
-        # 5. Spatial hints (English)
-        spatial_en = []
+        extra_objects = [obj for obj in kis_query.parsed_objects if obj != "person"]
+
+        # 2. Scene/location
+        scene_phrases = {
+            "news": "a TV news studio", "outdoor": "an outdoor setting",
+            "indoor": "an indoor setting", "sport": "a sports venue",
+            "press_conference": "a press conference", "ceremony": "an award ceremony",
+        }
+        location = scene_phrases.get(kis_query.parsed_scene, "") if kis_query.parsed_scene else ""
+
+        # 3. Colors
+        color_parts = [_VI_TO_EN_COLORS.get(c, c) for c in kis_query.parsed_colors]
+        clothing_words = ("mặc", "áo", "quần", "trang phục", "váy", "đầm")
+        if color_parts:
+            color_phrase = ("wearing " if any(w in raw_lower for w in clothing_words) else "color ") + " and ".join(color_parts)
+        else:
+            color_phrase = ""
+
+        # 4. Actions (exclude wearing — already covered by color_phrase)
+        action_parts = []
+        for vi_act, en_act in _VI_TO_EN_ACTIONS.items():
+            if vi_act in raw_lower and en_act not in ("wearing", "wearing on head"):
+                action_parts.append(en_act)
+
+        # 5. Spatial
+        spatial_parts = []
         for hint in kis_query.spatial_hints:
-            translated = hint
             for vi, en in _VI_TO_EN_SPATIAL.items():
                 if vi in hint:
-                    translated = en
+                    spatial_parts.append(en)
                     break
-            spatial_en.append(translated)
-        if spatial_en:
-            en_parts.append(", ".join(spatial_en))
 
-        # 6. OCR keywords
+        # Build sentence
+        sentence = f"A photo of {subject}"
+        if action_parts:
+            sentence += " " + " and ".join(action_parts)
+        if location:
+            sentence += f" in {location}"
+        if extra_objects:
+            sentence += ", with " + ", ".join(extra_objects)
+        if color_phrase:
+            sentence += f", {color_phrase}"
+        if spatial_parts:
+            sentence += ", " + ", ".join(spatial_parts)
         if kis_query.ocr_keywords:
-            en_parts.append("text: " + " ".join(kis_query.ocr_keywords))
+            sentence += f". Text visible: {' '.join(kis_query.ocr_keywords)}"
 
-        # Combine: English visual terms FIRST, followed by concise raw_text
-        prefix = ". ".join(en_parts)
-        if prefix:
-            return f"{prefix}. {kis_query.raw_text}"
-        return kis_query.raw_text
+        return sentence.strip()
+
+    def build_retrieval_text(self, kis_query: "TextualKISQuery") -> str:
+        """
+        Build retrieval prompt for CLIP (v4 — Full English Sentence Strategy).
+
+        Pillar 4: Generates a structured English sentence FIRST (for CLIP alignment),
+        then appends the original Vietnamese text (for OCR/keyword recall).
+        CLIP ViT-B/32 max = 77 tokens — sentence kept to ~50 tokens.
+        """
+        en_sentence = self._build_en_sentence(kis_query)
+        # Truncate raw Vietnamese to prevent 77-token overflow
+        raw_truncated = kis_query.raw_text[:100] if len(kis_query.raw_text) > 100 else kis_query.raw_text
+        return f"{en_sentence}. {raw_truncated}"
+
 
     # ============================================================
     # Build CLIP retrieval text (Q&A)
