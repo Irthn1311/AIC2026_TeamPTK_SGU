@@ -204,11 +204,13 @@ class RetrievalPipeline:
             f"text_rets: {len(text_retrievers)} | "
             f"VLM: {'yes' if vlm_client else 'no'}"
         )
+        media_info_dir = kwargs.pop("media_info_dir", None)
         return cls(
             faiss_db, meta_store, encoder,
             text_retrievers=text_retrievers,
             vlm_client=vlm_client,
             keyframe_image_root=keyframe_image_root,
+            media_info_dir=media_info_dir,
             **kwargs,
         )
 
