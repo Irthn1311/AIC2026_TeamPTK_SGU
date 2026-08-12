@@ -63,6 +63,8 @@ class RetrievalPipeline:
         text_weight: float = 0.8,
         top_k_retrieval: int = 100,
         top_k_fusion: int = 50,
+        media_info_dir: Optional[str] = None,
+        **kwargs,
     ):
         self._faiss_db   = faiss_db
         self._meta_store = meta_store
@@ -80,7 +82,7 @@ class RetrievalPipeline:
         # BatchRouter: predicts which batch(es) to search when target_prefix is absent
         self._batch_router = BatchRouter(
             known_batches=self._meta_store.known_batches if hasattr(meta_store, 'known_batches') else None,
-            media_info_dir=kwargs.pop("media_info_dir", None) if kwargs else None,
+            media_info_dir=media_info_dir,
         )
 
         self._visual_weight = visual_weight
