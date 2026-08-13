@@ -80,7 +80,7 @@ def run_keyframe_v2(video_path: str | Path, config_path: str | Path, output_root
         warnings.append(embedder.warning)
 
     candidates, selected_rows, frame_embeddings = score_and_select_candidates(
-        decoder, mapper, shots, meta.reported_fps, cfg, embedder, debug_dir
+        decoder, mapper, shots, meta.reported_fps, cfg, embedder, debug_dir, write_candidate_images=debug
     )
     candidates_df = pd.DataFrame(candidates)
     selected_df = pd.DataFrame(selected_rows)
@@ -269,7 +269,16 @@ def _validation_sheet_items(debug_dir: Path, n: int, mapped: int, images: dict, 
     return items
 
 
-def score_and_select_candidates(decoder: ExactFrameDecoder, mapper: FrameMapper, shots: list, fps: float, cfg: dict, embedder: ImageEmbeddingScorer, debug_dir: Path):
+def score_and_select_candidates(
+    decoder: ExactFrameDecoder,
+    mapper: FrameMapper,
+    shots: list,
+    fps: float,
+    cfg: dict,
+    embedder: ImageEmbeddingScorer,
+    debug_dir: Path,
+    write_candidate_images: bool = False,
+):
     candidates = []
     selected_rows = []
     frame_embeddings: dict[int, np.ndarray] = {}
@@ -277,7 +286,8 @@ def score_and_select_candidates(decoder: ExactFrameDecoder, mapper: FrameMapper,
     hard_dup = float(cfg["scoring"].get("hard_duplicate_threshold", 0.965))
     window_frames = max(1, int(round(float(cfg["candidates"].get("candidate_window_seconds", 0.5)) * fps)))
     candidate_img_dir = debug_dir / "candidate_frames"
-    candidate_img_dir.mkdir(parents=True, exist_ok=True)
+    if write_candidate_images:
+        candidate_img_dir.mkdir(parents=True, exist_ok=True)
 
     for shot in shots:
         selected_in_shot: list[np.ndarray] = []
@@ -296,7 +306,8 @@ def score_and_select_candidates(decoder: ExactFrameDecoder, mapper: FrameMapper,
             for fid in frames:
                 dec = decoder.decode(fid)
                 candidate_image_path = candidate_img_dir / f"shot_{int(shot.shot_id):06d}_target_{int(target.target_id):03d}_frame_{fid:06d}.jpg"
-                cv2.imwrite(str(candidate_image_path), dec.image_bgr, [cv2.IMWRITE_JPEG_QUALITY, 90])
+                if write_candidate_images:
+                    cv2.imwrite(str(candidate_image_path), dec.image_bgr, [cv2.IMWRITE_JPEG_QUALITY, 90])
                 images.append(dec.image_bgr)
                 q = score_quality(dec.image_bgr, cfg["quality"])
                 row = {
@@ -312,7 +323,7 @@ def score_and_select_candidates(decoder: ExactFrameDecoder, mapper: FrameMapper,
                     "timestamp": mapper.frame_to_timestamp(fid),
                     "distance_from_target": abs(int(fid) - int(target.target_frame)),
                     "inside_margin_guard": bool(shot.start_frame + guard <= fid <= shot.end_frame - guard) if shot.start_frame + guard <= shot.end_frame - guard else True,
-                    "image_path": str(candidate_image_path),
+                    "image_path": str(candidate_image_path) if write_candidate_images else "",
                     "selected": False,
                     "reject_reason": "",
                     **q,
