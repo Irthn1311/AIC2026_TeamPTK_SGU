@@ -138,6 +138,7 @@ class ImageEmbeddingScorer:
                 "OpenCLIP safetensors checkpoint does not match model "
                 f"(missing={len(missing)}, unexpected={len(unexpected)})"
             )
+        model = model.to(self._device)
         return model, preprocess, weights_path
 
     def _load_openai_clip(self, torch_module):
@@ -148,6 +149,7 @@ class ImageEmbeddingScorer:
             raise FileNotFoundError(f"CLIP image weights not found in {root}")
         model, preprocess = clip.load(str(self.cfg.get("model_name", "ViT-B/32")), device=self._device, download_root=str(root))
         weights = next(root.glob("*.pt"), root)
+        model = model.to(self._device)
         return model, preprocess, weights
 
     def _resolve_weights_path(self, pattern: str) -> Path | None:
@@ -173,25 +175,39 @@ class ImageEmbeddingScorer:
 
     def embed_images(self, images_bgr: list[np.ndarray]) -> np.ndarray:
         if not images_bgr:
-            return np.zeros((0, 1), dtype=np.float32)
+            return np.zeros((0, 512), dtype=np.float32)
         if self._model is not None:
             return self._embed_clip(images_bgr)
         return np.vstack([self._embed_fallback(img) for img in images_bgr]).astype(np.float32)
 
     def _embed_clip(self, images_bgr: list[np.ndarray]) -> np.ndarray:
         import torch
-        from PIL import Image
 
+        if not images_bgr:
+            return np.zeros((0, 512), dtype=np.float32)
+
+        batch_size = max(1, int(self.cfg.get("batch_size", 64)))
         feats_all = []
-        batch_size = max(1, int(self.cfg.get("batch_size", 16)))
+
+        mean = torch.tensor([0.48145466, 0.4578275, 0.40821073], device=self._device, dtype=torch.float32).view(1, 3, 1, 1)
+        std = torch.tensor([0.26862954, 0.26130258, 0.27577711], device=self._device, dtype=torch.float32).view(1, 3, 1, 1)
+
         for start in range(0, len(images_bgr), batch_size):
-            tensors = []
-            for img in images_bgr[start : start + batch_size]:
-                rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                tensors.append(self._preprocess(Image.fromarray(rgb)))
-            batch = torch.stack(tensors).to(self._device)
+            batch_imgs = images_bgr[start : start + batch_size]
+            resized_list = []
+            for img in batch_imgs:
+                r = cv2.resize(img, (224, 224), interpolation=cv2.INTER_CUBIC)
+                rgb = cv2.cvtColor(r, cv2.COLOR_BGR2RGB)
+                resized_list.append(rgb)
+
+            arr = np.stack(resized_list, axis=0)
+            t_batch = torch.from_numpy(arr).to(self._device, dtype=torch.float32).permute(0, 3, 1, 2) / 255.0
+            t_batch = (t_batch - mean) / std
+
             with torch.no_grad():
-                feats_all.append(self._model.encode_image(batch).float().cpu().numpy())
+                feats = self._model.encode_image(t_batch)
+                feats_all.append(feats.float().cpu().numpy())
+
         return _normalize(np.vstack(feats_all))
 
     def _embed_fallback(self, image_bgr: np.ndarray) -> np.ndarray:
