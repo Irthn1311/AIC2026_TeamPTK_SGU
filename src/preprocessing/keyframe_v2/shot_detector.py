@@ -38,29 +38,29 @@ def detect_shots(video_path: Path, meta: VideoMetadata, cfg: dict) -> tuple[list
     )
     if not use_fast_histdiff:
         try:
-        from transnetv2_pytorch import TransNetV2
+            from transnetv2_pytorch import TransNetV2
 
-        model = TransNetV2(device=str(cfg.get("transnetv2_device", "auto")))
-        model.eval()
-        if str(cfg.get("transnetv2_frame_reader", "opencv")) == "opencv":
-            shots = _detect_transnetv2_opencv(video_path, meta, model, float(cfg.get("transnetv2_threshold", 0.5)))
-        else:
-            scenes = model.detect_scenes(str(video_path), threshold=float(cfg.get("transnetv2_threshold", 0.5)))
-            shots = []
-            for i, sc in enumerate(scenes):
-                sf = int(sc["start_frame"])
-                ef = int(sc["end_frame"])
-                shots.append(_make_shot(meta, i, sf, ef, "transnetv2", sc.get("probability")))
-        if shots:
-            return shots, warnings
-        message = "TransNetV2 returned zero shots"
-        if require_transnetv2:
-            raise RuntimeError(message)
-        warnings.append(f"{message}; fallback histdiff used")
-    except Exception as exc:
-        if require_transnetv2:
-            raise RuntimeError(f"TransNetV2 required but unavailable: {exc}") from exc
-        warnings.append(f"TransNetV2 unavailable: {exc}; fallback histdiff used")
+            model = TransNetV2(device=str(cfg.get("transnetv2_device", "auto")))
+            model.eval()
+            if str(cfg.get("transnetv2_frame_reader", "opencv")) == "opencv":
+                shots = _detect_transnetv2_opencv(video_path, meta, model, float(cfg.get("transnetv2_threshold", 0.5)))
+            else:
+                scenes = model.detect_scenes(str(video_path), threshold=float(cfg.get("transnetv2_threshold", 0.5)))
+                shots = []
+                for i, sc in enumerate(scenes):
+                    sf = int(sc["start_frame"])
+                    ef = int(sc["end_frame"])
+                    shots.append(_make_shot(meta, i, sf, ef, "transnetv2", sc.get("probability")))
+            if shots:
+                return shots, warnings
+            message = "TransNetV2 returned zero shots"
+            if require_transnetv2:
+                raise RuntimeError(message)
+            warnings.append(f"{message}; fallback histdiff used")
+        except Exception as exc:
+            if require_transnetv2:
+                raise RuntimeError(f"TransNetV2 required but unavailable: {exc}") from exc
+            warnings.append(f"TransNetV2 unavailable: {exc}; fallback histdiff used")
     return _detect_histdiff(video_path, meta, cfg), warnings
 
 
