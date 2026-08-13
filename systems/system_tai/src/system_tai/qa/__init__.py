@@ -15,6 +15,7 @@ from .question_types import (
     QuestionClassification,
     QuestionType,
     classify_question,
+    classify_question_legacy,
     classify_question_type,
 )
 from .runtime import QAPipelineTimings, QARuntimePipeline
@@ -38,6 +39,7 @@ __all__ = [
     "QuestionClassification",
     "QuestionType",
     "classify_question",
+    "classify_question_legacy",
     "classify_question_type",
     "normalize_object_label",
 ]

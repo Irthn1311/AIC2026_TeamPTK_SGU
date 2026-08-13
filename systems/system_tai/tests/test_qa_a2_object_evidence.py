@@ -24,7 +24,12 @@ from system_tai.qa.object_provider import (
     normalize_object_label,
 )
 from system_tai.qa.question_types import QuestionType, classify_question
-from system_tai.qa.runtime import QARuntimePipeline
+from system_tai.qa.runtime import (
+    LEGACY_PHASE_P0,
+    QA_A2_CAPABILITY_AWARE,
+    QARuntimePipeline,
+    classify_runtime_question,
+)
 from system_tai.refinement.engine import QueryRefinementOutcome
 from system_tai.refinement.models import RefinedCandidate, RefinementStatus
 from system_tai.refinement.video import RawVideoRecord, RawVideoRegistry
@@ -242,6 +247,80 @@ def test_object_count_has_no_provider_and_config_requires_qa_a1(tmp_path: Path) 
         SessionConfig(qa_object_answer_provider_config=ObjectAnswerProviderConfig(enabled=True))
 
 
+@pytest.mark.parametrize(
+    ("question", "expected"),
+    [
+        ("Có bao nhiêu người?", QuestionType.COUNT),
+        ("Có bao nhiêu tiền?", QuestionType.COUNT),
+        ("How many people are visible?", QuestionType.COUNT),
+        ("How much does it cost?", QuestionType.COUNT),
+        ("What object is he holding?", QuestionType.UNSUPPORTED),
+        ("What color is the car?", QuestionType.COLOR),
+        ("Có phải chiếc xe đang dừng không?", QuestionType.YES_NO),
+        ("The car is on the left or right?", QuestionType.DIRECTION),
+    ],
+)
+def test_runtime_qa_a2_off_reproduces_frozen_parent_classifier(
+    question: str,
+    expected: QuestionType,
+) -> None:
+    classification, policy = classify_runtime_question(
+        question,
+        None,
+        qa_a2_enabled=False,
+    )
+    assert classification.question_type is expected
+    assert policy == LEGACY_PHASE_P0
+
+
+def test_runtime_qa_a2_enabled_uses_capability_classifier() -> None:
+    object_count, object_policy = classify_runtime_question(
+        "Có bao nhiêu người?",
+        None,
+        qa_a2_enabled=True,
+    )
+    monetary, monetary_policy = classify_runtime_question(
+        "Có bao nhiêu tiền?",
+        None,
+        qa_a2_enabled=True,
+    )
+    assert object_count.question_type is QuestionType.OBJECT_COUNT
+    assert object_policy == QA_A2_CAPABILITY_AWARE
+    assert monetary.question_type is QuestionType.UNSUPPORTED
+    assert monetary.reason.startswith("OCR_PATTERN_PROVIDER_MISSING")
+    assert monetary_policy == QA_A2_CAPABILITY_AWARE
+
+
+def test_runtime_qa_a2_enabled_object_count_and_ocr_fail_closed(tmp_path: Path) -> None:
+    encoder = _Encoder()
+    provider = ObjectEntityAnswerProvider(
+        index=_index(tmp_path),
+        config=ObjectAnswerProviderConfig(enabled=True),
+    )
+    retriever = SimpleNamespace()
+    pipeline = QARuntimePipeline(
+        exact_retriever=retriever,
+        weighted_rrf=WeightedRRFRetriever(retriever),
+        refiner=SimpleNamespace(),
+        raw_video_registry=RawVideoRegistry([RawVideoRecord("V1", None)]),
+        decoder=SimpleNamespace(),
+        shared_encoder=encoder,
+        object_answer_provider=provider,
+    )
+    count_result, _timings, count_diagnostics = pipeline.process_qa_query(
+        QAQueryRequest("count", "q-count", "event", "Có bao nhiêu người?")
+    )
+    ocr_result, _timings, ocr_diagnostics = pipeline.process_qa_query(
+        QAQueryRequest("ocr", "q-ocr", "event", "Có bao nhiêu tiền?")
+    )
+    assert count_result.question_type is QuestionType.OBJECT_COUNT
+    assert count_result.unsupported_reason == "UNSUPPORTED_OBJECT_COUNT_PROVIDER_MISSING"
+    assert count_diagnostics["question_classifier_policy"] == QA_A2_CAPABILITY_AWARE
+    assert ocr_result.question_type is QuestionType.UNSUPPORTED
+    assert ocr_result.unsupported_reason == "UNSUPPORTED_OCR_PROVIDER_MISSING"
+    assert ocr_diagnostics["question_classifier_policy"] == QA_A2_CAPABILITY_AWARE
+
+
 def test_disabled_qa_a1_does_not_activate_object_provider(tmp_path: Path) -> None:
     encoder = _Encoder()
     provider = ObjectEntityAnswerProvider(
@@ -265,6 +344,18 @@ def test_disabled_qa_a1_does_not_activate_object_provider(tmp_path: Path) -> Non
     assert result.unsupported_reason == "UNSUPPORTED_NO_PROVIDER"
     assert diagnostics["qa_grounding_enabled"] is False
     assert diagnostics["object_artifact_lookup_count"] == 0
+
+
+def test_qa_a1_enabled_qa_a2_disabled_keeps_legacy_classification() -> None:
+    classification, policy = classify_runtime_question(
+        "Có bao nhiêu người?",
+        None,
+        qa_a2_enabled=False,
+    )
+    qa_a1_config = QAVideoConditionedEvidenceConfig(enabled=True)
+    assert qa_a1_config.enabled is True
+    assert classification.question_type is QuestionType.COUNT
+    assert policy == LEGACY_PHASE_P0
 
 
 class _Encoder:
@@ -413,3 +504,49 @@ def test_l21_object_flag_is_isolated_to_qa_a1_dev() -> None:
             gt_policy="proposed",
             qa_object_answer_provider_config=enabled,
         )
+
+
+def test_l21_qa_a2_provenance_scope_has_precedence(tmp_path: Path) -> None:
+    runner_path = Path(__file__).parents[1] / "scripts" / "l21_150_run_baseline.py"
+    spec = importlib.util.spec_from_file_location("qa_a2_scope_runner", runner_path)
+    assert spec is not None and spec.loader is not None
+    runner = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = runner
+    spec.loader.exec_module(runner)
+    grounding = QAVideoConditionedEvidenceConfig(enabled=True)
+    object_config = ObjectAnswerProviderConfig(enabled=True)
+    runtime = SimpleNamespace(
+        config=SimpleNamespace(
+            device="cpu",
+            qa_video_conditioned_evidence_config=grounding,
+            qa_object_answer_provider_config=object_config,
+        ),
+        manifest=SimpleNamespace(fingerprint="fixture", schema_version=2),
+        shared_encoder=SimpleNamespace(identifiers={"model": "fake"}),
+        object_artifact_index=SimpleNamespace(
+            schema_identity=BTC_OBJECT_ARTIFACT_SCHEMA,
+            source_root_identity="objects-aic25-b1/objects",
+        ),
+    )
+    report = runner.run_l21_150_baseline(
+        SimpleNamespace(queries=(), benchmark_id="empty"),
+        runtime,
+        tmp_path,
+        experiment_id="qa-a2-scope",
+        split="dev",
+        task="qa",
+        top_k=100,
+        refine_top_n=3,
+        resume=False,
+        fail_fast=True,
+        benchmark_sha256="0" * 64,
+        manifest_sha256=None,
+        gt_policy="proposed",
+        qa_video_conditioned_evidence_config=grounding,
+        qa_object_answer_provider_config=object_config,
+    )
+    assert report["production_algorithm_modified_scope"] == (
+        runner.QA_ARTIFACT_BACKED_OBJECT_EVIDENCE
+    )
+    assert report["qa_grounding_policy"] == runner.QA_VIDEO_CONDITIONED_EVIDENCE_V1
+    assert report["qa_object_provider_enabled"] is True

@@ -98,6 +98,54 @@ _DIRECTION_PATTERNS = (
     r"\bon the right\b",
 )
 
+_LEGACY_COLOR_PATTERNS = (
+    r"màu\s+gì",
+    r"màu\s+nào",
+    r"có\s+màu",
+    r"màu\s+sắc",
+    r"what\s+color",
+    r"which\s+color",
+    r"color\s+of",
+)
+
+_LEGACY_COUNT_PATTERNS = (
+    r"bao\s+nhiêu",
+    r"\bmấy\b",
+    r"số\s+lượng",
+    r"how\s+many",
+    r"how\s+much",
+    r"number\s+of",
+)
+
+_LEGACY_YES_NO_PATTERNS = (
+    r"có\s+.*\s+không",
+    r"có\s+phải",
+    r"phải\s+không",
+    r"^\s*is\s+there\b",
+    r"^\s*are\s+there\b",
+    r"^\s*is\s+",
+    r"^\s*are\s+",
+    r"^\s*was\s+",
+    r"^\s*were\s+",
+    r"^\s*does\b",
+    r"^\s*did\b",
+    r"^\s*do\b",
+    r"^\s*can\b",
+)
+
+_LEGACY_DIRECTION_PATTERNS = (
+    r"bên\s+trái",
+    r"bên\s+phải",
+    r"hướng\s+nào",
+    r"bên\s+nào",
+    r"phía\s+nào",
+    r"which\s+direction",
+    r"left\s+or\s+right",
+    r"which\s+side",
+    r"on\s+the\s+left",
+    r"on\s+the\s+right",
+)
+
 
 def _normalize(text: str) -> str:
     decomposed = unicodedata.normalize("NFKD", text.casefold())
@@ -110,6 +158,34 @@ def _matching_pattern(text: str, patterns: tuple[str, ...]) -> str | None:
         if re.search(pattern, text):
             return pattern
     return None
+
+
+def classify_question_legacy(
+    question: str, question_en: str | None = None
+) -> QuestionClassification:
+    """Reproduce the frozen Phase-P0 classifier at parent ``88b8f2f``."""
+
+    texts = [("question", question.lower())]
+    if question_en:
+        texts.append(("question_en", question_en.lower()))
+    precedence = (
+        (_LEGACY_COUNT_PATTERNS, QuestionType.COUNT, "LEGACY_COUNT_PATTERN"),
+        (_LEGACY_YES_NO_PATTERNS, QuestionType.YES_NO, "LEGACY_YES_NO_PATTERN"),
+        (_LEGACY_DIRECTION_PATTERNS, QuestionType.DIRECTION, "LEGACY_DIRECTION_PATTERN"),
+        (_LEGACY_COLOR_PATTERNS, QuestionType.COLOR, "LEGACY_COLOR_PATTERN"),
+    )
+    for source, text in texts:
+        for patterns, question_type, reason in precedence:
+            pattern = _matching_pattern(text, patterns)
+            if pattern is not None:
+                return QuestionClassification(
+                    question_type=question_type,
+                    reason=f"{reason}:{source}:{pattern}",
+                )
+    return QuestionClassification(
+        question_type=QuestionType.UNSUPPORTED,
+        reason="LEGACY_NO_SUPPORTED_QUESTION_PATTERN",
+    )
 
 
 def classify_question(
@@ -143,10 +219,6 @@ def classify_question(
 
 
 def classify_question_type(question: str, question_en: str | None = None) -> QuestionType:
-    """Backward-compatible question-type-only classification API."""
+    """Return the frozen Phase-P0 legacy classification contract."""
 
-    classified = classify_question(question, question_en).question_type
-    # Preserve the public Phase-P0 classifier contract for legacy callers. The
-    # capability-aware runtime consumes ``classify_question`` directly and can
-    # fail closed for artifact-only OBJECT_COUNT until a defensible provider exists.
-    return QuestionType.COUNT if classified is QuestionType.OBJECT_COUNT else classified
+    return classify_question_legacy(question, question_en).question_type

@@ -76,6 +76,7 @@ FROZEN_Q2_KIS_DEV_EN_SIDECAR_SHA256 = (
 FROZEN_TR_A2_D0_TRAKE_DEV_EN_SIDECAR_SHA256 = (
     "021980a96f8a59677b143df556abd407f7d70588bd98d8d413bc25741754fcf7"
 )
+QA_ARTIFACT_BACKED_OBJECT_EVIDENCE = "QA_ARTIFACT_BACKED_OBJECT_EVIDENCE"
 
 
 class L21150Runtime(Protocol):
@@ -793,6 +794,7 @@ def run_l21_150_baseline(
         q3_enabled
         or resolved_trake_video_first.enabled
         or resolved_qa_grounding.enabled
+        or resolved_qa_object_provider.enabled
     )
     metadata = {
         "schema_version": 2,
@@ -818,7 +820,9 @@ def run_l21_150_baseline(
         "task_counts": dict(sorted(task_counts.items())),
         "production_algorithm_modified": production_algorithm_modified,
         "production_algorithm_modified_scope": (
-            QA_VIDEO_CONDITIONED_EVIDENCE_V1
+            QA_ARTIFACT_BACKED_OBJECT_EVIDENCE
+            if resolved_qa_object_provider.enabled
+            else QA_VIDEO_CONDITIONED_EVIDENCE_V1
             if resolved_qa_grounding.enabled
             else TRAKE_VIDEO_FIRST_RESTRICTED_EVENT_SEARCH
             if resolved_trake_video_first.enabled

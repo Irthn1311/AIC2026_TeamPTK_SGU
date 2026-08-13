@@ -39,7 +39,26 @@ from .grounding import (
 )
 from .models import QAEvidenceCandidate, QAQuery, QAResult
 from .object_provider import ObjectEntityAnswerProvider
-from .question_types import QuestionType, classify_question
+from .question_types import (
+    QuestionClassification,
+    QuestionType,
+    classify_question,
+    classify_question_legacy,
+)
+
+LEGACY_PHASE_P0 = "LEGACY_PHASE_P0"
+QA_A2_CAPABILITY_AWARE = "QA_A2_CAPABILITY_AWARE"
+
+
+def classify_runtime_question(
+    question: str,
+    question_en: str | None,
+    *,
+    qa_a2_enabled: bool,
+) -> tuple[QuestionClassification, str]:
+    if qa_a2_enabled:
+        return classify_question(question, question_en), QA_A2_CAPABILITY_AWARE
+    return classify_question_legacy(question, question_en), LEGACY_PHASE_P0
 
 
 @dataclass
@@ -136,6 +155,7 @@ class QARuntimePipeline:
             "request_id": request.request_id,
             "question_type": None,
             "question_classification_reason": None,
+            "question_classifier_policy": None,
             "question_supported": None,
             "object_provider_enabled": bool(
                 self.object_answer_provider is not None
@@ -181,10 +201,19 @@ class QARuntimePipeline:
             )
 
         # Step 1: Question classification
-        classification = classify_question(request.question, request.question_en)
+        qa_a2_enabled = bool(
+            self.object_answer_provider is not None
+            and self.object_answer_provider.enabled
+        )
+        classification, classifier_policy = classify_runtime_question(
+            request.question,
+            request.question_en,
+            qa_a2_enabled=qa_a2_enabled,
+        )
         q_type = classification.question_type
         diagnostics["question_type"] = q_type.value
         diagnostics["question_classification_reason"] = classification.reason
+        diagnostics["question_classifier_policy"] = classifier_policy
         diagnostics["question_supported"] = q_type != QuestionType.UNSUPPORTED
 
         answer_hypotheses = self.candidate_provider.get_candidates(q_type)
