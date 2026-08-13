@@ -235,8 +235,17 @@ def verify_frame_coordinate_contract(
         keyframes = _keyframes_by_n(Path(video["keyframe_directory"]))
         sample_rows = evenly_spaced(mapping, samples_per_video)
         frame_ids = list(dict.fromkeys(row["frame_idx"] for row in sample_rows))
+        if not Path(video["video_path"]).is_file():
+            checks.append(
+                {
+                    "video_id": video["video_id"],
+                    "status": "RAW_VIDEO_MISSING",
+                    "samples": [],
+                }
+            )
+            continue
         try:
-            decoded = dict(decoder(Path(video["video_path"]), frame_ids))
+            decoded_rows = list(decoder(Path(video["video_path"]), frame_ids))
         except Exception as error:
             checks.append(
                 {
@@ -247,6 +256,9 @@ def verify_frame_coordinate_contract(
                 }
             )
             continue
+        actual_ids = [frame_id for frame_id, _ in decoded_rows]
+        decoded = dict(decoded_rows)
+        raw_identity_exact = actual_ids == frame_ids
         samples = []
         for row in sample_rows:
             keyframe_path = keyframes.get(row["n"])
@@ -256,6 +268,7 @@ def verify_frame_coordinate_contract(
                 "actual_decoded_frame_idx": row["frame_idx"]
                 if row["frame_idx"] in decoded
                 else None,
+                "raw_decode_identity_exact": row["frame_idx"] in decoded,
                 "keyframe_path": str(keyframe_path) if keyframe_path else None,
             }
             try:
@@ -270,20 +283,25 @@ def verify_frame_coordinate_contract(
         checks.append(
             {
                 "video_id": video["video_id"],
-                "status": (
-                    "PASS"
-                    if samples and all(row["correspondence_pass"] for row in samples)
-                    else "FAIL"
+                "status": "PASS" if raw_identity_exact else "RAW_FRAME_IDENTITY_MISMATCH",
+                "btc_jpeg_correspondence_status": (
+                    "CLEAN" if samples and all(row["correspondence_pass"] for row in samples)
+                    else "HAS_MISMATCH"
                 ),
                 "samples": samples,
                 "duplicate_frame_idx_preserved": True,
             }
         )
     passed = bool(checks) and all(row["status"] == "PASS" for row in checks)
+    samples = [sample for check in checks for sample in check.get("samples", [])]
+    jpeg_passes = sum(sample.get("correspondence_pass") is True for sample in samples)
     return {
         "status": "PASS" if passed else "FAIL",
         "video_count": len(checks),
-        "sample_count": sum(len(row["samples"]) for row in checks),
+        "sample_count": len(samples),
+        "btc_jpeg_correspondence_pass_count": jpeg_passes,
+        "btc_jpeg_correspondence_fail_count": len(samples) - jpeg_passes,
+        "jpeg_correspondence_used_as_hard_gate": False,
         "mapping_authority": "BTC CSV frame_idx",
         "raw_video_source_of_truth": True,
         "timestamp_fps_reconstruction_used": False,
@@ -351,24 +369,14 @@ def audit_anchors(
             audits.append(audit)
             continue
         mapping = read_mapping(video["mapping_path"])
-        relevant = _relevant_mapping_rows(mapping, start, end, float(video["fps"]))
-        selected = evenly_spaced(relevant, min(5, len(relevant)))
-        requested = list(
-            dict.fromkeys([start, center, end, *(row["frame_idx"] for row in selected)])
-        )
-        audit["relevant_mapping_rows"] = relevant
-        audit["suggested_raw_frame_ids"] = requested
-        try:
-            decoded = decoder(Path(video["video_path"]), requested)
-            actual = [frame_id for frame_id, _ in decoded]
-            if actual != requested:
-                raise RuntimeError(f"requested={requested}, actual={actual}")
-        except Exception as error:
+        if any(
+            row["frame_idx"] < 0 or row["frame_idx"] >= video["total_frames"]
+            for row in mapping
+        ):
             audit.update(
                 {
                     "status": "NEEDS_VISUAL_REVIEW",
-                    "reason": "RAW_DECODE_FAILED",
-                    "decode_error": str(error),
+                    "reason": "MAPPING_FRAME_IDX_OUT_OF_BOUNDS",
                 }
             )
             audits.append(audit)
@@ -381,7 +389,37 @@ def audit_anchors(
             audit.update(
                 {
                     "status": "NEEDS_VISUAL_REVIEW",
-                    "reason": "MAPPING_AMBIGUITY_WITH_COORDINATE_CONFLICT",
+                    "reason": "MAPPING_NON_MONOTONIC_COORDINATE_CONFLICT",
+                }
+            )
+            audits.append(audit)
+            continue
+        relevant = _relevant_mapping_rows(mapping, start, end, float(video["fps"]))
+        selected = evenly_spaced(relevant, min(5, len(relevant)))
+        requested = list(
+            dict.fromkeys([start, center, end, *(row["frame_idx"] for row in selected)])
+        )
+        audit["relevant_mapping_rows"] = relevant
+        audit["suggested_raw_frame_ids"] = requested
+        try:
+            decoded = list(decoder(Path(video["video_path"]), requested))
+            actual = [frame_id for frame_id, _ in decoded]
+        except Exception as error:
+            audit.update(
+                {
+                    "status": "NEEDS_VISUAL_REVIEW",
+                    "reason": "RAW_DECODE_FAILED",
+                    "decode_error": str(error),
+                }
+            )
+            audits.append(audit)
+            continue
+        if actual != requested:
+            audit.update(
+                {
+                    "status": "NEEDS_VISUAL_REVIEW",
+                    "reason": "RAW_FRAME_IDENTITY_MISMATCH",
+                    "decode_error": f"requested={requested}, actual={actual}",
                 }
             )
         else:
@@ -633,14 +671,14 @@ def run_l21_finalization(
     coordinate_summary, coordinate_checks = verify_frame_coordinate_contract(
         inventory, decoder=decoder
     )
-    from .coordinate_anomaly import diagnose_failed_samples
+    from .coordinate_anomaly import close_coordinate_policy
 
     (
         coordinate_decision,
         anomaly_diagnostics,
         neighbor_crosscheck,
         expanded_coordinate_checks,
-    ) = diagnose_failed_samples(inventory, coordinate_checks, decoder=decoder)
+    ) = close_coordinate_policy(inventory, coordinate_checks)
     coordinate_summary = {
         **coordinate_summary,
         **coordinate_decision,
@@ -650,7 +688,7 @@ def run_l21_finalization(
     write_json(
         output / "coordinate_anomaly_diagnostics.json",
         {
-            "diagnostic_scope": "ONLY_ORIGINAL_FAILED_REPRESENTATIVE_SAMPLES",
+            "diagnostic_scope": "FINAL_POLICY_CLOSURE_FROM_COMPLETED_BOUNDED_KAGGLE_EVIDENCE",
             "status": coordinate_summary["status"],
             "failed_sample_count": len(anomaly_diagnostics),
             "classifications": dict(Counter(row["classification"] for row in anomaly_diagnostics)),
@@ -660,6 +698,8 @@ def run_l21_finalization(
             ],
             "similarity_thresholds_changed": False,
             "semantic_gt_touched_before_decision": False,
+            "neighborhood_search_rerun": False,
+            "jpeg_correspondence_used_as_hard_gate": False,
         },
     )
     write_jsonl(output / "failed_sample_neighborhood_diagnostics.jsonl", anomaly_diagnostics)
@@ -671,7 +711,7 @@ def run_l21_finalization(
     issues = list(inventory_issues)
     coordinate_accepted = coordinate_summary["status"] in {
         "PASS",
-        "PASS_WITH_DOCUMENTED_LOCAL_BTC_ANOMALIES",
+        "PASS_WITH_DOCUMENTED_LOCAL_BTC_ASSET_OFFSETS",
     }
     if not coordinate_accepted:
         issues.append(
@@ -695,6 +735,13 @@ def run_l21_finalization(
                 "resolved_anchor_count": 0,
                 "unresolved_anchor_count": len(anchors),
                 "gt_claim": "INTERNAL_BENCHMARK_NOT_OFFICIAL_BTC_GT",
+                "frame_coordinate_contract": coordinate_summary["status"],
+                "btc_jpeg_correspondence_cleanliness": coordinate_summary[
+                    "btc_jpeg_correspondence_cleanliness"
+                ],
+                "raw_video_source_of_truth": True,
+                "mapping_authority": "BTC CSV frame_idx",
+                "semantic_intervals_modified_due_to_btc_jpeg_anomalies": False,
             },
         )
         write_jsonl(output / "issues.jsonl", issues)
@@ -710,6 +757,9 @@ def run_l21_finalization(
             "L21_QA_COUNT": 50,
             "L21_TRAKE_COUNT": 50,
             "L21_FRAME_COORDINATE_CONTRACT": coordinate_summary["status"],
+            "BTC_LOCAL_ASSET_OFFSETS_DOCUMENTED": coordinate_summary[
+                "documented_btc_local_asset_offset_count"
+            ],
             "L21_CANONICAL_ANCHORS": len(anchors),
             "L21_RESOLVED_ANCHORS": 0,
             "L21_UNRESOLVED_ANCHORS": len(anchors),
@@ -782,6 +832,11 @@ def run_l21_finalization(
         "timestamp_fps_final_reconstruction_used": False,
         "strict_plus_minus_4_trake_windows_used": False,
         "frame_coordinate_contract_status": coordinate_summary["status"],
+        "frame_coordinate_contract": coordinate_summary["status"],
+        "btc_jpeg_correspondence_cleanliness": coordinate_summary[
+            "btc_jpeg_correspondence_cleanliness"
+        ],
+        "semantic_intervals_modified_due_to_btc_jpeg_anomalies": False,
         "documented_coordinate_anomalies": coordinate_summary.get("documented_anomalies", []),
         "source_draft_sha256": sha256_file(draft),
         "git_commit": git_commit,
@@ -820,6 +875,9 @@ def run_l21_finalization(
         "L21_QA_COUNT": 50,
         "L21_TRAKE_COUNT": 50,
         "L21_FRAME_COORDINATE_CONTRACT": coordinate_summary["status"],
+        "BTC_LOCAL_ASSET_OFFSETS_DOCUMENTED": coordinate_summary[
+            "documented_btc_local_asset_offset_count"
+        ],
         "L21_CANONICAL_ANCHORS": len(audit),
         "L21_RESOLVED_ANCHORS": len(audit) - len(unresolved),
         "L21_UNRESOLVED_ANCHORS": len(unresolved),

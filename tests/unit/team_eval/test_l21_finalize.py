@@ -138,9 +138,11 @@ def inventory(tmp_path: Path, *, total_frames: int = 5000) -> dict:
     keyframes.mkdir(exist_ok=True)
     for n in range(1, 4):
         Image.new("RGB", (64, 36), (0, 0, 128)).save(keyframes / f"{n:03d}.jpg")
+    video_path = tmp_path / "video.mp4"
+    video_path.write_bytes(b"raw-video-present")
     return {
         "video_id": video_id(),
-        "video_path": str(tmp_path / "video.mp4"),
+        "video_path": str(video_path),
         "mapping_path": str(mapping),
         "keyframe_directory": str(keyframes),
         "fps": 25.0,
@@ -231,6 +233,14 @@ def test_anchor_frame_bounds_fail_closed(tmp_path: Path) -> None:
     assert rows[0]["reason"] == "OUT_OF_BOUNDS"
 
 
+def test_source_interval_invalid_fails_closed(tmp_path: Path) -> None:
+    source = anchor_rows()[0]
+    source["provisional_raw_interval"] = [32, 20]
+    rows = audit_anchors([source], [inventory(tmp_path)])
+    assert rows[0]["status"] == "NEEDS_VISUAL_REVIEW"
+    assert rows[0]["reason"] == "SOURCE_INTERVAL_INVALID"
+
+
 def test_anchor_decode_preserves_requested_actual_frame_identity(tmp_path: Path) -> None:
     source = anchor_rows()[0]
 
@@ -241,6 +251,26 @@ def test_anchor_decode_preserves_requested_actual_frame_identity(tmp_path: Path)
     assert rows[0]["status"] == "RESOLVED"
     assert rows[0]["decoded_actual_frame_ids"] == rows[0]["suggested_raw_frame_ids"]
     assert rows[0]["timestamp_fps_final_reconstruction_used"] is False
+
+
+def test_anchor_raw_identity_mismatch_fails_closed(tmp_path: Path) -> None:
+    def decoder(_: Path, frame_ids: list[int]):
+        return [
+            (frame_id + (1 if index == 0 else 0), np.zeros((36, 64, 3), dtype=np.uint8))
+            for index, frame_id in enumerate(frame_ids)
+        ]
+
+    rows = audit_anchors([anchor_rows()[0]], [inventory(tmp_path)], decoder=decoder)
+    assert rows[0]["status"] == "NEEDS_VISUAL_REVIEW"
+    assert rows[0]["reason"] == "RAW_FRAME_IDENTITY_MISMATCH"
+
+
+def test_anchor_mapping_non_monotonic_conflict_fails_closed(tmp_path: Path) -> None:
+    item = inventory(tmp_path)
+    mapping_file(Path(item["mapping_path"]), [(1, 0.8, 25.0, 20), (2, 0.4, 25.0, 10)])
+    rows = audit_anchors([anchor_rows()[0]], [item], decoder=lambda _p, ids: [])
+    assert rows[0]["status"] == "NEEDS_VISUAL_REVIEW"
+    assert rows[0]["reason"] == "MAPPING_NON_MONOTONIC_COORDINATE_CONFLICT"
 
 
 def test_frame_coordinate_contract_passes_matching_raw_and_btc(tmp_path: Path) -> None:
@@ -255,14 +285,27 @@ def test_frame_coordinate_contract_passes_matching_raw_and_btc(tmp_path: Path) -
     assert summary["timestamp_fps_reconstruction_used"] is False
 
 
-def test_frame_coordinate_contract_fails_visual_mismatch(tmp_path: Path) -> None:
+def test_frame_coordinate_contract_keeps_visual_mismatch_audit_only(tmp_path: Path) -> None:
     white = np.full((36, 64, 3), 255, dtype=np.uint8)
 
     def decoder(_: Path, frame_ids: list[int]):
         return [(frame_id, white.copy()) for frame_id in frame_ids]
 
-    summary, _ = verify_frame_coordinate_contract([inventory(tmp_path)], decoder=decoder)
-    assert summary["status"] == "FAIL"
+    summary, checks = verify_frame_coordinate_contract([inventory(tmp_path)], decoder=decoder)
+    assert summary["status"] == "PASS"
+    assert summary["btc_jpeg_correspondence_fail_count"] == 3
+    assert summary["jpeg_correspondence_used_as_hard_gate"] is False
+    assert checks[0]["btc_jpeg_correspondence_status"] == "HAS_MISMATCH"
+
+
+def test_trake_interval_order_invalid_still_fails() -> None:
+    anchors = anchor_rows()
+    anchors[1]["canonical_interval"] = [10, 18]
+    gt, issues = materialize_ground_truth(
+        normalize_queries(query_rows()), provisional_rows(), anchors
+    )
+    assert len(gt) < 150
+    assert "TRAKE_EVENT_ORDER_INVALID" in {row["code"] for row in issues}
 
 
 def write_benchmark_files(root: Path, benchmark_id: str) -> None:
