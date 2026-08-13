@@ -23,13 +23,14 @@ def resolve(path: str | Path) -> Path:
     return path if path.is_absolute() else PROJECT_ROOT / path
 
 
-def find_mapping_path(data_root: Path, video_id: str) -> Path:
+def find_mapping_path(data_root: Path, video_id: str, mapping_root: Path | None = None) -> Path:
     candidates = [
+        mapping_root / f"{video_id}.csv" if mapping_root else None,
         data_root / "map-keyframes-aic25-b1" / "map-keyframes" / f"{video_id}.csv",
         data_root / "map-keyframes" / f"{video_id}.csv",
     ]
     for path in candidates:
-        if path.is_file():
+        if path and path.is_file():
             return path
     matches = sorted(data_root.glob(f"**/map-keyframes/{video_id}.csv"))
     if matches:
@@ -37,14 +38,16 @@ def find_mapping_path(data_root: Path, video_id: str) -> Path:
     raise FileNotFoundError(f"BTC mapping CSV not found for {video_id}")
 
 
-def find_keyframe_dir(data_root: Path, video_id: str) -> Path:
+def find_keyframe_dir(data_root: Path, video_id: str, keyframe_root: Path | None = None) -> Path:
     level = video_id.split("_", 1)[0]
     candidates = [
+        keyframe_root / video_id if keyframe_root else None,
         data_root / "keyframes" / video_id,
+        data_root / "keyframes" / "keyframes" / video_id,
         data_root / f"Keyframes_{level}" / "keyframes" / video_id,
     ]
     for path in candidates:
-        if path.is_dir():
+        if path and path.is_dir():
             return path
     matches = sorted(data_root.glob(f"Keyframes_{level}*/keyframes/{video_id}"))
     if matches:
@@ -55,12 +58,23 @@ def find_keyframe_dir(data_root: Path, video_id: str) -> Path:
     raise FileNotFoundError(f"BTC keyframe directory not found for {video_id}")
 
 
-def discover_video_ids(data_root: Path) -> list[str]:
+def discover_video_ids(data_root: Path, mapping_root: Path | None = None, keyframe_root: Path | None = None) -> list[str]:
     ids = set()
+    if mapping_root and mapping_root.is_dir():
+        for path in sorted(mapping_root.glob("L*_V*.csv")):
+            ids.add(path.stem)
+        if ids:
+            return sorted(ids, key=natural_video_key)
     for path in sorted(data_root.glob("**/map-keyframes/L*_V*.csv")):
         ids.add(path.stem)
     if ids:
         return sorted(ids, key=natural_video_key)
+    if keyframe_root and keyframe_root.is_dir():
+        for path in sorted(keyframe_root.glob("L*_V*")):
+            if path.is_dir():
+                ids.add(path.name)
+        if ids:
+            return sorted(ids, key=natural_video_key)
     for path in sorted(data_root.glob("**/keyframes/L*_V*")):
         if path.is_dir():
             ids.add(path.name)
@@ -78,9 +92,16 @@ def image_path_for_row(keyframe_dir: Path, n: int) -> Path:
     raise FileNotFoundError(f"BTC keyframe image not found for n={n} in {keyframe_dir}")
 
 
-def build_video_rows(data_root: Path, output_root: Path, video_id: str, start_global_id: int) -> tuple[list[dict], dict]:
-    mapping_path = find_mapping_path(data_root, video_id)
-    keyframe_dir = find_keyframe_dir(data_root, video_id)
+def build_video_rows(
+    data_root: Path,
+    output_root: Path,
+    video_id: str,
+    start_global_id: int,
+    mapping_root: Path | None = None,
+    keyframe_root: Path | None = None,
+) -> tuple[list[dict], dict]:
+    mapping_path = find_mapping_path(data_root, video_id, mapping_root)
+    keyframe_dir = find_keyframe_dir(data_root, video_id, keyframe_root)
     df = pd.read_csv(mapping_path)
     if "n" not in df.columns or "frame_idx" not in df.columns:
         raise ValueError(f"BTC mapping must include n and frame_idx: {mapping_path}")
@@ -146,6 +167,8 @@ def build_video_rows(data_root: Path, output_root: Path, video_id: str, start_gl
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build pipeline-compatible maps from provided BTC keyframes.")
     parser.add_argument("--data-root", default="/kaggle/input/datasets/nadkli/dataset-aic")
+    parser.add_argument("--keyframe-root", help="Directory containing per-video BTC keyframe folders, e.g. .../keyframes/keyframes.")
+    parser.add_argument("--mapping-root", help="Directory containing BTC map CSV files, e.g. .../map-keyframes-aic25-b1/map-keyframes.")
     parser.add_argument("--output", default="/kaggle/working/artifacts/keyframe_btc_full")
     parser.add_argument("--video-id", action="append", default=[])
     parser.add_argument("--limit", type=int)
@@ -153,12 +176,26 @@ def main() -> int:
 
     started = time.time()
     data_root = resolve(args.data_root)
+    keyframe_source_root = resolve(args.keyframe_root) if args.keyframe_root else None
+    mapping_source_root = resolve(args.mapping_root) if args.mapping_root else None
     output_root = resolve(args.output)
     output_root.mkdir(parents=True, exist_ok=True)
     index_dir = output_root / "indexes"
     index_dir.mkdir(parents=True, exist_ok=True)
 
-    video_ids = [v.strip() for v in args.video_id if v.strip()] or discover_video_ids(data_root)
+    print(json.dumps({
+        "data_root": str(data_root),
+        "keyframe_root": str(keyframe_source_root) if keyframe_source_root else "",
+        "mapping_root": str(mapping_source_root) if mapping_source_root else "",
+        "output_root": str(output_root),
+        "requested_video_ids": args.video_id,
+    }, indent=2, ensure_ascii=False), flush=True)
+
+    video_ids = [v.strip() for v in args.video_id if v.strip()] or discover_video_ids(
+        data_root,
+        mapping_root=mapping_source_root,
+        keyframe_root=keyframe_source_root,
+    )
     video_ids = sorted(dict.fromkeys(video_ids), key=natural_video_key)
     if args.limit:
         video_ids = video_ids[: max(0, args.limit)]
@@ -170,13 +207,20 @@ def main() -> int:
     errors = []
     for idx, video_id in enumerate(video_ids, start=1):
         try:
-            rows, summary = build_video_rows(data_root, output_root, video_id, len(all_rows))
+            rows, summary = build_video_rows(
+                data_root,
+                output_root,
+                video_id,
+                len(all_rows),
+                mapping_root=mapping_source_root,
+                keyframe_root=keyframe_source_root,
+            )
             all_rows.extend(rows)
             summaries.append(summary)
-            print(f"[{idx}/{len(video_ids)}] BTC keyframes {video_id}: {len(rows)}")
+            print(f"[{idx}/{len(video_ids)}] BTC keyframes {video_id}: {len(rows)}", flush=True)
         except Exception as exc:
             errors.append({"video_id": video_id, "exception": repr(exc)})
-            print(f"[{idx}/{len(video_ids)}] FAIL {video_id}: {exc}")
+            print(f"[{idx}/{len(video_ids)}] FAIL {video_id}: {exc}", flush=True)
 
     global_df = pd.DataFrame(all_rows)
     if global_df.empty:

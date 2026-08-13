@@ -230,6 +230,7 @@ def append_repeated_arg(cmd: list[str], flag: str, values: list[Path | str]) -> 
 
 def resolve_btc_keyframe_root(data_root: Path) -> Path:
     for candidate in [
+        data_root / "keyframes" / "keyframes",
         data_root / "keyframes",
         data_root / "Keyframes_L21" / "keyframes",
     ]:
@@ -406,6 +407,10 @@ def main() -> int:
                 "scripts/build_btc_keyframe_map.py",
                 "--data-root",
                 str(data_root),
+                "--keyframe-root",
+                str(resolve_btc_keyframe_root(data_root)),
+                "--mapping-root",
+                str(data_root / "map-keyframes-aic25-b1" / "map-keyframes"),
                 "--output",
                 str(keyframe_root),
             ]
