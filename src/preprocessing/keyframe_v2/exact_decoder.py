@@ -20,6 +20,7 @@ class ExactFrameDecoder:
         self.cap = cv2.VideoCapture(str(self.video_path))
         if not self.cap.isOpened():
             raise RuntimeError(f"Cannot open video: {self.video_path}")
+        self.current_pos = 0
 
     def close(self) -> None:
         self.cap.release()
@@ -27,12 +28,26 @@ class ExactFrameDecoder:
     def decode(self, internal_frame_index: int) -> DecodedFrame:
         if internal_frame_index < 0:
             raise ValueError("internal_frame_index must be non-negative")
-        self.cap.set(cv2.CAP_PROP_POS_FRAMES, int(internal_frame_index))
+        target = int(internal_frame_index)
+        if self.current_pos <= target <= self.current_pos + 300:
+            while self.current_pos < target:
+                if not self.cap.grab():
+                    break
+                self.current_pos += 1
+        else:
+            self.cap.set(cv2.CAP_PROP_POS_FRAMES, target)
+            self.current_pos = target
+
         ok, frame = self.cap.read()
         if not ok or frame is None:
-            raise RuntimeError(f"Cannot decode frame {internal_frame_index}")
-        pos = int(self.cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
-        return DecodedFrame(int(internal_frame_index), pos, frame)
+            self.cap.set(cv2.CAP_PROP_POS_FRAMES, target)
+            self.current_pos = target
+            ok, frame = self.cap.read()
+            if not ok or frame is None:
+                raise RuntimeError(f"Cannot decode frame {internal_frame_index}")
+
+        self.current_pos += 1
+        return DecodedFrame(target, self.current_pos - 1, frame)
 
     def save(self, internal_frame_index: int, output_path: str | Path, quality: int = 95) -> None:
         decoded = self.decode(internal_frame_index)

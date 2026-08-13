@@ -19,7 +19,7 @@ from src.retrieval.logging_utils import setup_logger
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--video-id", default="L21_V005")
-    parser.add_argument("--dataset-root", default=r"e:\AI Challenge TP.HCM 2026\CodeBase\datasets_L21")
+    parser.add_argument("--dataset-root", default=str(PROJECT_ROOT / "datasets_L21"))
     parser.add_argument("--output-dir", default=str(PROJECT_ROOT / "outputs" / "indexes" / "asr"))
     args = parser.parse_args()
 

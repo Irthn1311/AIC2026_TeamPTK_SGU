@@ -383,8 +383,9 @@ def print_report(r: PipelineResult) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="BTC Keyframe Processing Pipeline")
     parser.add_argument("--video-id", default="L21_V005", help="Video ID (e.g. L21_V005)")
-    parser.add_argument("--dataset-dir", default=r"e:\AI Challenge TP.HCM 2026\CodeBase\datasets_L21", help="Dataset root directory")
-    parser.add_argument("--output", default=r"e:\AI Challenge TP.HCM 2026\CodeBase\pipeline_btc_output", help="Output directory")
+    from _bootstrap import PROJECT_ROOT
+    parser.add_argument("--dataset-dir", default=str(PROJECT_ROOT / "datasets_L21"), help="Dataset root directory")
+    parser.add_argument("--output", default=str(PROJECT_ROOT / "outputs" / "pipeline_btc_output"), help="Output directory")
     args = parser.parse_args()
 
     result = run_pipeline(args.video_id, args.dataset_dir, args.output)

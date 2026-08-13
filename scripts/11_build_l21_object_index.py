@@ -16,7 +16,7 @@ from src.retrieval.object_index import build_object_index
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset-root", default=r"e:\AI Challenge TP.HCM 2026\CodeBase\datasets_L21")
+    parser.add_argument("--dataset-root", default=str(PROJECT_ROOT / "datasets_L21"))
     parser.add_argument("--output-dir", default=str(PROJECT_ROOT / "outputs" / "indexes" / "object"))
     parser.add_argument("--min-score", type=float, default=0.25)
     args = parser.parse_args()

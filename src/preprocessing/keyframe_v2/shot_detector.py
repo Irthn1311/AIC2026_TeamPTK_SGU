@@ -121,10 +121,9 @@ def _detect_histdiff(video_path: Path, meta: VideoMetadata, cfg: dict) -> list[S
     cuts = [0]
     prev_hist = None
     frame_idx = 0
-    while frame_idx < meta.total_frames:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+    while True:
         ok, frame = cap.read()
-        if not ok:
+        if not ok or frame is None:
             break
         hist = _frame_hist(frame)
         if prev_hist is not None:
@@ -133,6 +132,9 @@ def _detect_histdiff(video_path: Path, meta: VideoMetadata, cfg: dict) -> list[S
                 cuts.append(frame_idx)
         prev_hist = hist
         frame_idx += stride
+        for _ in range(stride - 1):
+            if not cap.grab():
+                break
     cap.release()
 
     shots = []

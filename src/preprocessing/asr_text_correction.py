@@ -17,10 +17,9 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import torch
+from _bootstrap import PROJECT_ROOT
 
-# Ensure E: drive cache paths
-DEFAULT_MODEL_DIR = Path(r"E:\AI Challenge TP.HCM 2026\CodeBase\.model_cache\qwen3_4b")
+DEFAULT_MODEL_DIR = PROJECT_ROOT / ".model_cache" / "qwen3_4b"
 
 logger = logging.getLogger("asr-correction")
 

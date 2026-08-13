@@ -27,7 +27,7 @@ from build_ocr_v3_index import build_ocr_v3_full_index
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset-root", default=r"e:\AI Challenge TP.HCM 2026\CodeBase\datasets_L21")
+    parser.add_argument("--dataset-root", default=str(PROJECT_ROOT / "datasets_L21"))
     parser.add_argument("--output-dir", default=str(PROJECT_ROOT / "outputs" / "indexes" / "ocr_v3"))
     parser.add_argument("--device", default="auto", help="Device to run on ('cuda', 'gpu', 'cpu', or 'auto')")
     parser.add_argument("--max-images", type=int, default=None, help="Set maximum images or omit for ALL")

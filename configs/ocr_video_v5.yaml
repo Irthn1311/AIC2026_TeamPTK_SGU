@@ -18,7 +18,7 @@ sampling:
 
 ocr:
   engine: paddle_vietocr_consensus_v5
-  paddle_stage_python: E:/conda_envs/aic2026/python.exe
+  paddle_stage_python: python
   paddle_device: gpu:0
   paddle_detection_model_dir: .ocr_cache/paddlex/official_models/PP-OCRv6_medium_det
   paddle_recognition_model_dir: .ocr_cache/paddlex/official_models/PP-OCRv6_medium_rec

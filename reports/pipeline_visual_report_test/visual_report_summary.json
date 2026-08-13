@@ -1,0 +1,12 @@
+{
+  "html": "E:\\AI Challenge TP.HCM 2026\\AIC2026_TeamPTK_SGU\\reports\\pipeline_visual_report_test\\index.html",
+  "keyframes": 9844,
+  "object_detections": 65716,
+  "object_images": 9678,
+  "ocr_v2_rows": 329,
+  "ocr_tracks": 55479,
+  "asr_videos": 29,
+  "asr_segments_sampled": 1400,
+  "video_clips": 0,
+  "package": "missing"
+}
