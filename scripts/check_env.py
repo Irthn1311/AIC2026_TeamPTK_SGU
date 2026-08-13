@@ -81,8 +81,8 @@ def audit_environment():
         from vietocr.tool.predictor import Predictor  # noqa: F401
 
         print("VietOCR        : Installed ✅")
-    except ImportError:
-        print("VietOCR        : NOT INSTALLED ❌")
+    except Exception as exc:
+        print(f"VietOCR        : NOT INSTALLED / ISSUE ({exc}) ⚠️")
 
     try:
         import paddleocr
