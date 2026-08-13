@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from system_tai.common.schemas import FrameMappingRecord, VideoFeatureStore
 from system_tai.features.btc_clip_store import (
@@ -144,6 +145,68 @@ def test_full_corpus_video_maxima_bypasses_global_frame_topk() -> None:
     assert {item.video_id for item in maxima.rankings["e1"]} == {"A", "B", "C"}
     assert maxima.physical_rows_scored == 4
     assert maxima.video_store_scan_count == 3
+
+
+def test_video_evidence_search_accepts_numpy_query_matrices_and_vector_lists() -> None:
+    registry = FeatureStoreRegistry(
+        [
+            _store("A", [(10, 0.0, (1.0, 0.0)), (20, 1.0, (0.0, 1.0))]),
+            _store("B", [(30, 0.0, (0.8, 0.2))]),
+        ]
+    )
+    searcher = VideoRestrictedFeatureSearcher(registry, chunk_size=1)
+
+    one_row = np.asarray([[1.0, 0.0]], dtype=np.float32)
+    one_result = searcher.search_video_maxima(
+        query_ids=("one",),
+        query_vectors=one_row,
+    )
+    assert [hit.video_id for hit in one_result.rankings["one"]] == ["A", "B"]
+
+    multi_row = np.asarray([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
+    multi_result = searcher.search_video_maxima(
+        query_ids=("x", "y"),
+        query_vectors=multi_row,
+    )
+    assert multi_result.rankings["x"][0].frame_id == 10
+    assert multi_result.rankings["y"][0].frame_id == 20
+
+    list_result = searcher.search_video_maxima(
+        query_ids=("list",),
+        query_vectors=[np.asarray([1.0, 0.0], dtype=np.float32)],
+    )
+    assert [
+        (hit.video_id, hit.frame_id, hit.cosine_score)
+        for hit in list_result.rankings["list"]
+    ] == [
+        (hit.video_id, hit.frame_id, hit.cosine_score)
+        for hit in one_result.rankings["one"]
+    ]
+
+
+@pytest.mark.parametrize(
+    ("query_vectors", "expected_message"),
+    [
+        (np.empty((0, 2), dtype=np.float32), "equal non-zero length"),
+        (np.ones((1, 3), dtype=np.float32), "shape mismatch"),
+        (np.asarray([[np.nan, 0.0]], dtype=np.float32), "NaN or Infinity"),
+        (np.asarray([[np.inf, 0.0]], dtype=np.float32), "NaN or Infinity"),
+        (np.zeros((1, 2), dtype=np.float32), "finite non-zero norm"),
+    ],
+)
+def test_video_evidence_search_rejects_invalid_numpy_query_matrices(
+    query_vectors: np.ndarray,
+    expected_message: str,
+) -> None:
+    registry = FeatureStoreRegistry([_store("A", [(10, 0.0, (1.0, 0.0))])])
+    searcher = VideoRestrictedFeatureSearcher(registry, chunk_size=1)
+    query_ids = tuple(f"q{index}" for index in range(len(query_vectors)))
+
+    with pytest.raises(ValueError, match=expected_message):
+        searcher.search_video_maxima(
+            query_ids=query_ids,
+            query_vectors=query_vectors,
+        )
 
 
 def test_variant_video_rankings_use_ranks_and_not_raw_cosine() -> None:

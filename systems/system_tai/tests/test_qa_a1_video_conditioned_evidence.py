@@ -9,7 +9,16 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from system_tai.common.schemas import CandidateFrame, KISResult
+from system_tai.common.schemas import (
+    CandidateFrame,
+    FrameMappingRecord,
+    KISResult,
+    VideoFeatureStore,
+)
+from system_tai.features.btc_clip_store import (
+    FeatureStoreRegistry,
+    LoadedVideoFeatureStore,
+)
 from system_tai.kis.session_schema import QAQueryRequest, SessionConfig
 from system_tai.preliminary.schemas import QAPrediction
 from system_tai.qa.grounding import (
@@ -45,6 +54,7 @@ from system_tai.retrieval.video_evidence import (
     FullCorpusVideoMaximaOutcome,
     RestrictedFrameHit,
     VideoMaximumHit,
+    VideoRestrictedFeatureSearcher,
     VideoRestrictedSearchOutcome,
 )
 
@@ -420,6 +430,75 @@ def _pipeline(tmp_path: Path, *, qa_engine=None):
         qa_engine=qa_engine,
     )
     return pipeline, encoder, legacy, searcher, refiner
+
+
+def test_qa_a1_passes_batched_numpy_encoder_output_to_real_video_search(
+    tmp_path: Path,
+) -> None:
+    video_path = tmp_path / "V1.mp4"
+    video_path.touch()
+    mappings = tuple(
+        FrameMappingRecord(
+            clip_row=index,
+            keyframe_order=index + 1,
+            frame_id=frame_id,
+            pts_time=frame_id / 30.0,
+            fps=30.0,
+        )
+        for index, frame_id in enumerate((100, 110, 120))
+    )
+    store = LoadedVideoFeatureStore(
+        descriptor=VideoFeatureStore(
+            video_id="V1",
+            mapping_csv_path=tmp_path / "V1.csv",
+            clip_npy_path=tmp_path / "V1.npy",
+            row_count=3,
+            embedding_dimension=4,
+            normalized=True,
+        ),
+        matrix=np.asarray(
+            [[1.0, 0.0, 0.0, 0.0], [0.8, 0.2, 0.0, 0.0], [0.6, 0.4, 0.0, 0.0]],
+            dtype=np.float32,
+        ),
+        mappings=mappings,
+    )
+    registry = FeatureStoreRegistry([store])
+    encoder = _FakeEncoder()
+    legacy = _LegacyRetriever()
+    pipeline = QARuntimePipeline(
+        exact_retriever=legacy,
+        weighted_rrf=WeightedRRFRetriever(legacy),
+        refiner=_EchoRefiner(),
+        raw_video_registry=RawVideoRegistry([RawVideoRecord("V1", video_path)]),
+        decoder=_FakeDecoder(),
+        shared_encoder=encoder,
+        video_restricted_searcher=VideoRestrictedFeatureSearcher(
+            registry,
+            chunk_size=2,
+        ),
+        video_conditioned_evidence_config=QAVideoConditionedEvidenceConfig(
+            enabled=True,
+            selected_video_cap=1,
+            anchors_per_video=1,
+        ),
+    )
+
+    result, _timings, diagnostics = pipeline.process_qa_query(
+        QAQueryRequest(
+            request_id="numpy-matrix",
+            query_id="qa-numpy-matrix",
+            event_description="A person enters a shop",
+            question="What happens after that?",
+            output_top_k=10,
+            refine_top_n=1,
+        )
+    )
+
+    assert isinstance(encoder.encode_texts(["contract probe"]), np.ndarray)
+    assert result.predictions == []
+    assert diagnostics["grounding_candidate_count"] == 1
+    assert diagnostics["selected_video_ids"] == ["V1"]
+    assert legacy.calls == 0
 
 
 def test_enabled_unsupported_query_runs_grounding_without_inventing_answer(

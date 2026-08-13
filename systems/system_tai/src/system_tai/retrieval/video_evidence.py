@@ -77,12 +77,14 @@ def _frame_sort_key(hit: _UnrankedFrameHit) -> tuple[float, int, int]:
 
 
 def _normalize_query_matrix(
-    query_vectors: Sequence[Sequence[float] | NDArray[np.number]],
+    query_vectors: (
+        Sequence[Sequence[float] | NDArray[np.number]] | NDArray[np.number]
+    ),
     *,
     expected_dimension: int,
     already_normalized: bool = False,
 ) -> NDArray[np.float32]:
-    if not query_vectors:
+    if len(query_vectors) == 0:
         raise ValueError("query_vectors must not be empty")
     units: list[NDArray[np.float32]] = []
     for index, vector in enumerate(query_vectors):
@@ -108,7 +110,9 @@ def rank_store_frames(
     store: LoadedVideoFeatureStore,
     *,
     query_ids: Sequence[str],
-    query_vectors: Sequence[Sequence[float] | NDArray[np.number]],
+    query_vectors: (
+        Sequence[Sequence[float] | NDArray[np.number]] | NDArray[np.number]
+    ),
     expected_dimension: int,
     chunk_size: int,
     per_query_cap: int | None = None,
@@ -215,7 +219,9 @@ class VideoRestrictedFeatureSearcher:
         self,
         *,
         query_ids: Sequence[str],
-        query_vectors: Sequence[Sequence[float] | NDArray[np.number]],
+        query_vectors: (
+            Sequence[Sequence[float] | NDArray[np.number]] | NDArray[np.number]
+        ),
     ) -> FullCorpusVideoMaximaOutcome:
         """Return every video's best keyframe for each query without global Top-K."""
 
@@ -274,7 +280,9 @@ class VideoRestrictedFeatureSearcher:
         *,
         video_ids: Sequence[str],
         query_ids: Sequence[str],
-        query_vectors: Sequence[Sequence[float] | NDArray[np.number]],
+        query_vectors: (
+            Sequence[Sequence[float] | NDArray[np.number]] | NDArray[np.number]
+        ),
         per_query_result_cap: int,
     ) -> VideoRestrictedSearchOutcome:
         if not video_ids:
