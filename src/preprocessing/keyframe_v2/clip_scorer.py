@@ -84,23 +84,8 @@ class ImageEmbeddingScorer:
                 filename=str(self.cfg.get("open_clip_filename", "open_clip_model.safetensors")),
                 cache_root=self.project_root / str(self.cfg.get("download_root", ".model_cache/clip")),
             )
-        if weights_path is not None and weights_path.suffix.lower() == ".safetensors":
-            model, _, preprocess = open_clip.create_model_and_transforms(
-                model_name,
-                pretrained=None,
-                precision=precision,
-                device=self._device,
-            )
-            from safetensors.torch import load_file
-
-            state_dict = load_file(str(weights_path), device="cpu")
-            missing, unexpected = model.load_state_dict(state_dict, strict=False)
-            if missing or unexpected:
-                raise RuntimeError(
-                    "OpenCLIP safetensors checkpoint does not match model "
-                    f"(missing={len(missing)}, unexpected={len(unexpected)})"
-                )
-            return model, preprocess, weights_path
+        if weights_path is not None and self._should_load_as_safetensors(weights_path):
+            return self._load_open_clip_safetensors(open_clip, model_name, precision, weights_path)
 
         if pretrained_alias:
             model, _, preprocess = open_clip.create_model_and_transforms(
@@ -119,6 +104,33 @@ class ImageEmbeddingScorer:
             precision=precision,
             device=self._device,
         )
+        return model, preprocess, weights_path
+
+    def _should_load_as_safetensors(self, weights_path: Path) -> bool:
+        filename = str(self.cfg.get("open_clip_filename", ""))
+        pattern = str(self.cfg.get("open_clip_weights", ""))
+        return (
+            weights_path.suffix.lower() == ".safetensors"
+            or filename.endswith(".safetensors")
+            or pattern.endswith(".safetensors")
+        )
+
+    def _load_open_clip_safetensors(self, open_clip, model_name: str, precision: str, weights_path: Path):
+        model, _, preprocess = open_clip.create_model_and_transforms(
+            model_name,
+            pretrained=None,
+            precision=precision,
+            device=self._device,
+        )
+        from safetensors.torch import load_file
+
+        state_dict = load_file(str(weights_path), device="cpu")
+        missing, unexpected = model.load_state_dict(state_dict, strict=False)
+        if missing or unexpected:
+            raise RuntimeError(
+                "OpenCLIP safetensors checkpoint does not match model "
+                f"(missing={len(missing)}, unexpected={len(unexpected)})"
+            )
         return model, preprocess, weights_path
 
     def _load_openai_clip(self, torch_module):
