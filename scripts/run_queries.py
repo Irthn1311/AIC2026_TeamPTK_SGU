@@ -147,8 +147,11 @@ def main():
                 event_frame_idxs = {ev.event_id: ev.frame_idx for ev in trake_sub.events}
                 formatter.add_trake(qid, trake_sub.video_id, event_frame_idxs)
             else:
-                # Fallback: single frame mapped to event 1
-                formatter.add_trake(qid, evidence.video_id, {1: evidence.frame_idx})
+                # Fallback: map single frame across all events in query
+                fidx = evidence.frame_idx if evidence.frame_idx > 0 else 1
+                n_evs = len(query_dict.get("events", [])) or 3
+                event_frame_idxs = {ev_id: fidx + (ev_id - 1) * 5 for ev_id in range(1, n_evs + 1)}
+                formatter.add_trake(qid, evidence.video_id, event_frame_idxs)
 
         elapsed = time.time() - t_q
         logger.info(

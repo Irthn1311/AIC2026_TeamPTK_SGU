@@ -264,12 +264,12 @@ class RetrievalPipeline:
         likely batch(es), then balanced retrieval prevents L25/L26 from dominating.
         """
         raw_text = query_dict.get("text") or query_dict.get("description", "")
-        target_prefix = query_dict.get("target_prefix") or ""
+        # target_prefix intentionally disabled — always search full database
 
         logger.info(f"\n{'='*70}")
         logger.info(f"PROCESSING QUERY [id='{query_id}']")
         logger.info(f"Raw Input: '{raw_text}'")
-        logger.info(f"Target Prefix: '{target_prefix}' ('' = global balanced search)")
+        logger.info(f"Mode: Global (full database search — target_prefix disabled)")
 
         # Step 1: Query Parsing & Intent Extraction
         kis_query = self._parser.parse_kis(raw_text, top_k=self._top_k_ret)
@@ -283,37 +283,14 @@ class RetrievalPipeline:
         logger.info(f"  • Topic Intent: '{topic_res.topic}' (Conf: {topic_res.confidence:.2f}, Kw: {topic_res.matched_keywords})")
         logger.info(f"  • Translated CLIP Prompt: '{retrieval_text}'")
 
-        # Step 2: Multimodal Candidate Retrieval
+        # Step 2: Multimodal Candidate Retrieval — always balanced global search
         logger.info(f"[Step 2/4 - Candidate Retrieval]")
 
-        if target_prefix:
-            # Known batch: restrict to that prefix (highest precision)
-            vis_results = self._vis_ret.retrieve(
-                retrieval_text, top_k=self._top_k_ret, target_prefix=target_prefix
-            )
-            logger.info(f"  • Mode: Prefix-Scoped ('{target_prefix}')")
-        else:
-            # Pillar 3: BatchRouter predicts likely batches WITHOUT knowing prefix
-            predicted_batches = self._batch_router.predict(raw_text, top_n=3)
-            n_all = len(self._batch_router._batches)
-            logger.info(f"  • Mode: Global — BatchRouter predicted: {predicted_batches} ({len(predicted_batches)}/{n_all} batches)")
-
-            if len(predicted_batches) < n_all:
-                # High-confidence routing: search within predicted batches only
-                all_vis: List = []
-                slots = max(self._top_k_ret // max(len(predicted_batches), 1), 20)
-                for batch in predicted_batches:
-                    batch_vis = self._vis_ret.retrieve(
-                        retrieval_text, top_k=slots, target_prefix=batch
-                    )
-                    all_vis.extend(batch_vis)
-                all_vis.sort(key=lambda r: r.score, reverse=True)
-                vis_results = all_vis[:self._top_k_ret]
-            else:
-                # Low-confidence: use Pillar 2 balanced retrieval (inverse-sqrt slots)
-                vis_results = self._vis_ret.retrieve_balanced(
-                    retrieval_text, top_k=self._top_k_ret, max_per_video=2
-                )
+        # Global balanced retrieval across all batches (inverse-sqrt slot allocation)
+        vis_results = self._vis_ret.retrieve_balanced(
+            retrieval_text, top_k=self._top_k_ret, max_per_video=2
+        )
+        logger.info(f"  • Mode: Global Balanced (all batches)")
 
         top1_score = vis_results[0].score if vis_results else 0.0
         logger.info(f"  • Visual Retrieval (CLIP): {len(vis_results)} candidates (Top 1 cosine: {top1_score:.4f})")
@@ -326,7 +303,7 @@ class RetrievalPipeline:
 
         for text_ret in self._text_rets:
             q_input = kis_query if getattr(text_ret, "name", "") == "ocr_inmemory" else raw_text
-            txt = text_ret.retrieve(q_input, top_k=self._top_k_ret, target_prefix=target_prefix)
+            txt = text_ret.retrieve(q_input, top_k=self._top_k_ret)
             if txt:
                 all_lists.append(txt)
                 all_weights.append(self._text_weight)
@@ -388,9 +365,9 @@ class RetrievalPipeline:
         event_desc    = query_dict.get("description", "")
         question      = query_dict.get("question", "")
         answer_lang   = query_dict.get("answer_language", "auto")
-        target_prefix = query_dict.get("target_prefix", "")
+        # target_prefix intentionally disabled — full database search
         qa_query      = self._parser.parse_qa(
-            event_desc, question, answer_language=answer_lang, target_prefix=target_prefix
+            event_desc, question, answer_language=answer_lang, target_prefix=""
         )
 
         if self._vlm is None:
@@ -399,7 +376,6 @@ class RetrievalPipeline:
             )
             evidence = self._run_kis({
                 "text": f"{event_desc} {question}",
-                "target_prefix": target_prefix,
             }, query_id)
             if evidence is None:
                 logger.warning(f"[QA] id='{query_id}' — KIS fallback returned no results.")
@@ -515,7 +491,7 @@ class RetrievalPipeline:
             sport_category=query_dict.get("sport_category", ""),
             top_k_videos=query_dict.get("top_k_videos", 5),
             video_id=query_dict.get("video_id", ""),
-            target_prefix=query_dict.get("target_prefix", ""),
+            target_prefix="",  # disabled — full database search
         )
 
         trake_result: Optional[TRAKESubmission] = self._trake_pipeline.run(

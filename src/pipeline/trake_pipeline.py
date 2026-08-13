@@ -238,11 +238,9 @@ class TRAKEPipeline:
 
         global_top_k = min(self.top_k_videos * 100, 500)
 
-        target_prefix = getattr(trake_query, "target_prefix", None)
-        # Visual retrieval with compact query
-        vis_results_compact = self._vis_ret.retrieve(compact_query, top_k=global_top_k, target_prefix=target_prefix)
-        # Visual retrieval with description query
-        vis_results_desc = self._vis_ret.retrieve(desc_query, top_k=global_top_k, target_prefix=target_prefix)
+        # target_prefix disabled — always search full database
+        vis_results_compact = self._vis_ret.retrieve(compact_query, top_k=global_top_k)
+        vis_results_desc    = self._vis_ret.retrieve(desc_query,    top_k=global_top_k)
 
         # Combine both visual retrievals
         all_lists   = [vis_results_compact, vis_results_desc]
@@ -250,7 +248,7 @@ class TRAKEPipeline:
 
         # Text retrieval (if Qdrant or OCR available)
         for text_ret in self._text_rets:
-            txt = text_ret.retrieve(compact_query, top_k=global_top_k, target_prefix=target_prefix)
+            txt = text_ret.retrieve(compact_query, top_k=global_top_k)
             if txt:
                 all_lists.append(txt)
                 all_weights.append(0.6)

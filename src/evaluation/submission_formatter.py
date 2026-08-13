@@ -123,11 +123,16 @@ class SubmissionFormatter:
         """
         if n_events is None:
             # Auto-detect from data: find max event_id across all rows
-            max_ev = 4  # BTC minimum
+            max_ev = 1
             for row in self._trake_rows:
-                ev_cols = [k for k in row if k.startswith("event_") and k.endswith("_frame_idx")]
-                max_ev = max(max_ev, len(ev_cols))
-            n_events = max_ev
+                for k in row.keys():
+                    if k.startswith("event_") and k.endswith("_frame_idx"):
+                        try:
+                            ev_num = int(k.split("_")[1])
+                            max_ev = max(max_ev, ev_num)
+                        except ValueError:
+                            pass
+            n_events = max_ev if self._trake_rows else 4
 
         fieldnames = ["query_id", "video_id"] + [
             f"event_{i}_frame_idx" for i in range(1, n_events + 1)

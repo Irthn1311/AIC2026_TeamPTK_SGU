@@ -211,19 +211,19 @@ class QAPipeline:
         """
         Retrieve and fuse candidates using enriched QA retrieval text
         (event_description + question visual keywords).
+        target_prefix is disabled — always search full database.
         """
         # Use enriched QA retrieval text instead of just event_description
         search_text = self._parser.build_qa_retrieval_text(qa_query)
         logger.debug(f"[QA] Retrieval text: {search_text[:120]}")
 
-        target_prefix = getattr(qa_query, "target_prefix", None)
-        vis_results = self._vis_ret.retrieve(search_text, top_k=self._top_k_ret, target_prefix=target_prefix)
+        vis_results = self._vis_ret.retrieve(search_text, top_k=self._top_k_ret)
 
         all_lists   = [vis_results]
         all_weights = [1.0]
         for text_ret in self._text_rets:
             # Also search with just event_description for text retrievers
-            txt = text_ret.retrieve(qa_query.event_description, top_k=self._top_k_ret, target_prefix=target_prefix)
+            txt = text_ret.retrieve(qa_query.event_description, top_k=self._top_k_ret)
             if txt:
                 all_lists.append(txt)
                 all_weights.append(0.8)
