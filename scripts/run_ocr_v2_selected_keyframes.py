@@ -47,7 +47,7 @@ def resolve_path(path: str | Path) -> Path:
 
 def load_selected_keyframes(selected_root: Path, video_ids: list[str] | None) -> list[dict[str, Any]]:
     requested = {v.strip() for v in video_ids or [] if v.strip()}
-    video_dirs = sorted(p for p in selected_root.iterdir() if p.is_dir() and p.name.startswith("L21_V"))
+    video_dirs = sorted(p for p in selected_root.iterdir() if p.is_dir() and "_V" in p.name and p.name.startswith("L"))
     if requested:
         video_dirs = [p for p in video_dirs if p.name in requested]
         missing = sorted(requested - {p.name for p in video_dirs})
@@ -216,7 +216,7 @@ def write_aggregate_outputs(rows: list[dict[str, Any]], output_dir: Path, starte
 def aggregate_per_video_outputs(output_dir: Path, video_ids: list[str] | None = None) -> dict[str, Any]:
     per_video_dir = output_dir / "per_video"
     requested = {str(v).strip() for v in video_ids or [] if str(v).strip()}
-    paths = sorted(per_video_dir.glob("L21_V*.jsonl"))
+    paths = sorted(per_video_dir.glob("L*_V*.jsonl"))
     if requested:
         paths = [path for path in paths if path.stem in requested]
     rows: list[dict[str, Any]] = []

@@ -55,11 +55,30 @@ def zip_files(paths: list[Path], output_path: Path, root: Path) -> None:
 
 
 def tar_keyframes(keyframe_root: Path, output_path: Path) -> int:
-    image_paths = sorted((keyframe_root).glob("L21_V*/keyframes/*.jpg"))
+    image_paths = []
+    map_path = keyframe_root / "indexes" / "keyframe_v2_global_map.parquet"
+    if map_path.is_file():
+        import pandas as pd
+
+        df = pd.read_parquet(map_path)
+        if "source" in df.columns and (df["source"].astype(str) == "btc_keyframe").any():
+            image_paths = [Path(str(path)) for path in df.get("image_path", []) if Path(str(path)).is_file()]
+    if not image_paths:
+        image_paths = sorted((keyframe_root).glob("L*_V*/keyframes/*.jpg"))
+    if not image_paths and map_path.is_file():
+        import pandas as pd
+
+        df = pd.read_parquet(map_path)
+        image_paths = [Path(str(path)) for path in df.get("image_path", []) if Path(str(path)).is_file()]
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with tarfile.open(output_path, "w:gz") as tf:
         for path in image_paths:
-            tf.add(path, path.relative_to(keyframe_root.parent).as_posix())
+            if path.is_relative_to(keyframe_root.parent):
+                arcname = path.relative_to(keyframe_root.parent).as_posix()
+            else:
+                video_id = path.parent.name
+                arcname = f"keyframe_v2_full/{video_id}/keyframes/{path.name}"
+            tf.add(path, arcname)
     return len(image_paths)
 
 

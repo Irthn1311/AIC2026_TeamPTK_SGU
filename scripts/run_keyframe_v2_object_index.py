@@ -217,8 +217,8 @@ def compact_object_stats(stats_json: dict[str, Any], *, top_label_limit: int = 1
 
 def aggregate_detection_outputs(output_root: Path, index_output: Path, started: float) -> dict[str, Any]:
     detections_dir = output_root / "detections"
-    detection_paths = sorted(path for path in detections_dir.glob("L21_V*.parquet") if not path.name.endswith("_records.parquet"))
-    corpus_paths = sorted(detections_dir.glob("L21_V*_records.parquet"))
+    detection_paths = sorted(path for path in detections_dir.glob("L*_V*.parquet") if not path.name.endswith("_records.parquet"))
+    corpus_paths = sorted(detections_dir.glob("L*_V*_records.parquet"))
     if not corpus_paths:
         raise FileNotFoundError(f"No object per-video records found in {detections_dir}")
     det_all = pd.concat([pd.read_parquet(path) for path in detection_paths], ignore_index=True) if detection_paths else pd.DataFrame()

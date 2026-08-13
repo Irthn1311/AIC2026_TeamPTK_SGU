@@ -303,6 +303,7 @@ def main() -> int:
     parser.add_argument("--skip-asr", action="store_true")
     parser.add_argument("--skip-objects", action="store_true")
     parser.add_argument("--skip-package", action="store_true")
+    parser.add_argument("--use-btc-keyframes", action="store_true", help="Use provided BTC keyframes instead of extracting Keyframe V2.")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--device", default=os.environ.get("AIC_DEVICE", "cuda"))
     parser.add_argument("--ocr-device", default=os.environ.get("AIC_OCR_DEVICE", "auto"), choices=["auto", "cpu", "cuda"])
@@ -395,60 +396,73 @@ def main() -> int:
         records.append(run_step("prepare assets/checkpoints", [py, "scripts/prepare_kaggle_assets.py"]))
 
     if not args.skip_keyframes:
-        keyframe_cmd = [
-            py,
-            "scripts/run_keyframe_v2_full.py",
-            "--config",
-            str(keyframe_config),
-            "--output",
-            str(keyframe_root),
-            "--limit",
-            str(len(video_ids)),
-        ]
-        append_repeated_arg(keyframe_cmd, "--video-root", video_roots)
-        if args.force:
-            keyframe_cmd.append("--force")
-        if sharded_gpu_devices:
-            jobs = []
-            for gpu_id, shard_video_ids in zip(sharded_gpu_devices, split_evenly(video_ids, len(sharded_gpu_devices))):
-                shard_cmd = [
-                    py,
-                    "scripts/run_keyframe_v2_full.py",
-                    "--config",
-                    str(keyframe_config),
-                    "--output",
-                    str(keyframe_root),
-                    "--no-aggregate",
-                ]
-                append_repeated_arg(shard_cmd, "--video-root", video_roots)
-                for video_id in shard_video_ids:
-                    shard_cmd.extend(["--video-id", video_id])
-                if args.force:
-                    shard_cmd.append("--force")
-                jobs.append({
-                    "name": f"keyframe_gpu{gpu_id}",
-                    "cmd": shard_cmd,
-                    "env_updates": {
-                        "CUDA_VISIBLE_DEVICES": str(gpu_id),
-                        "AIC_FAST_SHOT_DETECTION": "1",
-                        "AIC_ALLOW_HISTDIFF_FALLBACK": "1",
-                    },
-                })
-            records.append(run_parallel_steps("keyframe v2 sharded", jobs))
-            records.append(run_step(
-                "keyframe v2 aggregate map",
-                [
-                    py,
-                    "scripts/run_keyframe_v2_full.py",
-                    "--config",
-                    str(keyframe_config),
-                    "--output",
-                    str(keyframe_root),
-                    "--aggregate-only",
-                ],
-            ))
+        if args.use_btc_keyframes:
+            btc_cmd = [
+                py,
+                "scripts/build_btc_keyframe_map.py",
+                "--data-root",
+                str(data_root),
+                "--output",
+                str(keyframe_root),
+            ]
+            for video_id in video_ids:
+                btc_cmd.extend(["--video-id", video_id])
+            records.append(run_step("btc keyframe map", btc_cmd))
         else:
-            records.append(run_step("keyframe v2", keyframe_cmd))
+            keyframe_cmd = [
+                py,
+                "scripts/run_keyframe_v2_full.py",
+                "--config",
+                str(keyframe_config),
+                "--output",
+                str(keyframe_root),
+                "--limit",
+                str(len(video_ids)),
+            ]
+            append_repeated_arg(keyframe_cmd, "--video-root", video_roots)
+            if args.force:
+                keyframe_cmd.append("--force")
+            if sharded_gpu_devices:
+                jobs = []
+                for gpu_id, shard_video_ids in zip(sharded_gpu_devices, split_evenly(video_ids, len(sharded_gpu_devices))):
+                    shard_cmd = [
+                        py,
+                        "scripts/run_keyframe_v2_full.py",
+                        "--config",
+                        str(keyframe_config),
+                        "--output",
+                        str(keyframe_root),
+                        "--no-aggregate",
+                    ]
+                    append_repeated_arg(shard_cmd, "--video-root", video_roots)
+                    for video_id in shard_video_ids:
+                        shard_cmd.extend(["--video-id", video_id])
+                    if args.force:
+                        shard_cmd.append("--force")
+                    jobs.append({
+                        "name": f"keyframe_gpu{gpu_id}",
+                        "cmd": shard_cmd,
+                        "env_updates": {
+                            "CUDA_VISIBLE_DEVICES": str(gpu_id),
+                            "AIC_FAST_SHOT_DETECTION": "1",
+                            "AIC_ALLOW_HISTDIFF_FALLBACK": "1",
+                        },
+                    })
+                records.append(run_parallel_steps("keyframe v2 sharded", jobs))
+                records.append(run_step(
+                    "keyframe v2 aggregate map",
+                    [
+                        py,
+                        "scripts/run_keyframe_v2_full.py",
+                        "--config",
+                        str(keyframe_config),
+                        "--output",
+                        str(keyframe_root),
+                        "--aggregate-only",
+                    ],
+                ))
+            else:
+                records.append(run_step("keyframe v2", keyframe_cmd))
         global_map_path = keyframe_root / "indexes" / "keyframe_v2_global_map.parquet"
         if not global_map_path.is_file():
             raise FileNotFoundError(f"Keyframe V2 did not create global map: {global_map_path}")
