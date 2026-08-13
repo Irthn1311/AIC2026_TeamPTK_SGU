@@ -80,32 +80,37 @@ class ImageEmbeddingScorer:
 
         weights_path = self._resolve_weights_path(str(self.cfg.get("open_clip_weights", "")))
         if weights_path is None and bool(self.cfg.get("allow_download", False)):
-            weights_path = ensure_open_clip_weights(
-                repo_id=str(self.cfg.get("open_clip_repo_id", "timm/vit_base_patch32_clip_224.openai")),
-                filename=str(self.cfg.get("open_clip_filename", "open_clip_model.safetensors")),
-                cache_root=self.project_root / str(self.cfg.get("download_root", ".model_cache/clip")),
-            )
+            try:
+                weights_path = ensure_open_clip_weights(
+                    repo_id=str(self.cfg.get("open_clip_repo_id", "timm/vit_base_patch32_clip_224.openai")),
+                    filename=str(self.cfg.get("open_clip_filename", "open_clip_model.safetensors")),
+                    cache_root=self.project_root / str(self.cfg.get("download_root", ".model_cache/clip")),
+                )
+            except Exception:
+                weights_path = None
+
         if weights_path is not None and self._should_load_as_safetensors(weights_path):
             return self._load_open_clip_safetensors(open_clip, model_name, precision, weights_path)
 
-        if pretrained_alias:
+        alias = pretrained_alias or "openai"
+        try:
             model, _, preprocess = open_clip.create_model_and_transforms(
                 model_name,
-                pretrained=pretrained_alias,
+                pretrained=alias,
                 precision=precision,
                 device=self._device,
             )
-            return model, preprocess, pretrained_alias
-
-        if weights_path is None:
-            raise FileNotFoundError(f"open_clip_weights not found: {self.cfg.get('open_clip_weights')}")
-        model, _, preprocess = open_clip.create_model_and_transforms(
-            model_name,
-            pretrained=str(weights_path),
-            precision=precision,
-            device=self._device,
-        )
-        return model, preprocess, weights_path
+            return model, preprocess, alias
+        except Exception:
+            if weights_path is not None:
+                model, _, preprocess = open_clip.create_model_and_transforms(
+                    model_name,
+                    pretrained=str(weights_path),
+                    precision=precision,
+                    device=self._device,
+                )
+                return model, preprocess, weights_path
+            raise
 
     def _should_load_as_safetensors(self, weights_path: Path) -> bool:
         filename = str(self.cfg.get("open_clip_filename", ""))
@@ -155,16 +160,21 @@ class ImageEmbeddingScorer:
     def _resolve_weights_path(self, pattern: str) -> Path | None:
         if not pattern:
             return None
+        candidates: list[Path] = []
         if any(ch in pattern for ch in "*?[]"):
             if Path(pattern).is_absolute():
-                matches = [Path(match) for match in sorted(glob.glob(pattern))]
+                candidates.extend([Path(match) for match in sorted(glob.glob(pattern))])
             else:
-                matches = sorted(self.project_root.glob(pattern))
+                candidates.extend(sorted(self.project_root.glob(pattern)))
+                candidates.extend([Path(m) for m in sorted(glob.glob(f"/kaggle/input/**/{Path(pattern).name}", recursive=True))])
+                candidates.extend([Path(m) for m in sorted(glob.glob("/kaggle/input/**/open_clip_model.safetensors", recursive=True))])
+                candidates.extend([Path(m) for m in sorted(glob.glob("/root/.cache/**/open_clip_model.safetensors", recursive=True))])
         else:
             path = Path(pattern)
-            matches = [path if path.is_absolute() else self.project_root / path]
-        for match in matches:
-            if match.exists():
+            candidates.append(path if path.is_absolute() else self.project_root / path)
+            candidates.append(Path("/kaggle/input") / pattern)
+        for match in candidates:
+            if match.exists() and match.is_file():
                 return match.resolve()
         return None
 
