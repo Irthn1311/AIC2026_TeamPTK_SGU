@@ -200,7 +200,7 @@ def _load_rgb(path: Path) -> np.ndarray:
         return np.asarray(image.convert("RGB"), dtype=np.uint8)
 
 
-def _visual_similarity(left: np.ndarray, right: np.ndarray) -> dict[str, Any]:
+def visual_similarity(left: np.ndarray, right: np.ndarray) -> dict[str, Any]:
     from PIL import Image
 
     left_gray = np.asarray(
@@ -262,7 +262,7 @@ def verify_frame_coordinate_contract(
                 if keyframe_path is None or row["frame_idx"] not in decoded:
                     raise RuntimeError("required decoded raw frame or BTC keyframe is missing")
                 sample.update(
-                    _visual_similarity(decoded[row["frame_idx"]], _load_rgb(keyframe_path))
+                    visual_similarity(decoded[row["frame_idx"]], _load_rgb(keyframe_path))
                 )
             except Exception as error:
                 sample.update({"correspondence_pass": False, "error": str(error)})
@@ -530,12 +530,31 @@ def create_review_bundle(root: Path, target: Path) -> Path:
         "review_requests.jsonl",
         "frame_coordinate_contract.json",
         "frame_coordinate_checks.jsonl",
+        "coordinate_anomaly_diagnostics.json",
+        "failed_sample_neighborhood_diagnostics.jsonl",
+        "neighbor_crosscheck.jsonl",
+        "expanded_coordinate_checks.jsonl",
     }
     members = [root / name for name in sorted(allowed) if (root / name).is_file()]
     review_root = root / "review"
     if review_root.is_dir():
         members.extend(path for path in sorted(review_root.glob("*.jpg")) if path.is_file())
     return _zip_members(root, target, members)
+
+
+def create_coordinate_diagnostics_bundle(root: Path, target: Path) -> Path:
+    names = {
+        "frame_coordinate_contract.json",
+        "frame_coordinate_checks.jsonl",
+        "coordinate_anomaly_diagnostics.json",
+        "failed_sample_neighborhood_diagnostics.jsonl",
+        "neighbor_crosscheck.jsonl",
+        "expanded_coordinate_checks.jsonl",
+    }
+    missing = sorted(name for name in names if not (root / name).is_file())
+    if missing:
+        raise ValueError(f"coordinate diagnostic bundle missing files: {missing}")
+    return _zip_members(root, target, [root / name for name in sorted(names)])
 
 
 def create_development_bundle(
@@ -606,14 +625,62 @@ def run_l21_finalization(
     inventory, corpus_summary, inventory_issues = build_corpus_inventory(
         dataset, video_ids=source_videos
     )
+    missing_source_videos = source_videos - {row["video_id"] for row in inventory}
+    if missing_source_videos:
+        raise RuntimeError(
+            f"L21 raw inventory is incomplete; missing={sorted(missing_source_videos)}"
+        )
     coordinate_summary, coordinate_checks = verify_frame_coordinate_contract(
         inventory, decoder=decoder
     )
+    from .coordinate_anomaly import diagnose_failed_samples
+
+    (
+        coordinate_decision,
+        anomaly_diagnostics,
+        neighbor_crosscheck,
+        expanded_coordinate_checks,
+    ) = diagnose_failed_samples(inventory, coordinate_checks, decoder=decoder)
+    coordinate_summary = {
+        **coordinate_summary,
+        **coordinate_decision,
+    }
     write_json(output / "frame_coordinate_contract.json", coordinate_summary)
     write_jsonl(output / "frame_coordinate_checks.jsonl", coordinate_checks)
+    write_json(
+        output / "coordinate_anomaly_diagnostics.json",
+        {
+            "diagnostic_scope": "ONLY_ORIGINAL_FAILED_REPRESENTATIVE_SAMPLES",
+            "status": coordinate_summary["status"],
+            "failed_sample_count": len(anomaly_diagnostics),
+            "classifications": dict(Counter(row["classification"] for row in anomaly_diagnostics)),
+            "raw_frame_coordinate_contract": coordinate_summary["raw_frame_coordinate_contract"],
+            "btc_jpeg_correspondence_cleanliness": coordinate_summary[
+                "btc_jpeg_correspondence_cleanliness"
+            ],
+            "similarity_thresholds_changed": False,
+            "semantic_gt_touched_before_decision": False,
+        },
+    )
+    write_jsonl(output / "failed_sample_neighborhood_diagnostics.jsonl", anomaly_diagnostics)
+    write_jsonl(output / "neighbor_crosscheck.jsonl", neighbor_crosscheck)
+    write_jsonl(output / "expanded_coordinate_checks.jsonl", expanded_coordinate_checks)
+    coordinate_diagnostics_archive = create_coordinate_diagnostics_bundle(
+        output, output.parent / "aic2026_l21_coordinate_diagnostics_v1.zip"
+    )
     issues = list(inventory_issues)
-    if coordinate_summary["status"] != "PASS":
-        issues.append({"severity": "ERROR", "code": "L21_FRAME_COORDINATE_CONTRACT_FAILED"})
+    coordinate_accepted = coordinate_summary["status"] in {
+        "PASS",
+        "PASS_WITH_DOCUMENTED_LOCAL_BTC_ANOMALIES",
+    }
+    if not coordinate_accepted:
+        issues.append(
+            {
+                "severity": "ERROR",
+                "code": "L21_FRAME_COORDINATE_CONTRACT_NOT_ACCEPTED",
+                "status": coordinate_summary["status"],
+            }
+        )
         write_jsonl(output / "queries.jsonl", queries)
         write_json(
             output / "manifest.json",
@@ -621,7 +688,7 @@ def run_l21_finalization(
                 "benchmark_id": BENCHMARK_ID,
                 "benchmark_version": BENCHMARK_VERSION,
                 "role": "PUBLIC_REGRESSION_DEBUG",
-                "status": "FAIL_FRAME_COORDINATE_CONTRACT",
+                "status": f"{coordinate_summary['status']}_FRAME_COORDINATE_CONTRACT",
                 "scoring_ready": False,
                 "query_count": 150,
                 "canonical_anchor_count": len(anchors),
@@ -635,12 +702,14 @@ def run_l21_finalization(
             output, output.parent / "aic2026_dev_l21_150_review_v1.zip"
         )
         return {
-            "TEAM_EVAL_L21_FINALIZATION": "FAIL",
+            "TEAM_EVAL_L21_FINALIZATION": (
+                "FAIL" if coordinate_summary["status"] == "FAIL" else "PARTIAL"
+            ),
             "L21_QUERY_COUNT": len(queries),
             "L21_KIS_COUNT": 50,
             "L21_QA_COUNT": 50,
             "L21_TRAKE_COUNT": 50,
-            "L21_FRAME_COORDINATE_CONTRACT": "FAIL",
+            "L21_FRAME_COORDINATE_CONTRACT": coordinate_summary["status"],
             "L21_CANONICAL_ANCHORS": len(anchors),
             "L21_RESOLVED_ANCHORS": 0,
             "L21_UNRESOLVED_ANCHORS": len(anchors),
@@ -653,6 +722,12 @@ def run_l21_finalization(
             "l21_zip_path": None,
             "dev_zip_path": None,
             "review_zip_path": str(review_archive),
+            "coordinate_diagnostics_zip_path": str(coordinate_diagnostics_archive),
+            "coordinate_summary": coordinate_summary,
+            "coordinate_anomalies": anomaly_diagnostics,
+            "EXPANDED_COORDINATE_EVIDENCE": (
+                "FAIL" if coordinate_summary["status"] == "FAIL" else "UNRESOLVED"
+            ),
         }
     audit = audit_anchors(anchors, inventory, decoder=decoder)
     unresolved = [row for row in audit if row["status"] != "RESOLVED"]
@@ -706,6 +781,8 @@ def run_l21_finalization(
         "source_human_reviewed": True,
         "timestamp_fps_final_reconstruction_used": False,
         "strict_plus_minus_4_trake_windows_used": False,
+        "frame_coordinate_contract_status": coordinate_summary["status"],
+        "documented_coordinate_anomalies": coordinate_summary.get("documented_anomalies", []),
         "source_draft_sha256": sha256_file(draft),
         "git_commit": git_commit,
         "created_at": datetime.now(UTC).isoformat(),
@@ -742,7 +819,7 @@ def run_l21_finalization(
         "L21_KIS_COUNT": 50,
         "L21_QA_COUNT": 50,
         "L21_TRAKE_COUNT": 50,
-        "L21_FRAME_COORDINATE_CONTRACT": "PASS",
+        "L21_FRAME_COORDINATE_CONTRACT": coordinate_summary["status"],
         "L21_CANONICAL_ANCHORS": len(audit),
         "L21_RESOLVED_ANCHORS": len(audit) - len(unresolved),
         "L21_UNRESOLVED_ANCHORS": len(unresolved),
@@ -757,6 +834,10 @@ def run_l21_finalization(
         "l21_zip_path": str(l21_archive) if l21_archive else None,
         "dev_zip_path": str(dev_archive) if dev_archive else None,
         "review_zip_path": str(review_archive) if review_archive else None,
+        "coordinate_diagnostics_zip_path": str(coordinate_diagnostics_archive),
+        "coordinate_summary": coordinate_summary,
+        "coordinate_anomalies": anomaly_diagnostics,
+        "EXPANDED_COORDINATE_EVIDENCE": "PASS",
     }
 
 
@@ -765,6 +846,7 @@ __all__ = [
     "aliases_from_source",
     "audit_anchors",
     "create_development_bundle",
+    "create_coordinate_diagnostics_bundle",
     "create_l21_bundle",
     "create_review_bundle",
     "materialize_ground_truth",
@@ -772,4 +854,5 @@ __all__ = [
     "run_l21_finalization",
     "validate_draft_integrity",
     "verify_frame_coordinate_contract",
+    "visual_similarity",
 ]
