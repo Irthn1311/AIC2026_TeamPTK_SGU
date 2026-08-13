@@ -2,6 +2,7 @@ from .answer_candidates import AnswerCandidateProvider, BaselineQuestionCandidat
 from .answer_scoring import CosineEvidenceAnswerScorer, EvidenceAnswerScorer
 from .engine import QABaselineEngine
 from .grounding import (
+    QA_MULTI_SEED_TEMPORAL_REFINEMENT_V1,
     QA_VIDEO_CONDITIONED_EVIDENCE_V1,
     QAVideoConditionedEvidenceConfig,
 )
@@ -39,6 +40,7 @@ __all__ = [
     "EvidenceAnswerScorer",
     "QABaselineEngine",
     "QA_VIDEO_CONDITIONED_EVIDENCE_V1",
+    "QA_MULTI_SEED_TEMPORAL_REFINEMENT_V1",
     "QAVideoConditionedEvidenceConfig",
     "QAEvidenceCandidate",
     "ObjectAnswerProviderConfig",

@@ -269,6 +269,10 @@ def test_l21_runner_cli_qa_policy_defaults_off_and_is_explicit() -> None:
     assert defaults.qa_dev_en_sidecar is None
     assert defaults.qa_keyframe_evidence_bank is False
     assert defaults.qa_keyframe_evidence_video_cap == 32
+    assert defaults.qa_multi_seed_temporal_refinement is False
+    assert defaults.qa_temporal_seeds_per_video == 3
+    assert defaults.qa_temporal_refinement_video_cap == 32
+    assert defaults.qa_temporal_refinement_total_seed_cap == 96
 
     enabled = RUNNER.build_parser().parse_args(
         [
@@ -286,6 +290,13 @@ def test_l21_runner_cli_qa_policy_defaults_off_and_is_explicit() -> None:
             "--qa-keyframe-evidence-bank",
             "--qa-keyframe-evidence-video-cap",
             "32",
+            "--qa-multi-seed-temporal-refinement",
+            "--qa-temporal-seeds-per-video",
+            "3",
+            "--qa-temporal-refinement-video-cap",
+            "16",
+            "--qa-temporal-refinement-total-seed-cap",
+            "24",
             "--refine-top-n",
             "1",
         ]
@@ -294,4 +305,49 @@ def test_l21_runner_cli_qa_policy_defaults_off_and_is_explicit() -> None:
     assert enabled.qa_dev_en_sidecar == SIDECAR_PATH
     assert enabled.qa_keyframe_evidence_bank is True
     assert enabled.qa_keyframe_evidence_video_cap == 32
+    assert enabled.qa_multi_seed_temporal_refinement is True
+    assert enabled.qa_temporal_seeds_per_video == 3
+    assert enabled.qa_temporal_refinement_video_cap == 16
+    assert enabled.qa_temporal_refinement_total_seed_cap == 24
     assert enabled.refine_top_n == 1
+
+
+def test_l21_runner_cli_qa_d12_requires_dev_qa_grounding_bank_and_en_only() -> None:
+    common = [
+        "--benchmark",
+        str(BENCHMARK_PATH),
+        "--reuse-manifest",
+        "manifest.json",
+        "--output-dir",
+        "out",
+        "--qa-multi-seed-temporal-refinement",
+    ]
+    assert RUNNER.main([*common, "--task", "qa"]) == 2
+    assert (
+        RUNNER.main(
+            [
+                *common,
+                "--task",
+                "qa",
+                "--qa-video-conditioned-evidence",
+                "--qa-keyframe-evidence-bank",
+            ]
+        )
+        == 2
+    )
+    assert (
+        RUNNER.main(
+            [
+                *common,
+                "--split",
+                "holdout",
+                "--task",
+                "qa",
+                "--qa-video-conditioned-evidence",
+                "--qa-keyframe-evidence-bank",
+                "--qa-localization-language-policy",
+                "en_only",
+            ]
+        )
+        == 2
+    )

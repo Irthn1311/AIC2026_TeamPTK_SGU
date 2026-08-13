@@ -16,8 +16,10 @@ from system_tai.retrieval.video_evidence import (
 
 QA_VIDEO_CONDITIONED_EVIDENCE_V1 = "QA_VIDEO_CONDITIONED_EVIDENCE_V1"
 QA_KEYFRAME_EVIDENCE_BANK_V1 = "QA_KEYFRAME_EVIDENCE_BANK_V1"
+QA_MULTI_SEED_TEMPORAL_REFINEMENT_V1 = "QA_MULTI_SEED_TEMPORAL_REFINEMENT_V1"
 KEYFRAME_ANCHOR = "KEYFRAME_ANCHOR"
 RAW_REFINED = "RAW_REFINED"
+TEMPORAL_REFINED = "TEMPORAL_REFINED"
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +32,10 @@ class QAVideoConditionedEvidenceConfig:
     video_rrf_constant: float = 60.0
     preserve_keyframe_evidence: bool = False
     keyframe_evidence_video_cap: int = 32
+    temporal_refinement_enabled: bool = False
+    temporal_seed_anchors_per_video: int = 3
+    temporal_refinement_video_cap: int = 32
+    temporal_refinement_total_seed_cap: int = 96
 
     def __post_init__(self) -> None:
         if type(self.enabled) is not bool:
@@ -56,6 +62,67 @@ class QAVideoConditionedEvidenceConfig:
             raise ValueError(
                 "preserve_keyframe_evidence requires video-conditioned evidence"
             )
+        if type(self.temporal_refinement_enabled) is not bool:
+            raise ValueError("temporal_refinement_enabled must be a boolean")
+        if (
+            type(self.temporal_seed_anchors_per_video) is not int
+            or not 1 <= self.temporal_seed_anchors_per_video <= 100
+        ):
+            raise ValueError(
+                "temporal_seed_anchors_per_video must be in [1, 100]"
+            )
+        if (
+            type(self.temporal_refinement_video_cap) is not int
+            or not 1 <= self.temporal_refinement_video_cap <= 100
+        ):
+            raise ValueError(
+                "temporal_refinement_video_cap must be in [1, 100]"
+            )
+        maximum_temporal_seeds = (
+            self.temporal_refinement_video_cap
+            * self.temporal_seed_anchors_per_video
+        )
+        if (
+            type(self.temporal_refinement_total_seed_cap) is not int
+            or not 1
+            <= self.temporal_refinement_total_seed_cap
+            <= 100
+        ):
+            raise ValueError(
+                "temporal_refinement_total_seed_cap must be in [1, 100]"
+            )
+        if self.temporal_refinement_enabled:
+            if not (self.enabled and self.preserve_keyframe_evidence):
+                raise ValueError(
+                    "temporal_refinement_enabled requires video-conditioned evidence "
+                    "and the keyframe evidence bank"
+                )
+            if self.temporal_seed_anchors_per_video > self.anchors_per_video:
+                raise ValueError(
+                    "temporal_seed_anchors_per_video must not exceed anchors_per_video"
+                )
+            if self.temporal_refinement_video_cap > self.selected_video_cap:
+                raise ValueError(
+                    "temporal_refinement_video_cap must not exceed selected_video_cap"
+                )
+            if self.temporal_refinement_video_cap > self.keyframe_evidence_video_cap:
+                raise ValueError(
+                    "temporal_refinement_video_cap must not exceed "
+                    "keyframe_evidence_video_cap"
+                )
+            if self.temporal_refinement_total_seed_cap > maximum_temporal_seeds:
+                raise ValueError(
+                    "temporal_refinement_total_seed_cap must not exceed the bounded "
+                    "video/anchor capacity"
+                )
+            if (
+                self.keyframe_evidence_video_cap
+                * self.temporal_seed_anchors_per_video
+                > 100
+            ):
+                raise ValueError(
+                    "multi-seed temporal evidence capacity must not exceed 100"
+                )
         if (
             type(self.video_rrf_constant) is bool
             or not isinstance(self.video_rrf_constant, (int, float))
@@ -104,6 +171,66 @@ def select_primary_keyframe_anchors(
         selected.append(candidate)
         if len(selected) >= video_cap:
             break
+    return tuple(selected)
+
+
+def select_temporal_seed_anchors(
+    candidates: Sequence[CandidateFrame],
+    *,
+    anchors_per_video: int,
+    video_cap: int,
+    total_seed_cap: int | None = None,
+) -> tuple[CandidateFrame, ...]:
+    """Select bounded, target-agnostic multi-seed anchors in deterministic order."""
+
+    if type(anchors_per_video) is not int or anchors_per_video < 1:
+        raise ValueError("anchors_per_video must be an integer >= 1")
+    if type(video_cap) is not int or video_cap < 1:
+        raise ValueError("video_cap must be an integer >= 1")
+    if total_seed_cap is not None and (
+        type(total_seed_cap) is not int or total_seed_cap < 1
+    ):
+        raise ValueError("total_seed_cap must be an integer >= 1 when provided")
+
+    eligible: list[tuple[int, int, str, int, int, int, CandidateFrame]] = []
+    nomination_ranks: dict[str, int] = {}
+    for candidate in candidates:
+        metadata = dict(candidate.diagnostic_metadata or {})
+        local_rank = metadata.get("local_anchor_rank")
+        nomination_rank = metadata.get("video_nomination_rank")
+        if type(local_rank) is not int or local_rank < 1:
+            raise ValueError("QA temporal seed requires a valid local_anchor_rank")
+        if type(nomination_rank) is not int or nomination_rank < 1:
+            raise ValueError(
+                "QA temporal seed requires a valid video_nomination_rank"
+            )
+        previous = nomination_ranks.setdefault(candidate.video_id, nomination_rank)
+        if previous != nomination_rank:
+            raise ValueError("video_nomination_rank must be stable within one video")
+        if local_rank > anchors_per_video:
+            continue
+        eligible.append(
+            (
+                local_rank,
+                nomination_rank,
+                candidate.video_id,
+                candidate.frame_id,
+                candidate.clip_row,
+                candidate.rank,
+                candidate,
+            )
+        )
+
+    selected_video_ids = {
+        video_id
+        for video_id, _rank in sorted(
+            nomination_ranks.items(), key=lambda item: (item[1], item[0])
+        )[:video_cap]
+    }
+    eligible.sort(key=lambda item: item[:-1])
+    selected = [item[-1] for item in eligible if item[2] in selected_video_ids]
+    if total_seed_cap is not None:
+        selected = selected[:total_seed_cap]
     return tuple(selected)
 
 

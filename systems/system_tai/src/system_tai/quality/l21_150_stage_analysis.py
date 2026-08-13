@@ -308,6 +308,9 @@ def analyze_l21_150_stages(
         "REFINEMENT_SUCCESS": {},
         "KEYFRAME_EVIDENCE": {},
         "RAW_REFINED_EVIDENCE": {},
+        "TEMPORAL_SEED": {},
+        "TEMPORAL_REFINEMENT_SUCCESS": {},
+        "TEMPORAL_EVIDENCE": {},
         "PROVIDER_EVIDENCE": {},
         "REFINED": {},
         "USABLE_EVIDENCE": {},
@@ -319,6 +322,9 @@ def analyze_l21_150_stages(
         "REFINEMENT_SELECTED": "refinement_selected_candidates",
         "KEYFRAME_EVIDENCE": "keyframe_evidence_candidates",
         "RAW_REFINED_EVIDENCE": "raw_refined_evidence_candidates",
+        "TEMPORAL_SEED": "temporal_seed_candidates",
+        "TEMPORAL_REFINEMENT_SUCCESS": "temporal_refined_evidence_candidates",
+        "TEMPORAL_EVIDENCE": "temporal_evidence_candidates",
         "PROVIDER_EVIDENCE": "provider_evidence_candidates",
     }
     for query in qa_queries:

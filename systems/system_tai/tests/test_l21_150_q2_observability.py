@@ -168,6 +168,15 @@ def _make_stage_run(root: Path) -> tuple[Path, Path]:
             "raw_refined_evidence_candidates": [
                 {"rank": 2, "video_id": "L21_OTHER", "frame_id": 6}
             ],
+            "temporal_seed_candidates": [
+                {"rank": 1, "video_id": "L21_TARGET", "frame_id": 9}
+            ],
+            "temporal_refined_evidence_candidates": [
+                {"rank": 2, "video_id": "L21_OTHER", "frame_id": 6}
+            ],
+            "temporal_evidence_candidates": [
+                {"rank": 1, "video_id": "L21_TARGET", "frame_id": 9}
+            ],
             "provider_evidence_candidates": [
                 {"rank": 1, "video_id": "L21_TARGET", "frame_id": 9}
             ],
@@ -504,6 +513,15 @@ def test_stage_analyzer_reports_offline_hits_without_runtime_gt(tmp_path: Path) 
     assert report["qa"]["stages"]["RAW_REFINED_EVIDENCE"][
         "target_video_hit_query_count"
     ] == 0
+    assert report["qa"]["stages"]["TEMPORAL_SEED"][
+        "target_video_hit_query_count"
+    ] == 1
+    assert report["qa"]["stages"]["TEMPORAL_REFINEMENT_SUCCESS"][
+        "target_video_hit_query_count"
+    ] == 0
+    assert report["qa"]["stages"]["TEMPORAL_EVIDENCE"][
+        "target_video_hit_query_count"
+    ] == 1
     assert report["qa"]["stages"]["PROVIDER_EVIDENCE"][
         "target_video_hit_query_count"
     ] == 1

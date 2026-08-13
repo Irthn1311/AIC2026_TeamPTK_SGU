@@ -29,6 +29,7 @@ from system_tai.kis.session_schema import (  # noqa: E402
 )
 from system_tai.qa.grounding import (  # noqa: E402
     QA_KEYFRAME_EVIDENCE_BANK_V1,
+    QA_MULTI_SEED_TEMPORAL_REFINEMENT_V1,
     QA_VIDEO_CONDITIONED_EVIDENCE_V1,
     QAVideoConditionedEvidenceConfig,
 )
@@ -909,6 +910,10 @@ def run_l21_150_baseline(
                 resolved_qa_grounding.preserve_keyframe_evidence,
                 QA_KEYFRAME_EVIDENCE_BANK_V1,
             ),
+            (
+                resolved_qa_grounding.temporal_refinement_enabled,
+                QA_MULTI_SEED_TEMPORAL_REFINEMENT_V1,
+            ),
             (resolved_qa_object_provider.enabled, QA_ARTIFACT_BACKED_OBJECT_EVIDENCE),
             (resolved_qa_ocr_provider.enabled, QA_EVIDENCE_GROUNDED_OCR),
         )
@@ -942,6 +947,8 @@ def run_l21_150_baseline(
             if resolved_qa_ocr_provider.enabled
             else QA_ARTIFACT_BACKED_OBJECT_EVIDENCE
             if resolved_qa_object_provider.enabled
+            else QA_MULTI_SEED_TEMPORAL_REFINEMENT_V1
+            if resolved_qa_grounding.temporal_refinement_enabled
             else QA_KEYFRAME_EVIDENCE_BANK_V1
             if resolved_qa_grounding.preserve_keyframe_evidence
             else QA_VIDEO_CONDITIONED_EVIDENCE_V1
@@ -1042,6 +1049,18 @@ def run_l21_150_baseline(
                     "keyframe_evidence_video_cap": (
                         resolved_qa_grounding.keyframe_evidence_video_cap
                     ),
+                    "temporal_refinement_enabled": (
+                        resolved_qa_grounding.temporal_refinement_enabled
+                    ),
+                    "temporal_seed_anchors_per_video": (
+                        resolved_qa_grounding.temporal_seed_anchors_per_video
+                    ),
+                    "temporal_refinement_video_cap": (
+                        resolved_qa_grounding.temporal_refinement_video_cap
+                    ),
+                    "temporal_refinement_total_seed_cap": (
+                        resolved_qa_grounding.temporal_refinement_total_seed_cap
+                    ),
                 },
             }
         )
@@ -1049,10 +1068,32 @@ def run_l21_150_baseline(
             metadata["qa_keyframe_evidence_bank"] = {
                 "policy": QA_KEYFRAME_EVIDENCE_BANK_V1,
                 "enabled": True,
-                "selection": "ONE_PRIMARY_LOCAL_ANCHOR_PER_NOMINATED_VIDEO",
+                "selection": (
+                    "BOUNDED_MULTI_SEED_LOCAL_ANCHORS_PER_NOMINATED_VIDEO"
+                    if resolved_qa_grounding.temporal_refinement_enabled
+                    else "ONE_PRIMARY_LOCAL_ANCHOR_PER_NOMINATED_VIDEO"
+                ),
                 "video_cap": resolved_qa_grounding.keyframe_evidence_video_cap,
-                "raw_refinement_budget": refine_top_n,
+                "raw_refinement_budget": (
+                    resolved_qa_grounding.temporal_refinement_total_seed_cap
+                    if resolved_qa_grounding.temporal_refinement_enabled
+                    else refine_top_n
+                ),
                 "refinement_is_upgrade_not_admission_gate": True,
+            }
+        if resolved_qa_grounding.temporal_refinement_enabled:
+            metadata["qa_multi_seed_temporal_refinement"] = {
+                "policy": QA_MULTI_SEED_TEMPORAL_REFINEMENT_V1,
+                "enabled": True,
+                "seeds_per_video": (
+                    resolved_qa_grounding.temporal_seed_anchors_per_video
+                ),
+                "video_cap": resolved_qa_grounding.temporal_refinement_video_cap,
+                "total_seed_cap": (
+                    resolved_qa_grounding.temporal_refinement_total_seed_cap
+                ),
+                "legacy_refine_top_n_executed": False,
+                "bidirectional_window": True,
             }
     if qa_localization_language_policy == "en_only":
         assert qa_translation_sidecar is not None
@@ -1287,6 +1328,17 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=32,
     )
+    parser.add_argument(
+        "--qa-multi-seed-temporal-refinement",
+        action="store_true",
+    )
+    parser.add_argument("--qa-temporal-seeds-per-video", type=int, default=3)
+    parser.add_argument("--qa-temporal-refinement-video-cap", type=int, default=32)
+    parser.add_argument(
+        "--qa-temporal-refinement-total-seed-cap",
+        type=int,
+        default=96,
+    )
     parser.add_argument("--qa-object-evidence", action="store_true")
     parser.add_argument("--qa-ocr-evidence", action="store_true")
     parser.add_argument("--qa-ocr-evidence-frame-budget", type=int, default=10)
@@ -1322,6 +1374,18 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError(
                 "--qa-keyframe-evidence-bank requires --split dev --task qa "
                 "--qa-video-conditioned-evidence"
+            )
+        if args.qa_multi_seed_temporal_refinement and (
+            args.split != "dev"
+            or args.task != "qa"
+            or not args.qa_video_conditioned_evidence
+            or not args.qa_keyframe_evidence_bank
+            or args.qa_localization_language_policy != "en_only"
+        ):
+            raise ValueError(
+                "--qa-multi-seed-temporal-refinement requires --split dev --task qa "
+                "--qa-video-conditioned-evidence --qa-keyframe-evidence-bank "
+                "--qa-localization-language-policy en_only"
             )
         if args.qa_ocr_evidence and (
             args.split != "dev"
@@ -1497,6 +1561,12 @@ def main(argv: list[str] | None = None) -> int:
             enabled=args.qa_video_conditioned_evidence,
             preserve_keyframe_evidence=args.qa_keyframe_evidence_bank,
             keyframe_evidence_video_cap=args.qa_keyframe_evidence_video_cap,
+            temporal_refinement_enabled=args.qa_multi_seed_temporal_refinement,
+            temporal_seed_anchors_per_video=args.qa_temporal_seeds_per_video,
+            temporal_refinement_video_cap=args.qa_temporal_refinement_video_cap,
+            temporal_refinement_total_seed_cap=(
+                args.qa_temporal_refinement_total_seed_cap
+            ),
         )
         qa_object_answer_provider_config = ObjectAnswerProviderConfig(
             enabled=args.qa_object_evidence,

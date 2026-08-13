@@ -662,9 +662,13 @@ def test_l21_qa_a2_provenance_scope_has_precedence(tmp_path: Path) -> None:
         "selected_video_cap": 32,
         "anchors_per_video": 5,
         "video_rrf_constant": 60.0,
-        "preserve_keyframe_evidence": True,
-        "keyframe_evidence_video_cap": 32,
-    }
+            "preserve_keyframe_evidence": True,
+            "keyframe_evidence_video_cap": 32,
+            "temporal_refinement_enabled": False,
+            "temporal_seed_anchors_per_video": 3,
+            "temporal_refinement_video_cap": 32,
+            "temporal_refinement_total_seed_cap": 96,
+        }
     assert report["qa_keyframe_evidence_bank"] == {
         "policy": runner.QA_KEYFRAME_EVIDENCE_BANK_V1,
         "enabled": True,
