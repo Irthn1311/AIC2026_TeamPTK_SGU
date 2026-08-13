@@ -33,8 +33,10 @@ def run_keyframe_v2(video_path: str | Path, config_path: str | Path, output_root
     project_root = Path.cwd()
     cfg = load_config(config_path)
     _force_e_local_env(project_root, cfg)
-    if os.environ.get("AIC_ALLOW_HISTDIFF_FALLBACK", "0") == "1":
+    if os.environ.get("AIC_ALLOW_HISTDIFF_FALLBACK", "0") == "1" or os.environ.get("AIC_FAST_SHOT_DETECTION", "1") == "1":
         cfg.setdefault("shot_detection", {})["require_transnetv2"] = False
+        cfg.setdefault("shot_detection", {})["use_histdiff_only"] = True
+        cfg.setdefault("shot_detection", {})["backend"] = "histdiff"
 
     video_path = Path(video_path).resolve()
     video_id = video_path.stem

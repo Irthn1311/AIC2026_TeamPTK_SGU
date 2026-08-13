@@ -190,14 +190,19 @@ def main() -> None:
             print(f"[{idx}/{len(videos)}] SKIP complete: {video_id}")
             continue
         print(f"[{idx}/{len(videos)}] RUN Keyframe V2: {video_id}")
+        t0 = time.time()
         try:
-            run_keyframe_v2(
+            summary = run_keyframe_v2(
                 video_path=video_path,
                 config_path=args.config,
                 output_root=output_root,
                 validate_btc_mapping=args.validate_btc_mapping,
                 debug=args.debug,
             )
+            elapsed = time.time() - t0
+            shot_time = summary.get("performance", {}).get("shot_detection", 0.0) if summary else 0.0
+            clip_time = summary.get("performance", {}).get("candidate_decoding_clip_quality_selection", 0.0) if summary else 0.0
+            print(f"[{idx}/{len(videos)}] DONE {video_id} in {elapsed:.2f}s (shot={shot_time:.2f}s, clip={clip_time:.2f}s)")
         except Exception as exc:
             errors.append({"video_id": video_id, "stage": "keyframe_v2", "exception": repr(exc), "status": "failed"})
             print(f"[{idx}/{len(videos)}] FAIL {video_id}: {exc}")
