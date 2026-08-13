@@ -1,0 +1,2 @@
+# One canonical video_id per line. Entries are treated as T3_GT_OR_QC_USED.
+# Keep this file team-shared; do not add descriptive semantic labels here.
