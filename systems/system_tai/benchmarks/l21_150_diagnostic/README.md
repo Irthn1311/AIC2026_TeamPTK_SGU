@@ -103,3 +103,25 @@ Run the three arms separately with `--trake-language-policy vi_only`,
 Recall@32/50/100, rank buckets, nearest-rank percentiles, per-event target-video ranks,
 and transparent language/cap opportunity labels. It does not alter the production cap
 or declare a production winner.
+
+## QA-D0 localization-language diagnostic
+
+`qa_dev_translations_en.json` contains one frozen literal English translation of
+`question_vi` for each of the 38 DEV QA queries. Translation authoring used only that
+Vietnamese question: no target video, answer, frame, interval, timestamp, object
+artifact, or retrieval output. The artifact contains no HOLDOUT entries, is not
+official ground truth, and is validated against the frozen benchmark bytes and exact
+DEV query IDs.
+
+`scripts/qa_d0_language_nomination.py` measures only whether localization language puts
+the target video into the existing QA-A1 nomination ranking. The `vi_only`,
+`vi_plus_en`, and `en_only` arms construct genuine language variants and reuse
+`search_video_maxima()` plus `nominate_qa_videos()`; EN_ONLY never creates or retrieves
+a fake Vietnamese variant. Because L21-150 has no separate QA event description, this
+remains a `QUESTION_AS_LOCALIZATION_FALLBACK` diagnostic.
+
+Retrieval receives only query ID and localization text. It finishes for all queries
+before a separate offline evaluator joins DEV query IDs to target videos. The diagnostic
+does not run answer classification/providers, selected-video frame search, raw decode,
+refinement, image encoding, or answer scoring. It does not change the default QA
+production language policy or establish official/semantic QA accuracy.

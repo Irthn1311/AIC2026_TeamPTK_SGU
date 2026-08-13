@@ -1,0 +1,208 @@
+{
+  "schema_version": 1,
+  "sidecar_role": "QA_DEV_LOCALIZATION_TRANSLATION_SIDECAR",
+  "benchmark_id": "system_tai-l21-150-diagnostic-v1",
+  "benchmark_sha256": "02f0bfc27053a9e532abb8c2cba9ead8f9923d7600993145c57b315f5e55ad1a",
+  "scope": "DEV_QA_ONLY",
+  "task": "qa",
+  "query_count": 38,
+  "source_language": "vi",
+  "target_language": "en",
+  "translation_scope": "question_vi_only",
+  "translation_status": "MODEL_AUTHORED_FROZEN_NOT_HUMAN_REVIEWED",
+  "official_ground_truth": false,
+  "retrieval_feedback_used": false,
+  "authoring_provenance": "Literal translation from question_vi only; no answer, target video, frame, interval, timestamp, retrieval output, or object artifact was used.",
+  "entries": [
+    {
+      "query_id": "QA-01",
+      "question_vi": "Trong cảnh có tấm biển cảnh báo màu vàng-đỏ, biển đang cảnh báo nguy hiểm gì?",
+      "question_en": "In the scene with a yellow-red warning sign, what danger is the sign warning about?"
+    },
+    {
+      "query_id": "QA-02",
+      "question_vi": "Trong cảnh người đàn ông mặc áo sọc đang làm việc với cán bộ, anh ta đang ngồi phía sau vật gì?",
+      "question_en": "In the scene where the man in a striped shirt is working with an officer, what is he sitting behind?"
+    },
+    {
+      "query_id": "QA-03",
+      "question_vi": "Trong cảnh có người dắt chó, có bao nhiêu con chó nhìn thấy rõ?",
+      "question_en": "In the scene with a person walking dogs, how many dogs are clearly visible?"
+    },
+    {
+      "query_id": "QA-04",
+      "question_vi": "Màn hình lớn cạnh nữ MC đang hiển thị cảnh gì?",
+      "question_en": "What scene is displayed on the large screen next to the female presenter?"
+    },
+    {
+      "query_id": "QA-08",
+      "question_vi": "Bữa tiệc sinh nhật trong bản tin được tổ chức cho con vật nào?",
+      "question_en": "In the news report, what animal is the birthday party being held for?"
+    },
+    {
+      "query_id": "QA-09",
+      "question_vi": "Phương tiện cỡ lớn ở phía trái khung hình là loại xe gì?",
+      "question_en": "What type of vehicle is the large vehicle on the left side of the frame?"
+    },
+    {
+      "query_id": "QA-10",
+      "question_vi": "Người đang ở trên cao phía trên thành phố ngồi trên vật gì?",
+      "question_en": "What is the person high above the city sitting on?"
+    },
+    {
+      "query_id": "QA-11",
+      "question_vi": "Cây trồng đang được máy thu hoạch trong cảnh là gì?",
+      "question_en": "What crop is the machine harvesting in the scene?"
+    },
+    {
+      "query_id": "QA-12",
+      "question_vi": "Người phụ nữ được phỏng vấn mặc áo màu gì?",
+      "question_en": "What color is the shirt worn by the woman being interviewed?"
+    },
+    {
+      "query_id": "QA-13",
+      "question_vi": "Cuộc đua trong bùn sử dụng con vật nào?",
+      "question_en": "What animal is used in the race through the mud?"
+    },
+    {
+      "query_id": "QA-18",
+      "question_vi": "Bề mặt trong cảnh chủ yếu là loại địa hình nào?",
+      "question_en": "What type of terrain mainly covers the surface in the scene?"
+    },
+    {
+      "query_id": "QA-19",
+      "question_vi": "Tên cửa hàng xuất hiện lặp lại trên biển hiệu là gì?",
+      "question_en": "What is the name of the store that appears repeatedly on the signs?"
+    },
+    {
+      "query_id": "QA-20",
+      "question_vi": "Có bao nhiêu người dẫn chương trình trong khung hình?",
+      "question_en": "How many presenters are in the frame?"
+    },
+    {
+      "query_id": "QA-21",
+      "question_vi": "Trong bảng mức phí, mức đề xuất cho xe mô tô/xe gắn máy là bao nhiêu?",
+      "question_en": "In the fee table, what is the proposed fee for motorcycles or mopeds?"
+    },
+    {
+      "query_id": "QA-22",
+      "question_vi": "Cậu bé đang dùng dụng cụ gì để quan sát vật nhỏ?",
+      "question_en": "What tool is the boy using to observe the small object?"
+    },
+    {
+      "query_id": "QA-23",
+      "question_vi": "Thương hiệu thời trang nào được nhắc trong dòng tiêu đề bên dưới?",
+      "question_en": "Which fashion brand is mentioned in the headline below?"
+    },
+    {
+      "query_id": "QA-24",
+      "question_vi": "Có bao nhiêu MC đứng sau bàn trong trường quay?",
+      "question_en": "How many presenters are standing behind the desk in the studio?"
+    },
+    {
+      "query_id": "QA-25",
+      "question_vi": "Nữ MC mặc trang phục màu gì?",
+      "question_en": "What color is the female presenter's outfit?"
+    },
+    {
+      "query_id": "QA-26",
+      "question_vi": "Đoàn xe màu trắng trong cảnh chủ yếu là loại xe gì?",
+      "question_en": "What type of vehicles mainly make up the convoy of white vehicles in the scene?"
+    },
+    {
+      "query_id": "QA-27",
+      "question_vi": "Người công nhân đang sơn/trát tường mặc áo màu gì?",
+      "question_en": "What color is the shirt worn by the worker painting or plastering the wall?"
+    },
+    {
+      "query_id": "QA-28",
+      "question_vi": "Tên công viên xuất hiện trên ảnh ghép là gì?",
+      "question_en": "What is the name of the park shown in the collage?"
+    },
+    {
+      "query_id": "QA-29",
+      "question_vi": "Người biểu diễn trên sân khấu mặc áo khoác màu gì?",
+      "question_en": "What color is the jacket worn by the performer on stage?"
+    },
+    {
+      "query_id": "QA-30",
+      "question_vi": "Khán giả đang dùng thiết bị gì để chụp/quay vật thể phát sáng trên trời?",
+      "question_en": "What device is the audience using to photograph or record the glowing object in the sky?"
+    },
+    {
+      "query_id": "QA-31",
+      "question_vi": "Bác sĩ đang khám cho trẻ mặc áo màu gì?",
+      "question_en": "What color is the shirt worn by the doctor examining the child?"
+    },
+    {
+      "query_id": "QA-32",
+      "question_vi": "Chiếc giỏ nhựa chứa thực phẩm/gia cầm có màu gì?",
+      "question_en": "What color is the plastic basket containing food or poultry?"
+    },
+    {
+      "query_id": "QA-33",
+      "question_vi": "Những người đang di chuyển trên dây cáp thực hiện hoạt động gì?",
+      "question_en": "What activity are the people moving along the cable doing?"
+    },
+    {
+      "query_id": "QA-34",
+      "question_vi": "Biểu tượng hình cầu bên cạnh nữ MC có hai màu chính nào?",
+      "question_en": "What are the two main colors of the globe symbol next to the female presenter?"
+    },
+    {
+      "query_id": "QA-35",
+      "question_vi": "Nam MC mặc áo sơ mi màu gì?",
+      "question_en": "What color is the male presenter's shirt?"
+    },
+    {
+      "query_id": "QA-36",
+      "question_vi": "Trên bục vận động tranh cử có tên hai người nào?",
+      "question_en": "What are the names of the two people shown on the campaign podium?"
+    },
+    {
+      "query_id": "QA-42",
+      "question_vi": "Vật kim loại màu vàng trong hộp nhựa là gì?",
+      "question_en": "What is the yellow metal object in the plastic box?"
+    },
+    {
+      "query_id": "QA-43",
+      "question_vi": "Tên cửa hàng trên biển hiệu lớn là gì?",
+      "question_en": "What is the name of the store on the large sign?"
+    },
+    {
+      "query_id": "QA-44",
+      "question_vi": "Nữ MC mặc áo màu gì?",
+      "question_en": "What color is the female presenter's shirt?"
+    },
+    {
+      "query_id": "QA-45",
+      "question_vi": "Thiết bị xây dựng lớn vươn lên trời trong cảnh là gì?",
+      "question_en": "What is the large construction equipment reaching into the sky in the scene?"
+    },
+    {
+      "query_id": "QA-46",
+      "question_vi": "Hai người phụ nữ đang thực hiện nghề thủ công gì?",
+      "question_en": "What craft are the two women practicing?"
+    },
+    {
+      "query_id": "QA-47",
+      "question_vi": "Tên thuốc in lớn trên hộp là gì?",
+      "question_en": "What is the name of the medicine printed in large letters on the box?"
+    },
+    {
+      "query_id": "QA-48",
+      "question_vi": "Hai học sinh ở phía trước đang làm gì?",
+      "question_en": "What are the two students in front doing?"
+    },
+    {
+      "query_id": "QA-49",
+      "question_vi": "Khung cảnh này diễn ra trong bối cảnh nào?",
+      "question_en": "In what setting does this scene take place?"
+    },
+    {
+      "query_id": "QA-50",
+      "question_vi": "Con vật hiển thị trên màn hình cạnh nữ MC là gì?",
+      "question_en": "What animal is displayed on the screen next to the female presenter?"
+    }
+  ]
+}
