@@ -2,8 +2,8 @@
 Environment Audit & Health Check Script
 =======================================
 Verifies Python version, GPU/CPU availability, PyTorch, FAISS,
-Transformers, SentenceTransformers, Faster-Whisper, RapidFuzz, PaddleOCR,
-and Pandas.
+Transformers, SentenceTransformers, Faster-Whisper, RapidFuzz, EasyOCR,
+VietOCR, PaddleOCR, and Pandas.
 """
 
 from __future__ import annotations
@@ -69,9 +69,24 @@ def audit_environment():
     except ImportError:
         print("Pandas         : NOT INSTALLED ❌")
 
-    # 6. PaddleOCR
+    # 6. OCR runtimes
+    try:
+        import easyocr
+
+        print(f"EasyOCR        : Installed ✅")
+    except ImportError:
+        print("EasyOCR        : NOT INSTALLED ❌")
+
+    try:
+        from vietocr.tool.predictor import Predictor  # noqa: F401
+
+        print("VietOCR        : Installed ✅")
+    except ImportError:
+        print("VietOCR        : NOT INSTALLED ❌")
+
     try:
         import paddleocr
+
         print(f"PaddleOCR      : Installed ✅")
     except ImportError:
         print("PaddleOCR      : NOT INSTALLED ❌")

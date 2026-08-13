@@ -27,6 +27,7 @@ bitsandbytes
 
 faster-whisper
 easyocr
+vietocr
 paddleocr
 paddlepaddle
 modelscope
