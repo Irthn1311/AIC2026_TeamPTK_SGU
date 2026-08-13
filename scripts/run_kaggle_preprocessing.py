@@ -344,7 +344,15 @@ def main() -> int:
                     shard_cmd.extend(["--video-id", video_id])
                 if args.force:
                     shard_cmd.append("--force")
-                jobs.append({"name": f"keyframe_gpu{gpu_id}", "cmd": shard_cmd, "env_updates": {"CUDA_VISIBLE_DEVICES": str(gpu_id)}})
+                jobs.append({
+                    "name": f"keyframe_gpu{gpu_id}",
+                    "cmd": shard_cmd,
+                    "env_updates": {
+                        "CUDA_VISIBLE_DEVICES": str(gpu_id),
+                        "AIC_FAST_SHOT_DETECTION": "1",
+                        "AIC_ALLOW_HISTDIFF_FALLBACK": "1",
+                    },
+                })
             records.append(run_parallel_steps("keyframe v2 sharded", jobs))
             records.append(run_step(
                 "keyframe v2 aggregate map",
