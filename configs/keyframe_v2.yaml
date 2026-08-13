@@ -22,12 +22,13 @@ frame_validation:
   final_match_max_pixel_error: 0.01
 
 shot_detection:
-  backend: transnetv2_or_histdiff
+  backend: histdiff
+  use_histdiff_only: true
   require_transnetv2: false
   transnetv2_device: auto
   transnetv2_frame_reader: opencv
   transnetv2_threshold: 0.5
-  fallback_sample_stride: 15
+  fallback_sample_stride: 30
   fallback_hist_threshold: 0.48
   fallback_min_shot_seconds: 1.2
 

@@ -33,7 +33,8 @@ def detect_shots(video_path: Path, meta: VideoMetadata, cfg: dict) -> tuple[list
     backend = str(cfg.get("backend", "")).lower()
     use_fast_histdiff = (
         bool(cfg.get("use_histdiff_only", False))
-        or backend in ("histdiff", "histdiff_fallback", "fast")
+        or not bool(cfg.get("require_transnetv2", False))
+        or backend in ("histdiff", "histdiff_fallback", "fast", "transnetv2_or_histdiff")
         or os.environ.get("AIC_FAST_SHOT_DETECTION", "0") == "1"
     )
     if not use_fast_histdiff:
