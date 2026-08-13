@@ -166,13 +166,9 @@ class ImageEmbeddingScorer:
                 candidates.extend([Path(match) for match in sorted(glob.glob(pattern))])
             else:
                 candidates.extend(sorted(self.project_root.glob(pattern)))
-                candidates.extend([Path(m) for m in sorted(glob.glob(f"/kaggle/input/**/{Path(pattern).name}", recursive=True))])
-                candidates.extend([Path(m) for m in sorted(glob.glob("/kaggle/input/**/open_clip_model.safetensors", recursive=True))])
-                candidates.extend([Path(m) for m in sorted(glob.glob("/root/.cache/**/open_clip_model.safetensors", recursive=True))])
         else:
             path = Path(pattern)
             candidates.append(path if path.is_absolute() else self.project_root / path)
-            candidates.append(Path("/kaggle/input") / pattern)
         for match in candidates:
             if match.exists() and match.is_file():
                 return match.resolve()
