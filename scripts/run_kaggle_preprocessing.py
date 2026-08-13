@@ -181,7 +181,10 @@ def make_keyframe_config(data_root: Path, output_root: Path, video_roots: list[P
     paths["clip_feature_root"] = str(data_root / "clip-features-32-aic25-b1" / "clip-features-32")
     paths["model_cache"] = str(PROJECT_ROOT / ".model_cache")
     paths["hf_cache"] = str(PROJECT_ROOT / ".model_cache" / "huggingface")
-    cfg.setdefault("shot_detection", {})["require_transnetv2"] = False
+    shot_cfg = cfg.setdefault("shot_detection", {})
+    shot_cfg["require_transnetv2"] = False
+    shot_cfg["use_histdiff_only"] = True
+    shot_cfg["backend"] = "histdiff"
     clip_cfg = cfg.setdefault("clip", {})
     clip_cfg["pretrained"] = ""
     clip_cfg["download_root"] = ".model_cache"

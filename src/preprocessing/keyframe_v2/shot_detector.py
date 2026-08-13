@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -29,7 +30,14 @@ class Shot:
 def detect_shots(video_path: Path, meta: VideoMetadata, cfg: dict) -> tuple[list[Shot], list[str]]:
     warnings: list[str] = []
     require_transnetv2 = bool(cfg.get("require_transnetv2", False))
-    try:
+    backend = str(cfg.get("backend", "")).lower()
+    use_fast_histdiff = (
+        bool(cfg.get("use_histdiff_only", False))
+        or backend in ("histdiff", "histdiff_fallback", "fast")
+        or os.environ.get("AIC_FAST_SHOT_DETECTION", "0") == "1"
+    )
+    if not use_fast_histdiff:
+        try:
         from transnetv2_pytorch import TransNetV2
 
         model = TransNetV2(device=str(cfg.get("transnetv2_device", "auto")))
