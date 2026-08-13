@@ -14,5 +14,5 @@ fi
 
 cd "$WORKDIR"
 
-# Execute Python Master Orchestrator
-python kaggle/run_kaggle_master.py "$@"
+# Execute the maintained Python orchestrator.
+python scripts/run_kaggle_preprocessing.py "$@"
