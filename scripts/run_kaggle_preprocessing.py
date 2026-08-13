@@ -209,6 +209,7 @@ def main() -> int:
     os.environ["AIC_OBJECT_OUTPUT_ROOT"] = str(object_root)
     os.environ["AIC_INDEX_OUTPUT_ROOT"] = str(index_root)
     os.environ["AIC_ALLOW_HISTDIFF_FALLBACK"] = "1"
+    os.environ.setdefault("OPENCV_FFMPEG_LOGLEVEL", "8")
 
     for path in (output_root, keyframe_root, ocr_v2_root, ocr_temporal_root, ocr_index_root, asr_root, audio_root, index_root):
         path.mkdir(parents=True, exist_ok=True)
@@ -223,7 +224,7 @@ def main() -> int:
     gpu_devices = resolve_gpu_devices(args.gpu_devices, args.device)
     if args.parallel_gpu_workers > 0:
         gpu_devices = gpu_devices[: args.parallel_gpu_workers]
-    sharded_gpu_devices = gpu_devices if args.full and len(gpu_devices) > 1 and len(video_ids) > 1 else []
+    sharded_gpu_devices = gpu_devices if len(gpu_devices) > 1 and len(video_ids) > 1 else []
 
     print(json.dumps({
         "mode": "full" if args.full else "smoke",
