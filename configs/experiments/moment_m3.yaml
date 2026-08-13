@@ -1,0 +1,24 @@
+experiment: MOMENT_M3
+experiment_version: "0.1"
+seed: 2026
+variants:
+  - A0_REAL_FROZEN_M1
+  - A1_STATE_TRANSITION
+  - A2_STATE_TRANSITION_PLUS_MOTION_TIEBREAKER
+local_raw_window:
+  radius_seconds: 1.5
+state_transition:
+  smooth_seconds: 0.12
+  context_seconds: 0.20
+  persistence_seconds: 0.20
+  pre_high_fraction_max: 0.40
+  post_high_fraction_min: 0.60
+  first_occurrence_relative_change: 0.75
+  motion_weight: 0.10
+  low_information_epsilon: 0.000001
+parameter_sweep: false
+gt_used_for_prediction: false
+raw_decoder: OPENCV_CPU_DEFAULT
+verified_clip_model: OPENAI_CLIP_VIT_B32_OFFICIAL
+stage1_ranking_change: false
+gpu_policy_change: false
