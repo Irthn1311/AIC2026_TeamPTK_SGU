@@ -4,9 +4,11 @@ import argparse
 import glob
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -14,6 +16,39 @@ import yaml
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _shell_join(cmd: list[str]) -> str:
+    return " ".join(f'"{part}"' if " " in str(part) else str(part) for part in cmd)
+
+
+def _safe_log_name(name: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", name.strip()).strip("_")
+    return safe or "step"
+
+
+def _log_path(name: str, suffix: str = "") -> Path:
+    root = Path(os.environ.get("AIC_OUTPUT_ROOT", PROJECT_ROOT / "outputs")) / "logs"
+    root.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    suffix_text = f"_{_safe_log_name(suffix)}" if suffix else ""
+    return root / f"{stamp}_{_safe_log_name(name)}{suffix_text}.log"
+
+
+def _stream_output(pipe, log_file, prefix: str = "") -> None:
+    try:
+        for line in iter(pipe.readline, ""):
+            if not line:
+                break
+            text = line.rstrip("\n")
+            print(f"{prefix}{text}" if prefix else text, flush=True)
+            log_file.write(line)
+            log_file.flush()
+    finally:
+        try:
+            pipe.close()
+        except Exception:
+            pass
 
 
 def resolve_path(value: str | Path) -> Path:
@@ -24,22 +59,38 @@ def resolve_path(value: str | Path) -> Path:
 def run_step(name: str, cmd: list[str], *, cwd: Path = PROJECT_ROOT, required: bool = True) -> dict[str, object]:
     print("\n" + "=" * 88)
     print(f"[KAGGLE] {name}")
-    print(" ".join(f'"{part}"' if " " in str(part) else str(part) for part in cmd))
+    print(_shell_join(cmd))
     print("=" * 88)
     started = time.time()
-    proc = subprocess.run(cmd, cwd=str(cwd))
+    log_path = _log_path(name)
+    print(f"[KAGGLE] log: {log_path}", flush=True)
+    with log_path.open("w", encoding="utf-8", errors="replace") as log_file:
+        log_file.write(f"$ {_shell_join([str(part) for part in cmd])}\n")
+        log_file.flush()
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(cwd),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        assert proc.stdout is not None
+        _stream_output(proc.stdout, log_file)
+        returncode = int(proc.wait())
     elapsed = round(time.time() - started, 2)
     record = {
         "name": name,
-        "returncode": int(proc.returncode),
+        "returncode": returncode,
         "elapsed_sec": elapsed,
         "command": cmd,
         "required": required,
+        "log_path": str(log_path),
     }
-    if proc.returncode != 0 and required:
-        raise subprocess.CalledProcessError(proc.returncode, cmd)
-    if proc.returncode != 0:
-        print(f"[KAGGLE][WARN] Optional step failed: {name} rc={proc.returncode}")
+    if returncode != 0 and required:
+        raise subprocess.CalledProcessError(returncode, cmd)
+    if returncode != 0:
+        print(f"[KAGGLE][WARN] Optional step failed: {name} rc={returncode}")
     return record
 
 
@@ -57,17 +108,39 @@ def run_parallel_steps(name: str, jobs: list[dict[str, object]], *, cwd: Path = 
         print(f"[{idx}/{len(jobs)}] " + " ".join(f'"{part}"' if " " in part else part for part in cmd))
         if env_updates:
             print(f"[{idx}/{len(jobs)}] env " + " ".join(f"{key}={value}" for key, value in sorted(env_updates.items())))
-        proc = subprocess.Popen(cmd, cwd=str(cwd), env=env)
-        running.append((job, proc))
+        log_path = _log_path(name, str(job.get("name", f"job{idx}")))
+        print(f"[{idx}/{len(jobs)}] log: {log_path}", flush=True)
+        log_file = log_path.open("w", encoding="utf-8", errors="replace")
+        log_file.write(f"$ {_shell_join(cmd)}\n")
+        if env_updates:
+            log_file.write("env " + " ".join(f"{key}={value}" for key, value in sorted(env_updates.items())) + "\n")
+        log_file.flush()
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(cwd),
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        assert proc.stdout is not None
+        prefix = f"[{idx}/{len(jobs)}][{job.get('name', 'job')}] "
+        thread = threading.Thread(target=_stream_output, args=(proc.stdout, log_file, prefix), daemon=True)
+        thread.start()
+        running.append((job, proc, thread, log_file, log_path))
     job_records: list[dict[str, object]] = []
     failures: list[dict[str, object]] = []
-    for job, proc in running:
+    for job, proc, thread, log_file, log_path in running:
         returncode = int(proc.wait())
+        thread.join(timeout=30)
+        log_file.close()
         job_record = {
             "name": str(job.get("name", "job")),
             "returncode": returncode,
             "command": [str(part) for part in job["cmd"]],
             "env_updates": dict(job.get("env_updates") or {}),
+            "log_path": str(log_path),
         }
         job_records.append(job_record)
         if returncode != 0:
