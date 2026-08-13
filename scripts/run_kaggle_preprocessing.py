@@ -64,12 +64,15 @@ def run_step(name: str, cmd: list[str], *, cwd: Path = PROJECT_ROOT, required: b
     started = time.time()
     log_path = _log_path(name)
     print(f"[KAGGLE] log: {log_path}", flush=True)
+    env = os.environ.copy()
+    env.setdefault("PYTHONUNBUFFERED", "1")
     with log_path.open("w", encoding="utf-8", errors="replace") as log_file:
         log_file.write(f"$ {_shell_join([str(part) for part in cmd])}\n")
         log_file.flush()
         proc = subprocess.Popen(
             cmd,
             cwd=str(cwd),
+            env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -104,6 +107,7 @@ def run_parallel_steps(name: str, jobs: list[dict[str, object]], *, cwd: Path = 
         cmd = [str(part) for part in job["cmd"]]
         env_updates = {str(k): str(v) for k, v in dict(job.get("env_updates") or {}).items()}
         env = os.environ.copy()
+        env.setdefault("PYTHONUNBUFFERED", "1")
         env.update(env_updates)
         print(f"[{idx}/{len(jobs)}] " + " ".join(f'"{part}"' if " " in part else part for part in cmd))
         if env_updates:

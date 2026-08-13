@@ -74,45 +74,40 @@ class ImageEmbeddingScorer:
                     sys.path.append(extra_path)
             import open_clip
 
-    def _load_open_clip(self, torch_module):
-        try:
-            import open_clip
-        except ImportError:
-            extra = self.cfg.get("open_clip_extra_site_packages")
-            if extra:
-                extra_path = str((self.project_root / str(extra)).resolve())
-                if extra_path not in sys.path:
-                    sys.path.append(extra_path)
-            import open_clip
-
         model_name = str(self.cfg.get("model_name", "ViT-B-32"))
         precision = str(self.cfg.get("precision", "fp32"))
-        pretrained_alias = str(self.cfg.get("pretrained", "") or "openai").strip()
+        pretrained_alias = str(self.cfg.get("pretrained", "") or "").strip()
 
-        # 1. Try standard open_clip pretrained model load on GPU
-        try:
-            model, _, preprocess = open_clip.create_model_and_transforms(
-                model_name,
-                pretrained=pretrained_alias,
-                precision=precision,
-                device=self._device,
-            )
-            return model, preprocess, pretrained_alias
-        except Exception:
-            pass
-
-        # 2. Try loading local safetensors if available
         weights_path = self._resolve_weights_path(str(self.cfg.get("open_clip_weights", "")))
+        if weights_path is None and bool(self.cfg.get("allow_download", False)):
+            weights_path = ensure_open_clip_weights(
+                repo_id=str(self.cfg.get("open_clip_repo_id", "timm/vit_base_patch32_clip_224.openai")),
+                filename=str(self.cfg.get("open_clip_filename", "open_clip_model.safetensors")),
+                cache_root=self.project_root / str(self.cfg.get("download_root", ".model_cache")),
+            )
         if weights_path is not None and self._should_load_as_safetensors(weights_path):
             return self._load_open_clip_safetensors(open_clip, model_name, precision, weights_path)
 
+        if pretrained_alias:
+            try:
+                model, _, preprocess = open_clip.create_model_and_transforms(
+                    model_name,
+                    pretrained=pretrained_alias,
+                    precision=precision,
+                    device=self._device,
+                )
+                return model, preprocess, pretrained_alias
+            except Exception:
+                if weights_path is None:
+                    raise
+
         model, _, preprocess = open_clip.create_model_and_transforms(
             model_name,
-            pretrained=str(weights_path) if weights_path else "openai",
+            pretrained=str(weights_path) if weights_path else None,
             precision=precision,
             device=self._device,
         )
-        return model, preprocess, weights_path or "openai"
+        return model, preprocess, weights_path or "uninitialized_open_clip"
 
     def _should_load_as_safetensors(self, weights_path: Path) -> bool:
         filename = str(self.cfg.get("open_clip_filename", ""))
