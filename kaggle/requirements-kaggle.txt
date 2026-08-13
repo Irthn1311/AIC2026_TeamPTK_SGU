@@ -21,6 +21,7 @@ transformers
 sentence-transformers
 huggingface_hub
 open-clip-torch
+safetensors
 accelerate
 bitsandbytes
 

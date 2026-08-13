@@ -23,7 +23,7 @@ frame_validation:
 
 shot_detection:
   backend: transnetv2_or_histdiff
-  require_transnetv2: true
+  require_transnetv2: false
   transnetv2_device: auto
   transnetv2_frame_reader: opencv
   transnetv2_threshold: 0.5

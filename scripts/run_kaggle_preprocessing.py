@@ -69,6 +69,10 @@ def make_keyframe_config(data_root: Path, output_root: Path) -> Path:
     paths["clip_feature_root"] = str(data_root / "clip-features-32-aic25-b1" / "clip-features-32")
     paths["model_cache"] = str(PROJECT_ROOT / ".model_cache")
     paths["hf_cache"] = str(PROJECT_ROOT / ".model_cache" / "huggingface")
+    cfg.setdefault("shot_detection", {})["require_transnetv2"] = False
+    clip_cfg = cfg.setdefault("clip", {})
+    clip_cfg["pretrained"] = "openai"
+    clip_cfg["open_clip_weights"] = ""
     return write_yaml(cfg, output_root / "kaggle_configs" / "keyframe_v2.yaml")
 
 
@@ -168,6 +172,20 @@ def main() -> int:
         if args.force:
             cmd.append("--force")
         records.append(run_step("keyframe v2", cmd))
+        global_map_path = keyframe_root / "indexes" / "keyframe_v2_global_map.parquet"
+        if not global_map_path.is_file():
+            raise FileNotFoundError(f"Keyframe V2 did not create global map: {global_map_path}")
+        try:
+            import pandas as pd
+
+            global_rows = len(pd.read_parquet(global_map_path))
+        except Exception as exc:
+            raise RuntimeError(f"Cannot read Keyframe V2 global map: {global_map_path}: {exc}") from exc
+        if global_rows <= 0:
+            raise RuntimeError(
+                f"Keyframe V2 produced 0 keyframes at {global_map_path}; "
+                "stopping before Visual/Object/OCR/ASR packaging."
+            )
         records.append(run_step(
             "visual clip faiss v2",
             [

@@ -72,6 +72,18 @@ class ImageEmbeddingScorer:
                     sys.path.append(extra_path)
             import open_clip
 
+        model_name = str(self.cfg.get("model_name", "ViT-B-32"))
+        precision = str(self.cfg.get("precision", "fp32"))
+        pretrained_alias = str(self.cfg.get("pretrained", "") or "").strip()
+        if pretrained_alias:
+            model, _, preprocess = open_clip.create_model_and_transforms(
+                model_name,
+                pretrained=pretrained_alias,
+                precision=precision,
+                device=self._device,
+            )
+            return model, preprocess, pretrained_alias
+
         weights_path = self._resolve_weights_path(str(self.cfg.get("open_clip_weights", "")))
         if weights_path is None and bool(self.cfg.get("allow_download", False)):
             weights_path = ensure_open_clip_weights(
@@ -81,12 +93,29 @@ class ImageEmbeddingScorer:
             )
         if weights_path is None:
             raise FileNotFoundError(f"open_clip_weights not found: {self.cfg.get('open_clip_weights')}")
-        model, _, preprocess = open_clip.create_model_and_transforms(
-            str(self.cfg.get("model_name", "ViT-B-32")),
-            pretrained=str(weights_path),
-            precision=str(self.cfg.get("precision", "fp32")),
-            device=self._device,
-        )
+        if weights_path.suffix.lower() == ".safetensors":
+            model, _, preprocess = open_clip.create_model_and_transforms(
+                model_name,
+                pretrained=None,
+                precision=precision,
+                device=self._device,
+            )
+            from safetensors.torch import load_file
+
+            state_dict = load_file(str(weights_path), device="cpu")
+            missing, unexpected = model.load_state_dict(state_dict, strict=False)
+            if missing or unexpected:
+                raise RuntimeError(
+                    "OpenCLIP safetensors checkpoint does not match model "
+                    f"(missing={len(missing)}, unexpected={len(unexpected)})"
+                )
+        else:
+            model, _, preprocess = open_clip.create_model_and_transforms(
+                model_name,
+                pretrained=str(weights_path),
+                precision=precision,
+                device=self._device,
+            )
         return model, preprocess, weights_path
 
     def _load_openai_clip(self, torch_module):
