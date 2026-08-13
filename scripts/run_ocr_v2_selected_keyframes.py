@@ -186,6 +186,51 @@ def ocr_image(
     return detections, combined, mean_conf
 
 
+def write_aggregate_outputs(rows: list[dict[str, Any]], output_dir: Path, started: float, summary_extra: dict[str, Any] | None = None) -> dict[str, Any]:
+    df = pd.DataFrame(rows)
+    df.to_json(output_dir / "l21_keyframe_ocr.jsonl", orient="records", lines=True, force_ascii=False)
+    df.to_csv(output_dir / "l21_keyframe_ocr.csv", index=False, encoding="utf-8-sig")
+    try:
+        df.to_parquet(output_dir / "l21_keyframe_ocr.parquet", index=False)
+    except Exception:
+        pass
+
+    summary = {
+        "output_dir": str(output_dir),
+        "video_ids": sorted(set(str(r["video_id"]) for r in rows)),
+        "images": len(rows),
+        "errors": int(sum(1 for r in rows if r.get("ocr_status") == "error")),
+        "elapsed_seconds": round(time.time() - started, 2),
+        "outputs": {
+            "csv": str(output_dir / "l21_keyframe_ocr.csv"),
+            "jsonl": str(output_dir / "l21_keyframe_ocr.jsonl"),
+            "per_video": str(output_dir / "per_video"),
+        },
+    }
+    if summary_extra:
+        summary.update(summary_extra)
+    (output_dir / "ocr_metadata.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    return summary
+
+
+def aggregate_per_video_outputs(output_dir: Path, video_ids: list[str] | None = None) -> dict[str, Any]:
+    per_video_dir = output_dir / "per_video"
+    requested = {str(v).strip() for v in video_ids or [] if str(v).strip()}
+    paths = sorted(per_video_dir.glob("L21_V*.jsonl"))
+    if requested:
+        paths = [path for path in paths if path.stem in requested]
+    rows: list[dict[str, Any]] = []
+    for path in paths:
+        with path.open("r", encoding="utf-8") as file:
+            for line in file:
+                line = line.strip()
+                if line:
+                    rows.append(json.loads(line))
+    if not rows:
+        raise FileNotFoundError(f"No per-video OCR V2 rows found in {per_video_dir}")
+    return write_aggregate_outputs(rows, output_dir, time.time(), {"mode": "aggregate_only", "detector": "cached", "recognizer": "cached"})
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run OCR V2 on selected keyframes from keyframe_v2 output.")
     parser.add_argument("--selected-root", default="outputs/keyframe_v2_full")
@@ -197,6 +242,8 @@ def main() -> None:
     parser.add_argument("--pad-px", type=int, default=6)
     parser.add_argument("--vietocr-config", default="configs/vietocr_vgg_transformer_local.yaml")
     parser.add_argument("--max-images", type=int, default=0)
+    parser.add_argument("--no-aggregate", action="store_true", help="Write per-video JSONL only. Useful for GPU sharded runs.")
+    parser.add_argument("--aggregate-only", action="store_true", help="Merge existing per-video JSONL files without loading OCR models.")
     args = parser.parse_args()
 
     started = time.time()
@@ -206,6 +253,10 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     per_video_dir = output_dir / "per_video"
     per_video_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.aggregate_only:
+        print(json.dumps(aggregate_per_video_outputs(output_dir, args.video_id), ensure_ascii=False, indent=2))
+        return
 
     items = load_selected_keyframes(selected_root, args.video_id)
     if args.max_images and args.max_images > 0:
@@ -249,33 +300,27 @@ def main() -> None:
         group_records = group.to_dict("records")
         path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in group_records), encoding="utf-8")
 
-    df = pd.DataFrame(rows)
-    df.to_json(output_dir / "l21_keyframe_ocr.jsonl", orient="records", lines=True, force_ascii=False)
-    df.to_csv(output_dir / "l21_keyframe_ocr.csv", index=False, encoding="utf-8-sig")
-    try:
-        df.to_parquet(output_dir / "l21_keyframe_ocr.parquet", index=False)
-    except Exception:
-        pass
-
-    summary = {
+    summary_extra = {
         "selected_root": str(selected_root),
-        "output_dir": str(output_dir),
-        "video_ids": sorted(set(str(r["video_id"]) for r in rows)),
-        "images": len(rows),
-        "errors": errors,
         "detector": "EasyOCR(['vi','en'])",
         "recognizer": f"VietOCR vgg_transformer {recognizer_status}",
         "scale_factor": args.scale_factor,
         "pad_px": args.pad_px,
         "min_confidence": args.min_confidence,
-        "elapsed_seconds": round(time.time() - started, 2),
-        "outputs": {
-            "csv": str(output_dir / "l21_keyframe_ocr.csv"),
-            "jsonl": str(output_dir / "l21_keyframe_ocr.jsonl"),
-            "per_video": str(per_video_dir),
-        },
+        "mode": "per_video_only" if args.no_aggregate else "full",
     }
-    (output_dir / "ocr_metadata.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    if args.no_aggregate:
+        summary = {
+            **summary_extra,
+            "output_dir": str(output_dir),
+            "video_ids": sorted(set(str(r["video_id"]) for r in rows)),
+            "images": len(rows),
+            "errors": errors,
+            "elapsed_seconds": round(time.time() - started, 2),
+            "outputs": {"per_video": str(per_video_dir)},
+        }
+    else:
+        summary = write_aggregate_outputs(rows, output_dir, started, summary_extra)
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 
 

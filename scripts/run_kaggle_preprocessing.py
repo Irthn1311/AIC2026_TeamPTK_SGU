@@ -42,6 +42,72 @@ def run_step(name: str, cmd: list[str], *, cwd: Path = PROJECT_ROOT, required: b
     return record
 
 
+def run_parallel_steps(name: str, jobs: list[dict[str, object]], *, cwd: Path = PROJECT_ROOT, required: bool = True) -> dict[str, object]:
+    print("\n" + "=" * 88)
+    print(f"[KAGGLE] {name} ({len(jobs)} parallel jobs)")
+    print("=" * 88)
+    started = time.time()
+    running = []
+    for idx, job in enumerate(jobs, start=1):
+        cmd = [str(part) for part in job["cmd"]]
+        env_updates = {str(k): str(v) for k, v in dict(job.get("env_updates") or {}).items()}
+        env = os.environ.copy()
+        env.update(env_updates)
+        print(f"[{idx}/{len(jobs)}] " + " ".join(f'"{part}"' if " " in part else part for part in cmd))
+        if env_updates:
+            print(f"[{idx}/{len(jobs)}] env " + " ".join(f"{key}={value}" for key, value in sorted(env_updates.items())))
+        proc = subprocess.Popen(cmd, cwd=str(cwd), env=env)
+        running.append((job, proc))
+    job_records: list[dict[str, object]] = []
+    failures: list[dict[str, object]] = []
+    for job, proc in running:
+        returncode = int(proc.wait())
+        job_record = {
+            "name": str(job.get("name", "job")),
+            "returncode": returncode,
+            "command": [str(part) for part in job["cmd"]],
+            "env_updates": dict(job.get("env_updates") or {}),
+        }
+        job_records.append(job_record)
+        if returncode != 0:
+            failures.append(job_record)
+    elapsed = round(time.time() - started, 2)
+    record = {
+        "name": name,
+        "returncode": 0 if not failures else int(failures[0]["returncode"]),
+        "elapsed_sec": elapsed,
+        "required": required,
+        "jobs": job_records,
+    }
+    if failures and required:
+        raise subprocess.CalledProcessError(int(failures[0]["returncode"]), failures[0]["command"])
+    if failures:
+        print(f"[KAGGLE][WARN] Optional parallel step failed: {name} failures={len(failures)}")
+    return record
+
+
+def split_evenly(items: list[str], parts: int) -> list[list[str]]:
+    parts = max(1, min(parts, len(items)))
+    return [items[idx::parts] for idx in range(parts) if items[idx::parts]]
+
+
+def resolve_gpu_devices(requested: str, device: str) -> list[str]:
+    if str(device).lower() == "cpu":
+        return []
+    if requested.strip().lower() != "auto":
+        return [item.strip() for item in requested.split(",") if item.strip()]
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
+    if visible:
+        return [item.strip() for item in visible.split(",") if item.strip()]
+    try:
+        import torch
+
+        count = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    except Exception:
+        count = 0
+    return [str(idx) for idx in range(count)]
+
+
 def discover_video_ids(video_root: Path, limit: int | None) -> list[str]:
     videos = sorted(path.stem for path in video_root.glob("*.mp4") if not path.name.startswith("."))
     if limit is not None:
@@ -59,7 +125,7 @@ def write_yaml(data: dict, path: Path) -> Path:
     return path
 
 
-def make_keyframe_config(data_root: Path, output_root: Path) -> Path:
+def make_keyframe_config(data_root: Path, output_root: Path, visual_batch_size: int) -> Path:
     cfg = load_yaml(PROJECT_ROOT / "configs" / "keyframe_v2.yaml")
     paths = cfg.setdefault("paths", {})
     paths["dataset_root"] = str(data_root)
@@ -77,6 +143,7 @@ def make_keyframe_config(data_root: Path, output_root: Path) -> Path:
         ".model_cache/models--timm--vit_base_patch32_clip_224.openai/"
         "snapshots/*/open_clip_model.safetensors"
     )
+    clip_cfg["batch_size"] = int(visual_batch_size)
     return write_yaml(cfg, output_root / "kaggle_configs" / "keyframe_v2.yaml")
 
 
@@ -105,6 +172,11 @@ def main() -> int:
     parser.add_argument("--device", default=os.environ.get("AIC_DEVICE", "cuda"))
     parser.add_argument("--ocr-device", default=os.environ.get("AIC_OCR_DEVICE", "auto"), choices=["auto", "cpu", "cuda"])
     parser.add_argument("--asr-compute-type", default=os.environ.get("AIC_ASR_COMPUTE_TYPE", "float16"))
+    parser.add_argument("--gpu-devices", default=os.environ.get("AIC_GPU_DEVICES", "auto"), help="Comma-separated GPU ids for sharded full runs, or auto.")
+    parser.add_argument("--parallel-gpu-workers", type=int, default=int(os.environ.get("AIC_PARALLEL_GPU_WORKERS", "0")), help="0 means use every visible GPU in --full mode.")
+    parser.add_argument("--visual-batch-size", type=int, default=int(os.environ.get("AIC_VISUAL_BATCH_SIZE", "128")))
+    parser.add_argument("--ocr-index-batch-size", type=int, default=int(os.environ.get("AIC_OCR_INDEX_BATCH_SIZE", "256")))
+    parser.add_argument("--asr-index-batch-size", type=int, default=int(os.environ.get("AIC_ASR_INDEX_BATCH_SIZE", "256")))
     parser.add_argument("--object-visualization-limit", type=int, default=int(os.environ.get("AIC_OBJECT_VISUALIZATION_LIMIT", "-1")))
     parser.add_argument("--allow-missing-package", action="store_true")
     parser.add_argument("--skip-visual-report", action="store_true")
@@ -148,6 +220,10 @@ def main() -> int:
     video_ids = discover_video_ids(video_root, limit)
     if not video_ids:
         raise FileNotFoundError(f"No .mp4 videos found in {video_root}")
+    gpu_devices = resolve_gpu_devices(args.gpu_devices, args.device)
+    if args.parallel_gpu_workers > 0:
+        gpu_devices = gpu_devices[: args.parallel_gpu_workers]
+    sharded_gpu_devices = gpu_devices if args.full and len(gpu_devices) > 1 and len(video_ids) > 1 else []
 
     print(json.dumps({
         "mode": "full" if args.full else "smoke",
@@ -155,17 +231,25 @@ def main() -> int:
         "output_root": str(output_root),
         "video_count": len(video_ids),
         "video_ids": video_ids[:20],
+        "gpu_devices": gpu_devices,
+        "sharded_gpu_devices": sharded_gpu_devices,
+        "batch_sizes": {
+            "visual": args.visual_batch_size,
+            "ocr_index": args.ocr_index_batch_size,
+            "asr_index": args.asr_index_batch_size,
+        },
     }, indent=2, ensure_ascii=False))
 
     records: list[dict[str, object]] = []
     py = sys.executable
-    keyframe_config = make_keyframe_config(data_root, output_root)
+    keyframe_config = make_keyframe_config(data_root, output_root, args.visual_batch_size)
     generated_keyframe_cfg = load_yaml(keyframe_config)
     print(json.dumps({
         "generated_keyframe_config": str(keyframe_config),
         "require_transnetv2": generated_keyframe_cfg.get("shot_detection", {}).get("require_transnetv2"),
         "clip_pretrained": generated_keyframe_cfg.get("clip", {}).get("pretrained"),
         "clip_open_clip_weights": generated_keyframe_cfg.get("clip", {}).get("open_clip_weights"),
+        "clip_batch_size": generated_keyframe_cfg.get("clip", {}).get("batch_size"),
     }, indent=2, ensure_ascii=False))
     ocr_temporal_config = make_ocr_temporal_config(ocr_v2_root, keyframe_root, ocr_temporal_root, output_root)
 
@@ -173,7 +257,7 @@ def main() -> int:
         records.append(run_step("prepare assets/checkpoints", [py, "scripts/prepare_kaggle_assets.py"]))
 
     if not args.skip_keyframes:
-        cmd = [
+        keyframe_cmd = [
             py,
             "scripts/run_keyframe_v2_full.py",
             "--video-root",
@@ -186,8 +270,43 @@ def main() -> int:
             str(len(video_ids)),
         ]
         if args.force:
-            cmd.append("--force")
-        records.append(run_step("keyframe v2", cmd))
+            keyframe_cmd.append("--force")
+        if sharded_gpu_devices:
+            jobs = []
+            for gpu_id, shard_video_ids in zip(sharded_gpu_devices, split_evenly(video_ids, len(sharded_gpu_devices))):
+                shard_cmd = [
+                    py,
+                    "scripts/run_keyframe_v2_full.py",
+                    "--video-root",
+                    str(video_root),
+                    "--config",
+                    str(keyframe_config),
+                    "--output",
+                    str(keyframe_root),
+                    "--no-aggregate",
+                ]
+                for video_id in shard_video_ids:
+                    shard_cmd.extend(["--video-id", video_id])
+                if args.force:
+                    shard_cmd.append("--force")
+                jobs.append({"name": f"keyframe_gpu{gpu_id}", "cmd": shard_cmd, "env_updates": {"CUDA_VISIBLE_DEVICES": str(gpu_id)}})
+            records.append(run_parallel_steps("keyframe v2 sharded", jobs))
+            records.append(run_step(
+                "keyframe v2 aggregate map",
+                [
+                    py,
+                    "scripts/run_keyframe_v2_full.py",
+                    "--video-root",
+                    str(video_root),
+                    "--config",
+                    str(keyframe_config),
+                    "--output",
+                    str(keyframe_root),
+                    "--aggregate-only",
+                ],
+            ))
+        else:
+            records.append(run_step("keyframe v2", keyframe_cmd))
         global_map_path = keyframe_root / "indexes" / "keyframe_v2_global_map.parquet"
         if not global_map_path.is_file():
             raise FileNotFoundError(f"Keyframe V2 did not create global map: {global_map_path}")
@@ -213,6 +332,8 @@ def main() -> int:
                 str(keyframe_config),
                 "--output-dir",
                 str(keyframe_root / "indexes" / "visual"),
+                "--batch-size",
+                str(args.visual_batch_size),
             ],
         ))
 
@@ -237,7 +358,39 @@ def main() -> int:
             cmd.extend(["--limit-frames", os.environ.get("AIC_OBJECT_SMOKE_FRAME_LIMIT", "100")])
         if args.force:
             cmd.append("--force")
-        records.append(run_step("object v2 yoloe", cmd))
+        if sharded_gpu_devices:
+            jobs = []
+            for gpu_id, shard_video_ids in zip(sharded_gpu_devices, split_evenly(video_ids, len(sharded_gpu_devices))):
+                shard_map = output_root / "tmp" / "shards" / f"object_gpu{gpu_id}_global_map.parquet"
+                shard_map.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    import pandas as pd
+
+                    global_df = pd.read_parquet(keyframe_root / "indexes" / "keyframe_v2_global_map.parquet")
+                    global_df[global_df["video_id"].astype(str).isin(shard_video_ids)].to_parquet(shard_map, index=False)
+                except Exception as exc:
+                    raise RuntimeError(f"Cannot create object shard map for GPU {gpu_id}: {exc}") from exc
+                shard_cmd = cmd.copy()
+                shard_cmd[shard_cmd.index("--global-map") + 1] = str(shard_map)
+                shard_cmd.append("--no-aggregate")
+                jobs.append({"name": f"object_gpu{gpu_id}", "cmd": shard_cmd, "env_updates": {"CUDA_VISIBLE_DEVICES": str(gpu_id)}})
+            records.append(run_parallel_steps("object v2 yoloe sharded", jobs))
+            records.append(run_step(
+                "object v2 aggregate index",
+                [
+                    py,
+                    "scripts/run_keyframe_v2_object_index.py",
+                    "--global-map",
+                    str(keyframe_root / "indexes" / "keyframe_v2_global_map.parquet"),
+                    "--output-root",
+                    str(object_root),
+                    "--index-output",
+                    str(object_index_root),
+                    "--aggregate-only",
+                ],
+            ))
+        else:
+            records.append(run_step("object v2 yoloe", cmd))
 
     if not args.skip_ocr:
         cmd = [
@@ -252,7 +405,38 @@ def main() -> int:
         ]
         for video_id in video_ids:
             cmd.extend(["--video-id", video_id])
-        records.append(run_step("ocr v2 selected keyframes", cmd))
+        if sharded_gpu_devices:
+            jobs = []
+            for gpu_id, shard_video_ids in zip(sharded_gpu_devices, split_evenly(video_ids, len(sharded_gpu_devices))):
+                shard_cmd = [
+                    py,
+                    "scripts/run_ocr_v2_selected_keyframes.py",
+                    "--selected-root",
+                    str(keyframe_root),
+                    "--output-dir",
+                    str(ocr_v2_root),
+                    "--device",
+                    args.ocr_device,
+                    "--no-aggregate",
+                ]
+                for video_id in shard_video_ids:
+                    shard_cmd.extend(["--video-id", video_id])
+                jobs.append({"name": f"ocr_v2_gpu{gpu_id}", "cmd": shard_cmd, "env_updates": {"CUDA_VISIBLE_DEVICES": str(gpu_id)}})
+            records.append(run_parallel_steps("ocr v2 selected keyframes sharded", jobs))
+            aggregate_cmd = [
+                py,
+                "scripts/run_ocr_v2_selected_keyframes.py",
+                "--selected-root",
+                str(keyframe_root),
+                "--output-dir",
+                str(ocr_v2_root),
+                "--aggregate-only",
+            ]
+            for video_id in video_ids:
+                aggregate_cmd.extend(["--video-id", video_id])
+            records.append(run_step("ocr v2 aggregate outputs", aggregate_cmd))
+        else:
+            records.append(run_step("ocr v2 selected keyframes", cmd))
 
         cmd = [
             py,
@@ -281,13 +465,15 @@ def main() -> int:
                 str(ocr_index_root),
                 "--device",
                 args.ocr_device,
+                "--batch-size",
+                str(args.ocr_index_batch_size),
             ],
         ))
 
     if not args.skip_asr:
         if shutil.which("ffmpeg") is None:
             print("[KAGGLE][WARN] ffmpeg not found on PATH; ASR audio extraction will likely fail.")
-        cmd = [
+        base_asr_cmd = [
             py,
             "scripts/run_batch_asr_whisper.py",
             "--video-dir",
@@ -302,12 +488,38 @@ def main() -> int:
             args.asr_compute_type,
             "--index-output-dir",
             str(index_root / "asr_v3"),
+            "--index-batch-size",
+            str(args.asr_index_batch_size),
         ]
         if args.force:
-            cmd.append("--overwrite")
-        if not args.full:
-            cmd.extend(["--limit", str(len(video_ids))])
-        records.append(run_step("asr faster-whisper v3", cmd))
+            base_asr_cmd.append("--overwrite")
+        if sharded_gpu_devices:
+            jobs = []
+            for gpu_id, shard_video_ids in zip(sharded_gpu_devices, split_evenly(video_ids, len(sharded_gpu_devices))):
+                shard_cmd = base_asr_cmd.copy()
+                shard_cmd.append("--skip-index")
+                for video_id in shard_video_ids:
+                    shard_cmd.extend(["--video-id", video_id])
+                jobs.append({"name": f"asr_gpu{gpu_id}", "cmd": shard_cmd, "env_updates": {"CUDA_VISIBLE_DEVICES": str(gpu_id)}})
+            records.append(run_parallel_steps("asr faster-whisper v3 sharded", jobs))
+            records.append(run_step(
+                "asr faster-whisper v3 aggregate index",
+                [
+                    py,
+                    "scripts/build_asr_v3_index.py",
+                    "--asr-dir",
+                    str(asr_root),
+                    "--output-dir",
+                    str(index_root / "asr_v3"),
+                    "--batch-size",
+                    str(args.asr_index_batch_size),
+                ],
+            ))
+        else:
+            cmd = base_asr_cmd
+            if not args.full:
+                cmd.extend(["--limit", str(len(video_ids))])
+            records.append(run_step("asr faster-whisper v3", cmd))
 
     if not args.skip_package:
         cmd = [

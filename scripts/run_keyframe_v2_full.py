@@ -140,13 +140,30 @@ def main() -> None:
     parser.add_argument("--debug", action="store_true", help="Generate debug contact sheets for every video.")
     parser.add_argument("--validate-btc-mapping", action="store_true", help="Run BTC mapping validation for every video.")
     parser.add_argument("--limit", type=int, help="Optional development limit. Do not use for final full run.")
+    parser.add_argument("--video-id", action="append", default=[], help="Only process this video id. Can be repeated.")
+    parser.add_argument("--no-aggregate", action="store_true", help="Only process per-video outputs; skip global map/summary writes.")
+    parser.add_argument("--aggregate-only", action="store_true", help="Only rebuild global map and summaries from existing per-video outputs.")
     args = parser.parse_args()
 
     started = time.time()
     video_root = Path(args.video_root)
     output_root = Path(args.output)
     output_root.mkdir(parents=True, exist_ok=True)
+
+    if args.aggregate_only:
+        global_df = build_global_map(output_root)
+        summary_df, total_summary = write_summaries(output_root, started, [])
+        print(f"Global V2 map rows: {len(global_df)}")
+        print(f"Summary videos: {len(summary_df)}")
+        print(json.dumps(total_summary, indent=2, ensure_ascii=False))
+        if len(global_df) == 0:
+            raise SystemExit("Keyframe V2 aggregate produced 0 keyframes; see per-video outputs.")
+        return
+
     videos = sorted([p for p in video_root.glob("*.mp4") if not p.name.startswith(".")], key=natural_video_key)
+    requested = {str(video_id).strip() for video_id in args.video_id if str(video_id).strip()}
+    if requested:
+        videos = [path for path in videos if path.stem in requested]
     if args.limit:
         videos = videos[: args.limit]
 
@@ -170,6 +187,12 @@ def main() -> None:
             errors.append({"video_id": video_id, "stage": "keyframe_v2", "exception": repr(exc), "status": "failed"})
             print(f"[{idx}/{len(videos)}] FAIL {video_id}: {exc}")
             continue
+
+    if args.no_aggregate:
+        if errors:
+            raise SystemExit(f"Keyframe V2 shard failed for {len(errors)} video(s): {errors}")
+        print(json.dumps({"mode": "per_video_only", "videos": len(videos), "errors": errors}, indent=2, ensure_ascii=False))
+        return
 
     global_df = build_global_map(output_root)
     summary_df, total_summary = write_summaries(output_root, started, errors)

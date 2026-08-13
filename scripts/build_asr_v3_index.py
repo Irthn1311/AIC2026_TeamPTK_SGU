@@ -10,6 +10,7 @@ from __future__ import annotations
 import glob
 import json
 import time
+import argparse
 from pathlib import Path
 import faiss
 import numpy as np
@@ -151,4 +152,15 @@ def build_asr_v3_index(
 
 
 if __name__ == "__main__":
-    build_asr_v3_index()
+    parser = argparse.ArgumentParser(description="Build ASR V3 FAISS + parquet index from ASR chunk JSON files.")
+    parser.add_argument("--asr-dir", default=None)
+    parser.add_argument("--output-dir", default=None)
+    parser.add_argument("--model-name", default="intfloat/multilingual-e5-small")
+    parser.add_argument("--batch-size", type=int, default=32)
+    args = parser.parse_args()
+    build_asr_v3_index(
+        asr_dir=args.asr_dir,
+        output_dir=args.output_dir,
+        model_name=args.model_name,
+        batch_size=args.batch_size,
+    )

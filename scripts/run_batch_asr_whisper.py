@@ -46,6 +46,9 @@ def run_batch_whisper(
     overwrite: bool = False,
     limit: int | None = None,
     index_output_dir: Path | str | None = None,
+    video_ids: list[str] | None = None,
+    skip_index: bool = False,
+    index_batch_size: int = 32,
 ):
     if video_dir is None:
         video_dir = PROJECT_ROOT / "datasets_L21" / "Videos_L21_a" / "video"
@@ -64,6 +67,9 @@ def run_batch_whisper(
     if not video_files:
         # Check subdirectories
         video_files = sorted(list(PROJECT_ROOT.glob("datasets_L21/**/L21_*.mp4")))
+    if video_ids:
+        requested = {str(video_id).strip() for video_id in video_ids if str(video_id).strip()}
+        video_files = [path for path in video_files if path.stem in requested]
     if limit is not None:
         video_files = video_files[: max(0, limit)]
 
@@ -198,9 +204,10 @@ def run_batch_whisper(
     print("=" * 80)
 
     # 4. Automatically Build Full ASR V3 FAISS Index
-    print("\nBuilding Full ASR V3 Hybrid Index from all generated chunks...")
-    build_asr_v3_index(asr_dir=output_dir, output_dir=index_output_dir)
-    print("✅ All indices built and search-ready!")
+    if not skip_index:
+        print("\nBuilding Full ASR V3 Hybrid Index from all generated chunks...")
+        build_asr_v3_index(asr_dir=output_dir, output_dir=index_output_dir, batch_size=index_batch_size)
+        print("✅ All indices built and search-ready!")
 
 
 if __name__ == "__main__":
@@ -214,6 +221,9 @@ if __name__ == "__main__":
     parser.add_argument("--overwrite", action="store_true", help="Overwrite existing ASR outputs")
     parser.add_argument("--limit", type=int, default=None, help="Optional development limit. Omit for full run.")
     parser.add_argument("--index-output-dir", default=None, help="Output directory for the ASR FAISS index")
+    parser.add_argument("--video-id", action="append", default=[], help="Only process this video id. Can be repeated.")
+    parser.add_argument("--skip-index", action="store_true", help="Only write ASR JSON/chunks; build FAISS index separately.")
+    parser.add_argument("--index-batch-size", type=int, default=32)
     args = parser.parse_args()
 
     run_batch_whisper(
@@ -226,4 +236,7 @@ if __name__ == "__main__":
         overwrite=args.overwrite,
         limit=args.limit,
         index_output_dir=args.index_output_dir,
+        video_ids=args.video_id,
+        skip_index=args.skip_index,
+        index_batch_size=args.index_batch_size,
     )

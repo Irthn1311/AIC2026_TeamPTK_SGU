@@ -215,6 +215,39 @@ def compact_object_stats(stats_json: dict[str, Any], *, top_label_limit: int = 1
     }
 
 
+def aggregate_detection_outputs(output_root: Path, index_output: Path, started: float) -> dict[str, Any]:
+    detections_dir = output_root / "detections"
+    detection_paths = sorted(path for path in detections_dir.glob("L21_V*.parquet") if not path.name.endswith("_records.parquet"))
+    corpus_paths = sorted(detections_dir.glob("L21_V*_records.parquet"))
+    if not corpus_paths:
+        raise FileNotFoundError(f"No object per-video records found in {detections_dir}")
+    det_all = pd.concat([pd.read_parquet(path) for path in detection_paths], ignore_index=True) if detection_paths else pd.DataFrame()
+    corpus_all = pd.concat([pd.read_parquet(path) for path in corpus_paths], ignore_index=True)
+    if "global_v2_id" in corpus_all.columns:
+        corpus_all = corpus_all.sort_values("global_v2_id").reset_index(drop=True)
+    if not det_all.empty and "global_v2_id" in det_all.columns:
+        det_all = det_all.sort_values(["global_v2_id", "detection_index"]).reset_index(drop=True)
+    det_all.to_parquet(output_root / "l21_objects_v2_detections.parquet", index=False)
+    corpus_all.to_parquet(output_root / "l21_objects_v2.parquet", index=False)
+    corpus_all.to_parquet(index_output / "l21_objects_v2.parquet", index=False)
+    _, idx_meta = build_object_index(index_output / "l21_objects_v2.parquet", index_output)
+    label_counts = Counter(det_all["object_label"].astype(str)) if not det_all.empty else Counter()
+    stats_json = {
+        "total_keyframes": int(len(corpus_all)),
+        "total_detections": int(len(det_all)),
+        "unique_labels": int(len(label_counts)),
+        "top_labels": label_counts.most_common(50),
+        "video_stats": [],
+        "object_index": idx_meta,
+        "visualization_dir": str((output_root / "visualization").resolve()),
+        "errors": [],
+        "mode": "aggregate_only",
+        "elapsed_seconds": round(time.time() - started, 3),
+    }
+    (output_root / "object_v2_stats.json").write_text(json.dumps(stats_json, indent=2, ensure_ascii=False), encoding="utf-8")
+    return stats_json
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run YOLOE Hybrid Object V2 over Keyframe V2 final keyframes.")
     parser.add_argument("--global-map", default=str(PROJECT_ROOT / "outputs" / "keyframe_v2_full" / "indexes" / "keyframe_v2_global_map.parquet"))
@@ -231,6 +264,8 @@ def main() -> None:
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--limit-frames", type=int)
     parser.add_argument("--visualization-limit", type=int, default=None, help="Max bbox images to write. Use -1 for all.")
+    parser.add_argument("--no-aggregate", action="store_true", help="Write per-video parquet files only. Useful for GPU sharded runs.")
+    parser.add_argument("--aggregate-only", action="store_true", help="Merge existing per-video parquet files and build object index.")
     args = parser.parse_args()
 
     started = time.time()
@@ -251,6 +286,11 @@ def main() -> None:
     vis_dir.mkdir(parents=True, exist_ok=True)
     index_output = Path(args.index_output)
     index_output.mkdir(parents=True, exist_ok=True)
+
+    if args.aggregate_only:
+        stats_json = aggregate_detection_outputs(output_root, index_output, started)
+        print(json.dumps(compact_object_stats(stats_json), indent=2, ensure_ascii=False))
+        return
 
     global_map = pd.read_parquet(args.global_map).sort_values("global_v2_id").reset_index(drop=True)
     if args.limit_frames:
@@ -293,6 +333,22 @@ def main() -> None:
         all_detection_rows.extend(detection_rows)
         all_corpus_rows.extend(corpus_rows)
         video_stats.append({"video_id": video_id, "visualizations_saved": visualizations_saved, **stats})
+
+    if args.no_aggregate:
+        stats_json = {
+            "total_keyframes": int(len(all_corpus_rows)),
+            "total_detections": int(len(all_detection_rows)),
+            "unique_labels": 0,
+            "top_labels": [],
+            "video_stats": video_stats,
+            "object_index": {"status": "skipped_no_aggregate", "index_output": str(index_output)},
+            "visualization_dir": str(vis_dir.resolve()),
+            "errors": errors,
+            "mode": "per_video_only",
+            "elapsed_seconds": round(time.time() - started, 3),
+        }
+        print(json.dumps(compact_object_stats(stats_json), indent=2, ensure_ascii=False))
+        return
 
     det_all = pd.DataFrame(all_detection_rows)
     corpus_all = pd.DataFrame(all_corpus_rows)
