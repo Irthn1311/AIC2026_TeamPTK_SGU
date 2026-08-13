@@ -6,12 +6,15 @@ runtime:
 
 hardware:
   mode: auto
-  auto_clip_promoted: false
+  # Frozen by approved G1.1 evidence: CLIP and translator AUTO select CUDA
+  # when compatible CUDA hardware is available; CPU fallback remains valid.
+  auto_clip_promoted: true
   auto_translator_promoted: true
 
 video:
   backend: auto
-  # G1 remains conservative until the real Kaggle parity and >=1.5x gate passes.
+  # AUTO stays on OpenCV. NVDEC remains a valid explicit/research backend, but
+  # is not production-promoted for MB1 or neural video consumers.
   auto_nvdec_promoted: false
 
 clip:

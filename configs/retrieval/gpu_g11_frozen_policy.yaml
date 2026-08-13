@@ -1,0 +1,16 @@
+policy_version: GPU_G1.1_FROZEN
+evidence_run_id: gpu_g11_20260813T091622Z
+evidence_build_commit: f4147522b99cc4185c5f16a6c244fa4c69d727c9
+evidence_bundle_sha256: fb4d7e54013488abd438865ef68acacb8e583045d2a1ed2ed112a0b99a877737
+
+clip_gpu_promoted: true
+translator_gpu_promoted: true
+
+nvdec_mb1_promoted: false
+nvdec_neural_promoted: false
+
+default_mb1_video_backend: opencv
+default_neural_video_backend: opencv
+
+stage1_backend: exact_numpy_cpu
+cpu_fallback_ready: true

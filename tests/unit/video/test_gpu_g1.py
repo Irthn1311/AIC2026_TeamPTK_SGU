@@ -135,6 +135,12 @@ def test_explicit_nvdec_fails_clearly_when_missing() -> None:
             torch_module=fake_torch(True),
             nvdec_probe=probe(False),
         )
+    selected = resolve_hardware(
+        HardwareConfig(video_backend="nvdec"),
+        torch_module=fake_torch(True),
+        nvdec_probe=probe(True),
+    )
+    assert selected.video_backend == "nvdec"
 
 
 def test_nvdec_import_failure_is_safe() -> None:
@@ -261,7 +267,7 @@ def test_gpu_stage2_yaml_keeps_exact_numpy_backend(tmp_path: Path) -> None:
     source = Path("configs/retrieval/stage2_operational_runtime_gpu.yaml")
     settings = load_stage2_settings(source)
     assert settings["hardware"]["mode"] == "auto"
-    assert settings["hardware"]["auto_clip_promoted"] is False
+    assert settings["hardware"]["auto_clip_promoted"] is True
     assert settings["hardware"]["auto_translator_promoted"] is True
     assert settings["video"]["auto_nvdec_promoted"] is False
     config = config_from_yaml(
@@ -276,6 +282,57 @@ def test_gpu_stage2_yaml_keeps_exact_numpy_backend(tmp_path: Path) -> None:
     )
     assert config.search_backend == "existing_stage1_exact"
     assert config.clip_device == config.translator_device == "auto"
+    selected = resolve_hardware(
+        HardwareConfig(
+            mode=config.hardware_mode,
+            video_backend=config.video_backend,
+            clip_device=config.clip_device,
+            translator_device=config.translator_device,
+            auto_clip_promoted=config.auto_clip_promoted,
+            auto_translator_promoted=config.auto_translator_promoted,
+            auto_nvdec_promoted=config.auto_nvdec_promoted,
+        ),
+        torch_module=fake_torch(True),
+        nvdec_probe=probe(True),
+    )
+    assert (
+        selected.clip_device,
+        selected.translator_device,
+        selected.video_backend,
+    ) == ("cuda:0", "cuda:0", "opencv")
+
+
+def test_cpu_stage2_yaml_remains_cpu_safe_with_available_gpu(tmp_path: Path) -> None:
+    source = Path("configs/retrieval/stage2_operational_runtime.yaml")
+    config = config_from_yaml(
+        source,
+        stage1_root=tmp_path / "s1",
+        stage1b_root=tmp_path / "s1b",
+        stage1e_root=tmp_path / "s1e",
+        clip_asset_root=tmp_path / "clip",
+        translator_asset_root=tmp_path / "opus",
+        output_root=tmp_path / "out",
+        stage1d_config=tmp_path / "stage1d.yaml",
+    )
+    selected = resolve_hardware(
+        HardwareConfig(
+            mode=config.hardware_mode,
+            video_backend=config.video_backend,
+            clip_device=config.clip_device,
+            translator_device=config.translator_device,
+            auto_clip_promoted=config.auto_clip_promoted,
+            auto_translator_promoted=config.auto_translator_promoted,
+            auto_nvdec_promoted=config.auto_nvdec_promoted,
+        ),
+        torch_module=fake_torch(True),
+        nvdec_probe=probe(True),
+    )
+    assert config.search_backend == "existing_stage1_exact"
+    assert (
+        selected.clip_device,
+        selected.translator_device,
+        selected.video_backend,
+    ) == ("cpu", "cpu", "opencv")
 
 
 def test_pynvvideocodec_is_not_a_core_dependency() -> None:
