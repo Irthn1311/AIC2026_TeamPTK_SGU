@@ -2,7 +2,8 @@
 Environment Audit & Health Check Script
 =======================================
 Verifies Python version, GPU/CPU availability, PyTorch, FAISS,
-Transformers, SentenceTransformers, Whisper, RapidFuzz, PaddleOCR, and Pandas.
+Transformers, SentenceTransformers, Faster-Whisper, RapidFuzz, PaddleOCR,
+and Pandas.
 """
 
 from __future__ import annotations
@@ -46,12 +47,14 @@ def audit_environment():
     except ImportError:
         print("SentenceTrans  : NOT INSTALLED ❌")
 
-    # 4. OpenAI Whisper
+    # 4. Faster-Whisper ASR runtime
     try:
-        import whisper
-        print(f"OpenAI Whisper : Installed ✅")
+        import faster_whisper
+
+        version = getattr(faster_whisper, "__version__", "OK")
+        print(f"Faster Whisper : {version} ✅")
     except ImportError:
-        print("OpenAI Whisper : NOT INSTALLED ❌")
+        print("Faster Whisper : NOT INSTALLED ❌")
 
     # 5. RapidFuzz & Pandas
     try:

@@ -109,7 +109,7 @@ def ensure_paddleocr_models(
 ) -> bool:
     from paddleocr import PaddleOCR
 
-    kwargs = {
+    kwargs: dict[str, object] = {
         "use_doc_orientation_classify": use_doc_orientation_classify,
         "use_doc_unwarping": use_doc_unwarping,
         "use_textline_orientation": use_textline_orientation,
@@ -118,13 +118,20 @@ def ensure_paddleocr_models(
     }
     if str(device).lower() == "cpu":
         kwargs["enable_mkldnn"] = False
-    try:
-        PaddleOCR(**kwargs)
-    except TypeError:
-        kwargs.pop("enable_mkldnn", None)
-        kwargs.pop("show_log", None)
-        PaddleOCR(**kwargs)
-    return True
+    while True:
+        try:
+            PaddleOCR(**kwargs)
+            return True
+        except (TypeError, ValueError) as exc:
+            message = str(exc)
+            removed = False
+            for key in ("show_log", "enable_mkldnn"):
+                if key in kwargs and (key in message or "Unknown argument" in message):
+                    kwargs.pop(key, None)
+                    removed = True
+                    break
+            if not removed:
+                raise
 
 
 def ensure_cache_dirs() -> dict[str, Path]:
