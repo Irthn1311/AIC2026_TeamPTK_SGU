@@ -20,7 +20,6 @@ from system_tai.refinement.models import (
 )
 from system_tai.refinement.video import (
     DecodeRequest,
-    RawVideoRecord,
     RawVideoRegistry,
     VideoDecoder,
 )
@@ -31,11 +30,15 @@ from system_tai.retrieval.video_evidence import VideoRestrictedFeatureSearcher
 from .answer_candidates import AnswerCandidateProvider, BaselineQuestionCandidateProvider
 from .engine import QABaselineEngine
 from .grounding import (
+    KEYFRAME_ANCHOR,
+    QA_KEYFRAME_EVIDENCE_BANK_V1,
     QA_VIDEO_CONDITIONED_EVIDENCE_V1,
+    RAW_REFINED,
     QAVideoConditionedEvidenceConfig,
     build_qa_grounding_result,
     nominate_qa_videos,
     nomination_diagnostics,
+    select_primary_keyframe_anchors,
 )
 from .models import QAEvidenceCandidate, QAQuery, QAResult
 from .object_provider import ObjectEntityAnswerProvider
@@ -235,6 +238,23 @@ class QARuntimePipeline:
                     "grounding_candidate_count": 0,
                     "selected_video_evidence": [],
                     "grounding_candidates": [],
+                    "qa_evidence_bank_policy": (
+                        QA_KEYFRAME_EVIDENCE_BANK_V1
+                        if self.video_conditioned_evidence_config.preserve_keyframe_evidence
+                        else "LEGACY_REFINED_ONLY"
+                    ),
+                    "refinement_budget": request.refine_top_n,
+                    "refinement_selected_count": 0,
+                    "refinement_success_count": 0,
+                    "keyframe_evidence_count": 0,
+                    "raw_refined_evidence_count": 0,
+                    "generic_evidence_bank_count": 0,
+                    "provider_evidence_count": 0,
+                    "refinement_selected_candidates": [],
+                    "refinement_success_candidates": [],
+                    "keyframe_evidence_candidates": [],
+                    "raw_refined_evidence_candidates": [],
+                    "provider_evidence_candidates": [],
                 }
             )
 
@@ -457,6 +477,86 @@ class QARuntimePipeline:
             )
             return result, timings, diagnostics
 
+        preserve_keyframes = (
+            self.video_conditioned_evidence_config.enabled
+            and self.video_conditioned_evidence_config.preserve_keyframe_evidence
+        )
+        if preserve_keyframes and not provider_supported:
+            anchors = select_primary_keyframe_anchors(
+                fused_result.ranked_candidates,
+                video_cap=(
+                    self.video_conditioned_evidence_config.keyframe_evidence_video_cap
+                ),
+            )
+            keyframe_records = [
+                {
+                    "rank": candidate.rank,
+                    "video_id": candidate.video_id,
+                    "frame_id": candidate.frame_id,
+                    "video_nomination_rank": dict(
+                        candidate.diagnostic_metadata or {}
+                    ).get("video_nomination_rank"),
+                    "local_anchor_rank": 1,
+                }
+                for candidate in anchors
+            ]
+            generic_records = [
+                {
+                    "query_id": request.query_id,
+                    "rank": candidate.rank,
+                    "video_id": candidate.video_id,
+                    "candidate_frame_id": candidate.frame_id,
+                    "frame_id": candidate.frame_id,
+                    "evidence_frame_id": candidate.frame_id,
+                    "video_nomination_rank": dict(
+                        candidate.diagnostic_metadata or {}
+                    ).get("video_nomination_rank"),
+                    "local_anchor_rank": 1,
+                    "evidence_source": KEYFRAME_ANCHOR,
+                    "raw_refinement_attempted": False,
+                    "raw_refinement_status": RefinementStatus.NOT_REFINED.value,
+                    "raw_refinement_replaced_anchor": False,
+                    "fallback_to_keyframe": False,
+                    "localization_score": dict(
+                        candidate.diagnostic_metadata or {}
+                    ).get("localization_score"),
+                    "source_localization_variant_ids": dict(
+                        candidate.diagnostic_metadata or {}
+                    ).get("source_localization_variant_ids", []),
+                }
+                for candidate in anchors
+            ]
+            diagnostics["keyframe_evidence_candidates"] = keyframe_records
+            diagnostics["keyframe_evidence_count"] = len(keyframe_records)
+            diagnostics["generic_evidence_bank_candidates"] = generic_records
+            diagnostics["generic_evidence_bank_count"] = len(generic_records)
+            diagnostics["evidence_candidate_count"] = len(generic_records)
+            diagnostics["evidence_bank"] = generic_records
+            diagnostics["evidence"] = []
+            unsupported_reason = "UNSUPPORTED_NO_PROVIDER"
+            diagnostics["unsupported_reason"] = unsupported_reason
+            msg = (
+                "Evidence grounding completed, but no current answer provider supports "
+                f"question type {q_type.value}; raw refinement and image decode skipped."
+            )
+            diagnostics["warnings"].append(msg)
+            timings.total_seconds = self.clock() - t_start
+            return (
+                QAResult(
+                    query_id=request.query_id,
+                    question_type=q_type,
+                    predictions=[],
+                    unsupported_reason=unsupported_reason,
+                    warnings=diagnostics["warnings"],
+                    diagnostics={
+                        "confidence_level": "UNSUPPORTED",
+                        "grounding_completed": True,
+                    },
+                ),
+                timings,
+                diagnostics,
+            )
+
         # Step 3: Exact Frame Refinement
         t_ref = self.clock()
         phase3_candidates_list: list[Phase3Candidate] = []
@@ -509,14 +609,46 @@ class QARuntimePipeline:
             for candidate in ref_outcome.candidates
         ]
 
-        # Step 4: Filter usable candidates -> QAEvidenceCandidate
-        cands_to_decode: list[tuple[QAEvidenceCandidate, RefinedCandidate, RawVideoRecord]] = []
+        refinement_selected = [
+            candidate
+            for candidate in ref_outcome.candidates
+            if candidate.original_candidate_rank <= request.refine_top_n
+        ]
+        refinement_success = [
+            candidate
+            for candidate in refinement_selected
+            if candidate.status is RefinementStatus.REFINED
+            and candidate.refined_frame_id is not None
+        ]
+        if self.video_conditioned_evidence_config.enabled:
+            diagnostics["refinement_selected_count"] = len(refinement_selected)
+            diagnostics["refinement_success_count"] = len(refinement_success)
+            diagnostics["refinement_selected_candidates"] = [
+                {
+                    "rank": candidate.original_candidate_rank,
+                    "video_id": candidate.video_id,
+                    "frame_id": candidate.candidate_frame_id,
+                    "status": candidate.status.value,
+                }
+                for candidate in refinement_selected
+            ]
+            diagnostics["refinement_success_candidates"] = [
+                {
+                    "rank": candidate.original_candidate_rank,
+                    "video_id": candidate.video_id,
+                    "candidate_frame_id": candidate.candidate_frame_id,
+                    "frame_id": candidate.refined_frame_id,
+                    "status": candidate.status.value,
+                }
+                for candidate in refinement_success
+            ]
+
+        # Step 4: Build provider-neutral evidence before provider routing.
+        evidence_bank: list[tuple[QAEvidenceCandidate, RefinedCandidate]] = []
         evidence_records: list[dict[str, Any]] = []
 
         def store_evidence_records() -> None:
             diagnostics["evidence"] = evidence_records
-            if self.video_conditioned_evidence_config.enabled:
-                diagnostics["evidence_bank"] = evidence_records
 
         def grounding_fields(refined: RefinedCandidate) -> dict[str, Any]:
             provenance = dict(refined.original_retrieval_provenance)
@@ -540,8 +672,49 @@ class QARuntimePipeline:
                 return {}
             return grounding_fields(refined)
 
-        for ref_cand in ref_outcome.candidates:
-            if ref_cand.refined_frame_id is None or ref_cand.status != RefinementStatus.REFINED:
+        def evidence_identity_fields(
+            evidence: QAEvidenceCandidate,
+            refined: RefinedCandidate,
+        ) -> dict[str, Any]:
+            return {
+                "refined_frame_id": (
+                    refined.refined_frame_id
+                    if evidence.source_status == RAW_REFINED
+                    else None
+                ),
+                "evidence_frame_id": evidence.frame_id,
+                "evidence_source": evidence.source_status,
+            }
+
+        refined_by_rank = {
+            candidate.original_candidate_rank: candidate
+            for candidate in ref_outcome.candidates
+        }
+        if preserve_keyframes:
+            anchor_candidates = select_primary_keyframe_anchors(
+                fused_result.ranked_candidates,
+                video_cap=(
+                    self.video_conditioned_evidence_config.keyframe_evidence_video_cap
+                ),
+            )
+            source_candidates = tuple(
+                (candidate, refined_by_rank[candidate.rank])
+                for candidate in anchor_candidates
+            )
+        else:
+            source_candidates = tuple(
+                (None, candidate) for candidate in ref_outcome.candidates
+            )
+
+        keyframe_records: list[dict[str, Any]] = []
+        raw_refined_records: list[dict[str, Any]] = []
+        generic_records: list[dict[str, Any]] = []
+        for anchor_candidate, ref_cand in source_candidates:
+            refinement_succeeded = (
+                ref_cand.status is RefinementStatus.REFINED
+                and ref_cand.refined_frame_id is not None
+            )
+            if not preserve_keyframes and not refinement_succeeded:
                 warn_msg = (
                     f"Candidate rank {ref_cand.original_candidate_rank} ({ref_cand.video_id}) "
                     "refinement failed or incomplete."
@@ -571,61 +744,155 @@ class QARuntimePipeline:
                 )
                 continue
 
-            try:
-                video_record = self.raw_video_registry.get(ref_cand.video_id)
-            except KeyError:
-                warn_msg = (
-                    f"Candidate rank {ref_cand.original_candidate_rank} ({ref_cand.video_id}) "
-                    "raw video missing in registry."
-                )
-                diagnostics["warnings"].append(warn_msg)
-                evidence_records.append(
-                    {
-                        "rank": ref_cand.original_candidate_rank,
-                        "video_id": ref_cand.video_id,
-                        "candidate_frame_id": ref_cand.candidate_frame_id,
-                        "refined_frame_id": ref_cand.refined_frame_id,
-                        "output_frame_id": None,
-                        "retrieval_score": float(
-                            ref_cand.original_retrieval_provenance.get("fusion_score", 0.0)
-                        ),
-                        "refinement_score": float(ref_cand.refinement_fusion_score)
-                        if ref_cand.refinement_fusion_score is not None
-                        else None,
-                        "refinement_status": ref_cand.status.value,
-                        "timestamp_seconds": ref_cand.refined_timestamp_seconds,
-                        "answer": None,
-                        "answer_score": None,
-                        "answer_confidence_level": None,
-                        "warning": warn_msg,
-                        "skip_reason": "raw_video_missing",
-                    }
-                )
-                continue
+            if not preserve_keyframes:
+                try:
+                    self.raw_video_registry.get(ref_cand.video_id)
+                except KeyError:
+                    warn_msg = (
+                        f"Candidate rank {ref_cand.original_candidate_rank} "
+                        f"({ref_cand.video_id}) raw video missing in registry."
+                    )
+                    diagnostics["warnings"].append(warn_msg)
+                    evidence_records.append(
+                        {
+                            "rank": ref_cand.original_candidate_rank,
+                            "video_id": ref_cand.video_id,
+                            "candidate_frame_id": ref_cand.candidate_frame_id,
+                            "refined_frame_id": ref_cand.refined_frame_id,
+                            "output_frame_id": None,
+                            "retrieval_score": float(
+                                ref_cand.original_retrieval_provenance.get(
+                                    "fusion_score", 0.0
+                                )
+                            ),
+                            "refinement_score": (
+                                float(ref_cand.refinement_fusion_score)
+                                if ref_cand.refinement_fusion_score is not None
+                                else None
+                            ),
+                            "refinement_status": ref_cand.status.value,
+                            "timestamp_seconds": ref_cand.refined_timestamp_seconds,
+                            "answer": None,
+                            "answer_score": None,
+                            "answer_confidence_level": None,
+                            "warning": warn_msg,
+                            "skip_reason": "raw_video_missing",
+                        }
+                    )
+                    continue
 
-            coarse_frame = (
-                ref_cand.fine_frame_ids[0] if ref_cand.fine_frame_ids else None
-            )
+            if preserve_keyframes:
+                assert anchor_candidate is not None
+                evidence_frame_id = (
+                    ref_cand.refined_frame_id
+                    if refinement_succeeded
+                    else anchor_candidate.frame_id
+                )
+                evidence_source = (
+                    RAW_REFINED if refinement_succeeded else KEYFRAME_ANCHOR
+                )
+                timestamp_seconds = (
+                    ref_cand.refined_timestamp_seconds
+                    if refinement_succeeded
+                    else dict(anchor_candidate.diagnostic_metadata or {}).get(
+                        "pts_time"
+                    )
+                )
+                retrieval_score = float(anchor_candidate.score)
+                attempted = (
+                    ref_cand.original_candidate_rank <= request.refine_top_n
+                )
+                keyframe_record = {
+                    "rank": anchor_candidate.rank,
+                    "video_id": anchor_candidate.video_id,
+                    "frame_id": anchor_candidate.frame_id,
+                    "video_nomination_rank": dict(
+                        anchor_candidate.diagnostic_metadata or {}
+                    ).get("video_nomination_rank"),
+                    "local_anchor_rank": 1,
+                }
+                keyframe_records.append(keyframe_record)
+            else:
+                assert ref_cand.refined_frame_id is not None
+                evidence_frame_id = ref_cand.refined_frame_id
+                evidence_source = RAW_REFINED
+                timestamp_seconds = ref_cand.refined_timestamp_seconds
+                retrieval_score = float(
+                    ref_cand.original_retrieval_provenance.get(
+                        "fusion_score", 0.0
+                    )
+                )
+                attempted = True
+
+            coarse_frame = ref_cand.fine_frame_ids[0] if ref_cand.fine_frame_ids else None
+            provenance = {
+                "source_status": ref_cand.status.value,
+                "evidence_source": evidence_source,
+                "coarse_selected_frame_id": coarse_frame,
+                "candidate_frame_id": ref_cand.candidate_frame_id,
+                "raw_refinement_attempted": attempted,
+                "raw_refinement_status": ref_cand.status.value,
+                "raw_refinement_replaced_anchor": bool(
+                    refinement_succeeded
+                    and ref_cand.refined_frame_id != ref_cand.candidate_frame_id
+                ),
+                "fallback_to_keyframe": bool(
+                    preserve_keyframes and attempted and not refinement_succeeded
+                ),
+                **grounding_artifact_fields(ref_cand),
+            }
             ev_cand = QAEvidenceCandidate(
                 query_id=request.query_id,
                 rank=ref_cand.original_candidate_rank,
                 video_id=ref_cand.video_id,
-                frame_id=ref_cand.refined_frame_id,
-                retrieval_score=ref_cand.original_retrieval_provenance.get("fusion_score", 0.0),
-                evidence_score=ref_cand.refinement_fusion_score,
-                timestamp_seconds=ref_cand.refined_timestamp_seconds,
-                provenance={
-                    "source_status": ref_cand.status.value,
-                    "coarse_selected_frame_id": coarse_frame,
-                    "candidate_frame_id": ref_cand.candidate_frame_id,
-                    **grounding_artifact_fields(ref_cand),
-                },
+                frame_id=evidence_frame_id,
+                retrieval_score=retrieval_score,
+                evidence_score=(
+                    ref_cand.refinement_fusion_score
+                    if refinement_succeeded
+                    else None
+                ),
+                source_status=evidence_source,
+                timestamp_seconds=timestamp_seconds,
+                provenance=provenance,
             )
-            cands_to_decode.append((ev_cand, ref_cand, video_record))
+            evidence_bank.append((ev_cand, ref_cand))
+            generic_record = {
+                "query_id": request.query_id,
+                "rank": ev_cand.rank,
+                "video_id": ev_cand.video_id,
+                "candidate_frame_id": ref_cand.candidate_frame_id,
+                "frame_id": ev_cand.frame_id,
+                "evidence_frame_id": ev_cand.frame_id,
+                "video_nomination_rank": provenance.get("video_nomination_rank"),
+                "local_anchor_rank": provenance.get("local_anchor_rank"),
+                "evidence_source": evidence_source,
+                "raw_refinement_attempted": attempted,
+                "raw_refinement_status": ref_cand.status.value,
+                "raw_refinement_replaced_anchor": provenance[
+                    "raw_refinement_replaced_anchor"
+                ],
+                "fallback_to_keyframe": provenance["fallback_to_keyframe"],
+                "localization_score": provenance.get("localization_score"),
+                "source_localization_variant_ids": provenance.get(
+                    "source_localization_variant_ids", []
+                ),
+            }
+            generic_records.append(generic_record)
+            if evidence_source == RAW_REFINED:
+                raw_refined_records.append(generic_record)
 
-        diagnostics["evidence_candidate_count"] = len(cands_to_decode)
+        diagnostics["evidence_candidate_count"] = len(evidence_bank)
+        if self.video_conditioned_evidence_config.enabled:
+            diagnostics["keyframe_evidence_candidates"] = keyframe_records
+            diagnostics["raw_refined_evidence_candidates"] = raw_refined_records
+            diagnostics["generic_evidence_bank_candidates"] = generic_records
+            diagnostics["keyframe_evidence_count"] = len(keyframe_records)
+            diagnostics["raw_refined_evidence_count"] = len(raw_refined_records)
+            diagnostics["generic_evidence_bank_count"] = len(generic_records)
+            diagnostics["evidence_bank"] = generic_records
 
-        if not cands_to_decode:
+        if not evidence_bank:
             store_evidence_records()
             timings.total_seconds = self.clock() - t_start
             result = QAResult(
@@ -640,11 +907,14 @@ class QARuntimePipeline:
         # pretending that detections exist on arbitrary decoded raw frames.
         if object_provider_supported:
             assert self.object_answer_provider is not None
+            diagnostics["provider_evidence_candidates"] = list(generic_records)
+            diagnostics["provider_evidence_count"] = len(generic_records)
+            diagnostics["usable_evidence_candidates"] = list(generic_records)
             t_object = self.clock()
             qa_result, object_telemetry = self.object_answer_provider.answer(
                 query_id=request.query_id,
                 question_type=q_type,
-                evidence=tuple((item[0], item[1]) for item in cands_to_decode),
+                evidence=tuple(item[0] for item in evidence_bank),
                 output_top_k=request.output_top_k,
                 warnings=diagnostics["warnings"],
             )
@@ -667,16 +937,23 @@ class QARuntimePipeline:
                 for prediction in qa_result.predictions
             }
             for item in object_telemetry["object_evidence"]:
+                matched_evidence, matched_refined = next(
+                    (candidate, refined)
+                    for candidate, refined in evidence_bank
+                    if candidate.rank == item["evidence_rank"]
+                )
                 evidence_records.append(
                     {
                         "rank": item["evidence_rank"],
                         "video_id": item["video_id"],
-                        "candidate_frame_id": next(
-                            refined.candidate_frame_id
-                            for candidate, refined, _ in cands_to_decode
-                            if candidate.rank == item["evidence_rank"]
+                        "candidate_frame_id": matched_refined.candidate_frame_id,
+                        "refined_frame_id": (
+                            matched_refined.refined_frame_id
+                            if matched_evidence.source_status == RAW_REFINED
+                            else None
                         ),
-                        "refined_frame_id": item["requested_frame_id"],
+                        "evidence_frame_id": matched_evidence.frame_id,
+                        "evidence_source": matched_evidence.source_status,
                         "output_frame_id": item["object_source_frame_id"],
                         "object_source_frame_id": item["object_source_frame_id"],
                         "object_frame_distance": item["frame_distance"],
@@ -710,16 +987,20 @@ class QARuntimePipeline:
         decoded_images: list[np.ndarray] = []
         valid_evidence_cands: list[tuple[QAEvidenceCandidate, RefinedCandidate]] = []
 
-        cands_for_image_decode = cands_to_decode
+        cands_for_image_decode = evidence_bank
         if ocr_provider_supported:
             assert self.ocr_answer_provider is not None
-            cands_for_image_decode = cands_to_decode[
+            cands_for_image_decode = evidence_bank[
                 : self.ocr_answer_provider.config.evidence_frame_budget
             ]
             diagnostics["ocr_frames_requested"] = len(cands_for_image_decode)
 
-        for ev_cand, ref_cand, video_record in cands_for_image_decode:
+        for ev_cand, ref_cand in cands_for_image_decode:
             try:
+                try:
+                    video_record = self.raw_video_registry.get(ev_cand.video_id)
+                except KeyError as exc:
+                    raise ValueError("raw video missing in registry") from exc
                 if (
                     video_record.raw_video_path is None
                     or not video_record.raw_video_path.is_file()
@@ -846,9 +1127,9 @@ class QARuntimePipeline:
             diagnostics["ocr_decode_seconds"] = timings.ocr_decode_seconds
         diagnostics["decoded_frame_count"] = len(decoded_images)
         diagnostics["usable_evidence_candidates"] = []
+        provider_records: list[dict[str, Any]] = []
         for evidence_candidate, refined_candidate in valid_evidence_cands:
-            diagnostics["usable_evidence_candidates"].append(
-                {
+            usable_record = {
                 "rank": evidence_candidate.rank,
                 "video_id": evidence_candidate.video_id,
                 "frame_id": evidence_candidate.frame_id,
@@ -857,13 +1138,26 @@ class QARuntimePipeline:
                         "candidate_frame_id": refined_candidate.candidate_frame_id,
                         "timestamp_seconds": evidence_candidate.timestamp_seconds,
                         "refinement_score": evidence_candidate.evidence_score,
+                        **(
+                            {
+                                "evidence_source": evidence_candidate.provenance.get(
+                                    "evidence_source"
+                                )
+                            }
+                            if preserve_keyframes
+                            else {}
+                        ),
                         **grounding_fields(refined_candidate),
                     }
                     if self.video_conditioned_evidence_config.enabled
                     else {}
                 ),
-                }
-            )
+            }
+            diagnostics["usable_evidence_candidates"].append(usable_record)
+            provider_records.append(dict(usable_record))
+        if self.video_conditioned_evidence_config.enabled:
+            diagnostics["provider_evidence_candidates"] = provider_records
+            diagnostics["provider_evidence_count"] = len(provider_records)
 
         if not decoded_images and not ocr_provider_supported:
             store_evidence_records()
@@ -924,7 +1218,9 @@ class QARuntimePipeline:
                         "rank": evidence_candidate.rank,
                         "video_id": evidence_candidate.video_id,
                         "candidate_frame_id": refined_candidate.candidate_frame_id,
-                        "refined_frame_id": evidence_candidate.frame_id,
+                        **evidence_identity_fields(
+                            evidence_candidate, refined_candidate
+                        ),
                         "output_frame_id": (
                             prediction.frame_id if prediction is not None else None
                         ),
@@ -974,7 +1270,9 @@ class QARuntimePipeline:
                         "rank": evidence_candidate.rank,
                         "video_id": evidence_candidate.video_id,
                         "candidate_frame_id": refined_candidate.candidate_frame_id,
-                        "refined_frame_id": evidence_candidate.frame_id,
+                        **evidence_identity_fields(
+                            evidence_candidate, refined_candidate
+                        ),
                         "output_frame_id": None,
                         "retrieval_score": float(evidence_candidate.retrieval_score),
                         "refinement_score": (
@@ -1073,7 +1371,7 @@ class QARuntimePipeline:
                         "rank": ev_cand.rank,
                         "video_id": ev_cand.video_id,
                         "candidate_frame_id": ref_cand.candidate_frame_id,
-                        "refined_frame_id": ev_cand.frame_id,
+                        **evidence_identity_fields(ev_cand, ref_cand),
                         "output_frame_id": pred.frame_id,
                         "retrieval_score": float(ev_cand.retrieval_score),
                         "refinement_score": float(ev_cand.evidence_score)
@@ -1095,7 +1393,7 @@ class QARuntimePipeline:
                         "rank": ev_cand.rank,
                         "video_id": ev_cand.video_id,
                         "candidate_frame_id": ref_cand.candidate_frame_id,
-                        "refined_frame_id": ev_cand.frame_id,
+                        **evidence_identity_fields(ev_cand, ref_cand),
                         "output_frame_id": None,
                         "retrieval_score": float(ev_cand.retrieval_score),
                         "refinement_score": float(ev_cand.evidence_score)

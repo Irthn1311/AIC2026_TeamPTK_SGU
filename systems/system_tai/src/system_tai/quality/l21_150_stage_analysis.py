@@ -171,6 +171,34 @@ def _candidate_observation(
     return True, bool(video_ids), target_video_id in video_ids
 
 
+def _video_id_observation(
+    video_ids: Any,
+    *,
+    target_video_id: str,
+) -> tuple[bool, bool, bool]:
+    if type(video_ids) is not list or any(type(item) is not str for item in video_ids):
+        return False, False, False
+    return True, bool(video_ids), target_video_id in video_ids
+
+
+def _refinement_success_observation(
+    records: Any,
+    *,
+    target_video_id: str,
+) -> tuple[bool, bool, bool]:
+    if type(records) is not list:
+        return False, False, False
+    successful = [
+        record
+        for record in records
+        if type(record) is dict
+        and record.get("status") == "REFINED"
+        and type(record.get("refined_frame_id")) is int
+        and record["refined_frame_id"] >= 0
+    ]
+    return _candidate_observation(successful, target_video_id=target_video_id)
+
+
 def _final_observation(
     query_id: str,
     target_video_id: str,
@@ -274,14 +302,24 @@ def analyze_l21_150_stages(
     qa_supported: dict[str, tuple[bool, bool, bool]] = {}
     qa_candidate_stages: dict[str, dict[str, tuple[bool, bool, bool]]] = {
         "RETRIEVAL_FUSED": {},
+        "NOMINATED_VIDEO": {},
+        "GROUNDING_CANDIDATE": {},
+        "REFINEMENT_SELECTED": {},
+        "REFINEMENT_SUCCESS": {},
+        "KEYFRAME_EVIDENCE": {},
+        "RAW_REFINED_EVIDENCE": {},
+        "PROVIDER_EVIDENCE": {},
         "REFINED": {},
         "USABLE_EVIDENCE": {},
         "FINAL_OUTPUT": {},
     }
     qa_keys = {
         "RETRIEVAL_FUSED": "fused_retrieval_candidates",
-        "REFINED": "refined_candidates",
-        "USABLE_EVIDENCE": "usable_evidence_candidates",
+        "GROUNDING_CANDIDATE": "grounding_candidates",
+        "REFINEMENT_SELECTED": "refinement_selected_candidates",
+        "KEYFRAME_EVIDENCE": "keyframe_evidence_candidates",
+        "RAW_REFINED_EVIDENCE": "raw_refined_evidence_candidates",
+        "PROVIDER_EVIDENCE": "provider_evidence_candidates",
     }
     for query in qa_queries:
         request_dir = qa_dirs.get(query.query_id)
@@ -309,6 +347,38 @@ def analyze_l21_150_stages(
                 evidence.get(key) if evidence is not None else None,
                 target_video_id=query.video_id,
             )
+        selected_video_ids = (
+            evidence.get("selected_video_ids") if evidence is not None else None
+        )
+        qa_candidate_stages["NOMINATED_VIDEO"][query.query_id] = (
+            _video_id_observation(
+                selected_video_ids,
+                target_video_id=query.video_id,
+            )
+        )
+        refined_records = (
+            evidence.get("refined_candidates") if evidence is not None else None
+        )
+        success_observation = _refinement_success_observation(
+            refined_records,
+            target_video_id=query.video_id,
+        )
+        qa_candidate_stages["REFINEMENT_SUCCESS"][query.query_id] = (
+            success_observation
+        )
+        # Backward-compatible aliases now use truthful provider-neutral semantics.
+        qa_candidate_stages["REFINED"][query.query_id] = success_observation
+        provider_observation = qa_candidate_stages["PROVIDER_EVIDENCE"][
+            query.query_id
+        ]
+        if not provider_observation[0]:
+            provider_observation = _candidate_observation(
+                evidence.get("usable_evidence_candidates")
+                if evidence is not None
+                else None,
+                target_video_id=query.video_id,
+            )
+        qa_candidate_stages["USABLE_EVIDENCE"][query.query_id] = provider_observation
         qa_candidate_stages["FINAL_OUTPUT"][query.query_id] = _final_observation(
             query.query_id,
             query.video_id,

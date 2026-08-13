@@ -15,6 +15,9 @@ from system_tai.retrieval.video_evidence import (
 )
 
 QA_VIDEO_CONDITIONED_EVIDENCE_V1 = "QA_VIDEO_CONDITIONED_EVIDENCE_V1"
+QA_KEYFRAME_EVIDENCE_BANK_V1 = "QA_KEYFRAME_EVIDENCE_BANK_V1"
+KEYFRAME_ANCHOR = "KEYFRAME_ANCHOR"
+RAW_REFINED = "RAW_REFINED"
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,6 +28,8 @@ class QAVideoConditionedEvidenceConfig:
     selected_video_cap: int = 32
     anchors_per_video: int = 5
     video_rrf_constant: float = 60.0
+    preserve_keyframe_evidence: bool = False
+    keyframe_evidence_video_cap: int = 32
 
     def __post_init__(self) -> None:
         if type(self.enabled) is not bool:
@@ -33,6 +38,24 @@ class QAVideoConditionedEvidenceConfig:
             raise ValueError("selected_video_cap must be an integer >= 1")
         if type(self.anchors_per_video) is not int or self.anchors_per_video < 1:
             raise ValueError("anchors_per_video must be an integer >= 1")
+        if type(self.preserve_keyframe_evidence) is not bool:
+            raise ValueError("preserve_keyframe_evidence must be a boolean")
+        if (
+            type(self.keyframe_evidence_video_cap) is not int
+            or self.keyframe_evidence_video_cap < 1
+        ):
+            raise ValueError("keyframe_evidence_video_cap must be an integer >= 1")
+        if (
+            self.preserve_keyframe_evidence
+            and self.keyframe_evidence_video_cap > self.selected_video_cap
+        ):
+            raise ValueError(
+                "keyframe_evidence_video_cap must not exceed selected_video_cap"
+            )
+        if self.preserve_keyframe_evidence and not self.enabled:
+            raise ValueError(
+                "preserve_keyframe_evidence requires video-conditioned evidence"
+            )
         if (
             type(self.video_rrf_constant) is bool
             or not isinstance(self.video_rrf_constant, (int, float))
@@ -40,6 +63,48 @@ class QAVideoConditionedEvidenceConfig:
             or self.video_rrf_constant <= 0
         ):
             raise ValueError("video_rrf_constant must be finite and positive")
+
+
+def select_primary_keyframe_anchors(
+    candidates: Sequence[CandidateFrame],
+    *,
+    video_cap: int,
+) -> tuple[CandidateFrame, ...]:
+    """Select one deterministic local-rank-one anchor per nominated video."""
+
+    if type(video_cap) is not int or video_cap < 1:
+        raise ValueError("video_cap must be an integer >= 1")
+    eligible: list[tuple[int, str, int, int, int, CandidateFrame]] = []
+    for candidate in candidates:
+        metadata = dict(candidate.diagnostic_metadata or {})
+        if metadata.get("local_anchor_rank") != 1:
+            continue
+        nomination_rank = metadata.get("video_nomination_rank")
+        if type(nomination_rank) is not int or nomination_rank < 1:
+            raise ValueError(
+                "primary QA keyframe anchor requires a valid video_nomination_rank"
+            )
+        eligible.append(
+            (
+                nomination_rank,
+                candidate.video_id,
+                candidate.frame_id,
+                candidate.clip_row,
+                candidate.rank,
+                candidate,
+            )
+        )
+    eligible.sort(key=lambda item: item[:-1])
+    selected: list[CandidateFrame] = []
+    seen_videos: set[str] = set()
+    for *_ordering, candidate in eligible:
+        if candidate.video_id in seen_videos:
+            continue
+        seen_videos.add(candidate.video_id)
+        selected.append(candidate)
+        if len(selected) >= video_cap:
+            break
+    return tuple(selected)
 
 
 @dataclass(frozen=True, slots=True)

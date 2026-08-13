@@ -116,8 +116,24 @@ def _refined(rank: int, candidate_frame: int, refined_frame: int) -> RefinedCand
     )
 
 
-def _evidence(rank: int, frame_id: int) -> QAEvidenceCandidate:
-    return QAEvidenceCandidate("q", rank, "V1", frame_id, 0.9)
+def _evidence(
+    rank: int,
+    frame_id: int,
+    *,
+    candidate_frame_id: int | None = None,
+) -> QAEvidenceCandidate:
+    return QAEvidenceCandidate(
+        "q",
+        rank,
+        "V1",
+        frame_id,
+        0.9,
+        provenance={
+            "candidate_frame_id": (
+                frame_id if candidate_frame_id is None else candidate_frame_id
+            )
+        },
+    )
 
 
 def test_object_index_maps_json_ordinal_to_original_frame_and_is_deterministic(
@@ -168,10 +184,7 @@ def test_object_label_normalization_and_artifact_backed_aggregation(tmp_path: Pa
     result, telemetry = provider.answer(
         query_id="q",
         question_type=QuestionType.OBJECT_ENTITY,
-        evidence=(
-            (_evidence(1, 100), _refined(1, 100, 100)),
-            (_evidence(2, 200), _refined(2, 200, 200)),
-        ),
+        evidence=(_evidence(1, 100), _evidence(2, 200)),
         output_top_k=10,
     )
     assert [prediction.answer for prediction in result.predictions] == [
@@ -199,7 +212,7 @@ def test_anchor_fallback_is_explicit_and_preserves_authoritative_source_frame(
     result, telemetry = provider.answer(
         query_id="q",
         question_type=QuestionType.OBJECT_ENTITY,
-        evidence=((_evidence(1, 105), _refined(1, 100, 105)),),
+        evidence=(_evidence(1, 105, candidate_frame_id=100),),
         output_top_k=5,
     )
     assert result.predictions[0].frame_id == 100
@@ -421,6 +434,48 @@ class _Refiner:
         return QueryRefinementOutcome(query.query_id, result, (refined,), (), {})
 
 
+class _UnrefinedAnchorRefiner:
+    def refine_query(self, query, config, precomputed_text_embeddings=None):
+        candidate = query.candidates[0]
+        record = RefinedCandidate(
+            query_id=query.query_id,
+            original_candidate_rank=1,
+            video_id=candidate.video_id,
+            candidate_frame_id=candidate.frame_id,
+            refined_frame_id=None,
+            candidate_timestamp_seconds=100 / 30,
+            refined_timestamp_seconds=None,
+            fps=None,
+            total_frame_count=None,
+            window_start_frame=None,
+            window_end_frame=None,
+            coarse_frame_ids=(),
+            fine_frame_ids=(),
+            coarse_sample_count=0,
+            fine_sample_count=0,
+            decoded_frame_count=0,
+            encoded_image_count=0,
+            refinement_fusion_score=None,
+            variant_hit_count=0,
+            best_individual_rank=None,
+            per_variant_provenance=(),
+            decoder_backend=None,
+            raw_video_path=None,
+            status=RefinementStatus.NOT_REFINED,
+            warnings=("candidate outside top_candidates_to_refine",),
+            failure_reason=None,
+            original_retrieval_provenance=candidate.retrieval_provenance,
+            timings={},
+        )
+        return QueryRefinementOutcome(
+            query.query_id,
+            KISResult(query.query_id, ()),
+            (record,),
+            record.warnings,
+            {},
+        )
+
+
 def test_qa_a1_routes_object_entity_to_artifact_provider_without_image_encoding(
     tmp_path: Path,
 ) -> None:
@@ -463,6 +518,54 @@ def test_qa_a1_routes_object_entity_to_artifact_provider_without_image_encoding(
     assert diagnostics["object_provider_enabled"] is True
     assert diagnostics["question_classification_reason"].startswith(
         "OBJECT_ENTITY_PATTERN"
+    )
+
+
+def test_keyframe_bank_routes_unrefined_anchor_to_object_provider(
+    tmp_path: Path,
+) -> None:
+    video = tmp_path / "V1.mp4"
+    video.touch()
+    encoder = _Encoder()
+    unused_retriever = SimpleNamespace()
+    pipeline = QARuntimePipeline(
+        exact_retriever=unused_retriever,
+        weighted_rrf=WeightedRRFRetriever(unused_retriever),
+        refiner=_UnrefinedAnchorRefiner(),
+        raw_video_registry=RawVideoRegistry([RawVideoRecord("V1", video)]),
+        decoder=SimpleNamespace(),
+        shared_encoder=encoder,
+        video_restricted_searcher=_Searcher(),
+        video_conditioned_evidence_config=QAVideoConditionedEvidenceConfig(
+            enabled=True,
+            selected_video_cap=1,
+            anchors_per_video=1,
+            preserve_keyframe_evidence=True,
+            keyframe_evidence_video_cap=1,
+        ),
+        object_answer_provider=ObjectEntityAnswerProvider(
+            index=_index(tmp_path),
+            config=ObjectAnswerProviderConfig(enabled=True),
+        ),
+    )
+    result, _timings, diagnostics = pipeline.process_qa_query(
+        QAQueryRequest(
+            "keyframe-object",
+            "q",
+            "A person holds an object",
+            "What object is he holding?",
+            output_top_k=10,
+            refine_top_n=1,
+        )
+    )
+    assert result.predictions[0].answer == "car"
+    assert result.predictions[0].frame_id == 100
+    assert encoder.image_calls == 0
+    assert diagnostics["refinement_success_count"] == 0
+    assert diagnostics["keyframe_evidence_count"] == 1
+    assert diagnostics["provider_evidence_count"] == 1
+    assert diagnostics["usable_evidence_candidates"][0]["evidence_source"] == (
+        "KEYFRAME_ANCHOR"
     )
 
 
@@ -513,7 +616,12 @@ def test_l21_qa_a2_provenance_scope_has_precedence(tmp_path: Path) -> None:
     runner = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = runner
     spec.loader.exec_module(runner)
-    grounding = QAVideoConditionedEvidenceConfig(enabled=True)
+    grounding = QAVideoConditionedEvidenceConfig(
+        enabled=True,
+        selected_video_cap=32,
+        preserve_keyframe_evidence=True,
+        keyframe_evidence_video_cap=32,
+    )
     object_config = ObjectAnswerProviderConfig(enabled=True)
     runtime = SimpleNamespace(
         config=SimpleNamespace(
@@ -536,7 +644,7 @@ def test_l21_qa_a2_provenance_scope_has_precedence(tmp_path: Path) -> None:
         split="dev",
         task="qa",
         top_k=100,
-        refine_top_n=3,
+        refine_top_n=1,
         resume=False,
         fail_fast=True,
         benchmark_sha256="0" * 64,
@@ -550,3 +658,18 @@ def test_l21_qa_a2_provenance_scope_has_precedence(tmp_path: Path) -> None:
     )
     assert report["qa_grounding_policy"] == runner.QA_VIDEO_CONDITIONED_EVIDENCE_V1
     assert report["qa_object_provider_enabled"] is True
+    assert report["qa_video_conditioned_evidence_config"] == {
+        "selected_video_cap": 32,
+        "anchors_per_video": 5,
+        "video_rrf_constant": 60.0,
+        "preserve_keyframe_evidence": True,
+        "keyframe_evidence_video_cap": 32,
+    }
+    assert report["qa_keyframe_evidence_bank"] == {
+        "policy": runner.QA_KEYFRAME_EVIDENCE_BANK_V1,
+        "enabled": True,
+        "selection": "ONE_PRIMARY_LOCAL_ANCHOR_PER_NOMINATED_VIDEO",
+        "video_cap": 32,
+        "raw_refinement_budget": 1,
+        "refinement_is_upgrade_not_admission_gate": True,
+    }

@@ -267,6 +267,8 @@ def test_l21_runner_cli_qa_policy_defaults_off_and_is_explicit() -> None:
     )
     assert defaults.qa_localization_language_policy == "legacy_vi"
     assert defaults.qa_dev_en_sidecar is None
+    assert defaults.qa_keyframe_evidence_bank is False
+    assert defaults.qa_keyframe_evidence_video_cap == 32
 
     enabled = RUNNER.build_parser().parse_args(
         [
@@ -280,7 +282,16 @@ def test_l21_runner_cli_qa_policy_defaults_off_and_is_explicit() -> None:
             "en_only",
             "--qa-dev-en-sidecar",
             str(SIDECAR_PATH),
+            "--qa-video-conditioned-evidence",
+            "--qa-keyframe-evidence-bank",
+            "--qa-keyframe-evidence-video-cap",
+            "32",
+            "--refine-top-n",
+            "1",
         ]
     )
     assert enabled.qa_localization_language_policy == "en_only"
     assert enabled.qa_dev_en_sidecar == SIDECAR_PATH
+    assert enabled.qa_keyframe_evidence_bank is True
+    assert enabled.qa_keyframe_evidence_video_cap == 32
+    assert enabled.refine_top_n == 1

@@ -28,6 +28,7 @@ from system_tai.kis.session_schema import (  # noqa: E402
     TRAKEQueryRequest,
 )
 from system_tai.qa.grounding import (  # noqa: E402
+    QA_KEYFRAME_EVIDENCE_BANK_V1,
     QA_VIDEO_CONDITIONED_EVIDENCE_V1,
     QAVideoConditionedEvidenceConfig,
 )
@@ -904,6 +905,10 @@ def run_l21_150_baseline(
         scope
         for enabled, scope in (
             (resolved_qa_grounding.enabled, QA_VIDEO_CONDITIONED_EVIDENCE_V1),
+            (
+                resolved_qa_grounding.preserve_keyframe_evidence,
+                QA_KEYFRAME_EVIDENCE_BANK_V1,
+            ),
             (resolved_qa_object_provider.enabled, QA_ARTIFACT_BACKED_OBJECT_EVIDENCE),
             (resolved_qa_ocr_provider.enabled, QA_EVIDENCE_GROUNDED_OCR),
         )
@@ -937,6 +942,8 @@ def run_l21_150_baseline(
             if resolved_qa_ocr_provider.enabled
             else QA_ARTIFACT_BACKED_OBJECT_EVIDENCE
             if resolved_qa_object_provider.enabled
+            else QA_KEYFRAME_EVIDENCE_BANK_V1
+            if resolved_qa_grounding.preserve_keyframe_evidence
             else QA_VIDEO_CONDITIONED_EVIDENCE_V1
             if resolved_qa_grounding.enabled
             else TRAKE_VIDEO_FIRST_RESTRICTED_EVENT_SEARCH
@@ -1029,9 +1036,24 @@ def run_l21_150_baseline(
                     "selected_video_cap": resolved_qa_grounding.selected_video_cap,
                     "anchors_per_video": resolved_qa_grounding.anchors_per_video,
                     "video_rrf_constant": resolved_qa_grounding.video_rrf_constant,
+                    "preserve_keyframe_evidence": (
+                        resolved_qa_grounding.preserve_keyframe_evidence
+                    ),
+                    "keyframe_evidence_video_cap": (
+                        resolved_qa_grounding.keyframe_evidence_video_cap
+                    ),
                 },
             }
         )
+        if resolved_qa_grounding.preserve_keyframe_evidence:
+            metadata["qa_keyframe_evidence_bank"] = {
+                "policy": QA_KEYFRAME_EVIDENCE_BANK_V1,
+                "enabled": True,
+                "selection": "ONE_PRIMARY_LOCAL_ANCHOR_PER_NOMINATED_VIDEO",
+                "video_cap": resolved_qa_grounding.keyframe_evidence_video_cap,
+                "raw_refinement_budget": refine_top_n,
+                "refinement_is_upgrade_not_admission_gate": True,
+            }
     if qa_localization_language_policy == "en_only":
         assert qa_translation_sidecar is not None
         metadata["qa_localization_experiment"] = {
@@ -1259,6 +1281,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="legacy_vi",
     )
     parser.add_argument("--qa-dev-en-sidecar", type=Path)
+    parser.add_argument("--qa-keyframe-evidence-bank", action="store_true")
+    parser.add_argument(
+        "--qa-keyframe-evidence-video-cap",
+        type=int,
+        default=32,
+    )
     parser.add_argument("--qa-object-evidence", action="store_true")
     parser.add_argument("--qa-ocr-evidence", action="store_true")
     parser.add_argument("--qa-ocr-evidence-frame-budget", type=int, default=10)
@@ -1284,6 +1312,15 @@ def main(argv: list[str] | None = None) -> int:
         ):
             raise ValueError(
                 "--qa-object-evidence requires --split dev --task qa "
+                "--qa-video-conditioned-evidence"
+            )
+        if args.qa_keyframe_evidence_bank and (
+            args.split != "dev"
+            or args.task != "qa"
+            or not args.qa_video_conditioned_evidence
+        ):
+            raise ValueError(
+                "--qa-keyframe-evidence-bank requires --split dev --task qa "
                 "--qa-video-conditioned-evidence"
             )
         if args.qa_ocr_evidence and (
@@ -1458,6 +1495,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         qa_video_conditioned_evidence_config = QAVideoConditionedEvidenceConfig(
             enabled=args.qa_video_conditioned_evidence,
+            preserve_keyframe_evidence=args.qa_keyframe_evidence_bank,
+            keyframe_evidence_video_cap=args.qa_keyframe_evidence_video_cap,
         )
         qa_object_answer_provider_config = ObjectAnswerProviderConfig(
             enabled=args.qa_object_evidence,

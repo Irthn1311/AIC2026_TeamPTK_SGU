@@ -26,6 +26,7 @@ from system_tai.qa.grounding import (
     QAVideoConditionedEvidenceConfig,
     build_qa_grounding_result,
     nominate_qa_videos,
+    select_primary_keyframe_anchors,
 )
 from system_tai.qa.models import QAResult
 from system_tai.qa.ocr_provider import (
@@ -105,6 +106,8 @@ def _restricted(video_id: str, frame_id: int, rank: int, score: float) -> Restri
 def test_config_default_disabled_and_strict_validation() -> None:
     config = QAVideoConditionedEvidenceConfig()
     assert config.enabled is False
+    assert config.preserve_keyframe_evidence is False
+    assert config.keyframe_evidence_video_cap == 32
     assert SessionConfig().qa_video_conditioned_evidence_config == config
     for kwargs in (
         {"enabled": 1},
@@ -112,6 +115,14 @@ def test_config_default_disabled_and_strict_validation() -> None:
         {"anchors_per_video": 0},
         {"video_rrf_constant": float("nan")},
         {"video_rrf_constant": 0.0},
+        {"keyframe_evidence_video_cap": 0},
+        {"preserve_keyframe_evidence": True},
+        {
+            "enabled": True,
+            "selected_video_cap": 2,
+            "preserve_keyframe_evidence": True,
+            "keyframe_evidence_video_cap": 3,
+        },
     ):
         with pytest.raises(ValueError):
             QAVideoConditionedEvidenceConfig(**kwargs)
@@ -212,6 +223,12 @@ def test_anchor_bounds_cross_video_order_unique_frames_and_contiguous_ranks() ->
         for item in result.ranked_candidates
     ] == [1, 1, 2, 2]
     assert all(item.source == QA_VIDEO_CONDITIONED_EVIDENCE_V1 for item in result.ranked_candidates)
+
+    primary = select_primary_keyframe_anchors(
+        result.ranked_candidates,
+        video_cap=1,
+    )
+    assert [(item.video_id, item.frame_id) for item in primary] == [("V1", 100)]
 
 
 class _FakeEncoder:
@@ -354,6 +371,9 @@ class _EchoRefiner:
 class _FakeDecoder:
     backend_identifier = "fake"
 
+    def __init__(self) -> None:
+        self.decode_calls: list[tuple[str, int]] = []
+
     def probe(self, record: RawVideoRecord) -> VideoProbe:
         return VideoProbe(
             video_id=record.video_id,
@@ -368,6 +388,7 @@ class _FakeDecoder:
 
     def decode(self, request: DecodeRequest) -> DecodeResult:
         frame_id = request.frame_ids[0]
+        self.decode_calls.append((request.probe.video_id, frame_id))
         return DecodeResult(
             frames=(
                 DecodedFrame(
@@ -436,6 +457,240 @@ def _pipeline(tmp_path: Path, *, qa_engine=None, ocr_answer_provider=None):
         ocr_answer_provider=ocr_answer_provider,
     )
     return pipeline, encoder, legacy, searcher, refiner
+
+
+class _MultiRegistry:
+    embedding_dimension = 4
+    total_rows = 6
+
+    def get(self, video_id: str):
+        if video_id not in {"V1", "V2", "V3"}:
+            raise KeyError(video_id)
+        return SimpleNamespace(descriptor=SimpleNamespace(row_count=2))
+
+
+class _MultiVideoSearcher:
+    registry = _MultiRegistry()
+
+    def search_video_maxima(self, *, query_ids, query_vectors):
+        return FullCorpusVideoMaximaOutcome(
+            rankings={
+                query_id: tuple(
+                    _maximum(query_id, video_id, rank, 1.0 - rank / 10)
+                    for rank, video_id in enumerate(("V1", "V2", "V3"), start=1)
+                )
+                for query_id in query_ids
+            },
+            physical_rows_scored=6,
+            video_store_scan_count=3,
+        )
+
+    def search_selected_videos(
+        self, *, video_ids, query_ids, query_vectors, per_query_result_cap
+    ):
+        starts = {"V1": 100, "V2": 200, "V3": 300}
+        return VideoRestrictedSearchOutcome(
+            rankings={
+                query_id: {
+                    video_id: (
+                        _restricted(video_id, starts[video_id], 1, 0.9),
+                        _restricted(video_id, starts[video_id] + 10, 2, 0.8),
+                    )
+                    for video_id in video_ids
+                }
+                for query_id in query_ids
+            },
+            physical_rows_scored=6,
+            video_store_scan_count=3,
+        )
+
+
+class _BudgetRefiner:
+    def __init__(self, *, first_status: RefinementStatus) -> None:
+        self.first_status = first_status
+        self.configs = []
+
+    def refine_query(self, query, config, precomputed_text_embeddings=None):
+        self.configs.append(config)
+        records = []
+        for candidate in query.candidates:
+            selected = candidate.rank == 1
+            status = self.first_status if selected else RefinementStatus.NOT_REFINED
+            succeeded = status is RefinementStatus.REFINED
+            records.append(
+                RefinedCandidate(
+                    query_id=query.query_id,
+                    original_candidate_rank=candidate.rank,
+                    video_id=candidate.video_id,
+                    candidate_frame_id=candidate.frame_id,
+                    refined_frame_id=candidate.frame_id + 1 if succeeded else None,
+                    candidate_timestamp_seconds=candidate.frame_id / 30.0,
+                    refined_timestamp_seconds=(
+                        (candidate.frame_id + 1) / 30.0 if succeeded else None
+                    ),
+                    fps=30.0 if selected else None,
+                    total_frame_count=1000 if selected else None,
+                    window_start_frame=candidate.frame_id if succeeded else None,
+                    window_end_frame=candidate.frame_id + 1 if succeeded else None,
+                    coarse_frame_ids=(candidate.frame_id,) if succeeded else (),
+                    fine_frame_ids=(candidate.frame_id + 1,) if succeeded else (),
+                    coarse_sample_count=1 if succeeded else 0,
+                    fine_sample_count=1 if succeeded else 0,
+                    decoded_frame_count=1 if succeeded else 0,
+                    encoded_image_count=1 if succeeded else 0,
+                    refinement_fusion_score=0.99 if succeeded else None,
+                    variant_hit_count=1 if succeeded else 0,
+                    best_individual_rank=1 if succeeded else None,
+                    per_variant_provenance=(),
+                    decoder_backend="fake" if selected else None,
+                    raw_video_path=Path(f"{candidate.video_id}.mp4") if selected else None,
+                    status=status,
+                    warnings=(),
+                    failure_reason=(
+                        "fixture failure"
+                        if status is RefinementStatus.FAILED
+                        else None
+                    ),
+                    original_retrieval_provenance=candidate.retrieval_provenance,
+                    timings={},
+                )
+            )
+        return QueryRefinementOutcome(
+            query.query_id,
+            KISResult(query.query_id, ()),
+            tuple(records),
+            (),
+            {},
+        )
+
+
+def _keyframe_bank_pipeline(
+    tmp_path: Path,
+    *,
+    first_status: RefinementStatus = RefinementStatus.REFINED,
+    qa_engine=None,
+):
+    videos = []
+    for video_id in ("V1", "V2", "V3"):
+        video_path = tmp_path / f"{video_id}.mp4"
+        video_path.touch()
+        videos.append(RawVideoRecord(video_id, video_path))
+    encoder = _FakeEncoder()
+    refiner = _BudgetRefiner(first_status=first_status)
+    decoder = _FakeDecoder()
+    legacy = _LegacyRetriever()
+    pipeline = QARuntimePipeline(
+        exact_retriever=legacy,
+        weighted_rrf=WeightedRRFRetriever(legacy),
+        refiner=refiner,
+        raw_video_registry=RawVideoRegistry(videos),
+        decoder=decoder,
+        shared_encoder=encoder,
+        video_restricted_searcher=_MultiVideoSearcher(),
+        video_conditioned_evidence_config=QAVideoConditionedEvidenceConfig(
+            enabled=True,
+            selected_video_cap=3,
+            anchors_per_video=2,
+            preserve_keyframe_evidence=True,
+            keyframe_evidence_video_cap=3,
+        ),
+        qa_engine=qa_engine,
+    )
+    return pipeline, encoder, refiner, decoder
+
+
+def test_keyframe_bank_preserves_diverse_videos_and_refinement_is_upgrade(
+    tmp_path: Path,
+) -> None:
+    engine = _RecordingQAEngine()
+    pipeline, _encoder, refiner, decoder = _keyframe_bank_pipeline(
+        tmp_path,
+        qa_engine=engine,
+    )
+    _result, _timings, diagnostics = pipeline.process_qa_query(
+        QAQueryRequest(
+            "bank",
+            "bank",
+            "Một chiếc xe dừng.",
+            "Chiếc xe có màu gì?",
+            event_description_en="A car stops.",
+            include_vi_variant=False,
+            output_top_k=10,
+            refine_top_n=1,
+        )
+    )
+
+    assert refiner.configs[0].top_candidates_to_refine == 1
+    assert [(item.video_id, item.frame_id) for item in engine.evidence] == [
+        ("V1", 101),
+        ("V2", 200),
+        ("V3", 300),
+    ]
+    assert [item.source_status for item in engine.evidence] == [
+        "RAW_REFINED",
+        "KEYFRAME_ANCHOR",
+        "KEYFRAME_ANCHOR",
+    ]
+    assert diagnostics["keyframe_evidence_count"] == 3
+    assert diagnostics["raw_refined_evidence_count"] == 1
+    assert diagnostics["generic_evidence_bank_count"] == 3
+    assert diagnostics["provider_evidence_count"] == 3
+    assert diagnostics["refinement_selected_count"] == 1
+    assert diagnostics["refinement_success_count"] == 1
+    assert decoder.decode_calls == [("V1", 101), ("V2", 200), ("V3", 300)]
+    assert len({(item.video_id, item.frame_id) for item in engine.evidence}) == 3
+
+
+def test_keyframe_bank_failed_refinement_falls_back_without_extra_decode(
+    tmp_path: Path,
+) -> None:
+    engine = _RecordingQAEngine()
+    pipeline, _encoder, _refiner, _decoder = _keyframe_bank_pipeline(
+        tmp_path,
+        first_status=RefinementStatus.FAILED,
+        qa_engine=engine,
+    )
+    _result, _timings, diagnostics = pipeline.process_qa_query(
+        QAQueryRequest(
+            "fallback",
+            "fallback",
+            "Một chiếc xe dừng.",
+            "Chiếc xe có màu gì?",
+            output_top_k=10,
+            refine_top_n=1,
+        )
+    )
+    assert [(item.video_id, item.frame_id) for item in engine.evidence] == [
+        ("V1", 100),
+        ("V2", 200),
+        ("V3", 300),
+    ]
+    assert all(item.source_status == "KEYFRAME_ANCHOR" for item in engine.evidence)
+    assert diagnostics["refinement_success_count"] == 0
+    assert diagnostics["generic_evidence_bank_candidates"][0][
+        "fallback_to_keyframe"
+    ] is True
+
+
+def test_keyframe_bank_unsupported_query_does_not_decode_images(tmp_path: Path) -> None:
+    pipeline, encoder, refiner, decoder = _keyframe_bank_pipeline(tmp_path)
+    pipeline.candidate_provider = _NoProvider()
+    result, _timings, diagnostics = pipeline.process_qa_query(
+        QAQueryRequest(
+            "unsupported-bank",
+            "unsupported-bank",
+            "Một người bước vào.",
+            "Sau đó chuyện gì xảy ra?",
+            output_top_k=10,
+            refine_top_n=1,
+        )
+    )
+    assert result.unsupported_reason == "UNSUPPORTED_NO_PROVIDER"
+    assert diagnostics["generic_evidence_bank_count"] == 3
+    assert diagnostics["provider_evidence_count"] == 0
+    assert refiner.configs == []
+    assert decoder.decode_calls == []
+    assert encoder.image_calls == []
 
 
 class _RuntimeOCRBackend:

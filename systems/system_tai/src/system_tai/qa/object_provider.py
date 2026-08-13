@@ -9,7 +9,6 @@ from typing import Any
 
 from system_tai.evidence.object_artifacts import ObjectArtifactIndex, ObjectFrameEvidence
 from system_tai.preliminary.schemas import QAPrediction
-from system_tai.refinement.models import RefinedCandidate
 
 from .models import QAEvidenceCandidate, QAResult
 from .question_types import QuestionType
@@ -96,7 +95,7 @@ class ObjectEntityAnswerProvider:
         *,
         query_id: str,
         question_type: QuestionType,
-        evidence: Sequence[tuple[QAEvidenceCandidate, RefinedCandidate]],
+        evidence: Sequence[QAEvidenceCandidate],
         output_top_k: int,
         warnings: list[str] | None = None,
     ) -> tuple[QAResult, dict[str, Any]]:
@@ -112,9 +111,7 @@ class ObjectEntityAnswerProvider:
         detection_count = 0
         evidence_diagnostics: list[dict[str, Any]] = []
 
-        for evidence_candidate, refined_candidate in sorted(
-            evidence, key=lambda item: item[0].rank
-        ):
+        for evidence_candidate in sorted(evidence, key=lambda item: item.rank):
             lookup_count += 1
             frame_evidence = self.index.lookup(
                 evidence_candidate.video_id,
@@ -122,14 +119,23 @@ class ObjectEntityAnswerProvider:
             )
             if frame_evidence is not None:
                 exact_hits += 1
-            elif (
-                self.config.allow_candidate_anchor_fallback
-                and refined_candidate.candidate_frame_id != evidence_candidate.frame_id
+            candidate_frame_id = evidence_candidate.provenance.get(
+                "candidate_frame_id"
+            )
+            has_distinct_candidate_anchor = (
+                type(candidate_frame_id) is int
+                and candidate_frame_id >= 0
+                and candidate_frame_id != evidence_candidate.frame_id
+            )
+            if (
+                frame_evidence is None
+                and self.config.allow_candidate_anchor_fallback
+                and has_distinct_candidate_anchor
             ):
                 lookup_count += 1
                 anchor = self.index.lookup(
                     evidence_candidate.video_id,
-                    refined_candidate.candidate_frame_id,
+                    candidate_frame_id,
                 )
                 if anchor is not None:
                     anchor_fallbacks += 1

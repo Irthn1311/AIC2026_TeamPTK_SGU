@@ -134,14 +134,42 @@ def _make_stage_run(root: Path) -> tuple[Path, Path]:
             "fused_retrieval_candidates": [
                 {"rank": 1, "video_id": "L21_TARGET", "frame_id": 9}
             ],
+            "selected_video_ids": ["L21_TARGET", "L21_OTHER"],
+            "grounding_candidates": [
+                {"rank": 1, "video_id": "L21_TARGET", "frame_id": 9}
+            ],
+            "refinement_selected_candidates": [
+                {
+                    "rank": 1,
+                    "video_id": "L21_TARGET",
+                    "frame_id": 9,
+                    "status": "NOT_REFINED",
+                }
+            ],
             "refined_candidates": [
                 {
                     "original_rank": 1,
+                    "video_id": "L21_TARGET",
+                    "candidate_frame_id": 9,
+                    "refined_frame_id": 10,
+                    "status": "NOT_REFINED",
+                },
+                {
+                    "original_rank": 2,
                     "video_id": "L21_OTHER",
                     "candidate_frame_id": 5,
                     "refined_frame_id": 6,
                     "status": "REFINED",
                 }
+            ],
+            "keyframe_evidence_candidates": [
+                {"rank": 1, "video_id": "L21_TARGET", "frame_id": 9}
+            ],
+            "raw_refined_evidence_candidates": [
+                {"rank": 2, "video_id": "L21_OTHER", "frame_id": 6}
+            ],
+            "provider_evidence_candidates": [
+                {"rank": 1, "video_id": "L21_TARGET", "frame_id": 9}
             ],
             "usable_evidence_candidates": [
                 {"rank": 1, "video_id": "L21_TARGET", "frame_id": 10}
@@ -457,7 +485,28 @@ def test_stage_analyzer_reports_offline_hits_without_runtime_gt(tmp_path: Path) 
     assert report["official_competition_claim"] is False
     assert report["qa"]["stages"]["SUPPORTED_QUERY"]["stage_non_empty_query_count"] == 1
     assert report["qa"]["stages"]["RETRIEVAL_FUSED"]["target_video_hit_query_count"] == 1
+    assert report["qa"]["stages"]["NOMINATED_VIDEO"][
+        "target_video_hit_query_count"
+    ] == 1
+    assert report["qa"]["stages"]["GROUNDING_CANDIDATE"][
+        "target_video_hit_query_count"
+    ] == 1
+    assert report["qa"]["stages"]["REFINEMENT_SELECTED"][
+        "target_video_hit_query_count"
+    ] == 1
+    assert report["qa"]["stages"]["REFINEMENT_SUCCESS"][
+        "target_video_hit_query_count"
+    ] == 0
     assert report["qa"]["stages"]["REFINED"]["target_video_hit_query_count"] == 0
+    assert report["qa"]["stages"]["KEYFRAME_EVIDENCE"][
+        "target_video_hit_query_count"
+    ] == 1
+    assert report["qa"]["stages"]["RAW_REFINED_EVIDENCE"][
+        "target_video_hit_query_count"
+    ] == 0
+    assert report["qa"]["stages"]["PROVIDER_EVIDENCE"][
+        "target_video_hit_query_count"
+    ] == 1
     assert report["qa"]["stages"]["USABLE_EVIDENCE"]["target_video_hit_query_count"] == 1
     assert report["trake"]["stages"]["EVENT_1_POOL"]["target_video_hit_query_count"] == 1
     assert report["trake"]["stages"]["ALL_EVENT_POOLS_CONTAIN_TARGET_VIDEO"][
