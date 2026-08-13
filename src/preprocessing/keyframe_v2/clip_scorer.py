@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import glob
+import logging
 from pathlib import Path
 import sys
 
@@ -116,12 +117,18 @@ class ImageEmbeddingScorer:
         )
 
     def _load_open_clip_safetensors(self, open_clip, model_name: str, precision: str, weights_path: Path):
-        model, _, preprocess = open_clip.create_model_and_transforms(
-            model_name,
-            pretrained=None,
-            precision=precision,
-            device=self._device,
-        )
+        root_logger = logging.getLogger()
+        previous_level = root_logger.level
+        root_logger.setLevel(max(previous_level, logging.ERROR))
+        try:
+            model, _, preprocess = open_clip.create_model_and_transforms(
+                model_name,
+                pretrained=None,
+                precision=precision,
+                device=self._device,
+            )
+        finally:
+            root_logger.setLevel(previous_level)
         from safetensors.torch import load_file
 
         state_dict = load_file(str(weights_path), device="cpu")
