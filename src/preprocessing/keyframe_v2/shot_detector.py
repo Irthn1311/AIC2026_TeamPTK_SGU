@@ -119,7 +119,7 @@ def _make_shot(meta: VideoMetadata, shot_id: int, start: int, end: int, backend:
 
 
 def _detect_histdiff(video_path: Path, meta: VideoMetadata, cfg: dict) -> list[Shot]:
-    stride = max(1, int(cfg.get("fallback_sample_stride", 15)))
+    stride = max(1, int(cfg.get("fallback_sample_stride", 30)))
     threshold = float(cfg.get("fallback_hist_threshold", 0.48))
     min_len = max(1, int(round(float(cfg.get("fallback_min_shot_seconds", 1.2)) * meta.reported_fps)))
     cap = cv2.VideoCapture(str(video_path))
@@ -129,7 +129,9 @@ def _detect_histdiff(video_path: Path, meta: VideoMetadata, cfg: dict) -> list[S
     cuts = [0]
     prev_hist = None
     frame_idx = 0
-    while True:
+    total_frames = meta.total_frames if meta.total_frames > 0 else 999999
+    while frame_idx < total_frames:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
         ok, frame = cap.read()
         if not ok or frame is None:
             break
@@ -140,9 +142,6 @@ def _detect_histdiff(video_path: Path, meta: VideoMetadata, cfg: dict) -> list[S
                 cuts.append(frame_idx)
         prev_hist = hist
         frame_idx += stride
-        for _ in range(stride - 1):
-            if not cap.grab():
-                break
     cap.release()
 
     shots = []
