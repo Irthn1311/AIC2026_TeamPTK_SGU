@@ -38,7 +38,8 @@ from .grounding import (
     nomination_diagnostics,
 )
 from .models import QAEvidenceCandidate, QAQuery, QAResult
-from .question_types import QuestionType, classify_question_type
+from .object_provider import ObjectEntityAnswerProvider
+from .question_types import QuestionType, classify_question
 
 
 @dataclass
@@ -83,6 +84,7 @@ class QARuntimePipeline:
         video_conditioned_evidence_config: QAVideoConditionedEvidenceConfig | None = None,
         qa_engine: QABaselineEngine | None = None,
         candidate_provider: AnswerCandidateProvider | None = None,
+        object_answer_provider: ObjectEntityAnswerProvider | None = None,
         clock: Callable[[], float] = time.perf_counter,
     ) -> None:
         self.exact_retriever = exact_retriever
@@ -97,6 +99,7 @@ class QARuntimePipeline:
         )
         self.qa_engine = qa_engine or QABaselineEngine()
         self.candidate_provider = candidate_provider or BaselineQuestionCandidateProvider()
+        self.object_answer_provider = object_answer_provider
         self.clock = clock
 
         self._prompt_cache: dict[str, np.ndarray] = {}
@@ -132,7 +135,20 @@ class QARuntimePipeline:
             "query_id": request.query_id,
             "request_id": request.request_id,
             "question_type": None,
+            "question_classification_reason": None,
             "question_supported": None,
+            "object_provider_enabled": bool(
+                self.object_answer_provider is not None
+                and self.object_answer_provider.enabled
+            ),
+            "object_artifact_lookup_count": 0,
+            "exact_object_frame_hit_count": 0,
+            "nearest_object_frame_fallback_count": 0,
+            "candidate_anchor_object_fallback_count": 0,
+            "object_detection_count": 0,
+            "unique_object_label_count": 0,
+            "object_answer_candidate_count": 0,
+            "top_object_candidates": [],
             "qa_grounding_enabled": self.video_conditioned_evidence_config.enabled,
             "retrieval_candidate_count": 0,
             "refined_candidate_count": 0,
@@ -165,34 +181,44 @@ class QARuntimePipeline:
             )
 
         # Step 1: Question classification
-        q_type = classify_question_type(request.question, request.question_en)
+        classification = classify_question(request.question, request.question_en)
+        q_type = classification.question_type
         diagnostics["question_type"] = q_type.value
+        diagnostics["question_classification_reason"] = classification.reason
         diagnostics["question_supported"] = q_type != QuestionType.UNSUPPORTED
 
+        answer_hypotheses = self.candidate_provider.get_candidates(q_type)
+        object_provider_supported = bool(
+            self.video_conditioned_evidence_config.enabled
+            and self.object_answer_provider is not None
+            and self.object_answer_provider.supports(q_type)
+        )
+        provider_supported = bool(answer_hypotheses) or object_provider_supported
+
         if (
-            q_type == QuestionType.UNSUPPORTED
+            not provider_supported
             and not self.video_conditioned_evidence_config.enabled
         ):
-            msg = (
-                "Question type is UNSUPPORTED; zero predictions generated without running "
-                "retrieval or refinement."
-            )
+            if q_type is QuestionType.OBJECT_COUNT:
+                unsupported_reason = "UNSUPPORTED_OBJECT_COUNT_PROVIDER_MISSING"
+            elif classification.reason.startswith("OCR_PATTERN_PROVIDER_MISSING"):
+                unsupported_reason = "UNSUPPORTED_OCR_PROVIDER_MISSING"
+            else:
+                unsupported_reason = "UNSUPPORTED_NO_PROVIDER"
+            msg = f"{unsupported_reason}; zero predictions generated without grounding."
             diagnostics["warnings"].append(msg)
+            diagnostics["unsupported_reason"] = unsupported_reason
             timings.total_seconds = self.clock() - t_start
             result = QAResult(
                 query_id=request.query_id,
                 question_type=q_type,
                 predictions=[],
-                unsupported_reason=msg,
+                unsupported_reason=unsupported_reason,
                 warnings=[msg],
             )
             return result, timings, diagnostics
 
-        answer_hypotheses = ()
-        provider_supported = True
         if self.video_conditioned_evidence_config.enabled:
-            answer_hypotheses = self.candidate_provider.get_candidates(q_type)
-            provider_supported = bool(answer_hypotheses)
             diagnostics["question_supported_by_current_provider"] = provider_supported
             if q_type == QuestionType.UNSUPPORTED:
                 diagnostics["question_capability_reason"] = "QUESTION_PATTERN_UNSUPPORTED"
@@ -509,6 +535,75 @@ class QARuntimePipeline:
                 warnings=diagnostics["warnings"],
             )
             return result, timings, diagnostics
+
+        # Artifact-backed object/entity answers consume the QA-A1 evidence bank without
+        # pretending that detections exist on arbitrary decoded raw frames.
+        if object_provider_supported:
+            assert self.object_answer_provider is not None
+            t_object = self.clock()
+            qa_result, object_telemetry = self.object_answer_provider.answer(
+                query_id=request.query_id,
+                question_type=q_type,
+                evidence=tuple((item[0], item[1]) for item in cands_to_decode),
+                output_top_k=request.output_top_k,
+                warnings=diagnostics["warnings"],
+            )
+            timings.answer_scoring_seconds = self.clock() - t_object
+            diagnostics.update(object_telemetry)
+            diagnostics["unsupported_reason"] = qa_result.unsupported_reason
+            val_errors = validate_ranked_top100(
+                qa_result.predictions,
+                expected_task="qa",
+                expected_query_id=request.query_id,
+            )
+            if val_errors:
+                err_msgs = "; ".join(error.message for error in val_errors)
+                raise ValueError(
+                    f"QA object prediction validation failed for request "
+                    f"{request.query_id}: {err_msgs}"
+                )
+            prediction_by_identity = {
+                (prediction.video_id, prediction.frame_id, prediction.answer): prediction
+                for prediction in qa_result.predictions
+            }
+            for item in object_telemetry["object_evidence"]:
+                evidence_records.append(
+                    {
+                        "rank": item["evidence_rank"],
+                        "video_id": item["video_id"],
+                        "candidate_frame_id": next(
+                            refined.candidate_frame_id
+                            for candidate, refined, _ in cands_to_decode
+                            if candidate.rank == item["evidence_rank"]
+                        ),
+                        "refined_frame_id": item["requested_frame_id"],
+                        "output_frame_id": item["object_source_frame_id"],
+                        "object_source_frame_id": item["object_source_frame_id"],
+                        "object_frame_distance": item["frame_distance"],
+                        "object_lookup_kind": item["lookup_kind"],
+                        "object_detection_count": item["detection_count"],
+                        "answer": None,
+                        "answer_score": None,
+                        "answer_confidence_level": "ARTIFACT_BACKED",
+                        "warning": None,
+                        "skip_reason": (
+                            None if item["object_source_frame_id"] is not None else "object_miss"
+                        ),
+                    }
+                )
+            diagnostics["object_prediction_identity_count"] = len(prediction_by_identity)
+            store_evidence_records()
+            diagnostics["final_predictions"] = [
+                {
+                    "rank": prediction.rank,
+                    "video_id": prediction.video_id,
+                    "frame_id": prediction.frame_id,
+                    "answer": prediction.answer,
+                }
+                for prediction in qa_result.predictions
+            ]
+            timings.total_seconds = self.clock() - t_start
+            return qa_result, timings, diagnostics
 
         # Step 5: Exact Evidence Frame Decode & Image Encode
         t_dec = self.clock()

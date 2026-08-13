@@ -6,7 +6,17 @@ from .grounding import (
     QAVideoConditionedEvidenceConfig,
 )
 from .models import AnswerHypothesis, QAEvidenceCandidate, QAQuery, QAResult
-from .question_types import QuestionType, classify_question_type
+from .object_provider import (
+    ObjectAnswerProviderConfig,
+    ObjectEntityAnswerProvider,
+    normalize_object_label,
+)
+from .question_types import (
+    QuestionClassification,
+    QuestionType,
+    classify_question,
+    classify_question_type,
+)
 from .runtime import QAPipelineTimings, QARuntimePipeline
 
 __all__ = [
@@ -19,10 +29,15 @@ __all__ = [
     "QA_VIDEO_CONDITIONED_EVIDENCE_V1",
     "QAVideoConditionedEvidenceConfig",
     "QAEvidenceCandidate",
+    "ObjectAnswerProviderConfig",
+    "ObjectEntityAnswerProvider",
     "QAPipelineTimings",
     "QAQuery",
     "QAResult",
     "QARuntimePipeline",
+    "QuestionClassification",
     "QuestionType",
+    "classify_question",
     "classify_question_type",
+    "normalize_object_label",
 ]

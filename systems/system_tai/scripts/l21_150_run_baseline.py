@@ -31,6 +31,7 @@ from system_tai.qa.grounding import (  # noqa: E402
     QA_VIDEO_CONDITIONED_EVIDENCE_V1,
     QAVideoConditionedEvidenceConfig,
 )
+from system_tai.qa.object_provider import ObjectAnswerProviderConfig  # noqa: E402
 from system_tai.quality.l21_150_schema import (  # noqa: E402
     L21150Benchmark,
     L21150FormatError,
@@ -479,6 +480,7 @@ def run_l21_150_baseline(
     trake_query_sidecar_path: Path | None = None,
     trake_query_sidecar_sha256: str | None = None,
     qa_video_conditioned_evidence_config: QAVideoConditionedEvidenceConfig | None = None,
+    qa_object_answer_provider_config: ObjectAnswerProviderConfig | None = None,
 ) -> dict[str, Any]:
     if not 1 <= top_k <= 100:
         raise ValueError("top_k must be in [1, 100]")
@@ -520,8 +522,15 @@ def run_l21_150_baseline(
     resolved_qa_grounding = (
         qa_video_conditioned_evidence_config or QAVideoConditionedEvidenceConfig()
     )
+    resolved_qa_object_provider = (
+        qa_object_answer_provider_config or ObjectAnswerProviderConfig()
+    )
     if resolved_qa_grounding.enabled and (split != "dev" or task != "qa"):
         raise ValueError("QA-A1 is restricted to the QA DEV diagnostic experiment")
+    if resolved_qa_object_provider.enabled and (
+        split != "dev" or task != "qa" or not resolved_qa_grounding.enabled
+    ):
+        raise ValueError("QA-A2 requires QA DEV with QA-A1 evidence grounding enabled")
     if resolved_trake_video_first.enabled and (split != "dev" or task != "trake"):
         raise ValueError("TR-A1 is restricted to the TRAKE DEV diagnostic experiment")
     if resolved_trake_shared_raw.enabled and (
@@ -643,6 +652,20 @@ def run_l21_150_baseline(
     if runtime_qa_grounding is not None and runtime_qa_grounding != resolved_qa_grounding:
         raise ValueError(
             "runtime QA-A1 configuration does not match experiment configuration"
+        )
+    runtime_qa_object_provider = getattr(
+        getattr(runtime, "config", None),
+        "qa_object_answer_provider_config",
+        None,
+    )
+    if resolved_qa_object_provider.enabled and runtime_qa_object_provider is None:
+        raise ValueError("runtime is missing the enabled QA-A2 object provider")
+    if (
+        runtime_qa_object_provider is not None
+        and runtime_qa_object_provider != resolved_qa_object_provider
+    ):
+        raise ValueError(
+            "runtime QA-A2 configuration does not match experiment configuration"
         )
 
     output = Path(output_dir)
@@ -883,6 +906,24 @@ def run_l21_150_baseline(
                 },
             }
         )
+    if resolved_qa_object_provider.enabled:
+        object_index = getattr(runtime, "object_artifact_index", None)
+        metadata.update(
+            {
+                "qa_object_provider_enabled": True,
+                "object_artifact_schema": (
+                    object_index.schema_identity if object_index is not None else None
+                ),
+                "object_artifact_root_identity": (
+                    object_index.source_root_identity if object_index is not None else None
+                ),
+                "frame_identity_contract": (
+                    "object JSON filename ordinal -> mapping n -> original frame_idx"
+                ),
+                "official_ground_truth": False,
+                "diagnostic_development_only": True,
+            }
+        )
     if trake_language_policy == "en_only":
         assert trake_query_sidecar is not None
         metadata["trake_query_experiment"] = {
@@ -1047,6 +1088,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--trake-dev-en-sidecar", type=Path)
     parser.add_argument("--trake-rrf-constant", type=float, default=60.0)
     parser.add_argument("--qa-video-conditioned-evidence", action="store_true")
+    parser.add_argument("--qa-object-evidence", action="store_true")
     return parser
 
 
@@ -1058,6 +1100,15 @@ def main(argv: list[str] | None = None) -> int:
         ):
             raise ValueError(
                 "--qa-video-conditioned-evidence is restricted to --split dev --task qa"
+            )
+        if args.qa_object_evidence and (
+            args.split != "dev"
+            or args.task != "qa"
+            or not args.qa_video_conditioned_evidence
+        ):
+            raise ValueError(
+                "--qa-object-evidence requires --split dev --task qa "
+                "--qa-video-conditioned-evidence"
             )
         benchmark = load_l21_150_benchmark(args.benchmark)
         benchmark_sha = hashlib.sha256(args.benchmark.read_bytes()).hexdigest()
@@ -1192,6 +1243,9 @@ def main(argv: list[str] | None = None) -> int:
         qa_video_conditioned_evidence_config = QAVideoConditionedEvidenceConfig(
             enabled=args.qa_video_conditioned_evidence,
         )
+        qa_object_answer_provider_config = ObjectAnswerProviderConfig(
+            enabled=args.qa_object_evidence,
+        )
         session_output = args.output_dir / "runtime"
         config = SessionConfig(
             input_root=args.input_root,
@@ -1209,6 +1263,7 @@ def main(argv: list[str] | None = None) -> int:
             qa_video_conditioned_evidence_config=(
                 qa_video_conditioned_evidence_config
             ),
+            qa_object_answer_provider_config=qa_object_answer_provider_config,
         )
         runtime = OperationalKISRuntime.bootstrap(config)
         try:
@@ -1258,6 +1313,9 @@ def main(argv: list[str] | None = None) -> int:
                     trake_query_sidecar_sha256=trake_sidecar_sha,
                     qa_video_conditioned_evidence_config=(
                         qa_video_conditioned_evidence_config
+                    ),
+                    qa_object_answer_provider_config=(
+                        qa_object_answer_provider_config
                     ),
                 )
         finally:

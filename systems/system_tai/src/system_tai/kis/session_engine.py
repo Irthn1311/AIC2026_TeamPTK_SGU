@@ -24,6 +24,10 @@ from system_tai.data.corpus_discovery import (
     load_corpus_manifest,
     load_or_build_manifest_cache,
 )
+from system_tai.evidence.object_artifacts import (
+    ObjectArtifactIndex,
+    resolve_object_artifact_root,
+)
 from system_tai.features.btc_clip_store import FeatureStoreRegistry
 from system_tai.features.query_encoder import SharedOpenAIClipEncoder
 from system_tai.kis.benchmark import resolve_device
@@ -43,6 +47,7 @@ from system_tai.preliminary.runtime_bridge import (
     qa_predictions_to_top100_query,
     trake_predictions_to_top100_query,
 )
+from system_tai.qa.object_provider import ObjectEntityAnswerProvider
 from system_tai.qa.runtime import QARuntimePipeline
 from system_tai.refinement.engine import ExactFrameRefiner, FrameEmbeddingCache
 from system_tai.refinement.models import Phase3Candidate, RefinementQuery
@@ -117,6 +122,7 @@ class OperationalKISRuntime:
         decoder: OpenCVVideoDecoder,
         exporter: CheckpointExporter | None = None,
         validator: CheckpointValidator | None = None,
+        object_answer_provider: ObjectEntityAnswerProvider | None = None,
         clock: Callable[[], float] = time.perf_counter,
         bootstrap_timings: Mapping[str, Any] | None = None,
     ) -> None:
@@ -131,6 +137,29 @@ class OperationalKISRuntime:
         self.validator = validator or CheckpointValidator()
         self.clock = clock
         self.bootstrap_timings = dict(bootstrap_timings or {})
+
+        self.object_artifact_index: ObjectArtifactIndex | None = None
+        if config.qa_object_answer_provider_config.enabled:
+            if object_answer_provider is None:
+                object_root = resolve_object_artifact_root(self.manifest.dataset_root)
+                root_identity = object_root.relative_to(
+                    self.manifest.dataset_root.resolve(strict=False)
+                ).as_posix()
+                self.object_artifact_index = ObjectArtifactIndex(
+                    object_root=object_root,
+                    mappings_by_video={
+                        store.descriptor.video_id: store.mappings
+                        for store in self.registry.stores
+                    },
+                    source_root_identity=root_identity,
+                )
+                object_answer_provider = ObjectEntityAnswerProvider(
+                    index=self.object_artifact_index,
+                    config=config.qa_object_answer_provider_config,
+                )
+            else:
+                self.object_artifact_index = object_answer_provider.index
+        self.object_answer_provider = object_answer_provider
 
         self.exact_retriever = ExactNumpyRetriever(
             registry=self.registry,
@@ -164,6 +193,7 @@ class OperationalKISRuntime:
             video_conditioned_evidence_config=(
                 config.qa_video_conditioned_evidence_config
             ),
+            object_answer_provider=self.object_answer_provider,
             clock=self.clock,
         )
 
@@ -204,6 +234,7 @@ class OperationalKISRuntime:
         decoder_factory: Callable[[], OpenCVVideoDecoder] | None = None,
         exporter: CheckpointExporter | None = None,
         validator: CheckpointValidator | None = None,
+        object_answer_provider: ObjectEntityAnswerProvider | None = None,
     ) -> OperationalKISRuntime:
         start_time = clock()
         output_root = Path(config.output_root)
@@ -305,6 +336,7 @@ class OperationalKISRuntime:
             decoder=decoder,
             exporter=exporter,
             validator=validator,
+            object_answer_provider=object_answer_provider,
             clock=clock,
             bootstrap_timings=bootstrap_timings,
         )
@@ -1007,6 +1039,27 @@ class OperationalKISRuntime:
                     },
                 }
             )
+        if self.config.qa_object_answer_provider_config.enabled:
+            req_manifest_payload.update(
+                {
+                    "qa_object_provider_enabled": True,
+                    "object_artifact_schema": (
+                        self.object_artifact_index.schema_identity
+                        if self.object_artifact_index is not None
+                        else None
+                    ),
+                    "object_artifact_root_identity": (
+                        self.object_artifact_index.source_root_identity
+                        if self.object_artifact_index is not None
+                        else None
+                    ),
+                    "object_frame_identity_contract": (
+                        "JSON filename keyframe ordinal -> mapping n -> frame_idx"
+                    ),
+                    "official_ground_truth": False,
+                    "diagnostic_development_only": True,
+                }
+            )
         _write_json(query_dir / "qa_request_manifest.json", req_manifest_payload)
 
         self._successful_query_count += 1
@@ -1316,6 +1369,20 @@ class OperationalKISRuntime:
         if self.config.trake_shared_raw_region_config.enabled:
             manifest_payload["trake_shared_raw_region_config"] = dataclasses.asdict(
                 self.config.trake_shared_raw_region_config
+            )
+        if self.config.qa_object_answer_provider_config.enabled:
+            manifest_payload["qa_object_answer_provider_config"] = dataclasses.asdict(
+                self.config.qa_object_answer_provider_config
+            )
+            manifest_payload["object_artifact_schema"] = (
+                self.object_artifact_index.schema_identity
+                if self.object_artifact_index is not None
+                else None
+            )
+            manifest_payload["object_artifact_root_identity"] = (
+                self.object_artifact_index.source_root_identity
+                if self.object_artifact_index is not None
+                else None
             )
         _write_json(self.output_root / "session_manifest.json", manifest_payload)
 

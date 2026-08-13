@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from system_tai.qa.grounding import QAVideoConditionedEvidenceConfig
+from system_tai.qa.object_provider import ObjectAnswerProviderConfig
 from system_tai.refinement.models import (
     Q3AnchorRefinementConfig,
     RefinementConfig,
@@ -83,6 +84,9 @@ class SessionConfig:
     qa_video_conditioned_evidence_config: QAVideoConditionedEvidenceConfig = field(
         default_factory=QAVideoConditionedEvidenceConfig
     )
+    qa_object_answer_provider_config: ObjectAnswerProviderConfig = field(
+        default_factory=ObjectAnswerProviderConfig
+    )
 
     def __post_init__(self) -> None:
         if self.reuse_manifest is not None and self.manifest_cache is not None:
@@ -136,6 +140,18 @@ class SessionConfig:
                 "qa_video_conditioned_evidence_config must be "
                 "QAVideoConditionedEvidenceConfig"
             )
+        if not isinstance(
+            self.qa_object_answer_provider_config,
+            ObjectAnswerProviderConfig,
+        ):
+            raise ValueError(
+                "qa_object_answer_provider_config must be ObjectAnswerProviderConfig"
+            )
+        if (
+            self.qa_object_answer_provider_config.enabled
+            and not self.qa_video_conditioned_evidence_config.enabled
+        ):
+            raise ValueError("QA object evidence requires QA video-conditioned evidence")
 
 
 @dataclass(frozen=True, slots=True)
