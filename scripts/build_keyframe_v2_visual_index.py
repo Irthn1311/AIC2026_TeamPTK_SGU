@@ -25,11 +25,14 @@ def main() -> None:
 
     started = time.time()
     cfg = load_config(args.config)
+    global_map = pd.read_parquet(args.global_map)
+    if global_map.empty:
+        raise RuntimeError(f"Global V2 map is empty: {args.global_map}")
+
     scorer = ImageEmbeddingScorer(PROJECT_ROOT, cfg["clip"])
     if scorer.backend != "clip":
         raise RuntimeError(f"Real CLIP required for Visual V2, got {scorer.backend}")
 
-    global_map = pd.read_parquet(args.global_map)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     index = None

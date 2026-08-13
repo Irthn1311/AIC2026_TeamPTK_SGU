@@ -71,8 +71,12 @@ def make_keyframe_config(data_root: Path, output_root: Path) -> Path:
     paths["hf_cache"] = str(PROJECT_ROOT / ".model_cache" / "huggingface")
     cfg.setdefault("shot_detection", {})["require_transnetv2"] = False
     clip_cfg = cfg.setdefault("clip", {})
-    clip_cfg["pretrained"] = "openai"
-    clip_cfg["open_clip_weights"] = ""
+    clip_cfg["pretrained"] = ""
+    clip_cfg["download_root"] = ".model_cache"
+    clip_cfg["open_clip_weights"] = (
+        ".model_cache/models--timm--vit_base_patch32_clip_224.openai/"
+        "snapshots/*/open_clip_model.safetensors"
+    )
     return write_yaml(cfg, output_root / "kaggle_configs" / "keyframe_v2.yaml")
 
 
@@ -128,6 +132,7 @@ def main() -> int:
     os.environ["AIC_ASR_OUTPUT_ROOT"] = str(asr_root)
     os.environ["AIC_OBJECT_OUTPUT_ROOT"] = str(object_root)
     os.environ["AIC_INDEX_OUTPUT_ROOT"] = str(index_root)
+    os.environ["AIC_ALLOW_HISTDIFF_FALLBACK"] = "1"
 
     for path in (output_root, keyframe_root, ocr_v2_root, ocr_temporal_root, ocr_index_root, asr_root, audio_root, index_root):
         path.mkdir(parents=True, exist_ok=True)
@@ -151,6 +156,13 @@ def main() -> int:
     records: list[dict[str, object]] = []
     py = sys.executable
     keyframe_config = make_keyframe_config(data_root, output_root)
+    generated_keyframe_cfg = load_yaml(keyframe_config)
+    print(json.dumps({
+        "generated_keyframe_config": str(keyframe_config),
+        "require_transnetv2": generated_keyframe_cfg.get("shot_detection", {}).get("require_transnetv2"),
+        "clip_pretrained": generated_keyframe_cfg.get("clip", {}).get("pretrained"),
+        "clip_open_clip_weights": generated_keyframe_cfg.get("clip", {}).get("open_clip_weights"),
+    }, indent=2, ensure_ascii=False))
     ocr_temporal_config = make_ocr_temporal_config(ocr_v2_root, keyframe_root, ocr_temporal_root, output_root)
 
     if not args.skip_assets:

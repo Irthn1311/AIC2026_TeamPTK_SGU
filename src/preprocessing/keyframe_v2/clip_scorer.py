@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import glob
 from pathlib import Path
 import sys
 
@@ -75,14 +76,6 @@ class ImageEmbeddingScorer:
         model_name = str(self.cfg.get("model_name", "ViT-B-32"))
         precision = str(self.cfg.get("precision", "fp32"))
         pretrained_alias = str(self.cfg.get("pretrained", "") or "").strip()
-        if pretrained_alias:
-            model, _, preprocess = open_clip.create_model_and_transforms(
-                model_name,
-                pretrained=pretrained_alias,
-                precision=precision,
-                device=self._device,
-            )
-            return model, preprocess, pretrained_alias
 
         weights_path = self._resolve_weights_path(str(self.cfg.get("open_clip_weights", "")))
         if weights_path is None and bool(self.cfg.get("allow_download", False)):
@@ -91,9 +84,7 @@ class ImageEmbeddingScorer:
                 filename=str(self.cfg.get("open_clip_filename", "open_clip_model.safetensors")),
                 cache_root=self.project_root / str(self.cfg.get("download_root", ".model_cache/clip")),
             )
-        if weights_path is None:
-            raise FileNotFoundError(f"open_clip_weights not found: {self.cfg.get('open_clip_weights')}")
-        if weights_path.suffix.lower() == ".safetensors":
+        if weights_path is not None and weights_path.suffix.lower() == ".safetensors":
             model, _, preprocess = open_clip.create_model_and_transforms(
                 model_name,
                 pretrained=None,
@@ -109,13 +100,25 @@ class ImageEmbeddingScorer:
                     "OpenCLIP safetensors checkpoint does not match model "
                     f"(missing={len(missing)}, unexpected={len(unexpected)})"
                 )
-        else:
+            return model, preprocess, weights_path
+
+        if pretrained_alias:
             model, _, preprocess = open_clip.create_model_and_transforms(
                 model_name,
-                pretrained=str(weights_path),
+                pretrained=pretrained_alias,
                 precision=precision,
                 device=self._device,
             )
+            return model, preprocess, pretrained_alias
+
+        if weights_path is None:
+            raise FileNotFoundError(f"open_clip_weights not found: {self.cfg.get('open_clip_weights')}")
+        model, _, preprocess = open_clip.create_model_and_transforms(
+            model_name,
+            pretrained=str(weights_path),
+            precision=precision,
+            device=self._device,
+        )
         return model, preprocess, weights_path
 
     def _load_openai_clip(self, torch_module):
@@ -132,9 +135,13 @@ class ImageEmbeddingScorer:
         if not pattern:
             return None
         if any(ch in pattern for ch in "*?[]"):
-            matches = sorted(self.project_root.glob(pattern))
+            if Path(pattern).is_absolute():
+                matches = [Path(match) for match in sorted(glob.glob(pattern))]
+            else:
+                matches = sorted(self.project_root.glob(pattern))
         else:
-            matches = [self.project_root / pattern]
+            path = Path(pattern)
+            matches = [path if path.is_absolute() else self.project_root / path]
         for match in matches:
             if match.exists():
                 return match.resolve()

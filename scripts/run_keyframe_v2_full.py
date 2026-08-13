@@ -176,6 +176,8 @@ def main() -> None:
     print(f"Global V2 map rows: {len(global_df)}")
     print(f"Summary videos: {len(summary_df)}")
     print(json.dumps(total_summary, indent=2, ensure_ascii=False))
+    if videos and len(global_df) == 0:
+        raise SystemExit("Keyframe V2 produced 0 keyframes; see summary/errors.csv for failed videos.")
 
 
 if __name__ == "__main__":
