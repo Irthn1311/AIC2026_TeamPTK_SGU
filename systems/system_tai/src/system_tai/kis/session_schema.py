@@ -269,6 +269,7 @@ class QAQueryRequest:
     question: str
     event_description_en: str | None = None
     question_en: str | None = None
+    include_vi_variant: bool = True
     top_k_per_variant: int = 100
     output_top_k: int = 100
     refine_top_n: int = 3
@@ -294,6 +295,15 @@ class QAQueryRequest:
             if not isinstance(self.question_en, str) or not self.question_en.strip():
                 raise ValueError("question_en must be a non-empty string when provided")
 
+        if type(self.include_vi_variant) is not bool:
+            raise ValueError("include_vi_variant must be a boolean")
+        if not self.include_vi_variant and not (
+            self.event_description_en and self.event_description_en.strip()
+        ):
+            raise ValueError(
+                "event_description_en must be non-empty when include_vi_variant is false"
+            )
+
         if type(self.top_k_per_variant) is not int or not (1 <= self.top_k_per_variant <= 1000):
             raise ValueError("top_k_per_variant must be integer in range [1, 1000]")
         if type(self.output_top_k) is not int or not (1 <= self.output_top_k <= 100):
@@ -302,15 +312,17 @@ class QAQueryRequest:
             raise ValueError("refine_top_n must be integer in range [1, output_top_k]")
 
     def variants(self) -> tuple[QueryVariant, ...]:
-        result: list[QueryVariant] = [
-            QueryVariant(
-                variant_id=f"{self.query_id}::v1_vi",
-                text=self.event_description.strip(),
-                language=QueryLanguage.VIETNAMESE,
-                variant_type=QueryVariantType.VIETNAMESE_DIRECT,
-                weight=1.0,
+        result: list[QueryVariant] = []
+        if self.include_vi_variant:
+            result.append(
+                QueryVariant(
+                    variant_id=f"{self.query_id}::v1_vi",
+                    text=self.event_description.strip(),
+                    language=QueryLanguage.VIETNAMESE,
+                    variant_type=QueryVariantType.VIETNAMESE_DIRECT,
+                    weight=1.0,
+                )
             )
-        ]
         if self.event_description_en and self.event_description_en.strip():
             result.append(
                 QueryVariant(
@@ -490,6 +502,7 @@ def parse_session_request(
                 question=question.strip(),
                 event_description_en=data.get("event_description_en"),
                 question_en=data.get("question_en"),
+                include_vi_variant=data.get("include_vi_variant", True),
                 top_k_per_variant=top_k_pv_raw,
                 output_top_k=out_k_raw,
                 refine_top_n=refine_n_raw,

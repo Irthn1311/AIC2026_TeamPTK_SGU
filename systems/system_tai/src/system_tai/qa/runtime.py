@@ -219,7 +219,13 @@ class QARuntimePipeline:
                     "question_supported_by_current_provider": None,
                     "question_capability_reason": None,
                     "qa_grounding_policy": QA_VIDEO_CONDITIONED_EVIDENCE_V1,
+                    "qa_localization_policy": None,
+                    "include_vi_variant": request.include_vi_variant,
                     "localization_variant_count": 0,
+                    "localization_variant_languages": [],
+                    "localization_variant_types": [],
+                    "localization_text_provenance": [],
+                    "answer_routing_question_language": "vi",
                     "full_corpus_video_count": 0,
                     "full_corpus_store_scan_count": 0,
                     "selected_video_count": 0,
@@ -301,7 +307,28 @@ class QARuntimePipeline:
         # Step 2: Event-only retrieval variants
         variants = request.variants()
         if self.video_conditioned_evidence_config.enabled:
+            diagnostics["qa_localization_policy"] = (
+                "EN_ONLY"
+                if not request.include_vi_variant
+                else "VI_PLUS_EN"
+                if request.event_description_en is not None
+                else "LEGACY_VI"
+            )
             diagnostics["localization_variant_count"] = len(variants)
+            diagnostics["localization_variant_languages"] = [
+                variant.language.value for variant in variants
+            ]
+            diagnostics["localization_variant_types"] = [
+                variant.variant_type.value for variant in variants
+            ]
+            diagnostics["localization_text_provenance"] = [
+                (
+                    "explicit_event_description_en"
+                    if variant.language.value == "en"
+                    else "event_description"
+                )
+                for variant in variants
+            ]
 
         t_text = self.clock()
         event_texts = [v.text for v in variants]

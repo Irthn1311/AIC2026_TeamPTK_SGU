@@ -33,6 +33,11 @@ from system_tai.qa.grounding import (  # noqa: E402
 )
 from system_tai.qa.object_provider import ObjectAnswerProviderConfig  # noqa: E402
 from system_tai.qa.ocr_provider import OCRAnswerProviderConfig  # noqa: E402
+from system_tai.quality.l21_150_qa_translation import (  # noqa: E402
+    QADevTranslationSidecar,
+    QATranslationSidecarError,
+    load_qa_dev_translation_sidecar,
+)
 from system_tai.quality.l21_150_schema import (  # noqa: E402
     L21150Benchmark,
     L21150FormatError,
@@ -76,6 +81,9 @@ FROZEN_Q2_KIS_DEV_EN_SIDECAR_SHA256 = (
 )
 FROZEN_TR_A2_D0_TRAKE_DEV_EN_SIDECAR_SHA256 = (
     "021980a96f8a59677b143df556abd407f7d70588bd98d8d413bc25741754fcf7"
+)
+FROZEN_QA_D0_DEV_EN_SIDECAR_SHA256 = (
+    "45929059506de93aac574a6d2d5581691af81ae12405c18d57289485948c1f4d"
 )
 QA_ARTIFACT_BACKED_OBJECT_EVIDENCE = "QA_ARTIFACT_BACKED_OBJECT_EVIDENCE"
 QA_EVIDENCE_GROUNDED_OCR = "QA_EVIDENCE_GROUNDED_OCR"
@@ -282,6 +290,8 @@ def _runtime_request(
     *,
     kis_query_policy: str = "vi_only",
     kis_translations: Mapping[str, str] | None = None,
+    qa_localization_language_policy: str = "legacy_vi",
+    qa_translations: Mapping[str, str] | None = None,
     trake_language_policy: str = "vi_only",
     trake_translations: Mapping[tuple[str, int], str] | None = None,
 ):
@@ -307,11 +317,32 @@ def _runtime_request(
             refine_top_n=refine_top_n,
         )
     if isinstance(query, L21150QAQuery):
+        if qa_localization_language_policy == "legacy_vi":
+            if qa_translations is not None:
+                raise ValueError("QA legacy_vi must not receive English translations")
+            event_description_en = None
+            include_vi_variant = True
+        elif qa_localization_language_policy == "en_only":
+            if qa_translations is None:
+                raise ValueError("QA EN_ONLY requires frozen English translations")
+            event_description_en = qa_translations.get(query.query_id)
+            if event_description_en is None:
+                raise ValueError(
+                    f"missing frozen English QA translation for {query.query_id}"
+                )
+            include_vi_variant = False
+        else:
+            raise ValueError(
+                "qa_localization_language_policy must be legacy_vi or en_only"
+            )
         return QAQueryRequest(
             request_id=request_id,
             query_id=query.query_id,
             event_description=query.question_vi,
             question=query.question_vi,
+            event_description_en=event_description_en,
+            question_en=None,
+            include_vi_variant=include_vi_variant,
             top_k_per_variant=top_k,
             output_top_k=top_k,
             refine_top_n=max(1, refine_top_n),
@@ -473,6 +504,10 @@ def run_l21_150_baseline(
     kis_query_sidecar: KISDevTranslationSidecar | None = None,
     kis_query_sidecar_path: Path | None = None,
     kis_query_sidecar_sha256: str | None = None,
+    qa_localization_language_policy: str = "legacy_vi",
+    qa_translation_sidecar: QADevTranslationSidecar | None = None,
+    qa_translation_sidecar_path: Path | None = None,
+    qa_translation_sidecar_sha256: str | None = None,
     q3_temporal_policy: str = "none",
     q3_config: VideoConditionedKeyframeConfig | None = None,
     q3_anchor_refinement_config: Q3AnchorRefinementConfig | None = None,
@@ -492,6 +527,10 @@ def run_l21_150_baseline(
         raise ValueError("split must be dev, holdout, or all")
     if task not in {"kis", "qa", "trake", "all"}:
         raise ValueError("task must be kis, qa, trake, or all")
+    if qa_localization_language_policy not in {"legacy_vi", "en_only"}:
+        raise ValueError(
+            "qa_localization_language_policy must be legacy_vi or en_only"
+        )
     supported_kis_policies = {
         "vi_only",
         "translation_augmented_rrf",
@@ -542,6 +581,37 @@ def run_l21_150_baseline(
         split != "dev" or task != "qa" or not resolved_qa_grounding.enabled
     ):
         raise ValueError("QA-A3 requires QA DEV with QA-A1 evidence grounding enabled")
+    if qa_localization_language_policy == "en_only":
+        if split != "dev" or task != "qa" or not resolved_qa_grounding.enabled:
+            raise ValueError(
+                "QA EN_ONLY is restricted to DEV QA with QA-A1 evidence grounding"
+            )
+        if qa_translation_sidecar is None:
+            raise ValueError("QA EN_ONLY requires a validated frozen QA-D0 sidecar")
+        if (
+            qa_translation_sidecar_path is None
+            or qa_translation_sidecar_sha256 is None
+        ):
+            raise ValueError("QA EN_ONLY requires frozen sidecar path and SHA256")
+        actual_qa_sidecar_sha256 = hashlib.sha256(
+            Path(qa_translation_sidecar_path).read_bytes()
+        ).hexdigest()
+        if (
+            qa_translation_sidecar_sha256 != actual_qa_sidecar_sha256
+            or actual_qa_sidecar_sha256 != FROZEN_QA_D0_DEV_EN_SIDECAR_SHA256
+        ):
+            raise ValueError(
+                "QA sidecar SHA256 does not match the frozen QA-D0 DEV artifact"
+            )
+    elif any(
+        value is not None
+        for value in (
+            qa_translation_sidecar,
+            qa_translation_sidecar_path,
+            qa_translation_sidecar_sha256,
+        )
+    ):
+        raise ValueError("QA legacy_vi must not receive a translation sidecar")
     if resolved_trake_video_first.enabled and (split != "dev" or task != "trake"):
         raise ValueError("TR-A1 is restricted to the TRAKE DEV diagnostic experiment")
     if resolved_trake_shared_raw.enabled and (
@@ -714,6 +784,11 @@ def run_l21_150_baseline(
     kis_translations = (
         kis_query_sidecar.translations if kis_query_sidecar is not None else None
     )
+    qa_translations = (
+        qa_translation_sidecar.translations
+        if qa_translation_sidecar is not None
+        else None
+    )
     trake_translations = (
         trake_query_sidecar.translations
         if trake_query_sidecar is not None
@@ -729,6 +804,8 @@ def run_l21_150_baseline(
             refine_top_n,
             kis_query_policy=kis_query_policy,
             kis_translations=kis_translations,
+            qa_localization_language_policy=qa_localization_language_policy,
+            qa_translations=qa_translations,
             trake_language_policy=trake_language_policy,
             trake_translations=trake_translations,
         )
@@ -811,7 +888,9 @@ def run_l21_150_baseline(
         "en_only": "EN_ONLY",
     }[kis_query_policy]
     query_policy_changed_from_e0 = (
-        kis_query_policy != "vi_only" or trake_language_policy != "vi_only"
+        kis_query_policy != "vi_only"
+        or trake_language_policy != "vi_only"
+        or qa_localization_language_policy != "legacy_vi"
     )
     resolved_trake_query_policy = trake_language_policy.upper()
     production_algorithm_modified = (
@@ -871,6 +950,11 @@ def run_l21_150_baseline(
         "core_production_algorithm_modified": production_algorithm_modified,
         "kis_query_policy": resolved_kis_query_policy,
         "trake_query_policy": resolved_trake_query_policy,
+        "qa_localization_language_policy": (
+            "EN_ONLY"
+            if qa_localization_language_policy == "en_only"
+            else "LEGACY_VI"
+        ),
         "query_policy_changed_from_e0": query_policy_changed_from_e0,
         "runtime_contract": "OperationalKISRuntime public task handlers",
         "known_current_limitations": [
@@ -948,6 +1032,25 @@ def run_l21_150_baseline(
                 },
             }
         )
+    if qa_localization_language_policy == "en_only":
+        assert qa_translation_sidecar is not None
+        metadata["qa_localization_experiment"] = {
+            "qa_localization_policy": "EN_ONLY",
+            "include_vi_variant": False,
+            "localization_variant_count": 1,
+            "localization_language": "en",
+            "localization_variant_type": "english_translation",
+            "english_localization_provenance": "explicit_frozen_translation_input",
+            "question_language_for_answer_routing": "vi",
+            "question_en_populated": False,
+            "translation_sidecar_path": str(qa_translation_sidecar_path),
+            "translation_sidecar_sha256": qa_translation_sidecar_sha256,
+            "translation_status": qa_translation_sidecar.translation_status,
+            "localization_input_contract": "QUESTION_AS_LOCALIZATION_FALLBACK",
+            "source_vi_retained_for_answer_routing": True,
+            "source_vi_used_for_localization_retrieval": False,
+            "retrieval_feedback_used": False,
+        }
     if resolved_qa_object_provider.enabled:
         object_index = getattr(runtime, "object_artifact_index", None)
         metadata.update(
@@ -1150,6 +1253,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--trake-dev-en-sidecar", type=Path)
     parser.add_argument("--trake-rrf-constant", type=float, default=60.0)
     parser.add_argument("--qa-video-conditioned-evidence", action="store_true")
+    parser.add_argument(
+        "--qa-localization-language-policy",
+        choices=("legacy_vi", "en_only"),
+        default="legacy_vi",
+    )
+    parser.add_argument("--qa-dev-en-sidecar", type=Path)
     parser.add_argument("--qa-object-evidence", action="store_true")
     parser.add_argument("--qa-ocr-evidence", action="store_true")
     parser.add_argument("--qa-ocr-evidence-frame-budget", type=int, default=10)
@@ -1188,6 +1297,37 @@ def main(argv: list[str] | None = None) -> int:
             )
         benchmark = load_l21_150_benchmark(args.benchmark)
         benchmark_sha = hashlib.sha256(args.benchmark.read_bytes()).hexdigest()
+        qa_sidecar = None
+        qa_sidecar_sha = None
+        if args.qa_localization_language_policy == "en_only":
+            if (
+                args.split != "dev"
+                or args.task != "qa"
+                or not args.qa_video_conditioned_evidence
+            ):
+                raise ValueError(
+                    "QA EN_ONLY requires --split dev --task qa "
+                    "--qa-video-conditioned-evidence"
+                )
+            if args.qa_dev_en_sidecar is None:
+                raise ValueError("--qa-dev-en-sidecar is required for QA EN_ONLY")
+            qa_sidecar = load_qa_dev_translation_sidecar(
+                args.qa_dev_en_sidecar,
+                benchmark,
+                args.benchmark,
+            )
+            qa_sidecar_sha = hashlib.sha256(
+                args.qa_dev_en_sidecar.read_bytes()
+            ).hexdigest()
+            if qa_sidecar_sha != FROZEN_QA_D0_DEV_EN_SIDECAR_SHA256:
+                raise ValueError(
+                    "--qa-dev-en-sidecar does not match the frozen QA-D0 DEV SHA256"
+                )
+        elif args.qa_dev_en_sidecar is not None:
+            raise ValueError(
+                "--qa-dev-en-sidecar requires "
+                "--qa-localization-language-policy en_only"
+            )
         kis_sidecar = None
         kis_sidecar_sha = None
         if args.kis_query_policy in {"translation_augmented_rrf", "en_only"}:
@@ -1388,6 +1528,12 @@ def main(argv: list[str] | None = None) -> int:
                     kis_query_sidecar=kis_sidecar,
                     kis_query_sidecar_path=args.kis_query_sidecar,
                     kis_query_sidecar_sha256=kis_sidecar_sha,
+                    qa_localization_language_policy=(
+                        args.qa_localization_language_policy
+                    ),
+                    qa_translation_sidecar=qa_sidecar,
+                    qa_translation_sidecar_path=args.qa_dev_en_sidecar,
+                    qa_translation_sidecar_sha256=qa_sidecar_sha,
                     q3_temporal_policy=args.q3_temporal_policy,
                     q3_config=q3_config,
                     q3_anchor_refinement_config=q3_anchor_config,
@@ -1416,6 +1562,7 @@ def main(argv: list[str] | None = None) -> int:
         KISTranslationSidecarError,
         L21150FormatError,
         OSError,
+        QATranslationSidecarError,
         RuntimeError,
         TRAKENominationError,
         TRAKETranslationSidecarError,

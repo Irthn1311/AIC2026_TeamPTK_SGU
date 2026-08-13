@@ -626,6 +626,42 @@ def test_supported_answer_engine_receives_refined_grounding_evidence(
     assert "What color is the car?" not in encoder.text_calls[0]
 
 
+def test_qa_d1_en_only_changes_localization_only_and_records_diagnostics(
+    tmp_path: Path,
+) -> None:
+    engine = _RecordingQAEngine()
+    pipeline, encoder, legacy, _searcher, _refiner = _pipeline(
+        tmp_path,
+        qa_engine=engine,
+    )
+    request = QAQueryRequest(
+        request_id="qa-d1",
+        query_id="qa-d1",
+        event_description="Một chiếc xe dừng lại.",
+        question="Chiếc xe có màu gì?",
+        event_description_en="A car stops.",
+        question_en=None,
+        include_vi_variant=False,
+        output_top_k=10,
+        refine_top_n=1,
+    )
+    result, _timings, diagnostics = pipeline.process_qa_query(request)
+
+    assert len(result.predictions) == 1
+    assert encoder.text_calls[0] == ["A car stops."]
+    assert diagnostics["question_type"] == "COLOR"
+    assert diagnostics["qa_localization_policy"] == "EN_ONLY"
+    assert diagnostics["include_vi_variant"] is False
+    assert diagnostics["localization_variant_count"] == 1
+    assert diagnostics["localization_variant_languages"] == ["en"]
+    assert diagnostics["localization_variant_types"] == ["english_translation"]
+    assert diagnostics["localization_text_provenance"] == [
+        "explicit_event_description_en"
+    ]
+    assert diagnostics["answer_routing_question_language"] == "vi"
+    assert legacy.calls == 0
+
+
 def test_supported_pattern_without_provider_is_distinguished(tmp_path: Path) -> None:
     pipeline, _encoder, _legacy, _searcher, _refiner = _pipeline(tmp_path)
     pipeline.candidate_provider = _NoProvider()
