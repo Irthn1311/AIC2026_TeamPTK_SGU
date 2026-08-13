@@ -120,6 +120,7 @@ def main() -> int:
     asr_root = output_root / "asr"
     audio_root = output_root / "audio"
     object_root = keyframe_root / "object_v2"
+    object_index_root = keyframe_root / "indexes" / "object"
     index_root = output_root / "indexes"
 
     os.environ["AIC_DATA_ROOT"] = str(data_root)
@@ -221,7 +222,7 @@ def main() -> int:
             "--output-root",
             str(object_root),
             "--index-output",
-            str(index_root / "object"),
+            str(object_index_root),
             "--cache-dir",
             str(PROJECT_ROOT / ".model_cache"),
             "--device",

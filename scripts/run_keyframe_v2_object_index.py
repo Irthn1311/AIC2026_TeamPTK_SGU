@@ -187,6 +187,34 @@ def write_detection_visualizations(
     return saved
 
 
+def compact_object_stats(stats_json: dict[str, Any], *, top_label_limit: int = 15) -> dict[str, Any]:
+    """Keep notebook output readable while preserving the full JSON artifact on disk."""
+    video_summaries = []
+    for item in stats_json.get("video_stats", []):
+        video_summaries.append(
+            {
+                "video_id": item.get("video_id"),
+                "total_frames": item.get("total_frames"),
+                "frames_with_hybrid_detection": item.get("frames_with_hybrid_detection"),
+                "final_hybrid_detections": item.get("final_hybrid_detections"),
+                "text_clean_detections": item.get("text_clean_detections"),
+                "prompt_free_clean_detections": item.get("prompt_free_clean_detections"),
+                "visualizations_saved": item.get("visualizations_saved"),
+            }
+        )
+    return {
+        "total_keyframes": stats_json.get("total_keyframes"),
+        "total_detections": stats_json.get("total_detections"),
+        "unique_labels": stats_json.get("unique_labels"),
+        "top_labels": stats_json.get("top_labels", [])[:top_label_limit],
+        "videos": video_summaries,
+        "object_index": stats_json.get("object_index"),
+        "visualization_dir": stats_json.get("visualization_dir"),
+        "error_count": len(stats_json.get("errors", [])),
+        "elapsed_seconds": stats_json.get("elapsed_seconds"),
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run YOLOE Hybrid Object V2 over Keyframe V2 final keyframes.")
     parser.add_argument("--global-map", default=str(PROJECT_ROOT / "outputs" / "keyframe_v2_full" / "indexes" / "keyframe_v2_global_map.parquet"))
@@ -303,7 +331,7 @@ def main() -> None:
         encoding="utf-8",
     )
     pd.DataFrame(errors).to_csv(output_root / "object_v2_errors.csv", index=False, encoding="utf-8-sig")
-    print(json.dumps(stats_json, indent=2, ensure_ascii=False))
+    print(json.dumps(compact_object_stats(stats_json), indent=2, ensure_ascii=False))
 
     del detector
     gc.collect()
