@@ -29,7 +29,7 @@ class ExactFrameDecoder:
         if internal_frame_index < 0:
             raise ValueError("internal_frame_index must be non-negative")
         target = int(internal_frame_index)
-        if self.current_pos <= target <= self.current_pos + 300:
+        if self.current_pos <= target <= self.current_pos + 5:
             while self.current_pos < target:
                 if not self.cap.grab():
                     break
