@@ -305,8 +305,57 @@ def score_and_select_candidates(
     if write_candidate_images:
         candidate_img_dir.mkdir(parents=True, exist_ok=True)
 
+    pending_groups = []
+    pending_images = []
+    max_pending_images = max(
+        1,
+        int(cfg.get("candidates", {}).get("candidate_embed_batch_size", int(cfg.get("clip", {}).get("batch_size", 64)) * 8)),
+    )
+    selected_by_shot: dict[int, list[np.ndarray]] = {}
+
+    def flush_pending() -> None:
+        nonlocal pending_groups, pending_images
+        if not pending_groups:
+            return
+        all_embs = embedder.embed_images(pending_images)
+        cursor = 0
+        for group in pending_groups:
+            rows = group["rows"]
+            shot_id = int(group["shot_id"])
+            embs = all_embs[cursor : cursor + len(rows)]
+            cursor += len(rows)
+            reps = representative_scores(embs)
+            selected_in_shot = selected_by_shot.setdefault(shot_id, [])
+            for row, emb, rep in zip(rows, embs, reps):
+                frame_embeddings[int(row["candidate_frame_internal"])] = emb
+                max_sim, penalty, dup_status = duplicate_penalty(emb, selected_in_shot, soft_dup)
+                row["representative_score"] = float(rep)
+                row["temporal_score"] = temporal_score(int(row["candidate_frame_internal"]), int(row["target_frame"]), window_frames)
+                row["duplicate_similarity"] = max_sim
+                row["duplicate_penalty"] = penalty
+                row["duplicate_status"] = "duplicate_hard" if max_sim >= hard_dup else dup_status
+                row["final_score"] = final_score(row, cfg["scoring"])
+            valid = [r for r in rows if r["inside_margin_guard"] and r["duplicate_status"] != "duplicate_hard"]
+            if not valid:
+                valid = [r for r in rows if r["inside_margin_guard"]] or rows
+            winner = max(valid, key=lambda r: r["final_score"])
+            selected_in_shot.append(frame_embeddings[int(winner["candidate_frame_internal"])])
+            for row in rows:
+                if row is winner:
+                    row["selected"] = True
+                    row["reject_reason"] = ""
+                    selected_rows.append(row.copy())
+                elif row["duplicate_status"] == "duplicate_hard":
+                    row["reject_reason"] = "duplicate_hard"
+                elif not row["inside_margin_guard"]:
+                    row["reject_reason"] = "boundary_guard"
+                else:
+                    row["reject_reason"] = "lower_score"
+                candidates.append(row)
+        pending_groups = []
+        pending_images = []
+
     for shot in shots:
-        selected_in_shot: list[np.ndarray] = []
         for target in make_targets(shot.start_frame, shot.end_frame, fps, cfg["targets"]):
             guard = margin_guard(shot.start_frame, shot.end_frame, cfg["margin_guard"])
             frames = make_candidate_frames(target, shot.start_frame, shot.end_frame, fps, cfg["candidates"], guard)
@@ -324,7 +373,7 @@ def score_and_select_candidates(
                 candidate_image_path = candidate_img_dir / f"shot_{int(shot.shot_id):06d}_target_{int(target.target_id):03d}_frame_{fid:06d}.jpg"
                 if write_candidate_images:
                     cv2.imwrite(str(candidate_image_path), dec.image_bgr, [cv2.IMWRITE_JPEG_QUALITY, 90])
-                images.append(dec.image_bgr)
+                images.append(cv2.resize(dec.image_bgr, (224, 224), interpolation=cv2.INTER_CUBIC))
                 q = score_quality(dec.image_bgr, cfg["quality"])
                 row = {
                     "video_id": shot.video_id,
@@ -345,34 +394,11 @@ def score_and_select_candidates(
                     **q,
                 }
                 quality_rows.append(row)
-            embs = embedder.embed_images(images)
-            reps = representative_scores(embs)
-            for row, emb, rep in zip(quality_rows, embs, reps):
-                frame_embeddings[int(row["candidate_frame_internal"])] = emb
-                max_sim, penalty, dup_status = duplicate_penalty(emb, selected_in_shot, soft_dup)
-                row["representative_score"] = float(rep)
-                row["temporal_score"] = temporal_score(int(row["candidate_frame_internal"]), int(row["target_frame"]), window_frames)
-                row["duplicate_similarity"] = max_sim
-                row["duplicate_penalty"] = penalty
-                row["duplicate_status"] = "duplicate_hard" if max_sim >= hard_dup else dup_status
-                row["final_score"] = final_score(row, cfg["scoring"])
-            valid = [r for r in quality_rows if r["inside_margin_guard"] and r["duplicate_status"] != "duplicate_hard"]
-            if not valid:
-                valid = [r for r in quality_rows if r["inside_margin_guard"]] or quality_rows
-            winner = max(valid, key=lambda r: r["final_score"])
-            selected_in_shot.append(frame_embeddings[int(winner["candidate_frame_internal"])])
-            for row in quality_rows:
-                if row is winner:
-                    row["selected"] = True
-                    row["reject_reason"] = ""
-                    selected_rows.append(row.copy())
-                elif row["duplicate_status"] == "duplicate_hard":
-                    row["reject_reason"] = "duplicate_hard"
-                elif not row["inside_margin_guard"]:
-                    row["reject_reason"] = "boundary_guard"
-                else:
-                    row["reject_reason"] = "lower_score"
-                candidates.append(row)
+            pending_groups.append({"shot_id": int(shot.shot_id), "rows": quality_rows})
+            pending_images.extend(images)
+            if len(pending_images) >= max_pending_images:
+                flush_pending()
+    flush_pending()
     return candidates, selected_rows, frame_embeddings
 
 

@@ -265,6 +265,7 @@ def make_keyframe_config(data_root: Path, output_root: Path, video_roots: list[P
     shot_cfg["fallback_sampling_mode"] = "sequential"
     candidate_cfg = cfg.setdefault("candidates", {})
     candidate_cfg["save_candidate_frames"] = False
+    candidate_cfg["candidate_embed_batch_size"] = max(1, int(visual_batch_size) * 8)
     clip_cfg = cfg.setdefault("clip", {})
     clip_cfg["pretrained"] = ""
     clip_cfg["download_root"] = ".model_cache"

@@ -49,6 +49,7 @@ margin_guard:
 candidates:
   candidate_window_seconds: 0.5
   candidate_count: 7
+  candidate_embed_batch_size: 1024
   save_candidate_frames: false
 
 scoring:
