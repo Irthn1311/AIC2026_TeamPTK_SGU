@@ -14,10 +14,15 @@ def bounded_directories(
 ):
     queue = deque([(Path(root), 0)])
     visited = 0
+    resolved_seen: set[Path] = set()
     while queue:
         current, depth = queue.popleft()
-        if not current.is_dir() or current.is_symlink():
+        if not current.is_dir():
             continue
+        resolved = current.resolve()
+        if resolved in resolved_seen:
+            continue
+        resolved_seen.add(resolved)
         visited += 1
         if visited > max_directories:
             raise RuntimeError("input discovery exceeded its directory bound")
@@ -26,7 +31,7 @@ def bounded_directories(
             queue.extend(
                 (child, depth + 1)
                 for child in sorted(current.iterdir(), key=lambda path: path.name)
-                if child.is_dir() and not child.is_symlink()
+                if child.is_dir()
             )
 
 
@@ -48,10 +53,15 @@ def _root_candidates(
     queue = deque([(root, 0)])
     candidates: set[Path] = set()
     visited = 0
+    resolved_seen: set[Path] = set()
     while queue:
         current, depth = queue.popleft()
-        if not current.is_dir() or current.is_symlink():
+        if not current.is_dir():
             continue
+        resolved = current.resolve()
+        if resolved in resolved_seen:
+            continue
+        resolved_seen.add(resolved)
         visited += 1
         if visited > max_directories:
             raise RuntimeError("input root discovery exceeded its directory bound")
@@ -62,7 +72,7 @@ def _root_candidates(
             queue.extend(
                 (child, depth + 1)
                 for child in sorted(current.iterdir(), key=lambda path: path.name)
-                if child.is_dir() and not child.is_symlink()
+                if child.is_dir()
             )
     return candidates
 

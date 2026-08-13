@@ -226,6 +226,24 @@ def decode_raw_frames(video_path: Path, frame_ids: list[int]) -> list[tuple[int,
     return frames
 
 
+def render_actual_frame_sheet(
+    path: str | Path,
+    *,
+    title: str,
+    decoded_frames: list[tuple[int, np.ndarray]],
+) -> None:
+    """Render decoded raw frames without deriving or changing their frame identities."""
+    _contact_sheet(
+        Path(path),
+        title=title,
+        images=[image for _, image in decoded_frames],
+        labels=[f"actual_frame_idx={frame_id}" for frame_id, _ in decoded_frames],
+        columns=6,
+        tile_size=(256, 144),
+        quality=86,
+    )
+
+
 def requested_frame_ids(request: dict[str, Any], video: dict[str, Any]) -> list[int]:
     center = request.get("approx_original_frame_idx")
     if not isinstance(center, int) or isinstance(center, bool):
@@ -302,6 +320,7 @@ __all__ = [
     "decode_raw_frames",
     "evenly_spaced",
     "render_dense_requests",
+    "render_actual_frame_sheet",
     "render_overview_atlas",
     "requested_frame_ids",
 ]

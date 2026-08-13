@@ -1,0 +1,21 @@
+{
+  "registry_version": "TEAM_EVAL_v1",
+  "benchmarks": [
+    {
+      "benchmark_id": "DEV_L21_150",
+      "role": "PUBLIC_REGRESSION_DEBUG",
+      "scores_reported_separately": true
+    },
+    {
+      "benchmark_id": "DEV_CROSS_60",
+      "role": "PUBLIC_CROSS_LEVEL_DEVELOPMENT",
+      "scores_reported_separately": true
+    },
+    {
+      "benchmark_id": "SEALED_FINAL_30",
+      "role": "FINAL_HELDOUT_GATE",
+      "content_in_development_bundle": false
+    }
+  ],
+  "combined_unweighted_dev_score_allowed": false
+}
