@@ -323,13 +323,17 @@ def main() -> int:
 
     data_root = resolve_path(args.data_root)
     output_root = resolve_path(args.output_root)
-    keyframe_root = output_root / "keyframe_v2_full"
+    keyframe_root = output_root / ("keyframe_btc_full" if args.use_btc_keyframes else "keyframe_v2_full")
+    keyframe_global_map_name = "keyframe_btc_global_map.parquet" if args.use_btc_keyframes else "keyframe_v2_global_map.parquet"
+    visual_artifact_prefix = "l21_visual_btc" if args.use_btc_keyframes else "l21_visual_v2"
+    object_artifact_prefix = "l21_objects_btc" if args.use_btc_keyframes else "l21_objects_v2"
+    global_map_path = keyframe_root / "indexes" / keyframe_global_map_name
     ocr_v2_root = output_root / "ocr_v2_selected_keyframes"
     ocr_temporal_root = output_root / "ocr_temporal_v3_full_tracking"
     ocr_index_root = output_root / "indexes" / "ocr_temporal_v3_full_tracking"
     asr_root = output_root / "asr"
     audio_root = output_root / "audio"
-    object_root = keyframe_root / "object_v2"
+    object_root = keyframe_root / ("object_btc" if args.use_btc_keyframes else "object_v2")
     object_index_root = keyframe_root / "indexes" / "object"
     index_root = output_root / "indexes"
 
@@ -463,18 +467,18 @@ def main() -> int:
                 ))
             else:
                 records.append(run_step("keyframe v2", keyframe_cmd))
-        global_map_path = keyframe_root / "indexes" / "keyframe_v2_global_map.parquet"
+        keyframe_label = "BTC keyframes" if args.use_btc_keyframes else "Keyframe V2"
         if not global_map_path.is_file():
-            raise FileNotFoundError(f"Keyframe V2 did not create global map: {global_map_path}")
+            raise FileNotFoundError(f"{keyframe_label} did not create global map: {global_map_path}")
         try:
             import pandas as pd
 
             global_rows = len(pd.read_parquet(global_map_path))
         except Exception as exc:
-            raise RuntimeError(f"Cannot read Keyframe V2 global map: {global_map_path}: {exc}") from exc
+            raise RuntimeError(f"Cannot read {keyframe_label} global map: {global_map_path}: {exc}") from exc
         if global_rows <= 0:
             raise RuntimeError(
-                f"Keyframe V2 produced 0 keyframes at {global_map_path}; "
+                f"{keyframe_label} produced 0 keyframes at {global_map_path}; "
                 "stopping before Visual/Object/OCR/ASR packaging."
             )
         records.append(run_step(
@@ -483,13 +487,15 @@ def main() -> int:
                 py,
                 "scripts/build_keyframe_v2_visual_index.py",
                 "--global-map",
-                str(keyframe_root / "indexes" / "keyframe_v2_global_map.parquet"),
+                str(global_map_path),
                 "--config",
                 str(keyframe_config),
                 "--output-dir",
                 str(keyframe_root / "indexes" / "visual"),
                 "--batch-size",
                 str(args.visual_batch_size),
+                "--artifact-prefix",
+                visual_artifact_prefix,
             ],
         ))
 
@@ -498,7 +504,7 @@ def main() -> int:
             py,
             "scripts/run_keyframe_v2_object_index.py",
             "--global-map",
-            str(keyframe_root / "indexes" / "keyframe_v2_global_map.parquet"),
+            str(global_map_path),
             "--output-root",
             str(object_root),
             "--index-output",
@@ -509,6 +515,8 @@ def main() -> int:
             args.device,
             "--visualization-limit",
             str(args.object_visualization_limit),
+            "--artifact-prefix",
+            object_artifact_prefix,
         ]
         if not args.full:
             cmd.extend(["--limit-frames", os.environ.get("AIC_OBJECT_SMOKE_FRAME_LIMIT", "100")])
@@ -522,7 +530,7 @@ def main() -> int:
                 try:
                     import pandas as pd
 
-                    global_df = pd.read_parquet(keyframe_root / "indexes" / "keyframe_v2_global_map.parquet")
+                    global_df = pd.read_parquet(global_map_path)
                     global_df[global_df["video_id"].astype(str).isin(shard_video_ids)].to_parquet(shard_map, index=False)
                 except Exception as exc:
                     raise RuntimeError(f"Cannot create object shard map for GPU {gpu_id}: {exc}") from exc
@@ -537,12 +545,14 @@ def main() -> int:
                     py,
                     "scripts/run_keyframe_v2_object_index.py",
                     "--global-map",
-                    str(keyframe_root / "indexes" / "keyframe_v2_global_map.parquet"),
+                    str(global_map_path),
                     "--output-root",
                     str(object_root),
                     "--index-output",
                     str(object_index_root),
                     "--aggregate-only",
+                    "--artifact-prefix",
+                    object_artifact_prefix,
                 ],
             ))
         else:

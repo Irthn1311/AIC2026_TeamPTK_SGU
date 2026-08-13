@@ -62,11 +62,11 @@ def _build_groups() -> list[OutputGroup]:
     output_root = _resolve(os.environ.get("AIC_OUTPUT_ROOT", "artifacts"))
     return [
         OutputGroup("artifacts", output_root),
-        OutputGroup("keyframe_v2", _resolve(os.environ.get("AIC_KEYFRAME_OUTPUT_ROOT", output_root / "keyframe_v2_full"))),
+        OutputGroup("keyframes", _resolve(os.environ.get("AIC_KEYFRAME_OUTPUT_ROOT", output_root / "keyframe_v2_full"))),
         OutputGroup("ocr_v2_selected", _resolve(os.environ.get("AIC_OCR_V2_OUTPUT_ROOT", output_root / "ocr_v2_selected_keyframes"))),
         OutputGroup("ocr_temporal_v3", _resolve(os.environ.get("AIC_OCR_TEMPORAL_OUTPUT_ROOT", output_root / "ocr_temporal_v3_full_tracking"))),
         OutputGroup("asr", _resolve(os.environ.get("AIC_ASR_OUTPUT_ROOT", output_root / "asr"))),
-        OutputGroup("object_v2", _resolve(os.environ.get("AIC_OBJECT_OUTPUT_ROOT", output_root / "keyframe_v2_full" / "object_v2"))),
+        OutputGroup("objects", _resolve(os.environ.get("AIC_OBJECT_OUTPUT_ROOT", output_root / "keyframe_v2_full" / "object_v2"))),
         OutputGroup("indexes", _resolve(os.environ.get("AIC_INDEX_OUTPUT_ROOT", output_root / "indexes"))),
         OutputGroup("packages", output_root),
         OutputGroup("stage0_audit", _resolve(os.environ.get("AIC_AUDIT_OUTPUT_ROOT", "triage_eg_stage0_audit"))),

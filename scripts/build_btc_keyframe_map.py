@@ -102,6 +102,7 @@ def build_video_rows(data_root: Path, output_root: Path, video_id: str, start_gl
                 "video_id": video_id,
                 "keyframe_v2_idx": local_idx,
                 "actual_frame_id": actual_frame_id,
+                "frame_idx": actual_frame_id,
                 "timestamp_sec": timestamp_sec,
                 "image_path": str(image_path),
                 "shot_id": local_idx,
@@ -122,13 +123,14 @@ def build_video_rows(data_root: Path, output_root: Path, video_id: str, start_gl
             "video_id": video_df["video_id"] if not video_df.empty else [],
             "keyframe_v2_idx": video_df["keyframe_v2_idx"] if not video_df.empty else [],
             "actual_frame_id": video_df["actual_frame_id"] if not video_df.empty else [],
+            "frame_idx": video_df["frame_idx"] if not video_df.empty else [],
             "timestamp_ms": (video_df["timestamp_sec"] * 1000).round().astype(int) if not video_df.empty else [],
             "shot_id": video_df["shot_id"] if not video_df.empty else [],
             "image_path": video_df["image_path"] if not video_df.empty else [],
         }
     )
-    map_df.to_csv(out_video / "keyframe_v2_map.csv", index=False, encoding="utf-8-sig")
-    map_df.to_parquet(out_video / "keyframe_v2_map.parquet", index=False)
+    map_df.to_csv(out_video / "keyframe_btc_map.csv", index=False, encoding="utf-8-sig")
+    map_df.to_parquet(out_video / "keyframe_btc_map.parquet", index=False)
     video_df.to_csv(out_video / "final_keyframes.csv", index=False, encoding="utf-8-sig")
     summary = {
         "video_id": video_id,
@@ -142,9 +144,9 @@ def build_video_rows(data_root: Path, output_root: Path, video_id: str, start_gl
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Build keyframe_v2-compatible maps from provided BTC keyframes.")
+    parser = argparse.ArgumentParser(description="Build pipeline-compatible maps from provided BTC keyframes.")
     parser.add_argument("--data-root", default="/kaggle/input/datasets/nadkli/dataset-aic")
-    parser.add_argument("--output", default="/kaggle/working/artifacts/keyframe_v2_full")
+    parser.add_argument("--output", default="/kaggle/working/artifacts/keyframe_btc_full")
     parser.add_argument("--video-id", action="append", default=[])
     parser.add_argument("--limit", type=int)
     args = parser.parse_args()
@@ -179,8 +181,8 @@ def main() -> int:
     global_df = pd.DataFrame(all_rows)
     if global_df.empty:
         raise RuntimeError(f"BTC keyframe map produced 0 rows. errors={errors[:5]}")
-    global_df.to_csv(index_dir / "keyframe_v2_global_map.csv", index=False, encoding="utf-8-sig")
-    global_df.to_parquet(index_dir / "keyframe_v2_global_map.parquet", index=False)
+    global_df.to_csv(index_dir / "keyframe_btc_global_map.csv", index=False, encoding="utf-8-sig")
+    global_df.to_parquet(index_dir / "keyframe_btc_global_map.parquet", index=False)
     report = {
         "source": "btc_keyframe",
         "data_root": str(data_root),

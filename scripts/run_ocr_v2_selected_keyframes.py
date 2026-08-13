@@ -56,7 +56,9 @@ def load_selected_keyframes(selected_root: Path, video_ids: list[str] | None) ->
 
     rows: list[dict[str, Any]] = []
     for video_dir in video_dirs:
-        map_path = video_dir / "keyframe_v2_map.csv"
+        map_path = video_dir / "keyframe_btc_map.csv"
+        if not map_path.exists():
+            map_path = video_dir / "keyframe_v2_map.csv"
         if map_path.exists():
             df = pd.read_csv(map_path)
             for idx, row in df.iterrows():

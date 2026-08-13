@@ -156,7 +156,10 @@ def select_evenly(rows: list[Any], limit: int) -> list[Any]:
 
 
 def render_keyframes(output_root: Path, report_dir: Path, limit: int) -> tuple[str, dict[str, Any]]:
-    path = output_root / "keyframe_v2_full" / "indexes" / "keyframe_v2_global_map.parquet"
+    keyframe_root = Path(os.environ.get("AIC_KEYFRAME_OUTPUT_ROOT", output_root / "keyframe_v2_full"))
+    btc_path = keyframe_root / "indexes" / "keyframe_btc_global_map.parquet"
+    v2_path = keyframe_root / "indexes" / "keyframe_v2_global_map.parquet"
+    path = btc_path if btc_path.is_file() else v2_path
     if not path.is_file():
         return card("Keyframes", "<p class='muted'>Chưa có global map.</p>"), {"keyframes": "missing"}
     df = pd.read_parquet(path)
@@ -175,7 +178,10 @@ def render_keyframes(output_root: Path, report_dir: Path, limit: int) -> tuple[s
 
 
 def render_object(output_root: Path, report_dir: Path, limit: int) -> tuple[str, dict[str, Any]]:
-    path = output_root / "keyframe_v2_full" / "object_v2" / "l21_objects_v2_detections.parquet"
+    object_root = Path(os.environ.get("AIC_OBJECT_OUTPUT_ROOT", output_root / "keyframe_v2_full" / "object_v2"))
+    btc_path = object_root / "l21_objects_btc_detections.parquet"
+    v2_path = object_root / "l21_objects_v2_detections.parquet"
+    path = btc_path if btc_path.is_file() else v2_path
     if not path.is_file():
         return card("Object V2", "<p class='muted'>Chưa có object detections.</p>"), {"object_detections": "missing"}
     df = pd.read_parquet(path)

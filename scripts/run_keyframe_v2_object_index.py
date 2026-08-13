@@ -215,7 +215,7 @@ def compact_object_stats(stats_json: dict[str, Any], *, top_label_limit: int = 1
     }
 
 
-def aggregate_detection_outputs(output_root: Path, index_output: Path, started: float) -> dict[str, Any]:
+def aggregate_detection_outputs(output_root: Path, index_output: Path, started: float, artifact_prefix: str) -> dict[str, Any]:
     detections_dir = output_root / "detections"
     detection_paths = sorted(path for path in detections_dir.glob("L*_V*.parquet") if not path.name.endswith("_records.parquet"))
     corpus_paths = sorted(detections_dir.glob("L*_V*_records.parquet"))
@@ -227,10 +227,10 @@ def aggregate_detection_outputs(output_root: Path, index_output: Path, started: 
         corpus_all = corpus_all.sort_values("global_v2_id").reset_index(drop=True)
     if not det_all.empty and "global_v2_id" in det_all.columns:
         det_all = det_all.sort_values(["global_v2_id", "detection_index"]).reset_index(drop=True)
-    det_all.to_parquet(output_root / "l21_objects_v2_detections.parquet", index=False)
-    corpus_all.to_parquet(output_root / "l21_objects_v2.parquet", index=False)
-    corpus_all.to_parquet(index_output / "l21_objects_v2.parquet", index=False)
-    _, idx_meta = build_object_index(index_output / "l21_objects_v2.parquet", index_output)
+    det_all.to_parquet(output_root / f"{artifact_prefix}_detections.parquet", index=False)
+    corpus_all.to_parquet(output_root / f"{artifact_prefix}.parquet", index=False)
+    corpus_all.to_parquet(index_output / f"{artifact_prefix}.parquet", index=False)
+    _, idx_meta = build_object_index(index_output / f"{artifact_prefix}.parquet", index_output)
     label_counts = Counter(det_all["object_label"].astype(str)) if not det_all.empty else Counter()
     stats_json = {
         "total_keyframes": int(len(corpus_all)),
@@ -244,7 +244,7 @@ def aggregate_detection_outputs(output_root: Path, index_output: Path, started: 
         "mode": "aggregate_only",
         "elapsed_seconds": round(time.time() - started, 3),
     }
-    (output_root / "object_v2_stats.json").write_text(json.dumps(stats_json, indent=2, ensure_ascii=False), encoding="utf-8")
+    (output_root / f"{artifact_prefix}_stats.json").write_text(json.dumps(stats_json, indent=2, ensure_ascii=False), encoding="utf-8")
     return stats_json
 
 
@@ -266,6 +266,7 @@ def main() -> None:
     parser.add_argument("--visualization-limit", type=int, default=None, help="Max bbox images to write. Use -1 for all.")
     parser.add_argument("--no-aggregate", action="store_true", help="Write per-video parquet files only. Useful for GPU sharded runs.")
     parser.add_argument("--aggregate-only", action="store_true", help="Merge existing per-video parquet files and build object index.")
+    parser.add_argument("--artifact-prefix", default="l21_objects_v2")
     args = parser.parse_args()
 
     started = time.time()
@@ -288,7 +289,7 @@ def main() -> None:
     index_output.mkdir(parents=True, exist_ok=True)
 
     if args.aggregate_only:
-        stats_json = aggregate_detection_outputs(output_root, index_output, started)
+        stats_json = aggregate_detection_outputs(output_root, index_output, started, args.artifact_prefix)
         print(json.dumps(compact_object_stats(stats_json), indent=2, ensure_ascii=False))
         return
 
@@ -352,11 +353,11 @@ def main() -> None:
 
     det_all = pd.DataFrame(all_detection_rows)
     corpus_all = pd.DataFrame(all_corpus_rows)
-    det_all.to_parquet(output_root / "l21_objects_v2_detections.parquet", index=False)
-    corpus_all.to_parquet(output_root / "l21_objects_v2.parquet", index=False)
-    corpus_all.to_parquet(index_output / "l21_objects_v2.parquet", index=False)
+    det_all.to_parquet(output_root / f"{args.artifact_prefix}_detections.parquet", index=False)
+    corpus_all.to_parquet(output_root / f"{args.artifact_prefix}.parquet", index=False)
+    corpus_all.to_parquet(index_output / f"{args.artifact_prefix}.parquet", index=False)
 
-    _, idx_meta = build_object_index(index_output / "l21_objects_v2.parquet", index_output)
+    _, idx_meta = build_object_index(index_output / f"{args.artifact_prefix}.parquet", index_output)
     label_counts = Counter(det_all["object_label"].astype(str)) if not det_all.empty else Counter()
     stats_json = {
         "total_keyframes": int(len(corpus_all)),
@@ -369,8 +370,8 @@ def main() -> None:
         "errors": errors,
         "elapsed_seconds": round(time.time() - started, 3),
     }
-    (output_root / "object_v2_stats.json").write_text(json.dumps(stats_json, indent=2, ensure_ascii=False), encoding="utf-8")
-    (output_root / "object_v2_metadata.json").write_text(
+    (output_root / f"{args.artifact_prefix}_stats.json").write_text(json.dumps(stats_json, indent=2, ensure_ascii=False), encoding="utf-8")
+    (output_root / f"{args.artifact_prefix}_metadata.json").write_text(
         json.dumps(
             {
                 "global_map": str(Path(args.global_map).resolve()),
@@ -386,7 +387,7 @@ def main() -> None:
         ),
         encoding="utf-8",
     )
-    pd.DataFrame(errors).to_csv(output_root / "object_v2_errors.csv", index=False, encoding="utf-8-sig")
+    pd.DataFrame(errors).to_csv(output_root / f"{args.artifact_prefix}_errors.csv", index=False, encoding="utf-8-sig")
     print(json.dumps(compact_object_stats(stats_json), indent=2, ensure_ascii=False))
 
     del detector

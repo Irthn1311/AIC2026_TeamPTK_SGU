@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import tarfile
 import zipfile
 from datetime import datetime, timezone
@@ -23,10 +24,18 @@ def file_info(path: Path, root: Path) -> dict[str, object]:
 
 
 def required_index_files(output_root: Path) -> list[Path]:
+    keyframe_root = resolve(os.environ.get("AIC_KEYFRAME_OUTPUT_ROOT", output_root / "keyframe_v2_full"))
+    btc_map = keyframe_root / "indexes" / "keyframe_btc_global_map.parquet"
+    v2_map = keyframe_root / "indexes" / "keyframe_v2_global_map.parquet"
+    keyframe_map = btc_map if btc_map.is_file() else v2_map
+    visual_btc = keyframe_root / "indexes" / "visual" / "l21_visual_btc_flat_ip.faiss"
+    visual_v2 = keyframe_root / "indexes" / "visual" / "l21_visual_v2_flat_ip.faiss"
+    objects_btc = keyframe_root / "indexes" / "object" / "l21_objects_btc.parquet"
+    objects_v2 = keyframe_root / "indexes" / "object" / "l21_objects_v2.parquet"
     return [
-        output_root / "keyframe_v2_full" / "indexes" / "keyframe_v2_global_map.parquet",
-        output_root / "keyframe_v2_full" / "indexes" / "visual" / "l21_visual_v2_flat_ip.faiss",
-        output_root / "keyframe_v2_full" / "indexes" / "object" / "l21_objects_v2.parquet",
+        keyframe_map,
+        visual_btc if visual_btc.is_file() else visual_v2,
+        objects_btc if objects_btc.is_file() else objects_v2,
         output_root / "indexes" / "ocr_temporal_v3_full_tracking" / "l21_ocr_temporal_v3_flat_ip.faiss",
         output_root / "indexes" / "ocr_temporal_v3_full_tracking" / "l21_ocr_temporal_v3_corpus.parquet",
         output_root / "indexes" / "asr_v3" / "l21_asr_v3_flat_ip.faiss",
@@ -56,7 +65,9 @@ def zip_files(paths: list[Path], output_path: Path, root: Path) -> None:
 
 def tar_keyframes(keyframe_root: Path, output_path: Path) -> int:
     image_paths = []
-    map_path = keyframe_root / "indexes" / "keyframe_v2_global_map.parquet"
+    btc_map = keyframe_root / "indexes" / "keyframe_btc_global_map.parquet"
+    v2_map = keyframe_root / "indexes" / "keyframe_v2_global_map.parquet"
+    map_path = btc_map if btc_map.is_file() else v2_map
     if map_path.is_file():
         import pandas as pd
 
@@ -77,7 +88,7 @@ def tar_keyframes(keyframe_root: Path, output_path: Path) -> int:
                 arcname = path.relative_to(keyframe_root.parent).as_posix()
             else:
                 video_id = path.parent.name
-                arcname = f"keyframe_v2_full/{video_id}/keyframes/{path.name}"
+                arcname = f"{keyframe_root.name}/{video_id}/keyframes/{path.name}"
             tf.add(path, arcname)
     return len(image_paths)
 
@@ -105,7 +116,8 @@ def main() -> int:
         return 2
 
     zip_files(ok_files, indices_zip, output_root)
-    keyframe_count = tar_keyframes(output_root / "keyframe_v2_full", keyframes_tar)
+    keyframe_root = resolve(os.environ.get("AIC_KEYFRAME_OUTPUT_ROOT", output_root / "keyframe_v2_full"))
+    keyframe_count = tar_keyframes(keyframe_root, keyframes_tar)
 
     report = {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),

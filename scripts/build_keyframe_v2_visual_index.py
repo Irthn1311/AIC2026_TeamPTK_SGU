@@ -21,6 +21,7 @@ def main() -> None:
     parser.add_argument("--config", default=str(PROJECT_ROOT / "configs" / "keyframe_v2.yaml"))
     parser.add_argument("--output-dir", default=str(PROJECT_ROOT / "outputs" / "keyframe_v2_full" / "indexes" / "visual"))
     parser.add_argument("--batch-size", type=int, default=32)
+    parser.add_argument("--artifact-prefix", default="l21_visual_v2")
     args = parser.parse_args()
 
     started = time.time()
@@ -58,7 +59,7 @@ def main() -> None:
 
     if index is None:
         raise RuntimeError("No V2 keyframes encoded.")
-    faiss.write_index(index, str(output_dir / "l21_visual_v2_flat_ip.faiss"))
+    faiss.write_index(index, str(output_dir / f"{args.artifact_prefix}_flat_ip.faiss"))
     meta = {
         "index_type": "IndexFlatIP",
         "metric": "IP",
@@ -69,7 +70,7 @@ def main() -> None:
         "clip_info": scorer.info,
         "elapsed_seconds": round(time.time() - started, 3),
     }
-    (output_dir / "l21_visual_v2_metadata.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+    (output_dir / f"{args.artifact_prefix}_metadata.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
     print(json.dumps(meta, indent=2, ensure_ascii=False))
 
 
