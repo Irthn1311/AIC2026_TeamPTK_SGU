@@ -113,8 +113,36 @@ class SelectedRefinementOutcome:
 
 
 @dataclass(frozen=True, slots=True)
+class SharedRefinementGroup:
+    """One semantic scoring group inside a shared raw-decode query batch."""
+
+    query_id: str
+    variants: tuple[QueryVariant, ...]
+    candidates: tuple[Phase3Candidate, ...]
+    text_embeddings: NDArray[np.float32]
+
+
+@dataclass(frozen=True, slots=True)
+class SharedRefinementBatchOutcome:
+    groups: tuple[SelectedRefinementOutcome, ...]
+    timings: Mapping[str, float | int | bool]
+
+
+@dataclass(frozen=True, slots=True)
 class _SelectedAnchorWork:
     candidate: Phase3Candidate
+    probe: VideoProbe
+    window_start: int
+    window_end: int
+    coarse_ids: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _SharedCandidateWork:
+    group_index: int
+    candidate: Phase3Candidate
+    variants: tuple[QueryVariant, ...]
+    text_embeddings: NDArray[np.float32]
     probe: VideoProbe
     window_start: int
     window_end: int
@@ -514,6 +542,409 @@ class ExactFrameRefiner:
             warnings=tuple(sorted(set(warnings))),
             timings=metrics,
         )
+
+    def refine_shared_candidate_groups(
+        self,
+        groups: tuple[SharedRefinementGroup, ...],
+        *,
+        config: RefinementConfig,
+        frame_embedding_cache: FrameEmbeddingCache | None = None,
+    ) -> SharedRefinementBatchOutcome:
+        """Refine semantic groups while sharing exact raw frames within one query.
+
+        Sampling, scoring, fusion, and candidate failure policies are identical to
+        the legacy candidate refiner.  Only raw decode orchestration is shared.
+        """
+        started = self.clock()
+        if not groups:
+            raise ValueError("shared refinement requires at least one group")
+        resolved_embedding_cache: FrameEmbeddingCache = (
+            frame_embedding_cache if frame_embedding_cache is not None else {}
+        )
+        raw_frame_cache: dict[tuple[str, int], DecodedFrame] = {}
+        records: list[list[RefinedCandidate]] = [[] for _ in groups]
+        warnings: list[list[str]] = [[] for _ in groups]
+        works: list[_SharedCandidateWork] = []
+        candidate_node_count = 0
+        raw_decode_before = 0
+
+        for group_index, group in enumerate(groups):
+            self._validate_shared_group(group)
+            candidate_node_count += len(group.candidates)
+            raw_decode_before += 2 * len(group.candidates)
+            for candidate in group.candidates:
+                try:
+                    raw_record = self.raw_videos.get(candidate.video_id)
+                except Exception as exc:
+                    record = self._handle_candidate_failure(candidate, exc, config)
+                    records[group_index].append(record)
+                    warnings[group_index].extend(record.warnings)
+                    continue
+                if raw_record.raw_video_path is None:
+                    record = self._handle_missing_raw(candidate, raw_record, config)
+                    records[group_index].append(record)
+                    warnings[group_index].extend(record.warnings)
+                    continue
+                try:
+                    probe = self._probe_cache.get(candidate.video_id)
+                    if probe is None:
+                        probe = self.decoder.probe(raw_record)
+                        self._probe_cache[candidate.video_id] = probe
+                    selected = self._selected_anchor_work(candidate, probe, config)
+                    works.append(
+                        _SharedCandidateWork(
+                            group_index=group_index,
+                            candidate=candidate,
+                            variants=group.variants,
+                            text_embeddings=group.text_embeddings,
+                            probe=probe,
+                            window_start=selected.window_start,
+                            window_end=selected.window_end,
+                            coarse_ids=selected.coarse_ids,
+                        )
+                    )
+                except Exception as exc:
+                    record = self._handle_candidate_failure(
+                        candidate,
+                        exc,
+                        config,
+                        raw_video_path=raw_record.raw_video_path,
+                    )
+                    records[group_index].append(record)
+                    warnings[group_index].extend(record.warnings)
+
+        telemetry: dict[str, float | int | bool] = {
+            "shared_raw_region_refinement_enabled": True,
+            "refinement_candidate_node_count": candidate_node_count,
+            "unique_video_count": len(
+                {
+                    candidate.video_id
+                    for group in groups
+                    for candidate in group.candidates
+                }
+            ),
+            "coarse_requested_frame_count": sum(len(work.coarse_ids) for work in works),
+            "coarse_unique_requested_frame_count": len(
+                {(work.candidate.video_id, frame) for work in works for frame in work.coarse_ids}
+            ),
+            "fine_requested_frame_count": 0,
+            "fine_unique_requested_frame_count": 0,
+            "raw_decode_request_count_before_estimate": raw_decode_before,
+            "raw_decode_request_count_actual": 0,
+            "decoded_frame_count_actual": 0,
+            "frame_cache_hit_count": 0,
+            "frame_embedding_cache_hit_count": 0,
+            "coalesced_region_count": 0,
+        }
+
+        fine_by_work: dict[tuple[int, int], tuple[int, ...]] = {}
+        coarse_warnings: dict[tuple[int, int], tuple[str, ...]] = {}
+        active: list[_SharedCandidateWork] = []
+        for video_id in sorted({work.candidate.video_id for work in works}):
+            video_works = tuple(work for work in works if work.candidate.video_id == video_id)
+            requests = tuple((work, work.coarse_ids) for work in video_works)
+            for region in self._merge_shared_stage_regions(
+                requests,
+                max_span=config.max_decoded_frames_per_candidate,
+            ):
+                telemetry["coalesced_region_count"] += 1
+                try:
+                    frames, region_warnings = self._decode_shared_stage_region(
+                        region,
+                        raw_frame_cache=raw_frame_cache,
+                        config=config,
+                        coarse=True,
+                        telemetry=telemetry,
+                    )
+                    embedding_hits = sum(len(ids) for _, ids in region) - len(frames)
+                    embedding_hits += sum(
+                        (video_id, frame.absolute_frame_id) in resolved_embedding_cache
+                        for frame in frames
+                    )
+                    telemetry["frame_embedding_cache_hit_count"] += embedding_hits
+                    embeddings = _encode_frames_with_cache(
+                        video_id=video_id,
+                        frames=frames,
+                        encoder=self.encoder,
+                        batch_size=config.image_batch_size,
+                        frame_embedding_cache=resolved_embedding_cache,
+                    )
+                    embedding_by_id = {
+                        frame.absolute_frame_id: embeddings[index]
+                        for index, frame in enumerate(frames)
+                    }
+                    region_fine: dict[tuple[int, int], tuple[int, ...]] = {}
+                    region_coarse_warnings: dict[
+                        tuple[int, int], tuple[str, ...]
+                    ] = {}
+                    region_active: list[_SharedCandidateWork] = []
+                    for work, requested_ids in region:
+                        candidate_embeddings = np.vstack(
+                            [embedding_by_id[frame_id] for frame_id in requested_ids]
+                        ).astype(np.float32)
+                        ranked = fuse_local_frame_rankings(
+                            requested_ids,
+                            candidate_embeddings,
+                            work.variants,
+                            work.text_embeddings,
+                            rrf_constant=config.rrf_constant,
+                        )
+                        winners = tuple(
+                            item.absolute_frame_id for item in ranked[: config.coarse_top_n]
+                        )
+                        key = (work.group_index, work.candidate.rank)
+                        region_fine[key] = fine_frame_ids(
+                            winners,
+                            window_start=work.window_start,
+                            window_end=work.window_end,
+                            radius=config.fine_radius_frames,
+                            stride=config.fine_stride_frames,
+                        )
+                        region_coarse_warnings[key] = region_warnings
+                        region_active.append(work)
+                    fine_by_work.update(region_fine)
+                    coarse_warnings.update(region_coarse_warnings)
+                    active.extend(region_active)
+                except Exception:
+                    self._legacy_fallback_region(
+                        region,
+                        records=records,
+                        warnings=warnings,
+                        config=config,
+                        frame_embedding_cache=resolved_embedding_cache,
+                    )
+
+        telemetry["fine_requested_frame_count"] = sum(
+            len(fine_by_work[(work.group_index, work.candidate.rank)]) for work in active
+        )
+        telemetry["fine_unique_requested_frame_count"] = len(
+            {
+                (work.candidate.video_id, frame)
+                for work in active
+                for frame in fine_by_work[(work.group_index, work.candidate.rank)]
+            }
+        )
+
+        for video_id in sorted({work.candidate.video_id for work in active}):
+            video_works = tuple(work for work in active if work.candidate.video_id == video_id)
+            requests = tuple(
+                (work, fine_by_work[(work.group_index, work.candidate.rank)])
+                for work in video_works
+            )
+            for region in self._merge_shared_stage_regions(
+                requests,
+                max_span=config.max_decoded_frames_per_candidate,
+            ):
+                telemetry["coalesced_region_count"] += 1
+                try:
+                    frames, region_warnings = self._decode_shared_stage_region(
+                        region,
+                        raw_frame_cache=raw_frame_cache,
+                        config=config,
+                        coarse=False,
+                        telemetry=telemetry,
+                    )
+                    embedding_hits = sum(len(ids) for _, ids in region) - len(frames)
+                    embedding_hits += sum(
+                        (video_id, frame.absolute_frame_id) in resolved_embedding_cache
+                        for frame in frames
+                    )
+                    telemetry["frame_embedding_cache_hit_count"] += embedding_hits
+                    embeddings = _encode_frames_with_cache(
+                        video_id=video_id,
+                        frames=frames,
+                        encoder=self.encoder,
+                        batch_size=config.image_batch_size,
+                        frame_embedding_cache=resolved_embedding_cache,
+                    )
+                    embedding_by_id = {
+                        frame.absolute_frame_id: embeddings[index]
+                        for index, frame in enumerate(frames)
+                    }
+                    region_records: list[tuple[int, RefinedCandidate]] = []
+                    for work, requested_ids in region:
+                        candidate_embeddings = np.vstack(
+                            [embedding_by_id[frame_id] for frame_id in requested_ids]
+                        ).astype(np.float32)
+                        ranked = fuse_local_frame_rankings(
+                            requested_ids,
+                            candidate_embeddings,
+                            work.variants,
+                            work.text_embeddings,
+                            rrf_constant=config.rrf_constant,
+                        )
+                        winner = ranked[0]
+                        key = (work.group_index, work.candidate.rank)
+                        record = RefinedCandidate(
+                            query_id=work.candidate.query_id,
+                            original_candidate_rank=work.candidate.rank,
+                            video_id=video_id,
+                            candidate_frame_id=work.candidate.frame_id,
+                            refined_frame_id=winner.absolute_frame_id,
+                            candidate_timestamp_seconds=(
+                                work.candidate.frame_id / work.probe.fps
+                            ),
+                            refined_timestamp_seconds=(
+                                winner.absolute_frame_id / work.probe.fps
+                            ),
+                            fps=work.probe.fps,
+                            total_frame_count=work.probe.total_frame_count,
+                            window_start_frame=work.window_start,
+                            window_end_frame=work.window_end,
+                            coarse_frame_ids=work.coarse_ids,
+                            fine_frame_ids=requested_ids,
+                            coarse_sample_count=len(work.coarse_ids),
+                            fine_sample_count=len(requested_ids),
+                            decoded_frame_count=len(work.coarse_ids) + len(requested_ids),
+                            encoded_image_count=len(work.coarse_ids) + len(requested_ids),
+                            refinement_fusion_score=winner.fusion_score,
+                            variant_hit_count=winner.variant_hit_count,
+                            best_individual_rank=winner.best_individual_rank,
+                            per_variant_provenance=winner.per_variant_provenance,
+                            decoder_backend=work.probe.decoder_backend,
+                            raw_video_path=work.probe.raw_video_path,
+                            status=RefinementStatus.REFINED,
+                            warnings=tuple(
+                                sorted(set((*coarse_warnings[key], *region_warnings)))
+                            ),
+                            failure_reason=None,
+                            original_retrieval_provenance=(
+                                work.candidate.retrieval_provenance
+                            ),
+                            timings=_empty_candidate_timings(),
+                        )
+                        region_records.append((work.group_index, record))
+                    for group_index, record in region_records:
+                        records[group_index].append(record)
+                        warnings[group_index].extend(record.warnings)
+                except Exception:
+                    self._legacy_fallback_region(
+                        region,
+                        records=records,
+                        warnings=warnings,
+                        config=config,
+                        frame_embedding_cache=resolved_embedding_cache,
+                    )
+
+        outcomes: list[SelectedRefinementOutcome] = []
+        for index, group in enumerate(groups):
+            ordered = tuple(sorted(records[index], key=lambda item: item.original_candidate_rank))
+            if len(ordered) != len(group.candidates):
+                raise RuntimeError("shared refinement did not resolve every candidate")
+            outcomes.append(
+                SelectedRefinementOutcome(
+                    candidates=ordered,
+                    warnings=tuple(sorted(set(warnings[index]))),
+                    timings={},
+                )
+            )
+        telemetry["shared_refinement_seconds"] = self.clock() - started
+        raw_frame_cache.clear()
+        return SharedRefinementBatchOutcome(groups=tuple(outcomes), timings=telemetry)
+
+    def _validate_shared_group(self, group: SharedRefinementGroup) -> None:
+        if not group.query_id.strip() or not group.variants or not group.candidates:
+            raise ValueError("shared refinement group requires ID, variants, and candidates")
+        if any(candidate.query_id != group.query_id for candidate in group.candidates):
+            raise ValueError("shared refinement candidate query_id mismatch")
+        ranks = [candidate.rank for candidate in group.candidates]
+        if ranks != list(range(1, len(ranks) + 1)):
+            raise ValueError("shared refinement candidate ranks must be contiguous from one")
+        if group.text_embeddings.dtype != np.float32 or group.text_embeddings.shape != (
+            len(group.variants),
+            self.encoder.dimension,
+        ):
+            raise ValueError("shared refinement text embedding shape/dtype mismatch")
+        if not np.isfinite(group.text_embeddings).all() or np.any(
+            np.linalg.norm(group.text_embeddings, axis=1) <= 0
+        ):
+            raise ValueError("shared refinement text embeddings must be finite and non-zero")
+
+    @staticmethod
+    def _merge_shared_stage_regions(
+        requests: tuple[tuple[_SharedCandidateWork, tuple[int, ...]], ...],
+        *,
+        max_span: int,
+    ) -> tuple[tuple[tuple[_SharedCandidateWork, tuple[int, ...]], ...], ...]:
+        regions: list[list[tuple[_SharedCandidateWork, tuple[int, ...]]]] = []
+        for request in sorted(
+            requests,
+            key=lambda item: (
+                item[1][0],
+                item[1][-1],
+                item[0].group_index,
+                item[0].candidate.rank,
+            ),
+        ):
+            if not regions:
+                regions.append([request])
+                continue
+            current = regions[-1]
+            current_start = min(item[1][0] for item in current)
+            current_end = max(item[1][-1] for item in current)
+            merged_end = max(current_end, request[1][-1])
+            if request[1][0] <= current_end + 1 and merged_end - current_start + 1 <= max_span:
+                current.append(request)
+            else:
+                regions.append([request])
+        return tuple(tuple(region) for region in regions)
+
+    def _decode_shared_stage_region(
+        self,
+        region: tuple[tuple[_SharedCandidateWork, tuple[int, ...]], ...],
+        *,
+        raw_frame_cache: dict[tuple[str, int], DecodedFrame],
+        config: RefinementConfig,
+        coarse: bool,
+        telemetry: dict[str, float | int | bool],
+    ) -> tuple[tuple[DecodedFrame, ...], tuple[str, ...]]:
+        probe = region[0][0].probe
+        video_id = region[0][0].candidate.video_id
+        requested_ids = tuple(sorted({frame for _, ids in region for frame in ids}))
+        logical_requested_count = sum(len(ids) for _, ids in region)
+        missing_ids = tuple(
+            frame for frame in requested_ids if (video_id, frame) not in raw_frame_cache
+        )
+        telemetry["frame_cache_hit_count"] += (
+            logical_requested_count - len(missing_ids)
+        )
+        decode_warnings: tuple[str, ...] = ()
+        if missing_ids:
+            telemetry["raw_decode_request_count_actual"] += 1
+            decode = self._decode_selected_frames(
+                probe=probe,
+                frame_ids=missing_ids,
+                config=config,
+                coarse=coarse,
+            )
+            telemetry["decoded_frame_count_actual"] += decode.decoded_frame_count
+            decode_warnings = decode.warnings
+            for frame in decode.frames:
+                raw_frame_cache[(video_id, frame.absolute_frame_id)] = frame
+        return (
+            tuple(raw_frame_cache[(video_id, frame)] for frame in requested_ids),
+            decode_warnings,
+        )
+
+    def _legacy_fallback_region(
+        self,
+        region: tuple[tuple[_SharedCandidateWork, tuple[int, ...]], ...],
+        *,
+        records: list[list[RefinedCandidate]],
+        warnings: list[list[str]],
+        config: RefinementConfig,
+        frame_embedding_cache: FrameEmbeddingCache,
+    ) -> None:
+        for work, _ in region:
+            record = self._process_candidate(
+                work.candidate,
+                work.variants,
+                work.text_embeddings,
+                config,
+                frame_embedding_cache=frame_embedding_cache,
+            )
+            records[work.group_index].append(record)
+            warnings[work.group_index].extend(record.warnings)
 
     @staticmethod
     def _selected_anchor_work(

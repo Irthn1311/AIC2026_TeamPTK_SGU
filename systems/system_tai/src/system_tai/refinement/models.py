@@ -105,6 +105,17 @@ class Q3AnchorRefinementConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class SharedRawRegionRefinementConfig:
+    """Opt-in query-scoped decode sharing for TRAKE raw refinement."""
+
+    enabled: bool = False
+
+    def __post_init__(self) -> None:
+        if type(self.enabled) is not bool:
+            raise ValueError("enabled must be a boolean")
+
+
+@dataclass(frozen=True, slots=True)
 class Phase3Candidate:
     query_id: str
     rank: int

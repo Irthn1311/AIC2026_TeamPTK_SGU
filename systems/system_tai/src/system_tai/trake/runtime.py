@@ -11,12 +11,16 @@ import numpy as np
 from system_tai.features.query_encoder import SharedOpenAIClipEncoder
 from system_tai.preliminary.schemas import TRAKEPrediction
 from system_tai.preliminary.validation import validate_ranked_top100
-from system_tai.refinement.engine import ExactFrameRefiner
+from system_tai.refinement.engine import (
+    ExactFrameRefiner,
+    SharedRefinementGroup,
+)
 from system_tai.refinement.models import (
     Phase3Candidate,
     RefinementConfig,
     RefinementQuery,
     RefinementStatus,
+    SharedRawRegionRefinementConfig,
 )
 from system_tai.retrieval.multi_query import (
     QueryLanguage,
@@ -104,8 +108,10 @@ class TRAKERuntimePipeline:
         refinement_config: RefinementConfig,
         rrf_constant: float = 60.0,
         video_first_config: TRAKEVideoFirstConfig | None = None,
+        shared_raw_region_config: SharedRawRegionRefinementConfig | None = None,
     ) -> tuple[TRAKEResult, TRAKERuntimeTimings, dict[str, Any]]:
         resolved_video_first = video_first_config or TRAKEVideoFirstConfig()
+        resolved_shared_raw = shared_raw_region_config or SharedRawRegionRefinementConfig()
         t_total_start = self.clock()
         timings = TRAKERuntimeTimings()
 
@@ -383,9 +389,34 @@ class TRAKERuntimePipeline:
         refined_proposals: dict[tuple[int, str, int], int] = {}
         refinement_node_records: list[dict[str, Any]] = []
         frame_embedding_cache: dict[tuple[str, int], np.ndarray] = {}
+        shared_raw_telemetry: dict[str, Any] = {
+            "shared_raw_region_refinement_enabled": resolved_shared_raw.enabled,
+            "refinement_candidate_node_count": 0,
+            "unique_video_count": 0,
+            "coarse_requested_frame_count": 0,
+            "coarse_unique_requested_frame_count": 0,
+            "fine_requested_frame_count": 0,
+            "fine_unique_requested_frame_count": 0,
+            "raw_decode_request_count_before_estimate": 0,
+            "raw_decode_request_count_actual": 0,
+            "decoded_frame_count_actual": 0,
+            "frame_cache_hit_count": 0,
+            "frame_embedding_cache_hit_count": 0,
+            "coalesced_region_count": 0,
+        }
 
         if refine_count > 0:
             top_paths = c1_preds[:refine_count]
+            prepared_groups: list[
+                tuple[
+                    int,
+                    dict[tuple[str, int], list[int]],
+                    tuple[Phase3Candidate, ...],
+                    RefinementQuery,
+                    np.ndarray,
+                    RefinementConfig,
+                ]
+            ] = []
             for e_idx in range(len(domain_events)):
                 unique_nodes_map: dict[tuple[str, int], list[int]] = {}
                 for p in top_paths:
@@ -425,10 +456,11 @@ class TRAKERuntimePipeline:
                         )
                         p3_candidates.append(p3)
 
+                    resolved_candidates = tuple(p3_candidates)
                     ref_query = RefinementQuery(
                         query_id=f"{request.query_id}::trake_refine_e{e_idx}",
                         variants=tuple(event_variants_map[e_idx]),
-                        candidates=tuple(p3_candidates),
+                        candidates=resolved_candidates,
                     )
 
                     e_variant_vectors = np.stack(
@@ -440,24 +472,57 @@ class TRAKERuntimePipeline:
                         top_candidates_to_refine=M,
                         output_top_k=M,
                     )
-
-                    outcome = self.refiner.refine_query(
-                        ref_query,
-                        config=exec_config,
-                        precomputed_text_embeddings=e_variant_vectors,
-                        frame_embedding_cache=frame_embedding_cache,
+                    prepared_groups.append(
+                        (
+                            e_idx,
+                            unique_nodes_map,
+                            resolved_candidates,
+                            ref_query,
+                            e_variant_vectors,
+                            exec_config,
+                        )
                     )
 
-                    for p3, ref_cand in zip(p3_candidates, outcome.candidates):
-                        prop_fid = p3.frame_id
-                        if (
-                            ref_cand.status == RefinementStatus.REFINED
-                            and ref_cand.refined_frame_id is not None
-                        ):
-                            prop_fid = ref_cand.refined_frame_id
+            outcomes: list[Any]
+            if resolved_shared_raw.enabled and prepared_groups:
+                shared_outcome = self.refiner.refine_shared_candidate_groups(
+                    tuple(
+                        SharedRefinementGroup(
+                            query_id=ref_query.query_id,
+                            variants=ref_query.variants,
+                            candidates=candidates,
+                            text_embeddings=vectors,
+                        )
+                        for _, _, candidates, ref_query, vectors, _ in prepared_groups
+                    ),
+                    config=refinement_config,
+                    frame_embedding_cache=frame_embedding_cache,
+                )
+                outcomes = list(shared_outcome.groups)
+                shared_raw_telemetry.update(shared_outcome.timings)
+            else:
+                outcomes = [
+                    self.refiner.refine_query(
+                        ref_query,
+                        config=exec_config,
+                        precomputed_text_embeddings=vectors,
+                        frame_embedding_cache=frame_embedding_cache,
+                    )
+                    for _, _, _, ref_query, vectors, exec_config in prepared_groups
+                ]
 
-                        refined_proposals[(e_idx, p3.video_id, p3.frame_id)] = prop_fid
-                        refinement_node_records.append({
+            for prepared, outcome in zip(prepared_groups, outcomes):
+                e_idx, unique_nodes_map, p3_candidates, _, _, _ = prepared
+                for p3, ref_cand in zip(p3_candidates, outcome.candidates):
+                    prop_fid = p3.frame_id
+                    if (
+                        ref_cand.status == RefinementStatus.REFINED
+                        and ref_cand.refined_frame_id is not None
+                    ):
+                        prop_fid = ref_cand.refined_frame_id
+
+                    refined_proposals[(e_idx, p3.video_id, p3.frame_id)] = prop_fid
+                    refinement_node_records.append({
                             "event_index": e_idx,
                             "video_id": p3.video_id,
                             "original_frame_id": p3.frame_id,
@@ -471,7 +536,15 @@ class TRAKERuntimePipeline:
                             "source_path_ranks": unique_nodes_map[(p3.video_id, p3.frame_id)],
                             "warnings": ref_cand.warnings,
                             "failure_reason": ref_cand.failure_reason,
-                        })
+                    })
+
+            if not resolved_shared_raw.enabled:
+                shared_raw_telemetry["refinement_candidate_node_count"] = len(
+                    refinement_node_records
+                )
+                shared_raw_telemetry["unique_video_count"] = len(
+                    {record["video_id"] for record in refinement_node_records}
+                )
 
         timings.refinement_seconds = self.clock() - t_r
 
@@ -598,6 +671,7 @@ class TRAKERuntimePipeline:
             "skipped_duplicate_path_count": skipped_duplicate_path_count,
             "final_prediction_count": len(final_predictions),
             "zero_output_reason": c1_result.diagnostics.get("zero_output_reason"),
+            **shared_raw_telemetry,
         }
         if resolved_video_first.enabled:
             result_diagnostics.update(
@@ -659,6 +733,7 @@ class TRAKERuntimePipeline:
             "path_diagnostics": path_diagnostics,
             "event_candidate_pools": event_candidate_pools,
             "frame_embedding_cache_entry_count": len(frame_embedding_cache),
+            "shared_raw_region_refinement": shared_raw_telemetry,
             "flattened_variants": [
                 {
                     "event_index": idx,

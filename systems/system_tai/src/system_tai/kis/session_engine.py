@@ -1064,6 +1064,10 @@ class OperationalKISRuntime:
         }
         if self.config.trake_video_first_config.enabled:
             trake_kwargs["video_first_config"] = self.config.trake_video_first_config
+        if self.config.trake_shared_raw_region_config.enabled:
+            trake_kwargs["shared_raw_region_config"] = (
+                self.config.trake_shared_raw_region_config
+            )
         trake_result, timings, extra_diag = self.trake_pipeline.process_trake_query(
             request,
             **trake_kwargs,
@@ -1308,6 +1312,10 @@ class OperationalKISRuntime:
         if self.config.trake_video_first_config.enabled:
             manifest_payload["trake_video_first_config"] = dataclasses.asdict(
                 self.config.trake_video_first_config
+            )
+        if self.config.trake_shared_raw_region_config.enabled:
+            manifest_payload["trake_shared_raw_region_config"] = dataclasses.asdict(
+                self.config.trake_shared_raw_region_config
             )
         _write_json(self.output_root / "session_manifest.json", manifest_payload)
 

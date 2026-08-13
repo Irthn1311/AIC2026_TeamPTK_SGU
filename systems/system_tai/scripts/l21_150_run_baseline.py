@@ -56,7 +56,10 @@ from system_tai.quality.l21_150_translation import (  # noqa: E402
     KISTranslationSidecarError,
     load_kis_dev_translation_sidecar,
 )
-from system_tai.refinement.models import Q3AnchorRefinementConfig  # noqa: E402
+from system_tai.refinement.models import (  # noqa: E402
+    Q3AnchorRefinementConfig,
+    SharedRawRegionRefinementConfig,
+)
 from system_tai.retrieval.video_restricted import (  # noqa: E402
     VIDEO_CONDITIONED_KEYFRAME_DIVERSITY,
     VideoConditionedKeyframeConfig,
@@ -470,6 +473,7 @@ def run_l21_150_baseline(
     q3_config: VideoConditionedKeyframeConfig | None = None,
     q3_anchor_refinement_config: Q3AnchorRefinementConfig | None = None,
     trake_video_first_config: TRAKEVideoFirstConfig | None = None,
+    trake_shared_raw_region_config: SharedRawRegionRefinementConfig | None = None,
     trake_language_policy: str = "vi_only",
     trake_query_sidecar: TRAKEDevTranslationSidecar | None = None,
     trake_query_sidecar_path: Path | None = None,
@@ -510,6 +514,9 @@ def run_l21_150_baseline(
     resolved_trake_video_first = (
         trake_video_first_config or TRAKEVideoFirstConfig()
     )
+    resolved_trake_shared_raw = (
+        trake_shared_raw_region_config or SharedRawRegionRefinementConfig()
+    )
     resolved_qa_grounding = (
         qa_video_conditioned_evidence_config or QAVideoConditionedEvidenceConfig()
     )
@@ -517,6 +524,16 @@ def run_l21_150_baseline(
         raise ValueError("QA-A1 is restricted to the QA DEV diagnostic experiment")
     if resolved_trake_video_first.enabled and (split != "dev" or task != "trake"):
         raise ValueError("TR-A1 is restricted to the TRAKE DEV diagnostic experiment")
+    if resolved_trake_shared_raw.enabled and (
+        split != "dev"
+        or task != "trake"
+        or not resolved_trake_video_first.enabled
+        or refine_top_n <= 0
+    ):
+        raise ValueError(
+            "TR-A3 shared raw-region refinement requires TRAKE DEV, TR-A1, "
+            "and refine_top_n > 0"
+        )
     if trake_language_policy not in {"vi_only", "en_only"}:
         raise ValueError("normal TRAKE E2E supports only vi_only or en_only policy")
     if trake_language_policy == "en_only":
@@ -847,6 +864,9 @@ def run_l21_150_baseline(
                         resolved_trake_video_first.anchors_per_event_video
                     ),
                 },
+                "trake_shared_raw_region_refinement": {
+                    "enabled": resolved_trake_shared_raw.enabled,
+                },
             }
         )
     if resolved_qa_grounding.enabled:
@@ -1014,6 +1034,10 @@ def build_parser() -> argparse.ArgumentParser:
         default=100,
     )
     parser.add_argument("--trake-anchors-per-event-video", type=int, default=5)
+    parser.add_argument(
+        "--trake-shared-raw-region-refinement",
+        action="store_true",
+    )
     parser.add_argument("--trake-nomination-only", action="store_true")
     parser.add_argument(
         "--trake-language-policy",
@@ -1162,6 +1186,9 @@ def main(argv: list[str] | None = None) -> int:
             event_video_nomination_depth=args.trake_event_video_nomination_depth,
             anchors_per_event_video=args.trake_anchors_per_event_video,
         )
+        trake_shared_raw_region_config = SharedRawRegionRefinementConfig(
+            enabled=args.trake_shared_raw_region_refinement,
+        )
         qa_video_conditioned_evidence_config = QAVideoConditionedEvidenceConfig(
             enabled=args.qa_video_conditioned_evidence,
         )
@@ -1178,6 +1205,7 @@ def main(argv: list[str] | None = None) -> int:
             video_conditioned_keyframe_config=q3_config,
             q3_anchor_refinement_config=q3_anchor_config,
             trake_video_first_config=trake_video_first_config,
+            trake_shared_raw_region_config=trake_shared_raw_region_config,
             qa_video_conditioned_evidence_config=(
                 qa_video_conditioned_evidence_config
             ),
@@ -1221,6 +1249,9 @@ def main(argv: list[str] | None = None) -> int:
                     q3_config=q3_config,
                     q3_anchor_refinement_config=q3_anchor_config,
                     trake_video_first_config=trake_video_first_config,
+                    trake_shared_raw_region_config=(
+                        trake_shared_raw_region_config
+                    ),
                     trake_language_policy=trake_policy.value,
                     trake_query_sidecar=trake_sidecar,
                     trake_query_sidecar_path=args.trake_dev_en_sidecar,

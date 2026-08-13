@@ -6,6 +6,7 @@ from system_tai.refinement.models import (
     Q3AnchorRefinementConfig,
     RefinementConfig,
     RefinementStatus,
+    SharedRawRegionRefinementConfig,
 )
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "Q3AnchorRefinementConfig",
     "RefinementConfig",
     "RefinementStatus",
+    "SharedRawRegionRefinementConfig",
 ]
