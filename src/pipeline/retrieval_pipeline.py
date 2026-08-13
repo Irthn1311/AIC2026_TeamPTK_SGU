@@ -24,6 +24,9 @@ from src.evidence.frame_selector import FrameSelector
 from src.database.faiss_db import FaissDB
 from src.storage.metadata_store import MetadataStore
 from src.embeddings.visual.clip import CLIPEncoder
+from src.preprocessing.text_cleaner import clean_query
+from src.reranking.ocr_reranker import OCRRelevanceReranker
+from src.reranking.temporal_reranker import TemporalReranker
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -78,6 +81,10 @@ class RetrievalPipeline:
         self._text_rets   = text_retrievers or []
         self._rrf         = ReciprocalRankFusion(k=rrf_k)
         self._selector    = FrameSelector()
+
+        # Advanced Rerankers
+        self._ocr_reranker      = OCRRelevanceReranker()
+        self._temporal_reranker = TemporalReranker()
 
         # BatchRouter: predicts which batch(es) to search when target_prefix is absent
         self._batch_router = BatchRouter(
@@ -264,7 +271,8 @@ class RetrievalPipeline:
         likely batch(es), then balanced retrieval prevents L25/L26 from dominating.
         """
         raw_text = query_dict.get("text") or query_dict.get("description", "")
-        # target_prefix intentionally disabled — always search full database
+        # Apply preprocessing text cleaning
+        raw_text = clean_query(raw_text)
 
         logger.info(f"\n{'='*70}")
         logger.info(f"PROCESSING QUERY [id='{query_id}']")
@@ -332,6 +340,10 @@ class RetrievalPipeline:
         if not fused:
             logger.warning(f"[KIS] No fused results for query_id='{query_id}'")
             return None
+
+        # Step 3.5: Multi-Stage Reranking (OCR Keyword Match + Temporal Continuity)
+        fused = self._ocr_reranker.rerank(kis_query, fused, top_k=self._top_k_fus)
+        fused = self._temporal_reranker.rerank(kis_query, fused, top_k=self._top_k_fus)
 
         # Step 4: Final Selection + Pillar 1 Score Normalization
         logger.info(f"[Step 4/4 - Frame Selection]")
