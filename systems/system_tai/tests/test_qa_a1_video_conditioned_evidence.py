@@ -28,6 +28,11 @@ from system_tai.qa.grounding import (
     nominate_qa_videos,
 )
 from system_tai.qa.models import QAResult
+from system_tai.qa.ocr_provider import (
+    OCRAnswerProvider,
+    OCRAnswerProviderConfig,
+    OCRDetection,
+)
 from system_tai.qa.question_types import QuestionType
 from system_tai.qa.runtime import QARuntimePipeline
 from system_tai.refinement.engine import QueryRefinementOutcome
@@ -407,7 +412,7 @@ class _NoProvider:
         return ()
 
 
-def _pipeline(tmp_path: Path, *, qa_engine=None):
+def _pipeline(tmp_path: Path, *, qa_engine=None, ocr_answer_provider=None):
     video_path = tmp_path / "V1.mp4"
     video_path.touch()
     encoder = _FakeEncoder()
@@ -428,8 +433,59 @@ def _pipeline(tmp_path: Path, *, qa_engine=None):
             anchors_per_video=1,
         ),
         qa_engine=qa_engine,
+        ocr_answer_provider=ocr_answer_provider,
     )
     return pipeline, encoder, legacy, searcher, refiner
+
+
+class _RuntimeOCRBackend:
+    identifiers = {
+        "backend": "fake_runtime_ocr",
+        "device": "cpu",
+        "model_download": False,
+    }
+
+    def recognize(self, image: np.ndarray) -> tuple[OCRDetection, ...]:
+        assert image.shape == (2, 2, 3)
+        return (OCRDetection("ĐỒNG BẰNG SÔNG HỒNG", 96.0),)
+
+
+def test_qa_a3_runtime_routes_ocr_to_bounded_decoded_evidence(tmp_path: Path) -> None:
+    ocr_provider = OCRAnswerProvider(
+        backend=_RuntimeOCRBackend(),
+        config=OCRAnswerProviderConfig(enabled=True, evidence_frame_budget=1),
+        clock=lambda: 0.0,
+    )
+    pipeline, encoder, legacy, searcher, refiner = _pipeline(
+        tmp_path,
+        ocr_answer_provider=ocr_provider,
+    )
+    result, timings, diagnostics = pipeline.process_qa_query(
+        QAQueryRequest(
+            request_id="qa-a3",
+            query_id="qa-a3",
+            event_description="Một bài giảng địa lý",
+            question="Dòng chữ trên màn hình là gì?",
+            output_top_k=10,
+            refine_top_n=1,
+        )
+    )
+
+    assert result.question_type is QuestionType.OCR
+    assert [(item.video_id, item.frame_id, item.answer) for item in result.predictions] == [
+        ("V1", 100, "ĐỒNG BẰNG SÔNG HỒNG")
+    ]
+    assert diagnostics["ocr_provider_enabled"] is True
+    assert diagnostics["ocr_frames_requested"] == 1
+    assert diagnostics["ocr_frames_processed"] == 1
+    assert diagnostics["decoded_frame_count"] == 1
+    assert diagnostics["encoded_image_count"] == 0
+    assert timings.ocr_decode_seconds >= 0.0
+    assert diagnostics["ocr_decode_seconds"] == timings.ocr_decode_seconds
+    assert legacy.calls == 0
+    assert len(searcher.maxima_calls) == 1
+    assert refiner.calls == 1
+    assert encoder.image_calls == []
 
 
 def test_qa_a1_passes_batched_numpy_encoder_output_to_real_video_search(
@@ -644,9 +700,11 @@ def test_l21_runner_flag_is_dev_qa_only() -> None:
             "--output-dir",
             "out",
             "--qa-video-conditioned-evidence",
+            "--qa-ocr-evidence",
         ]
     )
     assert args.qa_video_conditioned_evidence is True
+    assert args.qa_ocr_evidence is True
     enabled = QAVideoConditionedEvidenceConfig(enabled=True)
     with pytest.raises(ValueError, match="QA-A1 is restricted"):
         runner.run_l21_150_baseline(
@@ -664,6 +722,23 @@ def test_l21_runner_flag_is_dev_qa_only() -> None:
             manifest_sha256=None,
             gt_policy="proposed",
             qa_video_conditioned_evidence_config=enabled,
+        )
+    with pytest.raises(ValueError, match="QA-A3 requires QA DEV"):
+        runner.run_l21_150_baseline(
+            object(),
+            object(),
+            Path("out"),
+            experiment_id="qa-a3",
+            split="holdout",
+            task="qa",
+            top_k=100,
+            refine_top_n=3,
+            resume=False,
+            fail_fast=True,
+            benchmark_sha256="0" * 64,
+            manifest_sha256=None,
+            gt_policy="proposed",
+            qa_ocr_answer_provider_config=OCRAnswerProviderConfig(enabled=True),
         )
     with pytest.raises(ValueError, match="QA-A1 is restricted"):
         runner.run_l21_150_baseline(

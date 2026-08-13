@@ -39,15 +39,18 @@ from .grounding import (
 )
 from .models import QAEvidenceCandidate, QAQuery, QAResult
 from .object_provider import ObjectEntityAnswerProvider
+from .ocr_provider import OCRAnswerProvider
 from .question_types import (
     QuestionClassification,
     QuestionType,
+    classify_ocr_question,
     classify_question,
     classify_question_legacy,
 )
 
 LEGACY_PHASE_P0 = "LEGACY_PHASE_P0"
 QA_A2_CAPABILITY_AWARE = "QA_A2_CAPABILITY_AWARE"
+QA_A3_CAPABILITY_AWARE = "QA_A3_CAPABILITY_AWARE"
 
 
 def classify_runtime_question(
@@ -55,9 +58,16 @@ def classify_runtime_question(
     question_en: str | None,
     *,
     qa_a2_enabled: bool,
+    qa_ocr_enabled: bool = False,
 ) -> tuple[QuestionClassification, str]:
-    if qa_a2_enabled:
-        return classify_question(question, question_en), QA_A2_CAPABILITY_AWARE
+    if qa_ocr_enabled:
+        ocr_classification = classify_ocr_question(question, question_en)
+        if ocr_classification is not None:
+            return ocr_classification, QA_A3_CAPABILITY_AWARE
+    if qa_a2_enabled or qa_ocr_enabled:
+        classification = classify_question(question, question_en)
+        policy = QA_A3_CAPABILITY_AWARE if qa_ocr_enabled else QA_A2_CAPABILITY_AWARE
+        return classification, policy
     return classify_question_legacy(question, question_en), LEGACY_PHASE_P0
 
 
@@ -72,6 +82,8 @@ class QAPipelineTimings:
     evidence_encode_seconds: float = 0.0
     answer_scoring_seconds: float = 0.0
     prompt_encode_seconds: float = 0.0
+    ocr_decode_seconds: float = 0.0
+    ocr_inference_seconds: float = 0.0
 
     def to_dict(self) -> dict[str, float]:
         return {
@@ -84,6 +96,8 @@ class QAPipelineTimings:
             "evidence_encode_seconds": self.evidence_encode_seconds,
             "answer_scoring_seconds": self.answer_scoring_seconds,
             "prompt_encode_seconds": self.prompt_encode_seconds,
+            "ocr_decode_seconds": self.ocr_decode_seconds,
+            "ocr_inference_seconds": self.ocr_inference_seconds,
         }
 
 
@@ -104,6 +118,7 @@ class QARuntimePipeline:
         qa_engine: QABaselineEngine | None = None,
         candidate_provider: AnswerCandidateProvider | None = None,
         object_answer_provider: ObjectEntityAnswerProvider | None = None,
+        ocr_answer_provider: OCRAnswerProvider | None = None,
         clock: Callable[[], float] = time.perf_counter,
     ) -> None:
         self.exact_retriever = exact_retriever
@@ -119,6 +134,7 @@ class QARuntimePipeline:
         self.qa_engine = qa_engine or QABaselineEngine()
         self.candidate_provider = candidate_provider or BaselineQuestionCandidateProvider()
         self.object_answer_provider = object_answer_provider
+        self.ocr_answer_provider = ocr_answer_provider
         self.clock = clock
 
         self._prompt_cache: dict[str, np.ndarray] = {}
@@ -169,6 +185,24 @@ class QARuntimePipeline:
             "unique_object_label_count": 0,
             "object_answer_candidate_count": 0,
             "top_object_candidates": [],
+            "ocr_provider_enabled": bool(
+                self.ocr_answer_provider is not None
+                and self.ocr_answer_provider.enabled
+            ),
+            "ocr_backend_identity": (
+                dict(self.ocr_answer_provider.identifiers)
+                if self.ocr_answer_provider is not None
+                and self.ocr_answer_provider.enabled
+                else None
+            ),
+            "ocr_frames_requested": 0,
+            "ocr_frames_processed": 0,
+            "ocr_observation_count": 0,
+            "ocr_nonempty_observation_count": 0,
+            "ocr_unique_candidate_count": 0,
+            "ocr_decode_seconds": 0.0,
+            "ocr_inference_seconds": 0.0,
+            "top_ocr_candidates": [],
             "qa_grounding_enabled": self.video_conditioned_evidence_config.enabled,
             "retrieval_candidate_count": 0,
             "refined_candidate_count": 0,
@@ -205,10 +239,15 @@ class QARuntimePipeline:
             self.object_answer_provider is not None
             and self.object_answer_provider.enabled
         )
+        qa_ocr_enabled = bool(
+            self.ocr_answer_provider is not None
+            and self.ocr_answer_provider.enabled
+        )
         classification, classifier_policy = classify_runtime_question(
             request.question,
             request.question_en,
             qa_a2_enabled=qa_a2_enabled,
+            qa_ocr_enabled=qa_ocr_enabled,
         )
         q_type = classification.question_type
         diagnostics["question_type"] = q_type.value
@@ -222,7 +261,14 @@ class QARuntimePipeline:
             and self.object_answer_provider is not None
             and self.object_answer_provider.supports(q_type)
         )
-        provider_supported = bool(answer_hypotheses) or object_provider_supported
+        ocr_provider_supported = bool(
+            self.video_conditioned_evidence_config.enabled
+            and self.ocr_answer_provider is not None
+            and self.ocr_answer_provider.supports(q_type)
+        )
+        provider_supported = bool(
+            answer_hypotheses or object_provider_supported or ocr_provider_supported
+        )
 
         if (
             not provider_supported
@@ -639,7 +685,15 @@ class QARuntimePipeline:
         decoded_images: list[np.ndarray] = []
         valid_evidence_cands: list[tuple[QAEvidenceCandidate, RefinedCandidate]] = []
 
-        for ev_cand, ref_cand, video_record in cands_to_decode:
+        cands_for_image_decode = cands_to_decode
+        if ocr_provider_supported:
+            assert self.ocr_answer_provider is not None
+            cands_for_image_decode = cands_to_decode[
+                : self.ocr_answer_provider.config.evidence_frame_budget
+            ]
+            diagnostics["ocr_frames_requested"] = len(cands_for_image_decode)
+
+        for ev_cand, ref_cand, video_record in cands_for_image_decode:
             try:
                 if (
                     video_record.raw_video_path is None
@@ -762,6 +816,9 @@ class QARuntimePipeline:
                 )
 
         timings.evidence_decode_seconds = self.clock() - t_dec
+        if ocr_provider_supported:
+            timings.ocr_decode_seconds = timings.evidence_decode_seconds
+            diagnostics["ocr_decode_seconds"] = timings.ocr_decode_seconds
         diagnostics["decoded_frame_count"] = len(decoded_images)
         diagnostics["usable_evidence_candidates"] = []
         for evidence_candidate, refined_candidate in valid_evidence_cands:
@@ -783,7 +840,7 @@ class QARuntimePipeline:
                 }
             )
 
-        if not decoded_images:
+        if not decoded_images and not ocr_provider_supported:
             store_evidence_records()
             timings.total_seconds = self.clock() - t_start
             result = QAResult(
@@ -793,6 +850,90 @@ class QARuntimePipeline:
                 warnings=diagnostics["warnings"],
             )
             return result, timings, diagnostics
+
+        if ocr_provider_supported:
+            assert self.ocr_answer_provider is not None
+            t_ocr = self.clock()
+            qa_result, ocr_telemetry = self.ocr_answer_provider.answer(
+                query_id=request.query_id,
+                question_type=q_type,
+                evidence=tuple(
+                    (evidence_candidate, image)
+                    for (evidence_candidate, _refined_candidate), image in zip(
+                        valid_evidence_cands,
+                        decoded_images,
+                    )
+                ),
+                output_top_k=request.output_top_k,
+                warnings=diagnostics["warnings"],
+            )
+            timings.ocr_inference_seconds = float(
+                ocr_telemetry["ocr_inference_seconds"]
+            )
+            timings.answer_scoring_seconds = self.clock() - t_ocr
+            diagnostics.update(ocr_telemetry)
+            diagnostics["ocr_frames_requested"] = len(cands_for_image_decode)
+            diagnostics["ocr_decode_seconds"] = timings.ocr_decode_seconds
+            diagnostics["unsupported_reason"] = qa_result.unsupported_reason
+            validation_errors = validate_ranked_top100(
+                qa_result.predictions,
+                expected_task="qa",
+                expected_query_id=request.query_id,
+            )
+            if validation_errors:
+                messages = "; ".join(error.message for error in validation_errors)
+                raise ValueError(
+                    f"QA OCR prediction validation failed for request "
+                    f"{request.query_id}: {messages}"
+                )
+            prediction_by_frame = {
+                (prediction.video_id, prediction.frame_id): prediction
+                for prediction in qa_result.predictions
+            }
+            for evidence_candidate, refined_candidate in valid_evidence_cands:
+                prediction = prediction_by_frame.get(
+                    (evidence_candidate.video_id, evidence_candidate.frame_id)
+                )
+                evidence_records.append(
+                    {
+                        "rank": evidence_candidate.rank,
+                        "video_id": evidence_candidate.video_id,
+                        "candidate_frame_id": refined_candidate.candidate_frame_id,
+                        "refined_frame_id": evidence_candidate.frame_id,
+                        "output_frame_id": (
+                            prediction.frame_id if prediction is not None else None
+                        ),
+                        "retrieval_score": float(evidence_candidate.retrieval_score),
+                        "refinement_score": (
+                            float(evidence_candidate.evidence_score)
+                            if evidence_candidate.evidence_score is not None
+                            else None
+                        ),
+                        "refinement_status": refined_candidate.status.value,
+                        "timestamp_seconds": evidence_candidate.timestamp_seconds,
+                        **grounding_artifact_fields(refined_candidate),
+                        "answer": prediction.answer if prediction is not None else None,
+                        "answer_score": None,
+                        "answer_confidence_level": "OCR_EVIDENCE",
+                        "warning": None,
+                        "skip_reason": (
+                            None if prediction is not None else "no_ocr_prediction_for_frame"
+                        ),
+                    }
+                )
+            evidence_records.sort(key=lambda record: record["rank"])
+            store_evidence_records()
+            diagnostics["final_predictions"] = [
+                {
+                    "rank": prediction.rank,
+                    "video_id": prediction.video_id,
+                    "frame_id": prediction.frame_id,
+                    "answer": prediction.answer,
+                }
+                for prediction in qa_result.predictions
+            ]
+            timings.total_seconds = self.clock() - t_start
+            return qa_result, timings, diagnostics
 
         if not provider_supported:
             unsupported_reason = "UNSUPPORTED_NO_PROVIDER"

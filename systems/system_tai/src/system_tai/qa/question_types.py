@@ -13,6 +13,7 @@ class QuestionType(Enum):
     DIRECTION = "DIRECTION"
     OBJECT_ENTITY = "OBJECT_ENTITY"
     OBJECT_COUNT = "OBJECT_COUNT"
+    OCR = "OCR"
     UNSUPPORTED = "UNSUPPORTED"
 
 
@@ -33,6 +34,16 @@ _OCR_PATTERNS = (
     r"\bwhat (?:does|do) .* say\b",
     r"\bwhat (?:text|number) (?:is|was) (?:shown|written|displayed)\b",
     r"\bread (?:the )?(?:text|sign|number)\b",
+)
+
+_QA_A3_ADDITIONAL_OCR_PATTERNS = (
+    r"\bbien (?:hieu|bao|quang cao) (?:ghi|viet|co) (?:chu )?gi\b",
+    r"\bdong chu .* (?:la )?gi\b",
+    r"\bnoi dung .* (?:man hinh|bien|bang|poster).* (?:la )?gi\b",
+    r"\bcon so .* (?:hien thi|ghi|viet).* (?:la )?gi\b",
+    r"\bgia .* (?:ghi|hien thi).* bao nhieu\b",
+    r"\bwhat (?:is|was) (?:written|displayed) (?:on|in) "
+    r"(?:the )?(?:sign|screen|board|poster)\b",
 )
 
 _OBJECT_COUNT_PATTERNS = (
@@ -216,6 +227,28 @@ def classify_question(
         question_type=QuestionType.UNSUPPORTED,
         reason="NO_SUPPORTED_QUESTION_PATTERN",
     )
+
+
+def classify_ocr_question(
+    question: str,
+    question_en: str | None = None,
+) -> QuestionClassification | None:
+    """Classify high-precision OCR intent only for an enabled QA-A3 provider."""
+
+    texts = [("question", _normalize(question))]
+    if question_en:
+        texts.append(("question_en", _normalize(question_en)))
+    for source, text in texts:
+        pattern = _matching_pattern(
+            text,
+            _OCR_PATTERNS + _QA_A3_ADDITIONAL_OCR_PATTERNS,
+        )
+        if pattern is not None:
+            return QuestionClassification(
+                question_type=QuestionType.OCR,
+                reason=f"OCR_PATTERN_PROVIDER_ENABLED:{source}:{pattern}",
+            )
+    return None
 
 
 def classify_question_type(question: str, question_en: str | None = None) -> QuestionType:

@@ -32,6 +32,7 @@ from system_tai.qa.grounding import (  # noqa: E402
     QAVideoConditionedEvidenceConfig,
 )
 from system_tai.qa.object_provider import ObjectAnswerProviderConfig  # noqa: E402
+from system_tai.qa.ocr_provider import OCRAnswerProviderConfig  # noqa: E402
 from system_tai.quality.l21_150_schema import (  # noqa: E402
     L21150Benchmark,
     L21150FormatError,
@@ -77,6 +78,7 @@ FROZEN_TR_A2_D0_TRAKE_DEV_EN_SIDECAR_SHA256 = (
     "021980a96f8a59677b143df556abd407f7d70588bd98d8d413bc25741754fcf7"
 )
 QA_ARTIFACT_BACKED_OBJECT_EVIDENCE = "QA_ARTIFACT_BACKED_OBJECT_EVIDENCE"
+QA_EVIDENCE_GROUNDED_OCR = "QA_EVIDENCE_GROUNDED_OCR"
 
 
 class L21150Runtime(Protocol):
@@ -482,6 +484,7 @@ def run_l21_150_baseline(
     trake_query_sidecar_sha256: str | None = None,
     qa_video_conditioned_evidence_config: QAVideoConditionedEvidenceConfig | None = None,
     qa_object_answer_provider_config: ObjectAnswerProviderConfig | None = None,
+    qa_ocr_answer_provider_config: OCRAnswerProviderConfig | None = None,
 ) -> dict[str, Any]:
     if not 1 <= top_k <= 100:
         raise ValueError("top_k must be in [1, 100]")
@@ -526,12 +529,19 @@ def run_l21_150_baseline(
     resolved_qa_object_provider = (
         qa_object_answer_provider_config or ObjectAnswerProviderConfig()
     )
+    resolved_qa_ocr_provider = (
+        qa_ocr_answer_provider_config or OCRAnswerProviderConfig()
+    )
     if resolved_qa_grounding.enabled and (split != "dev" or task != "qa"):
         raise ValueError("QA-A1 is restricted to the QA DEV diagnostic experiment")
     if resolved_qa_object_provider.enabled and (
         split != "dev" or task != "qa" or not resolved_qa_grounding.enabled
     ):
         raise ValueError("QA-A2 requires QA DEV with QA-A1 evidence grounding enabled")
+    if resolved_qa_ocr_provider.enabled and (
+        split != "dev" or task != "qa" or not resolved_qa_grounding.enabled
+    ):
+        raise ValueError("QA-A3 requires QA DEV with QA-A1 evidence grounding enabled")
     if resolved_trake_video_first.enabled and (split != "dev" or task != "trake"):
         raise ValueError("TR-A1 is restricted to the TRAKE DEV diagnostic experiment")
     if resolved_trake_shared_raw.enabled and (
@@ -668,6 +678,20 @@ def run_l21_150_baseline(
         raise ValueError(
             "runtime QA-A2 configuration does not match experiment configuration"
         )
+    runtime_qa_ocr_provider = getattr(
+        getattr(runtime, "config", None),
+        "qa_ocr_answer_provider_config",
+        None,
+    )
+    if resolved_qa_ocr_provider.enabled and runtime_qa_ocr_provider is None:
+        raise ValueError("runtime is missing the enabled QA-A3 OCR provider")
+    if (
+        runtime_qa_ocr_provider is not None
+        and runtime_qa_ocr_provider != resolved_qa_ocr_provider
+    ):
+        raise ValueError(
+            "runtime QA-A3 configuration does not match experiment configuration"
+        )
 
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
@@ -795,7 +819,17 @@ def run_l21_150_baseline(
         or resolved_trake_video_first.enabled
         or resolved_qa_grounding.enabled
         or resolved_qa_object_provider.enabled
+        or resolved_qa_ocr_provider.enabled
     )
+    qa_capability_scope = [
+        scope
+        for enabled, scope in (
+            (resolved_qa_grounding.enabled, QA_VIDEO_CONDITIONED_EVIDENCE_V1),
+            (resolved_qa_object_provider.enabled, QA_ARTIFACT_BACKED_OBJECT_EVIDENCE),
+            (resolved_qa_ocr_provider.enabled, QA_EVIDENCE_GROUNDED_OCR),
+        )
+        if enabled
+    ]
     metadata = {
         "schema_version": 2,
         "experiment_id": experiment_id,
@@ -820,7 +854,9 @@ def run_l21_150_baseline(
         "task_counts": dict(sorted(task_counts.items())),
         "production_algorithm_modified": production_algorithm_modified,
         "production_algorithm_modified_scope": (
-            QA_ARTIFACT_BACKED_OBJECT_EVIDENCE
+            "+".join(qa_capability_scope)
+            if resolved_qa_ocr_provider.enabled
+            else QA_ARTIFACT_BACKED_OBJECT_EVIDENCE
             if resolved_qa_object_provider.enabled
             else QA_VIDEO_CONDITIONED_EVIDENCE_V1
             if resolved_qa_grounding.enabled
@@ -840,8 +876,10 @@ def run_l21_150_baseline(
         "known_current_limitations": [
             "QA closed-set support centers on COLOR, COUNT, YES_NO, and DIRECTION",
             "TRAKE baseline does not implement all design-level gap constraints",
-            "OCR/ASR/Object/BM25 are not fully integrated in runtime retrieval",
+            "OCR is opt-in, bounded to QA-A1 evidence, and requires Tesseract language data",
+            "ASR and BM25 are not integrated in runtime retrieval",
         ],
+        "qa_capability_scope": qa_capability_scope,
         "outputs": {
             "predictions_jsonl": predictions_path.name,
             "failures_jsonl": failures_path.name,
@@ -923,6 +961,26 @@ def run_l21_150_baseline(
                 ),
                 "frame_identity_contract": (
                     "object JSON filename ordinal -> mapping n -> original frame_idx"
+                ),
+                "official_ground_truth": False,
+                "diagnostic_development_only": True,
+            }
+        )
+    if resolved_qa_ocr_provider.enabled:
+        ocr_provider = getattr(runtime, "ocr_answer_provider", None)
+        metadata.update(
+            {
+                "qa_ocr_provider_enabled": True,
+                "ocr_backend_identity": (
+                    dict(ocr_provider.identifiers)
+                    if ocr_provider is not None
+                    else None
+                ),
+                "ocr_evidence_frame_budget": (
+                    resolved_qa_ocr_provider.evidence_frame_budget
+                ),
+                "ocr_frame_identity_contract": (
+                    "decoded QA-A1 evidence frame -> original-video absolute frame_id"
                 ),
                 "official_ground_truth": False,
                 "diagnostic_development_only": True,
@@ -1093,6 +1151,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--trake-rrf-constant", type=float, default=60.0)
     parser.add_argument("--qa-video-conditioned-evidence", action="store_true")
     parser.add_argument("--qa-object-evidence", action="store_true")
+    parser.add_argument("--qa-ocr-evidence", action="store_true")
+    parser.add_argument("--qa-ocr-evidence-frame-budget", type=int, default=10)
+    parser.add_argument("--qa-ocr-executable", default="tesseract")
+    parser.add_argument("--qa-ocr-languages", default="eng")
+    parser.add_argument("--qa-ocr-page-segmentation-mode", type=int, default=6)
     return parser
 
 
@@ -1112,6 +1175,15 @@ def main(argv: list[str] | None = None) -> int:
         ):
             raise ValueError(
                 "--qa-object-evidence requires --split dev --task qa "
+                "--qa-video-conditioned-evidence"
+            )
+        if args.qa_ocr_evidence and (
+            args.split != "dev"
+            or args.task != "qa"
+            or not args.qa_video_conditioned_evidence
+        ):
+            raise ValueError(
+                "--qa-ocr-evidence requires --split dev --task qa "
                 "--qa-video-conditioned-evidence"
             )
         benchmark = load_l21_150_benchmark(args.benchmark)
@@ -1250,6 +1322,17 @@ def main(argv: list[str] | None = None) -> int:
         qa_object_answer_provider_config = ObjectAnswerProviderConfig(
             enabled=args.qa_object_evidence,
         )
+        qa_ocr_answer_provider_config = OCRAnswerProviderConfig(
+            enabled=args.qa_ocr_evidence,
+            evidence_frame_budget=args.qa_ocr_evidence_frame_budget,
+            executable=args.qa_ocr_executable,
+            languages=tuple(
+                language.strip()
+                for language in args.qa_ocr_languages.split("+")
+                if language.strip()
+            ),
+            page_segmentation_mode=args.qa_ocr_page_segmentation_mode,
+        )
         session_output = args.output_dir / "runtime"
         config = SessionConfig(
             input_root=args.input_root,
@@ -1268,6 +1351,7 @@ def main(argv: list[str] | None = None) -> int:
                 qa_video_conditioned_evidence_config
             ),
             qa_object_answer_provider_config=qa_object_answer_provider_config,
+            qa_ocr_answer_provider_config=qa_ocr_answer_provider_config,
         )
         runtime = OperationalKISRuntime.bootstrap(config)
         try:
@@ -1320,6 +1404,9 @@ def main(argv: list[str] | None = None) -> int:
                     ),
                     qa_object_answer_provider_config=(
                         qa_object_answer_provider_config
+                    ),
+                    qa_ocr_answer_provider_config=(
+                        qa_ocr_answer_provider_config
                     ),
                 )
         finally:

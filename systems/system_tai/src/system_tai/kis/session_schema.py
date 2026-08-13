@@ -10,6 +10,7 @@ from typing import Any
 
 from system_tai.qa.grounding import QAVideoConditionedEvidenceConfig
 from system_tai.qa.object_provider import ObjectAnswerProviderConfig
+from system_tai.qa.ocr_provider import OCRAnswerProviderConfig
 from system_tai.refinement.models import (
     Q3AnchorRefinementConfig,
     RefinementConfig,
@@ -87,6 +88,9 @@ class SessionConfig:
     qa_object_answer_provider_config: ObjectAnswerProviderConfig = field(
         default_factory=ObjectAnswerProviderConfig
     )
+    qa_ocr_answer_provider_config: OCRAnswerProviderConfig = field(
+        default_factory=OCRAnswerProviderConfig
+    )
 
     def __post_init__(self) -> None:
         if self.reuse_manifest is not None and self.manifest_cache is not None:
@@ -152,6 +156,18 @@ class SessionConfig:
             and not self.qa_video_conditioned_evidence_config.enabled
         ):
             raise ValueError("QA object evidence requires QA video-conditioned evidence")
+        if not isinstance(
+            self.qa_ocr_answer_provider_config,
+            OCRAnswerProviderConfig,
+        ):
+            raise ValueError(
+                "qa_ocr_answer_provider_config must be OCRAnswerProviderConfig"
+            )
+        if (
+            self.qa_ocr_answer_provider_config.enabled
+            and not self.qa_video_conditioned_evidence_config.enabled
+        ):
+            raise ValueError("QA OCR evidence requires QA video-conditioned evidence")
 
 
 @dataclass(frozen=True, slots=True)

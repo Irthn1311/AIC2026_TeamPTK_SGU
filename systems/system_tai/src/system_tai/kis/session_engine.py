@@ -48,6 +48,10 @@ from system_tai.preliminary.runtime_bridge import (
     trake_predictions_to_top100_query,
 )
 from system_tai.qa.object_provider import ObjectEntityAnswerProvider
+from system_tai.qa.ocr_provider import (
+    OCRAnswerProvider,
+    TesseractCLIBackend,
+)
 from system_tai.qa.runtime import QARuntimePipeline
 from system_tai.refinement.engine import ExactFrameRefiner, FrameEmbeddingCache
 from system_tai.refinement.models import Phase3Candidate, RefinementQuery
@@ -123,6 +127,7 @@ class OperationalKISRuntime:
         exporter: CheckpointExporter | None = None,
         validator: CheckpointValidator | None = None,
         object_answer_provider: ObjectEntityAnswerProvider | None = None,
+        ocr_answer_provider: OCRAnswerProvider | None = None,
         clock: Callable[[], float] = time.perf_counter,
         bootstrap_timings: Mapping[str, Any] | None = None,
     ) -> None:
@@ -161,6 +166,14 @@ class OperationalKISRuntime:
                 self.object_artifact_index = object_answer_provider.index
         self.object_answer_provider = object_answer_provider
 
+        if config.qa_ocr_answer_provider_config.enabled and ocr_answer_provider is None:
+            ocr_answer_provider = OCRAnswerProvider(
+                backend=TesseractCLIBackend(config.qa_ocr_answer_provider_config),
+                config=config.qa_ocr_answer_provider_config,
+                clock=clock,
+            )
+        self.ocr_answer_provider = ocr_answer_provider
+
         self.exact_retriever = ExactNumpyRetriever(
             registry=self.registry,
             text_encoder=self.shared_encoder,
@@ -194,6 +207,7 @@ class OperationalKISRuntime:
                 config.qa_video_conditioned_evidence_config
             ),
             object_answer_provider=self.object_answer_provider,
+            ocr_answer_provider=self.ocr_answer_provider,
             clock=self.clock,
         )
 
@@ -235,6 +249,7 @@ class OperationalKISRuntime:
         exporter: CheckpointExporter | None = None,
         validator: CheckpointValidator | None = None,
         object_answer_provider: ObjectEntityAnswerProvider | None = None,
+        ocr_answer_provider: OCRAnswerProvider | None = None,
     ) -> OperationalKISRuntime:
         start_time = clock()
         output_root = Path(config.output_root)
@@ -337,6 +352,7 @@ class OperationalKISRuntime:
             exporter=exporter,
             validator=validator,
             object_answer_provider=object_answer_provider,
+            ocr_answer_provider=ocr_answer_provider,
             clock=clock,
             bootstrap_timings=bootstrap_timings,
         )
@@ -1060,6 +1076,25 @@ class OperationalKISRuntime:
                     "diagnostic_development_only": True,
                 }
             )
+        if self.config.qa_ocr_answer_provider_config.enabled:
+            req_manifest_payload.update(
+                {
+                    "qa_ocr_provider_enabled": True,
+                    "ocr_backend_identity": (
+                        dict(self.ocr_answer_provider.identifiers)
+                        if self.ocr_answer_provider is not None
+                        else None
+                    ),
+                    "ocr_evidence_frame_budget": (
+                        self.config.qa_ocr_answer_provider_config.evidence_frame_budget
+                    ),
+                    "ocr_frame_identity_contract": (
+                        "decoded QA-A1 evidence frame -> original-video absolute frame_id"
+                    ),
+                    "official_ground_truth": False,
+                    "diagnostic_development_only": True,
+                }
+            )
         _write_json(query_dir / "qa_request_manifest.json", req_manifest_payload)
 
         self._successful_query_count += 1
@@ -1390,6 +1425,15 @@ class OperationalKISRuntime:
             manifest_payload["object_artifact_root_identity"] = (
                 self.object_artifact_index.source_root_identity
                 if self.object_artifact_index is not None
+                else None
+            )
+        if self.config.qa_ocr_answer_provider_config.enabled:
+            manifest_payload["qa_ocr_answer_provider_config"] = dataclasses.asdict(
+                self.config.qa_ocr_answer_provider_config
+            )
+            manifest_payload["ocr_backend_identity"] = (
+                dict(self.ocr_answer_provider.identifiers)
+                if self.ocr_answer_provider is not None
                 else None
             )
         _write_json(self.output_root / "session_manifest.json", manifest_payload)
