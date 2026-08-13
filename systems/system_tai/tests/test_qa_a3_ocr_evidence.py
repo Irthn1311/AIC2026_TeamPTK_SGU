@@ -81,18 +81,23 @@ def test_qa_a3_disabled_preserves_ocr_unsupported_and_legacy_behavior() -> None:
 
 
 @pytest.mark.parametrize(
-    ("question", "expected"),
+    ("question", "expected", "expected_policy"),
     [
-        ("Biển số xe ghi gì?", QuestionType.OCR),
-        ("Giá là bao nhiêu?", QuestionType.OCR),
-        ("Người đó đang cầm gì?", QuestionType.OBJECT_ENTITY),
-        ("Có bao nhiêu người?", QuestionType.OBJECT_COUNT),
-        ("Chiếc xe màu gì?", QuestionType.COLOR),
+        ("Biển số xe ghi gì?", QuestionType.OCR, QA_A3_CAPABILITY_AWARE),
+        ("Giá là bao nhiêu?", QuestionType.OCR, QA_A3_CAPABILITY_AWARE),
+        (
+            "Người đó đang cầm gì?",
+            QuestionType.OBJECT_ENTITY,
+            QA_A2_CAPABILITY_AWARE,
+        ),
+        ("Có bao nhiêu người?", QuestionType.OBJECT_COUNT, QA_A2_CAPABILITY_AWARE),
+        ("Chiếc xe màu gì?", QuestionType.COLOR, QA_A2_CAPABILITY_AWARE),
     ],
 )
 def test_combined_capability_routing_is_precise(
     question: str,
     expected: QuestionType,
+    expected_policy: str,
 ) -> None:
     classification, policy = classify_runtime_question(
         question,
@@ -101,7 +106,61 @@ def test_combined_capability_routing_is_precise(
         qa_ocr_enabled=True,
     )
     assert classification.question_type is expected
+    assert policy == expected_policy
+
+
+@pytest.mark.parametrize(
+    ("question", "expected"),
+    [
+        ("Biển số xe ghi gì?", QuestionType.OCR),
+        ("Giá là bao nhiêu?", QuestionType.OCR),
+    ],
+)
+def test_qa_a3_only_routes_high_precision_ocr_intent(
+    question: str,
+    expected: QuestionType,
+) -> None:
+    classification, policy = classify_runtime_question(
+        question,
+        None,
+        qa_a2_enabled=False,
+        qa_ocr_enabled=True,
+    )
+    assert classification.question_type is expected
     assert policy == QA_A3_CAPABILITY_AWARE
+
+
+@pytest.mark.parametrize(
+    ("question", "expected"),
+    [
+        ("Có bao nhiêu người?", QuestionType.COUNT),
+        ("Chiếc xe màu gì?", QuestionType.COLOR),
+        ("Có chiếc xe nào không?", QuestionType.YES_NO),
+        ("Người đó đi bên trái hay bên phải?", QuestionType.DIRECTION),
+        ("Người đó đang làm gì?", QuestionType.UNSUPPORTED),
+    ],
+)
+def test_qa_a3_only_preserves_exact_non_ocr_legacy_classification(
+    question: str,
+    expected: QuestionType,
+) -> None:
+    legacy, legacy_policy = classify_runtime_question(
+        question,
+        None,
+        qa_a2_enabled=False,
+        qa_ocr_enabled=False,
+    )
+    with_ocr, with_ocr_policy = classify_runtime_question(
+        question,
+        None,
+        qa_a2_enabled=False,
+        qa_ocr_enabled=True,
+    )
+
+    assert legacy.question_type is expected
+    assert with_ocr == legacy
+    assert legacy_policy == LEGACY_PHASE_P0
+    assert with_ocr_policy == LEGACY_PHASE_P0
 
 
 def test_ocr_aggregation_is_bounded_deterministic_and_preserves_frame_identity() -> None:

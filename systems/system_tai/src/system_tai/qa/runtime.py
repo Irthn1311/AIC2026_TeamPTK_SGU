@@ -64,10 +64,8 @@ def classify_runtime_question(
         ocr_classification = classify_ocr_question(question, question_en)
         if ocr_classification is not None:
             return ocr_classification, QA_A3_CAPABILITY_AWARE
-    if qa_a2_enabled or qa_ocr_enabled:
-        classification = classify_question(question, question_en)
-        policy = QA_A3_CAPABILITY_AWARE if qa_ocr_enabled else QA_A2_CAPABILITY_AWARE
-        return classification, policy
+    if qa_a2_enabled:
+        return classify_question(question, question_en), QA_A2_CAPABILITY_AWARE
     return classify_question_legacy(question, question_en), LEGACY_PHASE_P0
 
 
