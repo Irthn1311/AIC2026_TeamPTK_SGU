@@ -21,7 +21,8 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = [".", "src"]
+include = ["src", "src.*", "triage_eg", "triage_eg.*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

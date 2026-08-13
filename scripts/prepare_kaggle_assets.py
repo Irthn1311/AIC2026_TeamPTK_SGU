@@ -4,6 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
+from _bootstrap import PROJECT_ROOT
 from src.preprocessing.model_assets import (
     DEFAULT_CACHE_ROOT,
     DEFAULT_FASTER_WHISPER_MODEL,
@@ -18,7 +19,8 @@ from src.preprocessing.model_assets import (
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Warm up Kaggle model/checkpoint caches.")
-    parser.add_argument("--cache-root", default=str(DEFAULT_CACHE_ROOT))
+    default_cache_root = DEFAULT_CACHE_ROOT if DEFAULT_CACHE_ROOT.is_absolute() else PROJECT_ROOT / DEFAULT_CACHE_ROOT
+    parser.add_argument("--cache-root", default=str(default_cache_root))
     parser.add_argument("--yoloe", action="store_true", default=True)
     parser.add_argument("--vietocr", action="store_true", default=True)
     parser.add_argument("--open-clip", action="store_true", default=True)
