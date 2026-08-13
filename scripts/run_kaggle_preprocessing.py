@@ -107,6 +107,9 @@ def main() -> int:
     parser.add_argument("--asr-compute-type", default=os.environ.get("AIC_ASR_COMPUTE_TYPE", "float16"))
     parser.add_argument("--object-visualization-limit", type=int, default=int(os.environ.get("AIC_OBJECT_VISUALIZATION_LIMIT", "-1")))
     parser.add_argument("--allow-missing-package", action="store_true")
+    parser.add_argument("--skip-visual-report", action="store_true")
+    parser.add_argument("--visual-report-limit", type=int, default=int(os.environ.get("AIC_VISUAL_REPORT_LIMIT", "12")))
+    parser.add_argument("--visual-report-video-clips", type=int, default=int(os.environ.get("AIC_VISUAL_REPORT_VIDEO_CLIPS", "1")))
     parser.add_argument("--manifest-limit", type=int, default=20)
     args = parser.parse_args()
 
@@ -316,6 +319,24 @@ def main() -> int:
         if args.allow_missing_package:
             cmd.append("--allow-missing")
         records.append(run_step("validate and package outputs", cmd))
+
+    if not args.skip_visual_report:
+        records.append(run_step(
+            "visual html report",
+            [
+                py,
+                "scripts/build_kaggle_visual_report.py",
+                "--output-root",
+                str(output_root),
+                "--data-root",
+                str(data_root),
+                "--limit",
+                str(args.visual_report_limit),
+                "--video-preview-count",
+                str(args.visual_report_video_clips),
+            ],
+            required=False,
+        ))
 
     records.append(run_step(
         "manifest 20 outputs/group",
