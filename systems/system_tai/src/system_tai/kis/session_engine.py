@@ -1191,18 +1191,22 @@ class OperationalKISRuntime:
             ]
 
         # Artifact 3: trake_refinement.json
+        refinement_payload = {
+            "query_id": request.query_id,
+            "c1_diagnostics": extra_diag["c1_diagnostics"],
+            "c1_paths": c1_paths,
+            "refinement_requested": trake_result.diagnostics["refinement_requested"],
+            "refine_top_n": request.refine_top_n,
+            "refinement_node_records": extra_diag["refinement_node_records"],
+            "path_diagnostics": extra_diag["path_diagnostics"],
+            "warnings": list(trake_result.diagnostics.get("warnings", [])),
+        }
+        shared_raw_telemetry = extra_diag.get("shared_raw_region_refinement")
+        if type(shared_raw_telemetry) is dict:
+            refinement_payload["shared_raw_region_refinement"] = shared_raw_telemetry
         refinement_json = _write_json(
             query_dir / "trake_refinement.json",
-            {
-                "query_id": request.query_id,
-                "c1_diagnostics": extra_diag["c1_diagnostics"],
-                "c1_paths": c1_paths,
-                "refinement_requested": trake_result.diagnostics["refinement_requested"],
-                "refine_top_n": request.refine_top_n,
-                "refinement_node_records": extra_diag["refinement_node_records"],
-                "path_diagnostics": extra_diag["path_diagnostics"],
-                "warnings": list(trake_result.diagnostics.get("warnings", [])),
-            },
+            refinement_payload,
         )
 
         # Artifact 5: trake_timings.json
@@ -1242,6 +1246,10 @@ class OperationalKISRuntime:
         }
         if "tr_a1" in extra_diag:
             req_manifest_payload["tr_a1"] = extra_diag["tr_a1"]
+        if self.config.trake_shared_raw_region_config.enabled:
+            req_manifest_payload["trake_shared_raw_region_refinement_config"] = (
+                dataclasses.asdict(self.config.trake_shared_raw_region_config)
+            )
         _write_json(query_dir / "trake_request_manifest.json", req_manifest_payload)
 
         self._successful_query_count += 1
