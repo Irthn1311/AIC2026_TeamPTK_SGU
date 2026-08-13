@@ -1,0 +1,78 @@
+# ==============================================================================
+# CONFIGURATION FOR QUERY ROUTING & DYNAMIC FUSION POLICY (AI Challenge 2026)
+# ==============================================================================
+
+# 1. Baseline Fallback Weights (Matches configs/multimodal_fusion.yaml)
+baseline_weights:
+  visual: 0.45
+  ocr: 0.25
+  asr: 0.18
+  object: 0.12
+
+# 2. Intent-Specific Dynamic Fusion Policies
+intent_weights:
+  visual_scene:
+    visual: 0.65
+    ocr: 0.15
+    asr: 0.10
+    object: 0.10
+
+  visual_object:
+    visual: 0.55
+    ocr: 0.15
+    asr: 0.10
+    object: 0.20
+
+  visual_action:
+    visual: 0.65
+    ocr: 0.15
+    asr: 0.10
+    object: 0.10
+
+  ocr_text:
+    visual: 0.25
+    ocr: 0.60
+    asr: 0.10
+    object: 0.05
+
+  speech_asr:
+    visual: 0.25
+    ocr: 0.10
+    asr: 0.60
+    object: 0.05
+
+  visual_ocr:
+    visual: 0.45
+    ocr: 0.40
+    asr: 0.08
+    object: 0.07
+
+  visual_asr:
+    visual: 0.45
+    ocr: 0.08
+    asr: 0.40
+    object: 0.07
+
+  visual_object_action:
+    visual: 0.60
+    ocr: 0.15
+    asr: 0.10
+    object: 0.15
+
+  mixed:
+    visual: 0.45
+    ocr: 0.25
+    asr: 0.18
+    object: 0.12
+
+# 3. Confidence Blending Parameters
+confidence_thresholds:
+  low_threshold: 0.50             # Below this: alpha = 0 (100% baseline)
+  full_dynamic_threshold: 0.85    # Above this: alpha = 1 (100% dynamic policy)
+  mixed_max_alpha: 0.25           # Upper bound on alpha for ambiguous/MIXED queries
+
+# 4. Branch Guardrails
+guardrails:
+  min_visual_weight: 0.20         # Visual branch is a foundational visual retrieval modality
+  max_object_weight: 0.25         # Object detector retrieval ceiling
+  max_refinement_delta: 0.08      # Max adjustment per branch from raw likelihood evidence

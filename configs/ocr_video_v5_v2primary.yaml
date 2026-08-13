@@ -1,0 +1,142 @@
+paths:
+  dataset_root: datasets_L21
+  video_root: datasets_L21/Videos_L21_a/video
+  output_dir: outputs/ocr_video_v5_v2primary_test
+  keyframe_v2_global_map: outputs/keyframe_v2_full/indexes/keyframe_v2_global_map.parquet
+  btc_mapping_root: datasets_L21/map-keyframes-aic25-b1/map-keyframes
+  keyframe_v2_root: outputs/keyframe_v2_full
+
+sampling:
+  sparse_fps: 2.0
+  dense_fps: 0.0
+  dense_window_sec: 0.0
+  detection_confidence_threshold: 0.45
+  dense_trigger_regions:
+    - headline
+    - ticker
+    - scene_text
+
+ocr:
+  engine: v5_tracks_v2_vietocr_primary
+  paddle_stage_python: E:/conda_envs/aic2026/python.exe
+  paddle_device: gpu:0
+  paddle_detection_model_dir: .ocr_cache/paddlex/official_models/PP-OCRv6_medium_det
+  paddle_recognition_model_dir: .ocr_cache/paddlex/official_models/PP-OCRv6_medium_rec
+  vietocr_config: configs/vietocr_vgg_transformer_local.yaml
+  use_vietocr_if_available: true
+  vietocr_scope: representative_track
+  recognition_priority: v2_vietocr_primary
+  vietocr_primary_min_similarity: 0.45
+  vietocr_batch_size: 64
+  min_confidence: 0.35
+  batch_size: 16
+  v2_primary:
+    enabled: true
+    use_easyocr_detector: true
+    easyocr_languages:
+      - vi
+      - en
+    region_hints:
+      - headline
+      - ticker
+      - scene_text
+    skip_region_hints:
+      - logo_channel
+      - clock_time
+    roi_expand_px: 18
+    scale_factor: 2.5
+    pad_px: 6
+    min_easyocr_confidence: 0.25
+    max_detected_parts: 6
+    min_width_norm: 0.08
+    min_height_norm: 0.015
+    fallback_min_width_norm: 0.20
+    skip_top_y_max: 0.28
+    skip_top_width_max: 0.35
+
+consensus:
+  enabled: true
+  text_similarity_threshold: 0.82
+  numeric_conflict_similarity_threshold: 0.98
+  temporal:
+    enabled: true
+    max_gap_seconds: 3.0
+    bbox_iou_threshold: 0.30
+    center_distance_threshold: 0.12
+    min_text_similarity: 0.70
+  reliability_weights:
+    engine_agreement: 0.25
+    temporal_support: 0.25
+    paddle_confidence: 0.20
+    observation_count: 0.15
+    spatial_stability: 0.15
+
+quality:
+  enabled: true
+  keep_threshold: 0.58
+  low_quality_threshold: 0.35
+  min_observations_for_short_text: 1
+
+qwen:
+  enabled: false
+  model: Qwen/Qwen3-4B
+  only_uncertain: true
+  reliability_threshold: 0.58
+  temperature: 0.0
+  max_new_tokens: 128
+  timeout_seconds: 45
+
+roles:
+  enabled: true
+  labels:
+    - HEADLINE
+    - TICKER
+    - SCENE_TEXT
+    - CHANNEL_LOGO
+    - CLOCK
+    - SCOREBOARD
+    - OTHER
+  headline_y_min: 0.45
+  headline_y_max: 0.84
+  headline_min_width: 0.35
+  ticker_y_min: 0.82
+  ticker_min_width: 0.30
+  overlay_corner_y_max: 0.30
+  logo_max_area: 0.06
+  clock_max_width: 0.28
+  channel_persistence_seconds: 20.0
+
+topic_boundary:
+  enabled: true
+  source: headline
+  min_persistence_seconds: 1.5
+  min_observations: 2
+  headline_similarity_threshold: 0.58
+  appear_confidence: 0.78
+  change_confidence: 0.88
+
+retrieval:
+  lexical:
+    enabled: true
+  fuzzy:
+    enabled: true
+  semantic:
+    enabled: true
+    model_name: intfloat/multilingual-e5-small
+    batch_size: 32
+  role_weights:
+    HEADLINE: 1.00
+    SCOREBOARD: 1.00
+    SCENE_TEXT: 0.95
+    TICKER: 0.65
+    OTHER: 0.45
+    CHANNEL_LOGO: 0.15
+    CLOCK: 0.12
+
+debug:
+  max_tracks: 120
+  contact_sheet_cols: 2
+  thumb_width: 480
+  thumb_height: 270
+  focus_times:
+    - 169.0

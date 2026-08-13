@@ -1,7 +1,7 @@
 audit_version: "0.1.0"
 dataset_version: "aic25-b1"
-dataset_root: "/kaggle/input/datasets/nadkli/dataset-aic"
-output_root: "/kaggle/working/triage_eg_stage0_audit"
+dataset_root: "${AIC_DATA_ROOT}"
+output_root: "${AIC_AUDIT_OUTPUT_ROOT}"
 mode: "sample"
 sample_size: 10
 seed: 2026

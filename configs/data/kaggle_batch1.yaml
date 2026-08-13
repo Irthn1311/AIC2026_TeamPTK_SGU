@@ -1,5 +1,5 @@
-# Path template only. Update it to match the attached Kaggle Dataset.
-data_root: /kaggle/input/aic2026-batch1
-output_root: /kaggle/working/artifacts
+# Kaggle-ready path contract. Set these in the notebook or shell before running.
+data_root: ${AIC_DATA_ROOT}
+output_root: ${AIC_OUTPUT_ROOT}
 dataset_version: kaggle-batch1-template
 

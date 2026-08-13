@@ -1,0 +1,194 @@
+model:
+  name: yoloe-26s-seg.pt
+  prompt_free_name: yoloe-26s-seg-pf.pt
+  conf: 0.25
+  iou: 0.70
+  imgsz: 640
+
+classes:
+  people:
+    - person
+    - man
+    - woman
+    - child
+    - crowd
+    - police officer
+    - firefighter
+    - doctor
+    - presenter
+    - worker
+  vehicles:
+    - car
+    - taxi
+    - bus
+    - truck
+    - van
+    - motorcycle
+    - bicycle
+    - train
+    - airplane
+    - ambulance
+    - fire truck
+  watercraft:
+    - boat
+    - ship
+  infrastructure:
+    - building
+    - bridge
+    - road
+    - street
+    - sidewalk
+    - tunnel
+    - tower
+    - traffic light
+    - traffic sign
+    - billboard
+  media:
+    - microphone
+    - camera
+    - television
+    - screen
+    - monitor
+    - laptop
+    - phone
+  safety:
+    - helmet
+    - mask
+    - life jacket
+    - fire
+    - smoke
+    - flood
+    - barrier
+    - cone
+  nature:
+    - tree
+    - river
+    - water
+    - beach
+    - mountain
+  animals:
+    - dog
+    - cat
+    - bird
+    - cow
+    - buffalo
+    - fish
+  common_indoor_objects:
+    - table
+    - chair
+    - bottle
+    - cup
+    - bag
+  symbols_signs:
+    - flag
+    - logo
+    - sign
+    - banner
+    - poster
+
+cleanup:
+  deduplication:
+    enabled: true
+    same_label_iou_threshold: 0.78
+    synonym_iou_threshold: 0.82
+    containment_threshold: 0.92
+    compare_parent_labels: true
+  normalization:
+    label_aliases:
+      man: person
+      woman: person
+      child: person
+      people: person
+      presenter: person
+      police officer: person
+      firefighter: person
+      doctor: person
+      worker: person
+      tv: television
+    parent_labels:
+      person: human
+      crowd: human
+      car: vehicle
+      taxi: vehicle
+      bus: vehicle
+      truck: vehicle
+      van: vehicle
+      motorcycle: vehicle
+      bicycle: vehicle
+      train: vehicle
+      airplane: vehicle
+      ambulance: vehicle
+      fire truck: vehicle
+      boat: watercraft
+      ship: watercraft
+      television: media_display
+      screen: media_display
+      monitor: media_display
+      laptop: device
+      phone: device
+      traffic light: traffic_control
+      traffic sign: traffic_control
+      billboard: sign
+      banner: sign
+      poster: sign
+      flag: symbol
+      logo: symbol
+      helmet: safety_equipment
+      mask: safety_equipment
+      life jacket: safety_equipment
+    dedup_groups:
+      human:
+        - person
+        - man
+        - woman
+        - child
+        - presenter
+        - police officer
+        - firefighter
+        - doctor
+        - worker
+      road_vehicle:
+        - car
+        - taxi
+        - bus
+        - truck
+        - van
+        - motorcycle
+        - ambulance
+        - fire truck
+      watercraft:
+        - boat
+        - ship
+      display:
+        - television
+        - screen
+        - monitor
+        - tv
+
+hybrid:
+  prompt_free_min_confidence: 0.35
+  prompt_free_min_label_frequency: 2
+  min_bbox_area_ratio: 0.0001
+  text_overlap_iou_threshold: 0.70
+  text_overlap_containment_threshold: 0.90
+  visualization_limit: 20
+  prompt_free_reject_labels:
+    - remove
+    - extrude
+    - squeeze
+    - reveal
+    - assemble
+    - modern
+    - launch event
+    - premiere
+    - lesson
+    - direct
+    - play pong
+    - clip art
+    - caribbean
+    - morning fog
+    - evening light
+    - darkness
+    - stormy
+    - disaster
+    - spark

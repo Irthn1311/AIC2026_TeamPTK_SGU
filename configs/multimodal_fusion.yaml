@@ -1,0 +1,96 @@
+# ==============================================================================
+# CONFIGURATION FOR 4-BRANCH MULTIMODAL SEARCH ENGINE (AI Challenge 2026)
+# ==============================================================================
+
+# 1. TRỌNG SỐ DUNG HỢP (MULTIMODAL FUSION WEIGHTS)
+# Tổng trọng số nên bằng 1.0 (Visual + OCR + ASR + Object = 1.0)
+fusion_weights:
+  visual: 0.40     # Trọng số cho Nhánh 1A: Hình ảnh (CLIP ViT-B/32)
+  ocr: 0.25        # Trọng số cho Nhánh 1B: Chữ viết trên màn hình (PaddleOCR V3)
+  asr: 0.25        # Trọng số cho Nhánh 2: Tiếng nói/Lắng nghe (Whisper + Qwen3-4B ASR V3)
+  object: 0.10     # Trọng số cho Nhánh 3: Nhận diện vật thể BTC (Objects)
+
+# 2. THAM SỐ TÌM KIẾM & TRUY VẤN (RETRIEVAL PARAMETERS)
+retrieval_params:
+  top_k_per_branch: 200               # Số kết quả lấy ra từ mỗi nhánh trước khi dung hợp
+  default_top_k: 10                   # Số kết quả hiển thị mặc định
+  min_object_score_threshold: 0.25    # Ngưỡng tin cậy tối thiểu cho đối tượng BTC
+  asr_time_window_seconds: 3.5        # Cửa sổ thời gian (giây) khớp ASR với keyframe
+
+# 2A. OCR PIPELINE MODE
+# keyframe_v3: OCR V3 legacy.
+# ocr_temporal_v3_tracking_only: OCR Temporal V3 built from selected keyframes, no Qwen.
+# adaptive_video_v4: dùng corpus/index sinh từ Adaptive Temporal Video OCR sau khi build offline.
+ocr_pipeline:
+  mode: "ocr_temporal_v3_tracking_only"
+
+ocr_v4:
+  enabled: false
+  adaptive_sampling:
+    enabled: true
+    offsets_sec:
+      - -1.0
+      - -0.5
+      - 0.0
+      - 0.5
+      - 1.0
+    max_neighbor_frames: 5
+
+# 2B. TEMPORAL MAPPING OCR -> KEYFRAME
+# interval: map theo toàn bộ [start_time, end_time] của OCRSegment.
+# start_time_window: compatibility mode với logic V3 cũ quanh start_time.
+temporal_mapping:
+  ocr_mode: "interval"
+  margin_sec: 1.0
+  ocr_context_window_sec: 10.0
+
+# 3. ĐƯỜNG DẪN INDEX (INDEX FILE PATHS)
+index_paths:
+  # Runtime default now uses Keyframe V2 / Visual V2.
+  # OCR/ASR indexes remain unchanged until their V2 corpora are explicitly built.
+  visual_index: "outputs/keyframe_v2_full/indexes/visual/l21_visual_v2_flat_ip.faiss"
+  global_id_map: "outputs/keyframe_v2_full/indexes/keyframe_v2_global_map.parquet"
+  ocr_index: "outputs/indexes/ocr_temporal_v3_full_tracking/l21_ocr_temporal_v3_flat_ip.faiss"
+  ocr_corpus: "outputs/indexes/ocr_temporal_v3_full_tracking/l21_ocr_temporal_v3_corpus.parquet"
+  asr_index: "outputs/indexes/asr_v3/l21_asr_v3_flat_ip.faiss"
+  asr_corpus: "outputs/indexes/asr_v3/l21_asr_v3_corpus.parquet"
+  object_corpus: "outputs/keyframe_v2_full/indexes/object/l21_objects_v2.parquet"
+  yoloe_hybrid_dir: ""
+
+# 4. THÔNG SỐ MODEL ENCODERS (MODEL CONFIGURATIONS)
+models:
+  clip_text_model: "openai/clip-vit-base-patch32"
+  text_embedding_model: "intfloat/multilingual-e5-small"
+  whisper_asr_model: "base"
+
+# 4A. QUERY TRANSLATION
+# Used before English CLIP text encoding. The cache must contain literal
+# query_text -> English translation pairs and must not contain GT/video/frame
+# information. If Google translation is unavailable, runtime falls back to the
+# original query and reports translated_query as empty.
+translation:
+  cache_path: "outputs/cache/query_translation_vi_en.json"
+  enable_google: true
+
+# 5. CẤU HÌNH TEMPORAL MERGE CHO OCR V3
+ocr_temporal_merge:
+  max_gap_seconds: 3.0           # Khoảng cách thời gian tối đa giữa 2 frame (giây)
+  min_bbox_iou: 0.30             # Ngưỡng IoU khung hình tối thiểu
+  min_text_similarity: 0.70      # Ngưỡng tương đồng chuỗi chữ (Levenshtein / Token Similarity)
+  min_segment_frames: 1          # Số frame tối thiểu trong 1 segment
+
+# 6. TRAKE — SEQUENCE-AWARE TEMPORAL RETRIEVAL
+# Cấu hình cho TRAKE Track Event pipeline sử dụng DP Temporal Alignment
+trake:
+  retrieval_top_k: 80              # Số candidate lấy cho mỗi event query
+  video_top_k: 5                   # Số Top-K video candidates trả về cho frontend
+
+  sequence:
+    strict_temporal_order: true     # Bắt buộc timestamp(E_i) < timestamp(E_{i+1})
+
+  ranking:
+    sequence_weight: 0.60          # Trọng số DP sequence score
+    coverage_weight: 0.20          # Trọng số coverage (bao phủ event)
+    retrieval_weight: 0.20         # Trọng số retrieval score trung bình
+
+  debug_logging: true              # Bật/tắt TRAKE debug logging

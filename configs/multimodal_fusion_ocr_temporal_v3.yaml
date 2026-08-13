@@ -1,0 +1,54 @@
+# 4-branch multimodal config using OCR Temporal V3 tracking-only index.
+# This keeps configs/multimodal_fusion.yaml unchanged.
+
+fusion_weights:
+  visual: 0.40
+  ocr: 0.25
+  asr: 0.25
+  object: 0.10
+
+retrieval_params:
+  top_k_per_branch: 200
+  default_top_k: 10
+  min_object_score_threshold: 0.25
+  asr_time_window_seconds: 3.5
+
+ocr_pipeline:
+  mode: "ocr_temporal_v3_tracking_only"
+
+temporal_mapping:
+  ocr_mode: "interval"
+  margin_sec: 1.0
+  ocr_context_window_sec: 10.0
+
+index_paths:
+  visual_index: "outputs/keyframe_v2_full/indexes/visual/l21_visual_v2_flat_ip.faiss"
+  global_id_map: "outputs/keyframe_v2_full/indexes/keyframe_v2_global_map.parquet"
+  ocr_index: "outputs/indexes/ocr_temporal_v3_full_tracking/l21_ocr_temporal_v3_flat_ip.faiss"
+  ocr_corpus: "outputs/indexes/ocr_temporal_v3_full_tracking/l21_ocr_temporal_v3_corpus.parquet"
+  asr_index: "outputs/indexes/asr_v3/l21_asr_v3_flat_ip.faiss"
+  asr_corpus: "outputs/indexes/asr_v3/l21_asr_v3_corpus.parquet"
+  object_corpus: "outputs/keyframe_v2_full/indexes/object/l21_objects_v2.parquet"
+  yoloe_hybrid_dir: ""
+
+models:
+  clip_text_model: "openai/clip-vit-base-patch32"
+  text_embedding_model: "intfloat/multilingual-e5-small"
+  whisper_asr_model: "base"
+
+ocr_temporal_merge:
+  max_gap_seconds: 3.0
+  min_bbox_iou: 0.30
+  min_text_similarity: 0.70
+  min_segment_frames: 1
+
+trake:
+  retrieval_top_k: 80
+  video_top_k: 5
+  sequence:
+    strict_temporal_order: true
+  ranking:
+    sequence_weight: 0.60
+    coverage_weight: 0.20
+    retrieval_weight: 0.20
+  debug_logging: true

@@ -1,0 +1,86 @@
+paths:
+  dataset_root: datasets_L21
+  video_root: datasets_L21/Videos_L21_a/video
+  btc_keyframe_root: datasets_L21/Keyframes_L21/keyframes
+  btc_mapping_root: datasets_L21/map-keyframes-aic25-b1/map-keyframes
+  global_id_map: outputs/indexes/l21_global_id_map.parquet
+  clip_feature_root: datasets_L21/clip-features-32-aic25-b1/clip-features-32
+  model_cache: .model_cache
+  hf_cache: .cache/huggingface
+
+video:
+  expected_fps: 30.0
+  cfr_tolerance: 0.001
+
+frame_validation:
+  sample_count: 25
+  tail_start_ratio: 0.90
+  tail_sample_count: 10
+  ssim_resize_width: 320
+  final_sample_count: 20
+  final_match_min_ssim: 0.98
+  final_match_max_pixel_error: 0.01
+
+shot_detection:
+  backend: transnetv2_or_histdiff
+  require_transnetv2: true
+  transnetv2_device: auto
+  transnetv2_frame_reader: opencv
+  transnetv2_threshold: 0.5
+  fallback_sample_stride: 15
+  fallback_hist_threshold: 0.48
+  fallback_min_shot_seconds: 1.2
+
+targets:
+  short_max_seconds: 2.0
+  medium_max_seconds: 8.0
+  long_max_seconds: 20.0
+  long_segment_seconds: 6.0
+  medium_candidate_ratios: [0.35, 0.50, 0.65]
+  long_candidate_ratios: [0.20, 0.50, 0.80]
+
+margin_guard:
+  min_guard_frames: 3
+  guard_ratio: 0.05
+  max_guard_fraction: 0.20
+
+candidates:
+  candidate_window_seconds: 0.5
+  candidate_count: 7
+
+scoring:
+  quality_weight: 0.30
+  representativeness_weight: 0.40
+  temporal_weight: 0.20
+  duplicate_penalty_weight: 0.10
+  hard_duplicate_threshold: 0.965
+  soft_duplicate_threshold: 0.90
+  cross_shot_duplicate_threshold: 0.975
+  cross_shot_max_neighbor_distance: 2
+
+quality:
+  sharpness_good: 350.0
+  sharpness_poor: 30.0
+  exposure_low: 35.0
+  exposure_high: 220.0
+
+clip:
+  require_real_clip: true
+  backend: open_clip
+  model_name: ViT-B-32
+  display_model_name: ViT-B/32
+  device: auto
+  precision: fp32
+  allow_download: true
+  download_root: .model_cache/clip
+  open_clip_repo_id: timm/vit_base_patch32_clip_224.openai
+  open_clip_filename: open_clip_model.safetensors
+  open_clip_extra_site_packages: .conda/l21/Lib/site-packages
+  open_clip_weights: .cache/huggingface/hub/models--timm--vit_base_patch32_clip_224.openai/snapshots/*/open_clip_model.safetensors
+  batch_size: 64
+
+visualization:
+  contact_sheet_cols: 4
+  thumb_width: 300
+  thumb_height: 170
+  max_shot_sheets: 9999

@@ -1,8 +1,8 @@
 stage1_version: "0.1.1"
 dataset_version: "aic25-b1"
-dataset_root: "/kaggle/input/datasets/nadkli/dataset-aic"
-stage0_root: "/kaggle/working/triage_eg_stage0_audit"
-output_root: "/kaggle/working/triage_eg_stage1_baseline"
+dataset_root: "${AIC_DATA_ROOT}"
+stage0_root: "${AIC_STAGE0_ROOT}"
+output_root: "${AIC_STAGE1_OUTPUT_ROOT}"
 index:
   backend: "numpy_exact"
   metric: "cosine"

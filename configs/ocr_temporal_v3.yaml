@@ -1,0 +1,112 @@
+paths:
+  input_dir: outputs/ocr_v2_selected_keyframes
+  selected_root: outputs/keyframe_v2_full
+  output_dir: outputs/ocr_temporal_v3
+  qwen_model_cache_dir: .model_cache/qwen3_4b
+
+roi:
+  keep_region_types:
+    - headline
+    - ticker
+    - scene_text
+  drop_region_types:
+    - logo_channel
+    - clock_time
+  min_confidence: 0.35
+  min_text_length: 2
+
+tracking:
+  max_gap_seconds: 8.0
+  max_gap_keyframes: 4
+  min_text_similarity: 0.58
+  min_bbox_iou: 0.08
+  center_distance_threshold: 0.20
+  same_shot_bonus: 0.12
+  cross_shot_min_similarity: 0.92
+  cross_shot_min_score: 0.82
+  cross_shot_max_gap_seconds: 2.5
+  cross_shot_center_distance_threshold: 0.12
+  match_score_threshold: 0.60
+  debug_max_candidates_per_observation: 8
+  text_weight: 0.54
+  bbox_weight: 0.26
+  time_weight: 0.12
+  region_weight: 0.08
+  recent_observations_for_match: 4
+  region_overrides:
+    headline:
+      max_gap_seconds: 14.0
+      max_gap_keyframes: 7
+      min_text_similarity: 0.46
+      min_bbox_iou: 0.01
+      center_distance_threshold: 0.36
+      match_score_threshold: 0.50
+      same_shot_bonus: 0.16
+      cross_shot_min_similarity: 0.80
+      cross_shot_min_score: 0.74
+      cross_shot_max_gap_seconds: 5.5
+      cross_shot_center_distance_threshold: 0.22
+    ticker:
+      max_gap_seconds: 14.0
+      max_gap_keyframes: 7
+      min_text_similarity: 0.44
+      min_bbox_iou: 0.01
+      center_distance_threshold: 0.38
+      match_score_threshold: 0.48
+      same_shot_bonus: 0.16
+      cross_shot_min_similarity: 0.86
+      cross_shot_min_score: 0.78
+      cross_shot_max_gap_seconds: 5.0
+      cross_shot_center_distance_threshold: 0.20
+    scene_text:
+      max_gap_seconds: 8.0
+      max_gap_keyframes: 5
+      min_text_similarity: 0.50
+      min_bbox_iou: 0.06
+      center_distance_threshold: 0.22
+      match_score_threshold: 0.53
+      same_shot_bonus: 0.10
+      cross_shot_min_similarity: 0.99
+      cross_shot_min_score: 0.84
+      cross_shot_max_gap_seconds: 3.0
+      cross_shot_center_distance_threshold: 0.20
+      cross_shot_min_text_chars: 8
+      cross_shot_min_tokens: 2
+
+consensus:
+  min_confident_track_confidence: 0.72
+  min_consensus_support: 0.55
+  max_variant_disagreement: 0.42
+  reliability_weights:
+    mean_confidence: 0.25
+    consensus_support: 0.30
+    temporal_support: 0.20
+    string_agreement: 0.15
+    representative_quality: 0.10
+  local_fixes:
+    enabled: true
+
+qwen:
+  enabled: false
+  model_name: Qwen/Qwen3-4B
+  use_4bit: true
+  max_tracks_per_video: 12
+  max_new_tokens: 96
+  device: cuda
+  only_roles:
+    - headline
+    - ticker
+    - scene_text
+
+validation:
+  min_token_overlap: 0.30
+  max_length_ratio: 2.20
+  min_length_ratio: 0.35
+  preserve_numbers: true
+  forbid_unsupported_capital_suffix: true
+
+documents:
+  dense_text_preference:
+    - corrected_text
+    - consensus_text
+  bm25_include_raw: true
