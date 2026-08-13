@@ -130,6 +130,17 @@ def test_consumer_specific_nvdec_verdicts_do_not_force_mb1_promotion() -> None:
         nvdec_available=True,
     )
     assert result == {"NVDEC_MB1": "NOT_PROMOTED", "NVDEC_NEURAL": "KEEP"}
+    incomplete = consumer_specific_nvdec_verdicts(
+        {"status": "NOT_PROMOTED"},
+        {
+            "status": "PASS",
+            "failed_video_count": 1,
+            "rows": [{"frame_identity": True, "combined_speedup": 2.0}],
+        },
+        {"status": "PASS"},
+        nvdec_available=True,
+    )
+    assert incomplete["NVDEC_NEURAL"] == "OPTIONAL"
 
 
 def test_mb1_sample_rate_is_the_frozen_current_constant() -> None:
@@ -167,6 +178,19 @@ def test_m1_benchmark_requests_are_local(monkeypatch, tmp_path: Path) -> None:
     assert min(requested[0] + requested[1]) >= 350
     assert max(requested[0] + requested[1]) <= 650
     assert len(requested[1]) == 31
+    monkeypatch.setattr(
+        g11_audit,
+        "create_raw_video_decoder",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            RuntimeError("NVDEC_INDEXED_DECODE_FAILED")
+        ),
+    )
+    benchmark, parity, cpu_images, gpu_images = benchmark_m1_local_workload(
+        [path], nvdec_available=True
+    )
+    assert parity["failed_video_count"] == 1
+    assert benchmark["issues"][0]["code"] == "NVDEC_M1_LOCAL_DECODE_FAILED"
+    assert cpu_images and not gpu_images
 
 
 def test_frozen_query_loader_reaches_minimum_without_inventing_labels(tmp_path: Path) -> None:

@@ -310,7 +310,7 @@ def _coarse_parity(cpu: Any, gpu: Any) -> dict[str, Any]:
 def benchmark_mb1_workload(
     video_paths: Sequence[Path], *, nvdec_available: bool
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    records, parity_rows = [], []
+    records, parity_rows, issues = [], [], []
     for path in video_paths:
         cpu = OpenCVRawVideoDecoder(path.stem, path)
         started = monotonic()
@@ -335,39 +335,76 @@ def benchmark_mb1_workload(
         cpu.close()
         if not nvdec_available:
             continue
-        gpu = create_raw_video_decoder(path.stem, path, backend="nvdec")
-        started = monotonic()
-        gpu_series = scan_coarse_video(gpu)
-        gpu_ms = (monotonic() - started) * 1000
-        records.append(
-            {
-                "video_id": path.stem,
-                "backend": "nvdec",
-                "wall_ms": gpu_ms,
-                "sample_count": len(gpu_series.frame_indices),
-                "samples_per_second": COARSE_SAMPLES_PER_SECOND,
-                "stride_frames": gpu_series.stride_frames,
-                "decoder": gpu.runtime_manifest(),
-            }
-        )
-        gpu_continuity = final_continuity_audit(gpu, audit_start, audit_end)
-        parity = _coarse_parity(cpu_series, gpu_series)
-        parity.update(
-            {
-                "video_id": path.stem,
-                "speedup": cpu_ms / gpu_ms if gpu_ms > 0 else None,
-                "orb_decisions_equal": (
-                    cpu_continuity.abrupt_frames == gpu_continuity.abrupt_frames
-                    and cpu_continuity.soft_frames == gpu_continuity.soft_frames
-                ),
-                "continuity_quality_cpu": cpu_continuity.continuity_quality,
-                "continuity_quality_nvdec": gpu_continuity.continuity_quality,
-                "orb_continuity_mean_cpu": cpu_continuity.orb_continuity_mean,
-                "orb_continuity_mean_nvdec": gpu_continuity.orb_continuity_mean,
-            }
-        )
-        parity_rows.append(parity)
-        gpu.close()
+        gpu = None
+        try:
+            gpu = create_raw_video_decoder(path.stem, path, backend="nvdec")
+            started = monotonic()
+            gpu_series = scan_coarse_video(gpu)
+            gpu_ms = (monotonic() - started) * 1000
+            records.append(
+                {
+                    "video_id": path.stem,
+                    "backend": "nvdec",
+                    "status": "COMPLETE",
+                    "wall_ms": gpu_ms,
+                    "sample_count": len(gpu_series.frame_indices),
+                    "samples_per_second": COARSE_SAMPLES_PER_SECOND,
+                    "stride_frames": gpu_series.stride_frames,
+                    "decoder": gpu.runtime_manifest(),
+                }
+            )
+            gpu_continuity = final_continuity_audit(gpu, audit_start, audit_end)
+            parity = _coarse_parity(cpu_series, gpu_series)
+            parity.update(
+                {
+                    "video_id": path.stem,
+                    "decode_status": "COMPLETE",
+                    "speedup": cpu_ms / gpu_ms if gpu_ms > 0 else None,
+                    "orb_decisions_equal": (
+                        cpu_continuity.abrupt_transition_frames
+                        == gpu_continuity.abrupt_transition_frames
+                        and cpu_continuity.soft_transition_frames
+                        == gpu_continuity.soft_transition_frames
+                    ),
+                    "continuity_quality_cpu": cpu_continuity.continuity_quality,
+                    "continuity_quality_nvdec": gpu_continuity.continuity_quality,
+                    "orb_continuity_mean_cpu": cpu_continuity.orb_continuity_mean,
+                    "orb_continuity_mean_nvdec": gpu_continuity.orb_continuity_mean,
+                }
+            )
+            parity_rows.append(parity)
+        except (IndexError, RuntimeError) as error:
+            detail = str(error)
+            records.append(
+                {
+                    "video_id": path.stem,
+                    "backend": "nvdec",
+                    "status": "FAILED",
+                    "error": detail,
+                }
+            )
+            parity_rows.append(
+                {
+                    "video_id": path.stem,
+                    "decode_status": "FAILED",
+                    "frame_identity": False,
+                    "hard_cut_decisions_equal": False,
+                    "orb_decisions_equal": False,
+                    "speedup": None,
+                    "error": detail,
+                }
+            )
+            issues.append(
+                {
+                    "severity": "WARNING",
+                    "code": "NVDEC_MB1_DECODE_FAILED",
+                    "video_id": path.stem,
+                    "detail": detail,
+                }
+            )
+        finally:
+            if gpu is not None:
+                gpu.close()
     promoted = bool(parity_rows) and all(
         row["frame_identity"]
         and row["hard_cut_decisions_equal"]
@@ -379,6 +416,7 @@ def benchmark_mb1_workload(
         "workload": "FROZEN_MB1_COARSE_SCAN",
         "samples_per_second": COARSE_SAMPLES_PER_SECOND,
         "records": records,
+        "issues": issues,
     }, {
         "status": "KEEP" if promoted else "NOT_PROMOTED" if nvdec_available else "UNAVAILABLE",
         "threshold_tuning_performed": False,
@@ -396,7 +434,7 @@ def benchmark_m1_local_workload(
     video_paths: Sequence[Path], *, nvdec_available: bool
 ) -> tuple[dict[str, Any], dict[str, Any], list[np.ndarray], list[np.ndarray]]:
     settings = M1Settings()
-    records, parity_rows = [], []
+    records, parity_rows, issues = [], [], []
     cpu_images: list[np.ndarray] = []
     gpu_images: list[np.ndarray] = []
     for path in video_paths:
@@ -431,17 +469,53 @@ def benchmark_m1_local_workload(
             }
         )
         probe.close()
+        cpu_images.extend(frame.image for frame in cpu_dense[:8])
         if not nvdec_available:
-            cpu_images.extend(frame.image for frame in cpu_dense[:8])
             continue
-        gpu = create_raw_video_decoder(path.stem, path, backend="nvdec")
-        gpu_coarse, gpu_coarse_ms = _decode_timed(gpu, coarse)
-        gpu_dense, gpu_dense_ms = _decode_timed(gpu, dense)
-        gpu.close()
+        gpu = None
+        try:
+            gpu = create_raw_video_decoder(path.stem, path, backend="nvdec")
+            gpu_coarse, gpu_coarse_ms = _decode_timed(gpu, coarse)
+            gpu_dense, gpu_dense_ms = _decode_timed(gpu, dense)
+        except (IndexError, RuntimeError) as error:
+            detail = str(error)
+            records.append(
+                {
+                    "video_id": path.stem,
+                    "backend": "nvdec",
+                    "status": "FAILED",
+                    "anchor": anchor,
+                    "window_start": start,
+                    "window_end": end,
+                    "error": detail,
+                }
+            )
+            parity_rows.append(
+                {
+                    "video_id": path.stem,
+                    "decode_status": "FAILED",
+                    "frame_identity": False,
+                    "combined_speedup": 0.0,
+                    "error": detail,
+                }
+            )
+            issues.append(
+                {
+                    "severity": "WARNING",
+                    "code": "NVDEC_M1_LOCAL_DECODE_FAILED",
+                    "video_id": path.stem,
+                    "detail": detail,
+                }
+            )
+            continue
+        finally:
+            if gpu is not None:
+                gpu.close()
         records.append(
             {
                 "video_id": path.stem,
                 "backend": "nvdec",
+                "status": "COMPLETE",
                 "anchor": anchor,
                 "window_start": start,
                 "window_end": end,
@@ -474,12 +548,18 @@ def benchmark_m1_local_workload(
                 and max(coarse + dense) <= end,
             }
         )
-        cpu_images.extend(frame.image for frame in cpu_dense[:8])
         gpu_images.extend(frame.image for frame in gpu_dense[:8])
+    failed = sum(row.get("decode_status") == "FAILED" for row in parity_rows)
     return {
         "workload": "FROZEN_M1_LOCAL_PLUS_MINUS_6S_COARSE12_DENSE15",
         "records": records,
-    }, {"rows": parity_rows}, cpu_images, gpu_images
+        "issues": issues,
+    }, {
+        "attempted_video_count": len(video_paths) if nvdec_available else 0,
+        "successful_video_count": len(parity_rows) - failed,
+        "failed_video_count": failed,
+        "rows": parity_rows,
+    }, cpu_images, gpu_images
 
 
 def benchmark_clip_batches(
@@ -597,6 +677,7 @@ def consumer_specific_nvdec_verdicts(
     mb1_status = str(mb1_parity.get("status", "NOT_PROMOTED"))
     neural_rows = neural_embedding.get("rows", [])
     identity = bool(neural_rows) and all(row.get("frame_identity") for row in neural_rows)
+    incomplete = int(neural_embedding.get("failed_video_count", 0)) > 0
     embedding_status = neural_embedding.get("status")
     retrieval_status = neural_retrieval.get("status")
     useful_speed = bool(neural_rows) and median(
@@ -608,6 +689,8 @@ def consumer_specific_nvdec_verdicts(
         neural_status = "OPTIONAL"
     else:
         neural_status = "DROP"
+    if incomplete and neural_status == "KEEP":
+        neural_status = "OPTIONAL"
     return {
         "NVDEC_MB1": "KEEP" if mb1_status == "KEEP" else "NOT_PROMOTED",
         "NVDEC_NEURAL": neural_status,
