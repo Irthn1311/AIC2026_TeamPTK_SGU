@@ -185,6 +185,9 @@ def make_keyframe_config(data_root: Path, output_root: Path, video_roots: list[P
     shot_cfg["require_transnetv2"] = False
     shot_cfg["use_histdiff_only"] = True
     shot_cfg["backend"] = "histdiff"
+    shot_cfg["fallback_sampling_mode"] = "sequential"
+    candidate_cfg = cfg.setdefault("candidates", {})
+    candidate_cfg["save_candidate_frames"] = False
     clip_cfg = cfg.setdefault("clip", {})
     clip_cfg["pretrained"] = ""
     clip_cfg["download_root"] = ".model_cache"

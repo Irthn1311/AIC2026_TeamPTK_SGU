@@ -8,7 +8,8 @@ from pathlib import Path
 import pandas as pd
 
 from _bootstrap import PROJECT_ROOT
-from src.preprocessing.keyframe_v2.pipeline import run_keyframe_v2
+from src.preprocessing.keyframe_v2.clip_scorer import ImageEmbeddingScorer
+from src.preprocessing.keyframe_v2.pipeline import _force_e_local_env, load_config, run_keyframe_v2
 
 
 def natural_video_key(path: Path) -> tuple[str, int]:
@@ -158,12 +159,15 @@ def main() -> None:
     parser.add_argument("--video-id", action="append", default=[], help="Only process this video id. Can be repeated.")
     parser.add_argument("--no-aggregate", action="store_true", help="Only process per-video outputs; skip global map/summary writes.")
     parser.add_argument("--aggregate-only", action="store_true", help="Only rebuild global map and summaries from existing per-video outputs.")
+    parser.add_argument("--reload-clip-per-video", action="store_true", help="Disable shared CLIP model reuse across the run.")
     args = parser.parse_args()
 
     started = time.time()
     video_roots = [Path(path) for path in (args.video_root or [PROJECT_ROOT / "datasets_L21" / "Videos_L21_a" / "video"])]
     output_root = Path(args.output)
     output_root.mkdir(parents=True, exist_ok=True)
+    cfg = load_config(args.config)
+    _force_e_local_env(PROJECT_ROOT, cfg)
 
     if args.aggregate_only:
         global_df = build_global_map(output_root)
@@ -182,6 +186,13 @@ def main() -> None:
     if args.limit:
         videos = videos[: args.limit]
 
+    shared_embedder = None
+    if not args.reload_clip_per_video:
+        print("[init] Loading image embedding scorer once for this shard...")
+        shared_embedder = ImageEmbeddingScorer(PROJECT_ROOT, cfg.get("clip", {}))
+        print(f"[init] Embedding backend: {shared_embedder.backend} device={shared_embedder.info.get('device', '')}")
+    print(f"[init] Videos queued: {len(videos)} from {len(video_roots)} root(s)")
+
     errors: list[dict] = []
     for idx, video_path in enumerate(videos, start=1):
         video_id = video_path.stem
@@ -198,6 +209,7 @@ def main() -> None:
                 output_root=output_root,
                 validate_btc_mapping=args.validate_btc_mapping,
                 debug=args.debug,
+                embedder=shared_embedder,
             )
             elapsed = time.time() - t0
             shot_time = summary.get("performance", {}).get("shot_detection", 0.0) if summary else 0.0

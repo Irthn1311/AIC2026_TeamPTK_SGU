@@ -15,11 +15,12 @@ class DecodedFrame:
 
 
 class ExactFrameDecoder:
-    def __init__(self, video_path: str | Path):
+    def __init__(self, video_path: str | Path, max_sequential_gap: int = 300):
         self.video_path = Path(video_path)
         self.cap = cv2.VideoCapture(str(self.video_path))
         if not self.cap.isOpened():
             raise RuntimeError(f"Cannot open video: {self.video_path}")
+        self.max_sequential_gap = max(0, int(max_sequential_gap))
         self.current_pos = 0
 
     def close(self) -> None:
@@ -29,7 +30,7 @@ class ExactFrameDecoder:
         if internal_frame_index < 0:
             raise ValueError("internal_frame_index must be non-negative")
         target = int(internal_frame_index)
-        if self.current_pos <= target <= self.current_pos + 5:
+        if self.current_pos <= target <= self.current_pos + self.max_sequential_gap:
             while self.current_pos < target:
                 if not self.cap.grab():
                     break

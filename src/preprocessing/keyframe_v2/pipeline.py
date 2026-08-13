@@ -28,7 +28,14 @@ def load_config(path: str | Path) -> dict:
         return yaml.safe_load(f)
 
 
-def run_keyframe_v2(video_path: str | Path, config_path: str | Path, output_root: str | Path, validate_btc_mapping: bool = True, debug: bool = True) -> dict:
+def run_keyframe_v2(
+    video_path: str | Path,
+    config_path: str | Path,
+    output_root: str | Path,
+    validate_btc_mapping: bool = True,
+    debug: bool = True,
+    embedder: ImageEmbeddingScorer | None = None,
+) -> dict:
     started = time.time()
     project_root = Path.cwd()
     cfg = load_config(config_path)
@@ -77,12 +84,19 @@ def run_keyframe_v2(video_path: str | Path, config_path: str | Path, output_root
 
     t = time.time()
     decoder = ExactFrameDecoder(video_path)
-    embedder = ImageEmbeddingScorer(project_root, cfg.get("clip", {}))
+    embedder = embedder or ImageEmbeddingScorer(project_root, cfg.get("clip", {}))
     if embedder.warning:
         warnings.append(embedder.warning)
 
     candidates, selected_rows, frame_embeddings = score_and_select_candidates(
-        decoder, mapper, shots, meta.reported_fps, cfg, embedder, debug_dir, write_candidate_images=debug
+        decoder,
+        mapper,
+        shots,
+        meta.reported_fps,
+        cfg,
+        embedder,
+        debug_dir,
+        write_candidate_images=bool(debug or cfg.get("candidates", {}).get("save_candidate_frames", False)),
     )
     candidates_df = pd.DataFrame(candidates)
     selected_df = pd.DataFrame(selected_rows)

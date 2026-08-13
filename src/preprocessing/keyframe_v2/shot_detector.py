@@ -123,6 +123,14 @@ def _detect_histdiff(video_path: Path, meta: VideoMetadata, cfg: dict) -> list[S
     stride = max(1, int(cfg.get("fallback_sample_stride", 30)))
     threshold = float(cfg.get("fallback_hist_threshold", 0.48))
     min_len = max(1, int(round(float(cfg.get("fallback_min_shot_seconds", 1.2)) * meta.reported_fps)))
+    sampling_mode = str(cfg.get("fallback_sampling_mode", "sequential")).lower()
+    if sampling_mode == "seek":
+        return _detect_histdiff_seek(video_path, meta, stride, threshold, min_len)
+
+    return _detect_histdiff_sequential(video_path, meta, stride, threshold, min_len)
+
+
+def _detect_histdiff_seek(video_path: Path, meta: VideoMetadata, stride: int, threshold: float, min_len: int) -> list[Shot]:
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
         raise RuntimeError(f"Cannot open video for fallback shot detection: {video_path}")
@@ -144,13 +152,44 @@ def _detect_histdiff(video_path: Path, meta: VideoMetadata, cfg: dict) -> list[S
         prev_hist = hist
         frame_idx += stride
     cap.release()
+    return _shots_from_cuts(cuts, meta, "histdiff_fallback_seek")
 
+
+def _detect_histdiff_sequential(video_path: Path, meta: VideoMetadata, stride: int, threshold: float, min_len: int) -> list[Shot]:
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        raise RuntimeError(f"Cannot open video for fallback shot detection: {video_path}")
+
+    cuts = [0]
+    prev_hist = None
+    frame_idx = 0
+    total_frames = meta.total_frames if meta.total_frames > 0 else 999999
+    while frame_idx < total_frames:
+        ok = cap.grab()
+        if not ok:
+            break
+        if frame_idx % stride == 0:
+            ok, frame = cap.retrieve()
+            if not ok or frame is None:
+                break
+            hist = _frame_hist(frame)
+            if prev_hist is not None:
+                diff = float(cv2.compareHist(prev_hist, hist, cv2.HISTCMP_BHATTACHARYYA))
+                if diff >= threshold and frame_idx - cuts[-1] >= min_len:
+                    cuts.append(frame_idx)
+            prev_hist = hist
+        frame_idx += 1
+    cap.release()
+    return _shots_from_cuts(cuts, meta, "histdiff_fallback_sequential")
+
+
+def _shots_from_cuts(cuts: list[int], meta: VideoMetadata, backend: str) -> list[Shot]:
     shots = []
     for i, start in enumerate(cuts):
         end = (cuts[i + 1] - 1) if i + 1 < len(cuts) else meta.total_frames - 1
         if end >= start:
-            shots.append(_make_shot(meta, i, start, end, "histdiff_fallback", None))
-    return shots or [_make_shot(meta, 0, 0, meta.total_frames - 1, "histdiff_fallback", None)]
+            shots.append(_make_shot(meta, i, start, end, backend, None))
+    return shots or [_make_shot(meta, 0, 0, meta.total_frames - 1, backend, None)]
 
 
 def _frame_hist(frame: np.ndarray) -> np.ndarray:

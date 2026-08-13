@@ -28,6 +28,7 @@ shot_detection:
   transnetv2_device: auto
   transnetv2_frame_reader: opencv
   transnetv2_threshold: 0.5
+  fallback_sampling_mode: sequential
   fallback_sample_stride: 30
   fallback_hist_threshold: 0.48
   fallback_min_shot_seconds: 1.2
@@ -48,6 +49,7 @@ margin_guard:
 candidates:
   candidate_window_seconds: 0.5
   candidate_count: 7
+  save_candidate_frames: false
 
 scoring:
   quality_weight: 0.30
