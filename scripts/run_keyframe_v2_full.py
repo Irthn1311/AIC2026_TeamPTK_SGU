@@ -63,6 +63,16 @@ def build_global_map(output_root: Path) -> pd.DataFrame:
     return global_df
 
 
+def collect_videos(video_roots: list[Path]) -> list[Path]:
+    videos: dict[str, Path] = {}
+    for video_root in video_roots:
+        for path in sorted(video_root.glob("*.mp4"), key=natural_video_key):
+            if path.name.startswith("."):
+                continue
+            videos.setdefault(path.stem, path)
+    return sorted(videos.values(), key=natural_video_key)
+
+
 def write_summaries(output_root: Path, started: float, errors: list[dict]) -> tuple[pd.DataFrame, dict]:
     summary_dir = output_root / "summary"
     summary_dir.mkdir(parents=True, exist_ok=True)
@@ -133,7 +143,12 @@ def write_summaries(output_root: Path, started: float, errors: list[dict]) -> tu
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run Keyframe V2 over video dataset with resume support.")
-    parser.add_argument("--video-root", default=str(PROJECT_ROOT / "datasets_L21" / "Videos_L21_a" / "video"))
+    parser.add_argument(
+        "--video-root",
+        action="append",
+        default=None,
+        help="Directory containing mp4 videos. Can be repeated for multi-folder Kaggle datasets.",
+    )
     parser.add_argument("--config", default=str(PROJECT_ROOT / "configs" / "keyframe_v2.yaml"))
     parser.add_argument("--output", default=str(PROJECT_ROOT / "outputs" / "keyframe_v2_full"))
     parser.add_argument("--force", action="store_true")
@@ -146,7 +161,7 @@ def main() -> None:
     args = parser.parse_args()
 
     started = time.time()
-    video_root = Path(args.video_root)
+    video_roots = [Path(path) for path in (args.video_root or [PROJECT_ROOT / "datasets_L21" / "Videos_L21_a" / "video"])]
     output_root = Path(args.output)
     output_root.mkdir(parents=True, exist_ok=True)
 
@@ -160,7 +175,7 @@ def main() -> None:
             raise SystemExit("Keyframe V2 aggregate produced 0 keyframes; see per-video outputs.")
         return
 
-    videos = sorted([p for p in video_root.glob("*.mp4") if not p.name.startswith(".")], key=natural_video_key)
+    videos = collect_videos(video_roots)
     requested = {str(video_id).strip() for video_id in args.video_id if str(video_id).strip()}
     if requested:
         videos = [path for path in videos if path.stem in requested]

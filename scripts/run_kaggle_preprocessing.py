@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import glob
 import json
 import os
 import shutil
@@ -108,11 +109,56 @@ def resolve_gpu_devices(requested: str, device: str) -> list[str]:
     return [str(idx) for idx in range(count)]
 
 
-def discover_video_ids(video_root: Path, limit: int | None) -> list[str]:
-    videos = sorted(path.stem for path in video_root.glob("*.mp4") if not path.name.startswith("."))
+def natural_video_key(path: Path | str) -> tuple[str, int]:
+    stem = Path(path).stem
+    try:
+        prefix, number = stem.rsplit("_V", 1)
+        return prefix, int(number)
+    except Exception:
+        return stem, 0
+
+
+def discover_video_roots(data_root: Path, video_root_glob: str) -> list[Path]:
+    pattern = video_root_glob.strip()
+    if not pattern:
+        pattern = "Videos_L21_a/video"
+    candidate = Path(pattern).expanduser()
+    if candidate.is_absolute():
+        if any(char in pattern for char in "*?["):
+            roots = [Path(path) for path in sorted(glob.glob(pattern))]
+        else:
+            roots = [candidate]
+    else:
+        roots = sorted(data_root.glob(pattern))
+    return [root for root in roots if root.is_dir()]
+
+
+def discover_video_paths(video_roots: list[Path], limit: int | None) -> list[Path]:
+    videos: dict[str, Path] = {}
+    for video_root in video_roots:
+        for path in sorted(video_root.glob("*.mp4"), key=natural_video_key):
+            if path.name.startswith("."):
+                continue
+            videos.setdefault(path.stem, path)
+    discovered = sorted(videos.values(), key=natural_video_key)
     if limit is not None:
-        videos = videos[: max(0, limit)]
-    return videos
+        discovered = discovered[: max(0, limit)]
+    return discovered
+
+
+def append_repeated_arg(cmd: list[str], flag: str, values: list[Path | str]) -> None:
+    for value in values:
+        cmd.extend([flag, str(value)])
+
+
+def resolve_btc_keyframe_root(data_root: Path) -> Path:
+    for candidate in [
+        data_root / "keyframes",
+        data_root / "Keyframes_L21" / "keyframes",
+    ]:
+        if candidate.is_dir():
+            return candidate
+    return data_root / "keyframes"
 
 
 def load_yaml(path: Path) -> dict:
@@ -125,12 +171,12 @@ def write_yaml(data: dict, path: Path) -> Path:
     return path
 
 
-def make_keyframe_config(data_root: Path, output_root: Path, visual_batch_size: int) -> Path:
+def make_keyframe_config(data_root: Path, output_root: Path, video_roots: list[Path], visual_batch_size: int) -> Path:
     cfg = load_yaml(PROJECT_ROOT / "configs" / "keyframe_v2.yaml")
     paths = cfg.setdefault("paths", {})
     paths["dataset_root"] = str(data_root)
-    paths["video_root"] = str(data_root / "Videos_L21_a" / "video")
-    paths["btc_keyframe_root"] = str(data_root / "Keyframes_L21" / "keyframes")
+    paths["video_root"] = str(video_roots[0] if video_roots else data_root / "Videos_L21_a" / "video")
+    paths["btc_keyframe_root"] = str(resolve_btc_keyframe_root(data_root))
     paths["btc_mapping_root"] = str(data_root / "map-keyframes-aic25-b1" / "map-keyframes")
     paths["clip_feature_root"] = str(data_root / "clip-features-32-aic25-b1" / "clip-features-32")
     paths["model_cache"] = str(PROJECT_ROOT / ".model_cache")
@@ -160,6 +206,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run Kaggle L21 preprocessing stages with smoke/full modes.")
     parser.add_argument("--data-root", default=os.environ.get("AIC_DATA_ROOT", "/kaggle/input/datasets/nadkli/dataset-aic"))
     parser.add_argument("--output-root", default=os.environ.get("AIC_OUTPUT_ROOT", "/kaggle/working/artifacts"))
+    parser.add_argument(
+        "--video-root-glob",
+        default=os.environ.get("AIC_VIDEO_ROOT_GLOB", "Videos_L21_a/video"),
+        help='Video root glob under --data-root, e.g. "Videos_L*_*/video" for all Kaggle folders.',
+    )
     parser.add_argument("--smoke-video-count", type=int, default=int(os.environ.get("AIC_SMOKE_VIDEO_COUNT", "1")))
     parser.add_argument("--full", action="store_true", help="Process every discovered video instead of the smoke limit.")
     parser.add_argument("--skip-assets", action="store_true")
@@ -187,7 +238,6 @@ def main() -> int:
 
     data_root = resolve_path(args.data_root)
     output_root = resolve_path(args.output_root)
-    video_root = data_root / "Videos_L21_a" / "video"
     keyframe_root = output_root / "keyframe_v2_full"
     ocr_v2_root = output_root / "ocr_v2_selected_keyframes"
     ocr_temporal_root = output_root / "ocr_temporal_v3_full_tracking"
@@ -214,13 +264,14 @@ def main() -> int:
     for path in (output_root, keyframe_root, ocr_v2_root, ocr_temporal_root, ocr_index_root, asr_root, audio_root, index_root):
         path.mkdir(parents=True, exist_ok=True)
 
-    if not video_root.is_dir():
-        raise FileNotFoundError(f"Missing Kaggle video root: {video_root}")
-
     limit = None if args.full else args.smoke_video_count
-    video_ids = discover_video_ids(video_root, limit)
+    video_roots = discover_video_roots(data_root, args.video_root_glob)
+    if not video_roots:
+        raise FileNotFoundError(f"No Kaggle video roots matched {args.video_root_glob!r} under {data_root}")
+    video_paths = discover_video_paths(video_roots, limit)
+    video_ids = [path.stem for path in video_paths]
     if not video_ids:
-        raise FileNotFoundError(f"No .mp4 videos found in {video_root}")
+        raise FileNotFoundError(f"No .mp4 videos found in roots: {[str(root) for root in video_roots]}")
     gpu_devices = resolve_gpu_devices(args.gpu_devices, args.device)
     if args.parallel_gpu_workers > 0:
         gpu_devices = gpu_devices[: args.parallel_gpu_workers]
@@ -230,6 +281,8 @@ def main() -> int:
         "mode": "full" if args.full else "smoke",
         "data_root": str(data_root),
         "output_root": str(output_root),
+        "video_root_glob": args.video_root_glob,
+        "video_roots": [str(root) for root in video_roots],
         "video_count": len(video_ids),
         "video_ids": video_ids[:20],
         "gpu_devices": gpu_devices,
@@ -243,7 +296,7 @@ def main() -> int:
 
     records: list[dict[str, object]] = []
     py = sys.executable
-    keyframe_config = make_keyframe_config(data_root, output_root, args.visual_batch_size)
+    keyframe_config = make_keyframe_config(data_root, output_root, video_roots, args.visual_batch_size)
     generated_keyframe_cfg = load_yaml(keyframe_config)
     print(json.dumps({
         "generated_keyframe_config": str(keyframe_config),
@@ -261,8 +314,6 @@ def main() -> int:
         keyframe_cmd = [
             py,
             "scripts/run_keyframe_v2_full.py",
-            "--video-root",
-            str(video_root),
             "--config",
             str(keyframe_config),
             "--output",
@@ -270,6 +321,7 @@ def main() -> int:
             "--limit",
             str(len(video_ids)),
         ]
+        append_repeated_arg(keyframe_cmd, "--video-root", video_roots)
         if args.force:
             keyframe_cmd.append("--force")
         if sharded_gpu_devices:
@@ -278,14 +330,13 @@ def main() -> int:
                 shard_cmd = [
                     py,
                     "scripts/run_keyframe_v2_full.py",
-                    "--video-root",
-                    str(video_root),
                     "--config",
                     str(keyframe_config),
                     "--output",
                     str(keyframe_root),
                     "--no-aggregate",
                 ]
+                append_repeated_arg(shard_cmd, "--video-root", video_roots)
                 for video_id in shard_video_ids:
                     shard_cmd.extend(["--video-id", video_id])
                 if args.force:
@@ -297,8 +348,6 @@ def main() -> int:
                 [
                     py,
                     "scripts/run_keyframe_v2_full.py",
-                    "--video-root",
-                    str(video_root),
                     "--config",
                     str(keyframe_config),
                     "--output",
@@ -477,8 +526,6 @@ def main() -> int:
         base_asr_cmd = [
             py,
             "scripts/run_batch_asr_whisper.py",
-            "--video-dir",
-            str(video_root),
             "--output-dir",
             str(asr_root),
             "--audio-dir",
@@ -492,6 +539,7 @@ def main() -> int:
             "--index-batch-size",
             str(args.asr_index_batch_size),
         ]
+        append_repeated_arg(base_asr_cmd, "--video-dir", video_roots)
         if args.force:
             base_asr_cmd.append("--overwrite")
         if sharded_gpu_devices:
@@ -559,6 +607,8 @@ def main() -> int:
     report_path = output_root / "kaggle_preprocessing_run_report.json"
     report_path.write_text(json.dumps({
         "mode": "full" if args.full else "smoke",
+        "video_root_glob": args.video_root_glob,
+        "video_roots": [str(root) for root in video_roots],
         "video_ids": video_ids,
         "steps": records,
     }, indent=2, ensure_ascii=False), encoding="utf-8")

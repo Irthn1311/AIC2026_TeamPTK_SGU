@@ -247,7 +247,7 @@ def render_ocr_temporal(output_root: Path, limit: int) -> tuple[str, dict[str, A
 
 def render_asr(output_root: Path, data_root: Path | None, report_dir: Path, limit: int, video_preview_count: int) -> tuple[str, dict[str, Any]]:
     asr_dir = output_root / "asr"
-    files = sorted(asr_dir.glob("L21_V*_asr.json"))
+    files = sorted(asr_dir.glob("L*_V*_asr.json"))
     if not files:
         return card("ASR", "<p class='muted'>Chưa có ASR JSON.</p>"), {"asr_segments": "missing"}
     total_segments = 0
@@ -272,7 +272,10 @@ def render_asr(output_root: Path, data_root: Path | None, report_dir: Path, limi
 
 def make_video_clip(data_root: Path, report_dir: Path, video_id: str, segments: list[dict[str, Any]]) -> Path | None:
     ffmpeg = shutil.which("ffmpeg")
-    video_path = data_root / "Videos_L21_a" / "video" / f"{video_id}.mp4"
+    video_path = next(
+        (path for path in sorted(data_root.glob("Videos_L*_*/video/*.mp4")) if path.stem == video_id),
+        data_root / "Videos_L21_a" / "video" / f"{video_id}.mp4",
+    )
     if not ffmpeg or not video_path.is_file():
         return None
     start = 0.0

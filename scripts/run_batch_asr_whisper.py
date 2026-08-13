@@ -37,7 +37,7 @@ def save_json(data: any, path: Path | str) -> None:
 
 
 def run_batch_whisper(
-    video_dir: Path | str = None,
+    video_dir: Path | str | list[Path | str] = None,
     output_dir: Path | str = None,
     audio_dir: Path | str = None,
     model_size: str = "large-v3-turbo",
@@ -57,13 +57,22 @@ def run_batch_whisper(
     if audio_dir is None:
         audio_dir = PROJECT_ROOT / "outputs" / "audio"
 
-    video_dir = Path(video_dir)
+    if isinstance(video_dir, (list, tuple)):
+        video_dirs = [Path(path) for path in video_dir]
+    else:
+        video_dirs = [Path(video_dir)]
     output_dir = Path(output_dir)
     audio_dir = Path(audio_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     audio_dir.mkdir(parents=True, exist_ok=True)
 
-    video_files = sorted(list(video_dir.glob("*.mp4")))
+    video_by_id: dict[str, Path] = {}
+    for root in video_dirs:
+        for path in sorted(root.glob("*.mp4")):
+            if path.name.startswith("."):
+                continue
+            video_by_id.setdefault(path.stem, path)
+    video_files = sorted(video_by_id.values())
     if not video_files:
         # Check subdirectories
         video_files = sorted(list(PROJECT_ROOT.glob("datasets_L21/**/L21_*.mp4")))
@@ -212,7 +221,7 @@ def run_batch_whisper(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Batch Faster-Whisper ASR Pipeline")
-    parser.add_argument("--video-dir", default=None, help="Directory containing mp4 videos")
+    parser.add_argument("--video-dir", action="append", default=None, help="Directory containing mp4 videos. Can be repeated.")
     parser.add_argument("--output-dir", default=None, help="Output directory for ASR JSON chunks")
     parser.add_argument("--audio-dir", default=None, help="Output directory for extracted WAVs")
     parser.add_argument("--model-size", default="large-v3-turbo", help="Faster-Whisper model size")
