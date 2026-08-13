@@ -9,7 +9,11 @@ import pytest
 
 from aic2026_eval.census import build_corpus_inventory, build_usage_census
 from aic2026_eval.contracts import contract_document, validate_query
-from aic2026_eval.discovery import resolve_dataset_root, resolve_named_file
+from aic2026_eval.discovery import (
+    resolve_dataset_root,
+    resolve_named_file,
+    resolve_or_pack_archive,
+)
 from aic2026_eval.evaluate_predictions import main as evaluate_main
 from aic2026_eval.holdout import select_heldout_candidates
 from aic2026_eval.mapping import audit_l21_bootstrap, read_mapping
@@ -428,3 +432,15 @@ def test_nested_input_discovery(tmp_path: Path) -> None:
     marker.write_text("{}\n", encoding="utf-8")
     assert resolve_dataset_root(tmp_path / "mount") == dataset.resolve()
     assert resolve_named_file(tmp_path / "requests", "anchor_requests.jsonl") == marker.resolve()
+    expanded = tmp_path / "expanded/nested"
+    expanded.mkdir(parents=True)
+    for name in ("queries.jsonl", "gt.jsonl", "manifest.json"):
+        (expanded / name).write_text("{}\n", encoding="utf-8")
+    packed = resolve_or_pack_archive(
+        tmp_path / "expanded",
+        "benchmark.zip",
+        {"queries.jsonl", "gt.jsonl", "manifest.json"},
+        tmp_path / "working/benchmark.zip",
+    )
+    with zipfile.ZipFile(packed) as archive:
+        assert set(archive.namelist()) == {"queries.jsonl", "gt.jsonl", "manifest.json"}

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import deque
 from pathlib import Path
+from zipfile import ZIP_DEFLATED, ZipFile
 
 
 def bounded_directories(
@@ -134,9 +135,56 @@ def resolve_named_file(
     return _unique(candidates, filename)
 
 
+def resolve_or_pack_archive(
+    requested: str | Path,
+    archive_name: str,
+    required_files: set[str],
+    staging_path: str | Path,
+    *,
+    optional: bool = False,
+) -> Path | None:
+    """Resolve an intact ZIP or repack a Kaggle-expanded dataset deterministically."""
+    root = Path(requested)
+    if not root.exists():
+        if optional:
+            return None
+        raise FileNotFoundError(f"required input does not exist: {root}")
+    if root.is_file():
+        if root.name != archive_name:
+            raise RuntimeError(f"expected {archive_name}, got {root.name}")
+        return root.resolve()
+    archives = {
+        (directory / archive_name).resolve()
+        for directory in bounded_directories(root)
+        if (directory / archive_name).is_file()
+    }
+    if archives:
+        return _unique(archives, archive_name)
+    package_roots = {
+        directory.resolve()
+        for directory in bounded_directories(root)
+        if all((directory / name).is_file() for name in required_files)
+    }
+    if not package_roots:
+        if optional:
+            return None
+        raise RuntimeError(
+            f"neither {archive_name} nor expanded files {sorted(required_files)} "
+            f"were found under {root}"
+        )
+    package_root = _unique(package_roots, f"expanded package for {archive_name}")
+    target = Path(staging_path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with ZipFile(target, "w", ZIP_DEFLATED) as archive:
+        for name in sorted(required_files):
+            archive.write(package_root / name, name)
+    return target.resolve()
+
+
 __all__ = [
     "bounded_directories",
     "resolve_dataset_root",
     "resolve_named_file",
+    "resolve_or_pack_archive",
     "resolve_repository_root",
 ]
