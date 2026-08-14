@@ -206,3 +206,84 @@ def test_visual_ontology_model_is_immutable() -> None:
     assert isinstance(ontology, VisualAnswerOntology)
     with pytest.raises(AttributeError):
         ontology.ontology_id = "mutated"  # type: ignore[misc]
+
+
+def test_visual_ontology_fallback_to_baseline_candidates_for_color_and_count() -> None:
+    provider = _provider()
+    assert provider.supports(QuestionType.COLOR) is True
+    assert provider.supports(QuestionType.COUNT) is True
+    assert provider.supports(QuestionType.YES_NO) is True
+    assert provider.supports(QuestionType.DIRECTION) is True
+
+    color_candidates = provider.get_candidates_for_query(
+        QuestionType.COLOR, "What color is the shirt?"
+    )
+    assert len(color_candidates) == 11
+    assert "trắng" in {c.canonical_answer for c in color_candidates}
+    assert "xanh lá" in {c.canonical_answer for c in color_candidates}
+
+    count_candidates = provider.get_candidates_for_query(
+        QuestionType.COUNT, "How many dogs are visible?"
+    )
+    assert len(count_candidates) == 11
+    assert "2" in {c.canonical_answer for c in count_candidates}
+
+
+def test_distill_qa_scene_prompt_extracts_visual_query() -> None:
+    from system_tai.qa.grounding import distill_qa_scene_prompt
+
+    assert (
+        distill_qa_scene_prompt(
+            "In the scene with a yellow-red warning sign, "
+            "what danger is the sign warning about?"
+        )
+        == "a yellow-red warning sign"
+    )
+    assert (
+        distill_qa_scene_prompt(
+            "In the scene where the man in a striped shirt is working "
+            "with an officer, what is he sitting behind?"
+        )
+        == "the man in a striped shirt is working with an officer"
+    )
+    assert (
+        distill_qa_scene_prompt(
+            "In the scene with a person walking dogs, "
+            "how many dogs are clearly visible?"
+        )
+        == "a person walking dogs"
+    )
+    assert (
+        distill_qa_scene_prompt(
+            "What color is the shirt worn by the woman being interviewed?"
+        )
+        == "shirt worn by the woman being interviewed"
+    )
+    assert (
+        distill_qa_scene_prompt(
+            "What type of vehicles mainly make up "
+            "the convoy of white vehicles in the scene?"
+        )
+        == "the convoy of white vehicles"
+    )
+
+
+def test_question_classifier_recognizes_new_color_and_entity_patterns() -> None:
+    from system_tai.qa.question_types import classify_question
+
+    assert (
+        classify_question("Nữ MC mặc trang phục màu gì?").question_type
+        == QuestionType.COLOR
+    )
+    assert (
+        classify_question("Biểu tượng hình cầu có hai màu gì?").question_type
+        == QuestionType.COLOR
+    )
+    assert (
+        classify_question("Cậu bé đang dùng dụng cụ gì để quan sát?").question_type
+        == QuestionType.OBJECT_ENTITY
+    )
+    assert (
+        classify_question("Cuộc đua trong bùn sử dụng con vật nào?").question_type
+        == QuestionType.OBJECT_ENTITY
+    )

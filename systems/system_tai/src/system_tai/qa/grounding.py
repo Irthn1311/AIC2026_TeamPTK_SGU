@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
@@ -592,3 +593,126 @@ def nomination_diagnostics(
         }
         for item in nominations
     ]
+
+
+def distill_qa_scene_prompt(text: str) -> str:
+    """Distill an interrogative QA question into a descriptive visual scene query."""
+    if not isinstance(text, str) or not text.strip():
+        return ""
+    if not re.search(
+        r"\b(?:what|which|how|who|where|scene|trong canh|ban tin|mau gi|bao nhieu|la gi)\b|[?]",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        return text
+
+    cleaned = text.strip()
+    match = re.search(
+        r"^(?:In the scene with|In the scene where|In the scene,?)\s+(.*?),"
+        r"\s*(?:what|which|how|who|where)\b",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        cleaned = match.group(1).strip()
+    else:
+        cleaned = re.sub(
+            r"^(?:In the scene with|In the scene where|In the news report,?|"
+            r"In the scene,?|In the frame,?)\s+",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(
+            r"^(?:Trong cảnh(?: có)?|Trong bản tin(?: có)?|Trong đoạn clip(?: có)?)\s+",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(
+            r"^(?:What is the scene displayed on|What scene is displayed on|"
+            r"What is displayed on|What is shown on)\s+",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(
+            r"^(?:What color is(?: the)?|Which color is(?: the)?|What color are(?: the)?)\s+",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(
+            r"^(?:What type of vehicles?|Which type of vehicles?|"
+            r"What kind of vehicles?)\s+(?:mainly )?(?:make up|is|are)\s+",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(
+            r"^(?:What type of|Which type of|What kind of)\s+",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(
+            r"^(?:What animal|Which animal)\s+(?:does|is|was)\s+(?:the )?",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(
+            r"^(?:What crop|Which crop)\s+(?:is|was)\s+(?:the )?",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(
+            r"^(?:What device|Which device|What tool|Which tool|"
+            r"What instrument)\s+(?:is|was)\s+(?:the )?",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(
+            r"^(?:What is the name of(?: the)?|What is the brand of(?: the)?|Which brand is)\s+",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(
+            r"^(?:What is the person|What is the man|What is the woman)\s+",
+            "a person ",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(
+            r"^(?:What is|What are|What was|What were)\s+",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(
+            r"^(?:How many)\s+",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+
+    cleaned = re.sub(
+        r"\s+(?:sitting on|sitting behind|holding|using to observe .*|worn by the|"
+        r"used in the|mentioned in the headline .*|making up the .*)\?*$",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(
+        r"\s+(?:are in the frame|are in the studio|are clearly visible|"
+        r"can be seen|in the scene)\?*$",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"[?!.,;:\'\"]+$", "", cleaned).strip()
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned if cleaned else text.strip()

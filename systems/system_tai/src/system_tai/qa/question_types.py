@@ -71,6 +71,13 @@ _OBJECT_ENTITY_PATTERNS = (
     r"\bwhat crop\b",
     r"\bwhat type of vehicle(?:s)?\b",
     r"\bwhat device\b",
+    r"\bcon vat (?:nao|gi)\b",
+    r"\bdung cu gi\b",
+    r"\bngoi (?:tren|sau) vat gi\b",
+    r"\bvat kim loai .* la gi\b",
+    r"\bwhat animal\b",
+    r"\bwhat tool\b",
+    r"\bwhat instrument\b",
 )
 
 _COLOR_PATTERNS = (
@@ -78,9 +85,13 @@ _COLOR_PATTERNS = (
     r"\bmau nao\b",
     r"\bco mau\b",
     r"\bmau sac\b",
+    r"\bhai mau gi\b",
+    r"\bnhung mau gi\b",
     r"\bwhat color\b",
     r"\bwhich color\b",
     r"\bcolor of\b",
+    r"\bcolors of\b",
+    r"\btwo (?:main )?colors\b",
 )
 
 _COUNT_PATTERNS = (

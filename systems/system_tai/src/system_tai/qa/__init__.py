@@ -7,6 +7,7 @@ from .grounding import (
     QA_MULTI_SEED_TEMPORAL_REFINEMENT_V1,
     QA_VIDEO_CONDITIONED_EVIDENCE_V1,
     QAVideoConditionedEvidenceConfig,
+    distill_qa_scene_prompt,
 )
 from .models import AnswerHypothesis, QAEvidenceCandidate, QAQuery, QAResult
 from .object_provider import (
@@ -54,6 +55,7 @@ __all__ = [
     "QA_MULTI_SEED_TEMPORAL_REFINEMENT_V1",
     "QAVideoConditionedEvidenceConfig",
     "QAEvidenceCandidate",
+    "distill_qa_scene_prompt",
     "ObjectAnswerProviderConfig",
     "ObjectEntityAnswerProvider",
     "OCRAnswerProvider",

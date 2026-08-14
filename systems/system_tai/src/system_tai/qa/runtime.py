@@ -38,6 +38,7 @@ from .grounding import (
     TEMPORAL_REFINED,
     QAVideoConditionedEvidenceConfig,
     build_qa_grounding_result,
+    distill_qa_scene_prompt,
     nominate_qa_videos,
     nomination_diagnostics,
     select_primary_keyframe_anchors,
@@ -465,7 +466,12 @@ class QARuntimePipeline:
             ]
 
         t_text = self.clock()
-        event_texts = [v.text for v in variants]
+        event_texts = [
+            distill_qa_scene_prompt(v.text)
+            if self.video_conditioned_evidence_config.enabled
+            else v.text
+            for v in variants
+        ]
         event_vectors = self.shared_encoder.encode_texts(event_texts)
         timings.text_encode_seconds = self.clock() - t_text
 

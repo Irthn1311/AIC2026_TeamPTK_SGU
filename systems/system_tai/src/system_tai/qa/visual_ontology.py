@@ -11,6 +11,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
+from .answer_candidates import AnswerCandidateProvider, BaselineQuestionCandidateProvider
 from .models import AnswerHypothesis
 from .question_types import QuestionType
 
@@ -222,9 +223,15 @@ class VisualOntologyAnswerCandidateProvider:
         self,
         ontology: VisualAnswerOntology,
         config: VisualOntologyConfig,
+        fallback_provider: AnswerCandidateProvider | None = None,
     ) -> None:
         self.ontology = ontology
         self.config = config
+        self.fallback_provider = (
+            fallback_provider
+            if fallback_provider is not None
+            else BaselineQuestionCandidateProvider()
+        )
         self.identifiers: Mapping[str, Any] = MappingProxyType(
             {
                 "provider": "visual-answer-ontology",
@@ -241,42 +248,63 @@ class VisualOntologyAnswerCandidateProvider:
         return self.config.enabled
 
     def supports(self, question_type: QuestionType) -> bool:
-        return self.enabled and any(
+        if not self.enabled:
+            return False
+        if any(
             question_type in domain.question_types for domain in self.ontology.domains
-        )
+        ):
+            return True
+        if self.fallback_provider is not None:
+            return bool(self.fallback_provider.get_candidates(question_type))
+        return False
 
     def get_candidates(self, question_type: QuestionType) -> tuple[AnswerHypothesis, ...]:
-        if not self.supports(question_type):
+        if not self.enabled:
             return ()
-        return tuple(
+        ontology_candidates = tuple(
             entry
             for domain in self.ontology.domains
             if question_type in domain.question_types
             for entry in domain.entries
         )
+        if ontology_candidates:
+            return ontology_candidates
+        if self.fallback_provider is not None:
+            return self.fallback_provider.get_candidates(question_type)
+        return ()
 
     def get_candidates_for_query(
         self,
         question_type: QuestionType,
         question_text: str,
     ) -> tuple[AnswerHypothesis, ...]:
-        if not self.supports(question_type) or not question_text.strip():
+        if not self.enabled or not question_text.strip():
             return ()
-        normalized_question = _normalize_text(question_text)
-        matches: list[tuple[int, str, VisualOntologyDomain]] = []
-        for domain in self.ontology.domains:
-            if question_type not in domain.question_types:
-                continue
-            matched_lengths = [
-                len(normalized_term)
-                for term in domain.activation_terms
-                if (normalized_term := _normalize_text(term)) in normalized_question
-            ]
-            if matched_lengths:
-                matches.append((-max(matched_lengths), domain.domain_id, domain))
-        matches.sort(key=lambda item: (item[0], item[1]))
-        selected = matches[: self.config.max_active_domains]
-        return tuple(entry for _length, _domain_id, domain in selected for entry in domain.entries)
+        if any(
+            question_type in domain.question_types for domain in self.ontology.domains
+        ):
+            normalized_question = _normalize_text(question_text)
+            matches: list[tuple[int, str, VisualOntologyDomain]] = []
+            for domain in self.ontology.domains:
+                if question_type not in domain.question_types:
+                    continue
+                matched_lengths = [
+                    len(normalized_term)
+                    for term in domain.activation_terms
+                    if (normalized_term := _normalize_text(term)) in normalized_question
+                ]
+                if matched_lengths:
+                    matches.append((-max(matched_lengths), domain.domain_id, domain))
+            matches.sort(key=lambda item: (item[0], item[1]))
+            selected = matches[: self.config.max_active_domains]
+            return tuple(
+                entry
+                for _length, _domain_id, domain in selected
+                for entry in domain.entries
+            )
+        if self.fallback_provider is not None:
+            return self.fallback_provider.get_candidates(question_type)
+        return ()
 
     def active_domain_ids(
         self,
