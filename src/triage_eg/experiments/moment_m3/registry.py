@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections import Counter
 from pathlib import Path
@@ -11,6 +12,18 @@ from zipfile import ZipFile
 from .solver import M3InferenceCase
 
 EXPECTED_AI_QC_SHA256 = "65062e7eb180e97ff4a9dc8462cde08bdd18b9d5ca9ca14c2f16740078cb1142"
+EXPECTED_AI_QC_MEMBER_SHA256 = {
+    "M3_HANDOFF.md": "55c1a71018f6c1370bea235678b28dff4394283325833c9f9897e608ce419458",
+    "mb1_v022_ai_qc_new_candidates_v01.jsonl": (
+        "ec944aabfe6d9cdd30563393fb2bf62a273ed997206817a1e38b710a07727fe0"
+    ),
+    "mb1_v022_ai_qc_summary_v01.json": (
+        "c4c0e0d57430c7b484dcf63045f65526c911478e6ac26b92adad689662448acd"
+    ),
+    "mb1_v022_frozen_seed_carryover_v01.jsonl": (
+        "35790f3eeb58f17c4dd4a2044ed99428321b754611e3dc2d42dbe373fd04f918"
+    ),
+}
 
 NEW_TRANSITIONS: dict[str, dict[str, Any]] = {
     "mb1v022_c005": {
@@ -91,12 +104,64 @@ TRUSTED_REQUIRED = frozenset(
 )
 
 
-def _zip_jsonl(path: Path, basename: str) -> list[dict[str, Any]]:
-    with ZipFile(path) as archive:
-        matches = [name for name in archive.namelist() if Path(name).name == basename]
+def _artifact_member_bytes(path: Path, basename: str) -> bytes:
+    if path.is_file():
+        with ZipFile(path) as archive:
+            matches = [name for name in archive.namelist() if Path(name).name == basename]
+            if len(matches) != 1:
+                raise ValueError(f"expected exactly one {basename} in {path}; found={matches}")
+            return archive.read(matches[0])
+    if path.is_dir():
+        matches = sorted(
+            candidate.resolve()
+            for candidate in path.rglob(basename)
+            if candidate.is_file() and not candidate.is_symlink()
+        )
         if len(matches) != 1:
-            raise ValueError(f"expected exactly one {basename} in {path}; found={matches}")
-        text = archive.read(matches[0]).decode("utf-8-sig")
+            raise ValueError(
+                f"expected exactly one extracted {basename} in {path}; found={matches}"
+            )
+        return matches[0].read_bytes()
+    raise FileNotFoundError(f"M3 artifact source is neither ZIP nor directory: {path}")
+
+
+def artifact_member_sha256(path: str | Path, basename: str) -> str:
+    source = Path(path).expanduser().resolve(strict=True)
+    return hashlib.sha256(_artifact_member_bytes(source, basename)).hexdigest()
+
+
+def verify_ai_qc_artifact(path: str | Path) -> dict[str, Any]:
+    source = Path(path).expanduser().resolve(strict=True)
+    if source.is_file():
+        digest = hashlib.sha256(source.read_bytes()).hexdigest()
+        if digest != EXPECTED_AI_QC_SHA256:
+            raise RuntimeError(
+                f"M3_AI_QC_SHA256_MISMATCH: expected={EXPECTED_AI_QC_SHA256} actual={digest}"
+            )
+        mode = "ORIGINAL_ZIP_SHA256"
+    else:
+        actual = {
+            name: hashlib.sha256(_artifact_member_bytes(source, name)).hexdigest()
+            for name in EXPECTED_AI_QC_MEMBER_SHA256
+        }
+        mismatches = {
+            name: {"expected": expected, "actual": actual[name]}
+            for name, expected in EXPECTED_AI_QC_MEMBER_SHA256.items()
+            if actual[name] != expected
+        }
+        if mismatches:
+            raise RuntimeError(f"M3_AI_QC_EXTRACTED_MEMBER_SHA256_MISMATCH: {mismatches}")
+        mode = "EXTRACTED_MEMBERS_SHA256"
+    return {
+        "source": str(source),
+        "verification_mode": mode,
+        "source_archive_sha256": EXPECTED_AI_QC_SHA256,
+        "member_sha256": dict(EXPECTED_AI_QC_MEMBER_SHA256),
+    }
+
+
+def _artifact_jsonl(path: Path, basename: str) -> list[dict[str, Any]]:
+    text = _artifact_member_bytes(path, basename).decode("utf-8-sig")
     return [json.loads(line) for line in text.splitlines() if line.strip()]
 
 
@@ -255,11 +320,11 @@ def build_case_registry(
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     qc_zip = Path(ai_qc_zip).expanduser().resolve(strict=True)
     candidates_zip = Path(notebook20_candidates_zip).expanduser().resolve(strict=True)
-    new_qc = _zip_jsonl(qc_zip, "mb1_v022_ai_qc_new_candidates_v01.jsonl")
-    carryover = _zip_jsonl(qc_zip, "mb1_v022_frozen_seed_carryover_v01.jsonl")
+    new_qc = _artifact_jsonl(qc_zip, "mb1_v022_ai_qc_new_candidates_v01.jsonl")
+    carryover = _artifact_jsonl(qc_zip, "mb1_v022_frozen_seed_carryover_v01.jsonl")
     candidates = {
         str(row["candidate_id"]): row
-        for row in _zip_jsonl(candidates_zip, "mb1_v022_candidate_manifest.jsonl")
+        for row in _artifact_jsonl(candidates_zip, "mb1_v022_candidate_manifest.jsonl")
     }
     external, external_source = _external_rows(
         Path(frozen_seed_metadata) if frozen_seed_metadata is not None else None
@@ -373,10 +438,13 @@ def build_case_registry(
 
 
 __all__ = [
+    "EXPECTED_AI_QC_MEMBER_SHA256",
     "EXPECTED_AI_QC_SHA256",
     "NEW_TRANSITIONS",
     "TRUSTED_REQUIRED",
+    "artifact_member_sha256",
     "build_case_registry",
     "inference_case_from_registry",
     "validate_trusted_registry_row",
+    "verify_ai_qc_artifact",
 ]

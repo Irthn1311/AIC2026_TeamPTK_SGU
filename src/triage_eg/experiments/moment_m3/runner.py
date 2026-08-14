@@ -30,7 +30,12 @@ from triage_eg.retrieval.stage1b.writers import write_json, write_jsonl
 from triage_eg.video import OpenCVRawVideoDecoder
 
 from .metrics import build_metrics, decide_m3, evaluate_predictions_only
-from .registry import EXPECTED_AI_QC_SHA256, build_case_registry, inference_case_from_registry
+from .registry import (
+    artifact_member_sha256,
+    build_case_registry,
+    inference_case_from_registry,
+    verify_ai_qc_artifact,
+)
 from .solver import M3Settings, build_state_signals, local_window, solve_state_transition
 from .visuals import render_overview_montage, render_review_sheet
 
@@ -112,11 +117,7 @@ def preflight_m3(config: M3Config) -> dict[str, Any]:
     stage1b = config.stage1b_root.expanduser().resolve(strict=True)
     if config.output_root.expanduser().resolve(strict=False).exists():
         raise FileExistsError(f"M3 output already exists: {config.output_root}")
-    ai_hash = sha256_file(ai_qc)
-    if ai_hash != EXPECTED_AI_QC_SHA256:
-        raise RuntimeError(
-            f"M3_AI_QC_SHA256_MISMATCH: expected={EXPECTED_AI_QC_SHA256} actual={ai_hash}"
-        )
+    ai_verification = verify_ai_qc_artifact(ai_qc)
     selected = _selected_contract(stage1b)
     clip_paths = resolve_official_asset_paths(config.clip_asset_root)
     if not clip_paths.source_root.is_dir() or not clip_paths.checkpoint_path.is_file():
@@ -139,8 +140,16 @@ def preflight_m3(config: M3Config) -> dict[str, Any]:
     return {
         "status": "READY",
         "registry_status": summary["status"],
-        "ai_qc_sha256": ai_hash,
-        "notebook20_candidates_sha256": sha256_file(candidates),
+        "ai_qc_sha256": ai_verification["source_archive_sha256"],
+        "ai_qc_verification": ai_verification,
+        "notebook20_candidates_sha256": (
+            sha256_file(candidates)
+            if candidates.is_file()
+            else artifact_member_sha256(candidates, "mb1_v022_candidate_manifest.jsonl")
+        ),
+        "notebook20_candidates_verification_mode": (
+            "ORIGINAL_ZIP_SHA256" if candidates.is_file() else "EXTRACTED_MANIFEST_SHA256"
+        ),
         "frozen_seed_annotation_sha256": (
             sha256_file(config.frozen_seed_metadata)
             if config.frozen_seed_metadata is not None
@@ -399,7 +408,11 @@ def run_m3(
         "created_at": datetime.now(UTC).isoformat(),
         "dataset_root": str(dataset),
         "ai_qc_input_sha256": preflight["ai_qc_sha256"],
+        "ai_qc_verification": preflight["ai_qc_verification"],
         "notebook20_candidate_input_sha256": preflight["notebook20_candidates_sha256"],
+        "notebook20_candidate_verification_mode": preflight[
+            "notebook20_candidates_verification_mode"
+        ],
         "frozen_seed_annotation_source": registry_summary["frozen_seed_annotation_source"],
         "frozen_seed_annotation_sha256": preflight["frozen_seed_annotation_sha256"],
         "verified_clip_model": "OpenAI CLIP ViT-B/32 official",

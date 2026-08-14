@@ -249,3 +249,16 @@ def test_frozen_seed_semantics_are_not_invented_from_reason_code(tmp_path: Path)
     assert summary["frozen_seed_metadata_found"] == 0
     assert summary["primary_case_count"] == 4
     assert summary["benchmark_coverage"] == "TOO_SMALL_FOR_KEEP_DROP"
+
+    extracted_qc = tmp_path / "extracted_qc"
+    extracted_candidates = tmp_path / "extracted_candidates"
+    with ZipFile(ai_zip) as archive:
+        archive.extractall(extracted_qc)
+    with ZipFile(candidate_zip) as archive:
+        archive.extractall(extracted_candidates)
+    extracted_registry, extracted_summary = build_case_registry(
+        ai_qc_zip=extracted_qc,
+        notebook20_candidates_zip=extracted_candidates,
+    )
+    assert extracted_registry == registry
+    assert extracted_summary == summary
