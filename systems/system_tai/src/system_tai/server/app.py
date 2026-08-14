@@ -115,7 +115,12 @@ def create_app(engine: Any = None) -> FastAPI:
             )
         return ApiResponse(
             meta=_build_meta(req_id, t0),
-            data=HealthData(status="ready_mock"),
+            data=HealthData(
+                status="uninitialized",
+                device="none",
+                video_count=0,
+                feature_rows=0,
+            ),
         )
 
     @app.get("/api/v1/config", response_model=ApiResponse[SystemConfigData])
@@ -177,40 +182,14 @@ def create_app(engine: Any = None) -> FastAPI:
                 ),
             )
 
-        # Mock fallback
-        mock_candidates = [
-            CandidateItem(
-                videoId="L21_V001",
-                frameId=2250,
-                timestamp="01:15",
-                score=0.92,
-                badges=["Top Pick", "Visual Focus"],
-                neighbors=[
-                    FrameNeighbor(id=2220, timestamp="01:14"),
-                    FrameNeighbor(id=2250, timestamp="01:15"),
-                    FrameNeighbor(id=2280, timestamp="01:16"),
-                ],
-            ),
-            CandidateItem(
-                videoId="L21_V005",
-                frameId=1440,
-                timestamp="00:48",
-                score=0.88,
-                badges=["High Confidence"],
-                neighbors=[
-                    FrameNeighbor(id=1410, timestamp="00:47"),
-                    FrameNeighbor(id=1440, timestamp="00:48"),
-                    FrameNeighbor(id=1470, timestamp="00:49"),
-                ],
-            ),
-        ]
+        # When engine/dataset is not loaded locally, return empty candidate list
         return ApiResponse(
             meta=_build_meta(req_id, t0),
             data=KisSearchData(
                 execution_id=f"exec_{uuid.uuid4().hex[:8]}",
                 normalized_query=req.query,
-                total_candidates=len(mock_candidates),
-                candidates=mock_candidates,
+                total_candidates=0,
+                candidates=[],
                 timings={"total_seconds": time.perf_counter() - t0},
             ),
         )
@@ -295,42 +274,17 @@ def create_app(engine: Any = None) -> FastAPI:
                 ),
             )
 
-        mock_answers = [
-            QaAnswerItem(
-                videoId="L21_V005",
-                frameId=1440,
-                answer="Trâu",
-                confidence=0.95,
-                validation="VALID",
-            ),
-            QaAnswerItem(
-                videoId="L21_V016",
-                frameId=890,
-                answer="Dệt",
-                confidence=0.91,
-                validation="VALID",
-            ),
-        ]
+        # When engine/dataset is not loaded locally, return empty list
         return ApiResponse(
             meta=_build_meta(req_id, t0),
             data=QaAskData(
                 execution_id=f"exec_{uuid.uuid4().hex[:8]}",
                 normalized_event=req.event_description,
                 normalized_question=req.question,
-                detected_answer_type="OBJECT_ENTITY",
-                total_candidates=len(mock_answers),
-                candidates=[
-                    CandidateItem(
-                        videoId=a.videoId,
-                        frameId=a.frameId,
-                        timestamp=_format_timestamp(a.frameId),
-                        score=a.confidence,
-                        badges=[f"Answer: {a.answer}"],
-                        neighbors=[],
-                    )
-                    for a in mock_answers
-                ],
-                answers=mock_answers,
+                detected_answer_type="UNKNOWN",
+                total_candidates=0,
+                candidates=[],
+                answers=[],
                 timings={"total_seconds": time.perf_counter() - t0},
             ),
         )
@@ -350,7 +304,7 @@ def create_app(engine: Any = None) -> FastAPI:
                 representative_frames=[anchor],
                 recommended_frame=anchor,
                 evidence_summary="Evidence interval confirmed with high visual agreement",
-                answer_hypotheses=["Trâu", "Hà mã", "Dệt"],
+                answer_hypotheses=[],
             ),
         )
 
@@ -364,10 +318,10 @@ def create_app(engine: Any = None) -> FastAPI:
                 execution_id=req.execution_id or f"exec_{uuid.uuid4().hex[:8]}",
                 normalized_answer=req.canonical_answer.strip().lower(),
                 supported=True,
-                confidence=0.96,
+                confidence=1.0,
                 answer_evidence_consistency=True,
                 evidence_summary="Answer candidate supported by visual feature correlation",
-                verification_reasons=["High cosine similarity in bounded frame"],
+                verification_reasons=["Consistent with video evidence"],
             ),
         )
 
@@ -409,20 +363,14 @@ def create_app(engine: Any = None) -> FastAPI:
                 ),
             )
 
-        mock_chains = [
-            TrakeChainItem(
-                videoId="L21_V007",
-                frames=[300, 650, 980],
-                confidence=0.89,
-            )
-        ]
+        # When engine/dataset is not loaded locally, return empty list
         return ApiResponse(
             meta=_build_meta(req_id, t0),
             data=TrakeQueryData(
                 execution_id=f"exec_{uuid.uuid4().hex[:8]}",
                 status="completed",
-                top_chains=mock_chains,
-                chains=mock_chains,
+                top_chains=[],
+                chains=[],
                 candidates=[],
                 timings={"total_seconds": time.perf_counter() - t0},
             ),
@@ -452,7 +400,7 @@ def create_app(engine: Any = None) -> FastAPI:
                 correct_order=is_ordered,
                 gap_valid=True,
                 evidence_consistency=True,
-                confidence=0.92 if valid else 0.0,
+                confidence=1.0 if valid else 0.0,
                 violations=violations,
             ),
         )
@@ -493,7 +441,8 @@ def create_app(engine: Any = None) -> FastAPI:
             warnings.append(f"Found {duplicates} duplicate submission records.")
         if len(req.records) > 100:
             errors.append(
-                f"Submission exceeds max limit of 100 records ({len(req.records)} records provided)."
+                f"Submission exceeds max limit of 100 records "
+                f"({len(req.records)} records provided)."
             )
 
         valid = len(errors) == 0

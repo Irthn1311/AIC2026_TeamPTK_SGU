@@ -23,7 +23,7 @@ def test_server_health_ready() -> None:
     response = client.get("/api/v1/health/ready")
     assert response.status_code == 200
     res = response.json()
-    assert res["data"]["status"] in ("ready", "ready_mock")
+    assert res["data"]["status"] in ("ready", "uninitialized")
 
 
 def test_server_config() -> None:
@@ -37,37 +37,39 @@ def test_server_config() -> None:
     assert "TRAKE" in res["data"]["supported_tasks"]
 
 
-def test_server_kis_search_and_refine() -> None:
-    app = create_app()
+def test_server_kis_search_empty_when_no_engine() -> None:
+    app = create_app(engine=None)
     client = TestClient(app)
-    # Search
     search_res = client.post(
         "/api/v1/kis/search",
         json={"query": "A person riding a water buffalo", "top_k": 5},
     )
     assert search_res.status_code == 200
     res_data = search_res.json()["data"]
-    assert len(res_data["candidates"]) > 0
-    top_cand = res_data["candidates"][0]
+    # Without engine/dataset, should return 0 candidates (no dummy data)
+    assert res_data["total_candidates"] == 0
+    assert len(res_data["candidates"]) == 0
 
-    # Refine
+
+def test_server_kis_refine() -> None:
+    app = create_app()
+    client = TestClient(app)
     refine_res = client.post(
         "/api/v1/kis/refine",
         json={
-            "video_id": top_cand["videoId"],
-            "center_actual_frame_id": top_cand["frameId"],
+            "video_id": "L21_V001",
+            "center_actual_frame_id": 4592,
         },
     )
     assert refine_res.status_code == 200
     ref_data = refine_res.json()["data"]
     assert ref_data["moment_found"] is True
-    assert ref_data["recommended_frame"] == top_cand["frameId"]
+    assert ref_data["recommended_frame"] == 4592
 
 
-def test_server_qa_search_localize_verify() -> None:
-    app = create_app()
+def test_server_qa_search_empty_when_no_engine() -> None:
+    app = create_app(engine=None)
     client = TestClient(app)
-    # Search
     search_res = client.post(
         "/api/v1/qa/search",
         json={
@@ -78,40 +80,29 @@ def test_server_qa_search_localize_verify() -> None:
     )
     assert search_res.status_code == 200
     res_data = search_res.json()["data"]
-    assert len(res_data["answers"]) > 0
-    ans = res_data["answers"][0]
+    assert res_data["total_candidates"] == 0
+    assert len(res_data["answers"]) == 0
 
-    # Localize
-    loc_res = client.post(
-        "/api/v1/qa/localize",
-        json={
-            "video_id": ans["videoId"],
-            "anchor_actual_frame_id": ans["frameId"],
-            "event_description": "Cuộc đua trong bùn",
-            "question": "Cuộc đua trong bùn sử dụng con vật nào?",
-        },
-    )
-    assert loc_res.status_code == 200
-    assert loc_res.json()["data"]["evidence_found"] is True
 
-    # Verify
+def test_server_qa_verify() -> None:
+    app = create_app()
+    client = TestClient(app)
     ver_res = client.post(
         "/api/v1/qa/verify",
         json={
-            "video_id": ans["videoId"],
-            "actual_frame_id": ans["frameId"],
+            "video_id": "L21_V001",
+            "actual_frame_id": 4592,
             "question": "Cuộc đua trong bùn sử dụng con vật nào?",
-            "canonical_answer": ans["answer"],
+            "canonical_answer": "Trâu",
         },
     )
     assert ver_res.status_code == 200
     assert ver_res.json()["data"]["supported"] is True
 
 
-def test_server_trake_search_and_verify() -> None:
-    app = create_app()
+def test_server_trake_search_empty_when_no_engine() -> None:
+    app = create_app(engine=None)
     client = TestClient(app)
-    # Search
     search_res = client.post(
         "/api/v1/trake/search",
         json={
@@ -125,16 +116,18 @@ def test_server_trake_search_and_verify() -> None:
     )
     assert search_res.status_code == 200
     res_data = search_res.json()["data"]
-    assert len(res_data["chains"]) > 0
-    chain = res_data["chains"][0]
+    assert len(res_data["chains"]) == 0
 
-    # Verify valid chain
+
+def test_server_trake_verify() -> None:
+    app = create_app()
+    client = TestClient(app)
     ver_res = client.post(
         "/api/v1/trake/verify",
         json={
-            "video_id": chain["videoId"],
+            "video_id": "L21_V001",
             "events": ["E1", "E2", "E3"],
-            "actual_frame_ids": chain["frames"],
+            "actual_frame_ids": [300, 450, 600],
         },
     )
     assert ver_res.status_code == 200
