@@ -218,7 +218,7 @@ def test_visual_ontology_fallback_to_baseline_candidates_for_color_and_count() -
     color_candidates = provider.get_candidates_for_query(
         QuestionType.COLOR, "What color is the shirt?"
     )
-    assert len(color_candidates) == 11
+    assert len(color_candidates) >= 11
     assert "trắng" in {c.canonical_answer for c in color_candidates}
     assert "xanh lá" in {c.canonical_answer for c in color_candidates}
 

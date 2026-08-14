@@ -297,12 +297,22 @@ class VisualOntologyAnswerCandidateProvider:
                     matches.append((-max(matched_lengths), domain.domain_id, domain))
             matches.sort(key=lambda item: (item[0], item[1]))
             selected = matches[: self.config.max_active_domains]
-            return tuple(
+            matched_entries = tuple(
                 entry
                 for _length, _domain_id, domain in selected
                 for entry in domain.entries
             )
+            if matched_entries:
+                return matched_entries
         if self.fallback_provider is not None:
+            if hasattr(self.fallback_provider, "get_extended_candidates_for_query"):
+                return self.fallback_provider.get_extended_candidates_for_query(
+                    question_type, question_text
+                )
+            if hasattr(self.fallback_provider, "get_candidates_for_query"):
+                return self.fallback_provider.get_candidates_for_query(
+                    question_type, question_text
+                )
             return self.fallback_provider.get_candidates(question_type)
         return ()
 
