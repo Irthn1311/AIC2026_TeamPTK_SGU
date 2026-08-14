@@ -1,6 +1,5 @@
 import { create } from 'zustand'
 import { apiSearchKis, apiSearchQa, apiSearchTrake } from './api'
-import { trakeEvents } from './mockData'
 import type { Candidate, EvidenceTab, KisAnswer, QaAnswer, Task, TrakeChain } from './types'
 import { normalizeAnswer, validateChain } from './utils'
 
@@ -108,8 +107,8 @@ export const initialQa: QaState = {
 }
 
 export const initialTrake: TrakeState = {
-  query: 'A person approaches a bus stop, boards the bus, then the bus leaves.',
-  events: trakeEvents,
+  query: '',
+  events: ['', '', ''],
   searched: false,
   loading: false,
   chains: [],
@@ -124,7 +123,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   history: [],
   kis: { ...initialKis },
   qa: { ...initialQa },
-  trake: { ...initialTrake, events: [...trakeEvents] },
+  trake: { ...initialTrake },
 
   setTask: (activeTask) => set({ activeTask }),
   setMode: (mode) => set({ mode }),
@@ -135,6 +134,11 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   searchKis: async () => {
     const { kis, mode } = get()
     const query = kis.query.trim()
+    if (!query) {
+      return set((s) => ({
+        kis: { ...s.kis, searched: true, results: [], message: 'Please enter an event query.' },
+      }))
+    }
     set((s) => ({ kis: { ...s.kis, loading: true, searched: true, message: undefined } }))
 
     const results = await apiSearchKis(query, kis.filters, kis.variants)
@@ -144,10 +148,17 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         ...s.kis,
         loading: false,
         results,
-        selectedVideoId: mode === 'Automatic' && results.length > 0 ? results[0].videoId : s.kis.selectedVideoId || (results.length > 0 ? results[0].videoId : undefined),
-        selectedFrameId: mode === 'Automatic' && results.length > 0 ? results[0].frameId : s.kis.selectedFrameId || (results.length > 0 ? results[0].frameId : undefined),
+        selectedVideoId:
+          mode === 'Automatic' && results.length > 0
+            ? results[0].videoId
+            : s.kis.selectedVideoId || (results.length > 0 ? results[0].videoId : undefined),
+        selectedFrameId:
+          mode === 'Automatic' && results.length > 0
+            ? results[0].frameId
+            : s.kis.selectedFrameId || (results.length > 0 ? results[0].frameId : undefined),
+        message: results.length === 0 ? 'No candidates found for this query.' : undefined,
       },
-      history: query ? [`KIS · ${query}`, ...s.history].slice(0, 8) : s.history,
+      history: [`KIS · ${query}`, ...s.history].slice(0, 8),
     }))
   },
   selectKisCandidate: (candidate) =>
@@ -197,6 +208,16 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   searchQa: async () => {
     const { qa, mode } = get()
     const query = `${qa.event} ${qa.question}`.trim()
+    if (!query) {
+      return set((s) => ({
+        qa: {
+          ...s.qa,
+          searched: true,
+          results: [],
+          message: 'Please enter event description and question.',
+        },
+      }))
+    }
     set((s) => ({ qa: { ...s.qa, loading: true, searched: true, message: undefined } }))
 
     const { candidates: results, answers } = await apiSearchQa(
@@ -206,36 +227,45 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       qa.answerType
     )
 
-    const defaultCanonical = answers.length > 0 ? answers[0].answer : 'A red bus'
+    const defaultCanonical = answers.length > 0 ? answers[0].answer : ''
 
     set((s) => ({
       qa: {
         ...s.qa,
         loading: false,
         results,
+        answers,
         selectedVideoId:
-          mode === 'Automatic' && results.length > 0 ? results[0].videoId : s.qa.selectedVideoId || (results.length > 0 ? results[0].videoId : undefined),
+          mode === 'Automatic' && results.length > 0
+            ? results[0].videoId
+            : s.qa.selectedVideoId || (results.length > 0 ? results[0].videoId : undefined),
         selectedFrameId:
-          mode === 'Automatic' && results.length > 0 ? results[0].frameId : s.qa.selectedFrameId || (results.length > 0 ? results[0].frameId : undefined),
-        intervalReady: mode === 'Automatic',
+          mode === 'Automatic' && results.length > 0
+            ? results[0].frameId
+            : s.qa.selectedFrameId || (results.length > 0 ? results[0].frameId : undefined),
+        intervalReady: mode === 'Automatic' && results.length > 0,
         canonical: mode === 'Automatic' ? defaultCanonical : s.qa.canonical || defaultCanonical,
-        verified: mode === 'Automatic',
+        verified: mode === 'Automatic' && results.length > 0,
+        message: results.length === 0 ? 'No evidence candidates retrieved.' : undefined,
       },
-      history: query ? [`Q&A · ${query}`, ...s.history].slice(0, 8) : s.history,
+      history: [`Q&A · ${query}`, ...s.history].slice(0, 8),
     }))
   },
   selectQaCandidate: (candidate) =>
-    set((s) => ({
-      qa: {
-        ...s.qa,
-        selectedVideoId: candidate.videoId,
-        selectedFrameId: candidate.frameId,
-        intervalReady: true,
-        verified: true,
-        canonical: s.qa.canonical || 'A red bus',
-        message: undefined,
-      },
-    })),
+    set((s) => {
+      const matchedAnswer = s.qa.answers.find((a) => a.videoId === candidate.videoId)
+      return {
+        qa: {
+          ...s.qa,
+          selectedVideoId: candidate.videoId,
+          selectedFrameId: candidate.frameId,
+          intervalReady: true,
+          verified: true,
+          canonical: matchedAnswer ? matchedAnswer.answer : s.qa.canonical,
+          message: undefined,
+        },
+      }
+    }),
   addQaAnswer: () => {
     const { qa } = get()
     const candidate = qa.results.find((item) => item.videoId === qa.selectedVideoId)
@@ -277,6 +307,12 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   updateTrake: (patch) => set((s) => ({ trake: { ...s.trake, ...patch } })),
   searchTrake: async () => {
     const { trake, mode } = get()
+    const validEvents = trake.events.map((e) => e.trim()).filter(Boolean)
+    if (validEvents.length === 0) {
+      return set((s) => ({
+        trake: { ...s.trake, searched: true, chains: [], message: 'Please enter events to align.' },
+      }))
+    }
     set((s) => ({ trake: { ...s.trake, loading: true, searched: true, message: undefined } }))
 
     const chains = await apiSearchTrake(trake.events)
@@ -287,12 +323,17 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         loading: false,
         chains,
         selectedVideoId:
-          mode === 'Automatic' && chains.length > 0 ? chains[0].videoId : s.trake.selectedVideoId || (chains.length > 0 ? chains[0].videoId : undefined),
+          mode === 'Automatic' && chains.length > 0
+            ? chains[0].videoId
+            : s.trake.selectedVideoId || (chains.length > 0 ? chains[0].videoId : undefined),
         activeChain:
-          mode === 'Automatic' && chains.length > 0 ? chains[0] : s.trake.activeChain || (chains.length > 0 ? chains[0] : undefined),
-        verified: mode === 'Automatic',
+          mode === 'Automatic' && chains.length > 0
+            ? chains[0]
+            : s.trake.activeChain || (chains.length > 0 ? chains[0] : undefined),
+        verified: mode === 'Automatic' && chains.length > 0,
+        message: chains.length === 0 ? 'No coherent event chains found.' : undefined,
       },
-      history: [`TRAKE · ${s.trake.query}`, ...s.history].slice(0, 8),
+      history: [`TRAKE · ${validEvents.join(' → ')}`, ...s.history].slice(0, 8),
     }))
   },
   selectChain: (activeChain) =>
@@ -342,5 +383,5 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   },
   removeChain: (index) =>
     set((s) => ({ trake: { ...s.trake, answers: s.trake.answers.filter((_, i) => i !== index) } })),
-  resetTrake: () => set({ trake: { ...initialTrake, events: [...trakeEvents] } }),
+  resetTrake: () => set({ trake: { ...initialTrake } }),
 }))

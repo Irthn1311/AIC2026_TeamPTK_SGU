@@ -1,9 +1,8 @@
 /**
  * Typed API Client for system_tai Gateway (conforming to Sheet 09 Accepted V1 Contract).
- * Provides live backend fetching with graceful mock fallback when offline.
+ * Interacts directly with the live Backend REST API.
  */
 
-import { candidates, trakeChains } from './mockData'
 import type { Candidate, KisAnswer, QaAnswer, TrakeChain } from './types'
 
 const API_BASE = '/api/v1'
@@ -26,12 +25,13 @@ export async function apiSearchKis(
   filters: string[] = [],
   variants: string[] = []
 ): Promise<Candidate[]> {
+  if (!query.trim()) return []
   try {
     const res = await fetch(`${API_BASE}/kis/search`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        query,
+        query: query.trim(),
         filters,
         query_variants: variants,
         top_k: 100,
@@ -40,14 +40,14 @@ export async function apiSearchKis(
     })
     if (res.ok) {
       const json: ResponseEnvelope<{ candidates: Candidate[] }> = await res.json()
-      if (json.data && Array.isArray(json.data.candidates) && json.data.candidates.length > 0) {
+      if (json.data && Array.isArray(json.data.candidates)) {
         return json.data.candidates
       }
     }
-  } catch {
-    // Backend offline: fallback to mock data
+  } catch (err) {
+    console.error('API KIS search error:', err)
   }
-  return candidates
+  return []
 }
 
 export async function apiSearchQa(
@@ -56,13 +56,16 @@ export async function apiSearchQa(
   temporal: string = 'during',
   answerType: string = 'automatic'
 ): Promise<{ candidates: Candidate[]; answers: QaAnswer[]; detectedType?: string }> {
+  if (!event.trim() && !question.trim()) {
+    return { candidates: [], answers: [], detectedType: undefined }
+  }
   try {
     const res = await fetch(`${API_BASE}/qa/search`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        event_description: event,
-        question,
+        event_description: event.trim(),
+        question: question.trim(),
         temporal_relation: temporal.toLowerCase(),
         answer_type: answerType.toLowerCase(),
         top_k: 100,
@@ -76,37 +79,27 @@ export async function apiSearchQa(
       }> = await res.json()
       if (json.data) {
         return {
-          candidates: json.data.candidates || candidates.slice(0, 4),
+          candidates: json.data.candidates || [],
           answers: json.data.answers || [],
           detectedType: json.data.detected_answer_type,
         }
       }
     }
-  } catch {
-    // Fallback
+  } catch (err) {
+    console.error('API QA search error:', err)
   }
-  return {
-    candidates: candidates.slice(0, 4),
-    answers: [
-      {
-        videoId: 'L21_V005',
-        frameId: 1440,
-        answer: 'Trâu',
-        confidence: 0.95,
-        validation: 'VALID',
-      },
-    ],
-    detectedType: 'OBJECT_ENTITY',
-  }
+  return { candidates: [], answers: [], detectedType: undefined }
 }
 
 export async function apiSearchTrake(events: string[]): Promise<TrakeChain[]> {
+  const filteredEvents = events.map((e) => e.trim()).filter(Boolean)
+  if (filteredEvents.length === 0) return []
   try {
     const res = await fetch(`${API_BASE}/trake/search`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        events,
+        events: filteredEvents,
         top_k_chains: 100,
         beam_width: 100,
       }),
@@ -115,18 +108,24 @@ export async function apiSearchTrake(events: string[]): Promise<TrakeChain[]> {
       const json: ResponseEnvelope<{
         chains: Array<{ videoId: string; frames: number[]; confidence: number }>
       }> = await res.json()
-      if (json.data && Array.isArray(json.data.chains) && json.data.chains.length > 0) {
+      if (json.data && Array.isArray(json.data.chains)) {
         return json.data.chains.map((c) => ({
           videoId: c.videoId,
-          frames: (c.frames.length >= 3 ? c.frames.slice(0, 3) : [c.frames[0] || 0, c.frames[1] || 0, c.frames[2] || 0]) as [number, number, number],
+          frames: (c.frames.length >= 3
+            ? c.frames.slice(0, 3)
+            : [c.frames[0] || 0, c.frames[1] || 0, c.frames[2] || 0]) as [
+            number,
+            number,
+            number,
+          ],
           confidence: c.confidence,
         }))
       }
     }
-  } catch {
-    // Fallback
+  } catch (err) {
+    console.error('API TRAKE search error:', err)
   }
-  return trakeChains
+  return []
 }
 
 export async function apiValidateSubmission(
@@ -157,8 +156,8 @@ export async function apiValidateSubmission(
         return json.data
       }
     }
-  } catch {
-    // Fallback local validation
+  } catch (err) {
+    console.error('API validation error:', err)
   }
   return { valid: true, errors: [], warnings: [] }
 }
