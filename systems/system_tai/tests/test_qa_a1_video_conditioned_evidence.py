@@ -303,6 +303,80 @@ def test_global_restricted_cosine_ordering_is_opt_in_and_score_exact() -> None:
     )
 
 
+def test_global_ordering_ranks_only_keyframe_evidence_bank_depth() -> None:
+    variant = _variant("q::en", "event", QueryLanguage.ENGLISH)
+    maxima = FullCorpusVideoMaximaOutcome(
+        rankings={
+            variant.variant_id: (
+                _maximum(variant.variant_id, "V1", 1, 0.99),
+                _maximum(variant.variant_id, "V2", 2, 0.98),
+            )
+        },
+        physical_rows_scored=10,
+        video_store_scan_count=2,
+    )
+    config = QAVideoConditionedEvidenceConfig(
+        enabled=True,
+        selected_video_cap=2,
+        anchors_per_video=5,
+        candidate_ordering_policy=QA_CANDIDATE_ORDER_GLOBAL_RESTRICTED_COSINE,
+        preserve_keyframe_evidence=True,
+        keyframe_evidence_video_cap=2,
+        keyframe_evidence_anchors_per_video=3,
+    )
+    nominations = nominate_qa_videos(
+        variants=(variant,),
+        maxima=maxima,
+        config=config,
+    )
+    restricted = VideoRestrictedSearchOutcome(
+        rankings={
+            variant.variant_id: {
+                "V1": tuple(
+                    _restricted("V1", frame_id, rank, score)
+                    for rank, (frame_id, score) in enumerate(
+                        ((100, 0.99), (110, 0.97), (120, 0.95), (130, 0.40), (140, 0.30)),
+                        start=1,
+                    )
+                ),
+                "V2": tuple(
+                    _restricted("V2", frame_id, rank, score)
+                    for rank, (frame_id, score) in enumerate(
+                        ((200, 0.98), (210, 0.96), (220, 0.94), (230, 0.20), (240, 0.10)),
+                        start=1,
+                    )
+                ),
+            }
+        },
+        physical_rows_scored=10,
+        video_store_scan_count=2,
+    )
+
+    result = build_qa_grounding_result(
+        query_id="q",
+        variants=(variant,),
+        nominations=nominations,
+        restricted=restricted,
+        weighted_rrf=WeightedRRFRetriever(object()),
+        config=config,
+        output_top_k=10,
+    )
+
+    assert [(item.video_id, item.frame_id) for item in result.ranked_candidates] == [
+        ("V1", 100),
+        ("V2", 200),
+        ("V1", 110),
+        ("V2", 210),
+        ("V1", 120),
+        ("V2", 220),
+    ]
+    assert [item.rank for item in result.ranked_candidates] == list(range(1, 7))
+    assert all(
+        (item.diagnostic_metadata or {})["local_anchor_rank"] <= 3
+        for item in result.ranked_candidates
+    )
+
+
 def test_global_restricted_cosine_rejects_multiple_variants() -> None:
     vi = _variant("q::vi", "su kien", QueryLanguage.VIETNAMESE)
     en = _variant("q::en", "event", QueryLanguage.ENGLISH)

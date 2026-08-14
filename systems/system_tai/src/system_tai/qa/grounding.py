@@ -445,6 +445,20 @@ def build_qa_grounding_result(
 
     staged: list[tuple[int, int, CandidateFrame, QAVideoNomination]] = []
     per_video_cap = min(config.anchors_per_video, output_top_k)
+    if (
+        config.candidate_ordering_policy
+        == QA_CANDIDATE_ORDER_GLOBAL_RESTRICTED_COSINE
+        and config.preserve_keyframe_evidence
+    ):
+        # Global ordering must rank the same bounded candidate set that the
+        # downstream keyframe evidence bank can admit.  Ranking deeper local
+        # anchors first and filtering them later creates sparse output ranks
+        # and can reduce an otherwise complete 32 x 3 evidence bank to fewer
+        # than 96 records.
+        per_video_cap = min(
+            per_video_cap,
+            config.keyframe_evidence_anchors_per_video,
+        )
     for nomination in resolved_nominations:
         if len(resolved_variants) == 1:
             variant = resolved_variants[0]
