@@ -44,6 +44,19 @@ _QA_A3_ADDITIONAL_OCR_PATTERNS = (
     r"\bgia .* (?:ghi|hien thi).* bao nhieu\b",
     r"\bwhat (?:is|was) (?:written|displayed) (?:on|in) "
     r"(?:the )?(?:sign|screen|board|poster)\b",
+    r"\bbien (?:hieu|bao|quang cao|canh bao)\b",
+    r"\btam bien\b",
+    r"\bten (?:cua hang|cong vien|thuoc|hai nguoi|nguoi|thuong hieu|cong ty|quan)\b",
+    r"\bthuong hieu\b",
+    r"\bdong tieu de\b",
+    r"\b(?:in|viet|ghi) (?:lon|ro|tren|trong)\b",
+    r"\bbang muc phi\b",
+    r"\bmuc de xuat\b",
+    r"\bname of (?:the )?(?:store|shop|park|brand|medicine|drug|company|person)\b",
+    r"\bwhat (?:brand|warning|text|name|store|shop|title|headline)\b",
+    r"\bwarning sign\b",
+    r"\bstore sign\b",
+    r"\bfee (?:table|schedule|chart)\b",
 )
 
 _OBJECT_COUNT_PATTERNS = (
