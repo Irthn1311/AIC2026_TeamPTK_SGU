@@ -798,6 +798,7 @@ def test_l21_qa_a2_provenance_scope_has_precedence(tmp_path: Path) -> None:
         "selected_video_cap": 32,
         "anchors_per_video": 5,
         "video_rrf_constant": 60.0,
+            "candidate_ordering_policy": "round_robin",
             "preserve_keyframe_evidence": True,
             "keyframe_evidence_video_cap": 32,
             "keyframe_evidence_anchors_per_video": 1,

@@ -1078,6 +1078,10 @@ class OperationalKISRuntime:
                         "video_rrf_constant": (
                             self.config.qa_video_conditioned_evidence_config.video_rrf_constant
                         ),
+                        "candidate_ordering_policy": (
+                            self.config.qa_video_conditioned_evidence_config
+                            .candidate_ordering_policy
+                        ),
                     },
                 }
             )

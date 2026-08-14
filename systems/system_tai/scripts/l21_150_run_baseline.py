@@ -30,6 +30,9 @@ from system_tai.kis.session_schema import (  # noqa: E402
     TRAKEQueryRequest,
 )
 from system_tai.qa.grounding import (  # noqa: E402
+    QA_CANDIDATE_ORDER_GLOBAL_RESTRICTED_COSINE,
+    QA_CANDIDATE_ORDER_ROUND_ROBIN,
+    QA_CANDIDATE_ORDERING_POLICIES,
     QA_KEYFRAME_EVIDENCE_BANK_V1,
     QA_MULTI_SEED_TEMPORAL_REFINEMENT_V1,
     QA_VIDEO_CONDITIONED_EVIDENCE_V1,
@@ -1348,6 +1351,9 @@ def run_l21_150_baseline(
                     "selected_video_cap": resolved_qa_grounding.selected_video_cap,
                     "anchors_per_video": resolved_qa_grounding.anchors_per_video,
                     "video_rrf_constant": resolved_qa_grounding.video_rrf_constant,
+                    "candidate_ordering_policy": (
+                        resolved_qa_grounding.candidate_ordering_policy
+                    ),
                     "preserve_keyframe_evidence": (
                         resolved_qa_grounding.preserve_keyframe_evidence
                     ),
@@ -1658,6 +1664,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--trake-rrf-constant", type=float, default=60.0)
     parser.add_argument("--qa-video-conditioned-evidence", action="store_true")
     parser.add_argument(
+        "--qa-grounding-candidate-ordering",
+        choices=tuple(sorted(QA_CANDIDATE_ORDERING_POLICIES)),
+        default=QA_CANDIDATE_ORDER_ROUND_ROBIN,
+    )
+    parser.add_argument(
         "--qa-localization-language-policy",
         choices=("legacy_vi", "en_only"),
         default="legacy_vi",
@@ -1716,6 +1727,15 @@ def main(argv: list[str] | None = None) -> int:
         ):
             raise ValueError(
                 "--qa-video-conditioned-evidence is restricted to --split dev --task qa"
+            )
+        if (
+            args.qa_grounding_candidate_ordering
+            == QA_CANDIDATE_ORDER_GLOBAL_RESTRICTED_COSINE
+            and not args.qa_video_conditioned_evidence
+        ):
+            raise ValueError(
+                "--qa-grounding-candidate-ordering global_restricted_cosine "
+                "requires --qa-video-conditioned-evidence"
             )
         if args.qa_object_evidence and (
             args.split != "dev"
@@ -1959,6 +1979,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         qa_video_conditioned_evidence_config = QAVideoConditionedEvidenceConfig(
             enabled=args.qa_video_conditioned_evidence,
+            candidate_ordering_policy=args.qa_grounding_candidate_ordering,
             preserve_keyframe_evidence=args.qa_keyframe_evidence_bank,
             keyframe_evidence_video_cap=args.qa_keyframe_evidence_video_cap,
             keyframe_evidence_anchors_per_video=(

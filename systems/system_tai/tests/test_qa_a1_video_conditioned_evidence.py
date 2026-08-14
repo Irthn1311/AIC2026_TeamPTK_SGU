@@ -22,6 +22,8 @@ from system_tai.features.btc_clip_store import (
 from system_tai.kis.session_schema import QAQueryRequest, SessionConfig
 from system_tai.preliminary.schemas import QAPrediction
 from system_tai.qa.grounding import (
+    QA_CANDIDATE_ORDER_GLOBAL_RESTRICTED_COSINE,
+    QA_CANDIDATE_ORDER_ROUND_ROBIN,
     QA_VIDEO_CONDITIONED_EVIDENCE_V1,
     QAVideoConditionedEvidenceConfig,
     build_qa_grounding_result,
@@ -109,6 +111,7 @@ def test_config_default_disabled_and_strict_validation() -> None:
     assert config.preserve_keyframe_evidence is False
     assert config.keyframe_evidence_video_cap == 32
     assert config.keyframe_evidence_anchors_per_video == 1
+    assert config.candidate_ordering_policy == QA_CANDIDATE_ORDER_ROUND_ROBIN
     assert SessionConfig().qa_video_conditioned_evidence_config == config
     for kwargs in (
         {"enabled": 1},
@@ -116,6 +119,7 @@ def test_config_default_disabled_and_strict_validation() -> None:
         {"anchors_per_video": 0},
         {"video_rrf_constant": float("nan")},
         {"video_rrf_constant": 0.0},
+        {"candidate_ordering_policy": "unknown"},
         {"keyframe_evidence_video_cap": 0},
         {"preserve_keyframe_evidence": True},
         {
@@ -230,6 +234,112 @@ def test_anchor_bounds_cross_video_order_unique_frames_and_contiguous_ranks() ->
         video_cap=1,
     )
     assert [(item.video_id, item.frame_id) for item in primary] == [("V1", 100)]
+
+
+def test_global_restricted_cosine_ordering_is_opt_in_and_score_exact() -> None:
+    variant = _variant("q::en", "event", QueryLanguage.ENGLISH)
+    maxima = FullCorpusVideoMaximaOutcome(
+        rankings={
+            variant.variant_id: (
+                _maximum(variant.variant_id, "V1", 1, 0.95),
+                _maximum(variant.variant_id, "V2", 2, 0.94),
+            )
+        },
+        physical_rows_scored=8,
+        video_store_scan_count=2,
+    )
+    nominations = nominate_qa_videos(
+        variants=(variant,),
+        maxima=maxima,
+        config=QAVideoConditionedEvidenceConfig(enabled=True, selected_video_cap=2),
+    )
+    restricted = VideoRestrictedSearchOutcome(
+        rankings={
+            variant.variant_id: {
+                "V1": (
+                    _restricted("V1", 100, 1, 0.95),
+                    _restricted("V1", 110, 2, 0.70),
+                ),
+                "V2": (
+                    _restricted("V2", 200, 1, 0.94),
+                    _restricted("V2", 210, 2, 0.93),
+                ),
+            }
+        },
+        physical_rows_scored=4,
+        video_store_scan_count=2,
+    )
+    config = QAVideoConditionedEvidenceConfig(
+        enabled=True,
+        selected_video_cap=2,
+        anchors_per_video=2,
+        candidate_ordering_policy=QA_CANDIDATE_ORDER_GLOBAL_RESTRICTED_COSINE,
+    )
+
+    result = build_qa_grounding_result(
+        query_id="q",
+        variants=(variant,),
+        nominations=nominations,
+        restricted=restricted,
+        weighted_rrf=WeightedRRFRetriever(object()),
+        config=config,
+        output_top_k=4,
+    )
+
+    assert [(item.video_id, item.frame_id) for item in result.ranked_candidates] == [
+        ("V1", 100),
+        ("V2", 200),
+        ("V2", 210),
+        ("V1", 110),
+    ]
+    assert [item.rank for item in result.ranked_candidates] == [1, 2, 3, 4]
+    assert [item.score for item in result.ranked_candidates] == pytest.approx(
+        [0.95, 0.94, 0.93, 0.70]
+    )
+    assert all(
+        (item.diagnostic_metadata or {})["candidate_ordering_policy"]
+        == QA_CANDIDATE_ORDER_GLOBAL_RESTRICTED_COSINE
+        for item in result.ranked_candidates
+    )
+
+
+def test_global_restricted_cosine_rejects_multiple_variants() -> None:
+    vi = _variant("q::vi", "su kien", QueryLanguage.VIETNAMESE)
+    en = _variant("q::en", "event", QueryLanguage.ENGLISH)
+    nominations = (
+        nominate_qa_videos(
+            variants=(vi,),
+            maxima=FullCorpusVideoMaximaOutcome(
+                rankings={vi.variant_id: (_maximum(vi.variant_id, "V1", 1, 0.9),)},
+                physical_rows_scored=1,
+                video_store_scan_count=1,
+            ),
+            config=QAVideoConditionedEvidenceConfig(enabled=True),
+        )[0],
+    )
+    restricted = VideoRestrictedSearchOutcome(
+        rankings={
+            vi.variant_id: {"V1": (_restricted("V1", 100, 1, 0.9),)},
+            en.variant_id: {"V1": (_restricted("V1", 100, 1, 0.9),)},
+        },
+        physical_rows_scored=1,
+        video_store_scan_count=1,
+    )
+    config = QAVideoConditionedEvidenceConfig(
+        enabled=True,
+        candidate_ordering_policy=QA_CANDIDATE_ORDER_GLOBAL_RESTRICTED_COSINE,
+    )
+
+    with pytest.raises(ValueError, match="exactly one localization variant"):
+        build_qa_grounding_result(
+            query_id="q",
+            variants=(vi, en),
+            nominations=nominations,
+            restricted=restricted,
+            weighted_rrf=WeightedRRFRetriever(object()),
+            config=config,
+            output_top_k=2,
+        )
 
 
 class _FakeEncoder:
@@ -992,10 +1102,16 @@ def test_l21_runner_flag_is_dev_qa_only() -> None:
             "--output-dir",
             "out",
             "--qa-video-conditioned-evidence",
+            "--qa-grounding-candidate-ordering",
+            "global_restricted_cosine",
             "--qa-ocr-evidence",
         ]
     )
     assert args.qa_video_conditioned_evidence is True
+    assert (
+        args.qa_grounding_candidate_ordering
+        == QA_CANDIDATE_ORDER_GLOBAL_RESTRICTED_COSINE
+    )
     assert args.qa_ocr_evidence is True
     enabled = QAVideoConditionedEvidenceConfig(enabled=True)
     with pytest.raises(ValueError, match="QA-A1 is restricted"):

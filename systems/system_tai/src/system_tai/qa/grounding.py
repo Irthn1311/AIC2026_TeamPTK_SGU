@@ -17,6 +17,14 @@ from system_tai.retrieval.video_evidence import (
 QA_VIDEO_CONDITIONED_EVIDENCE_V1 = "QA_VIDEO_CONDITIONED_EVIDENCE_V1"
 QA_KEYFRAME_EVIDENCE_BANK_V1 = "QA_KEYFRAME_EVIDENCE_BANK_V1"
 QA_MULTI_SEED_TEMPORAL_REFINEMENT_V1 = "QA_MULTI_SEED_TEMPORAL_REFINEMENT_V1"
+QA_CANDIDATE_ORDER_ROUND_ROBIN = "round_robin"
+QA_CANDIDATE_ORDER_GLOBAL_RESTRICTED_COSINE = "global_restricted_cosine"
+QA_CANDIDATE_ORDERING_POLICIES = frozenset(
+    {
+        QA_CANDIDATE_ORDER_ROUND_ROBIN,
+        QA_CANDIDATE_ORDER_GLOBAL_RESTRICTED_COSINE,
+    }
+)
 KEYFRAME_ANCHOR = "KEYFRAME_ANCHOR"
 RAW_REFINED = "RAW_REFINED"
 TEMPORAL_REFINED = "TEMPORAL_REFINED"
@@ -30,6 +38,7 @@ class QAVideoConditionedEvidenceConfig:
     selected_video_cap: int = 32
     anchors_per_video: int = 5
     video_rrf_constant: float = 60.0
+    candidate_ordering_policy: str = QA_CANDIDATE_ORDER_ROUND_ROBIN
     preserve_keyframe_evidence: bool = False
     keyframe_evidence_video_cap: int = 32
     keyframe_evidence_anchors_per_video: int = 1
@@ -45,6 +54,14 @@ class QAVideoConditionedEvidenceConfig:
             raise ValueError("selected_video_cap must be an integer >= 1")
         if type(self.anchors_per_video) is not int or self.anchors_per_video < 1:
             raise ValueError("anchors_per_video must be an integer >= 1")
+        if (
+            type(self.candidate_ordering_policy) is not str
+            or self.candidate_ordering_policy not in QA_CANDIDATE_ORDERING_POLICIES
+        ):
+            raise ValueError(
+                "candidate_ordering_policy must be one of: "
+                + ", ".join(sorted(QA_CANDIDATE_ORDERING_POLICIES))
+            )
         if type(self.preserve_keyframe_evidence) is not bool:
             raise ValueError("preserve_keyframe_evidence must be a boolean")
         if (
@@ -417,6 +434,14 @@ def build_qa_grounding_result(
         resolved_nominations
     ):
         raise ValueError("nominated video_id values must be unique")
+    if (
+        config.candidate_ordering_policy
+        == QA_CANDIDATE_ORDER_GLOBAL_RESTRICTED_COSINE
+        and len(resolved_variants) != 1
+    ):
+        raise ValueError(
+            "global_restricted_cosine ordering requires exactly one localization variant"
+        )
 
     staged: list[tuple[int, int, CandidateFrame, QAVideoNomination]] = []
     per_video_cap = min(config.anchors_per_video, output_top_k)
@@ -458,15 +483,27 @@ def build_qa_grounding_result(
                 )
             )
 
-    staged.sort(
-        key=lambda item: (
-            item[0],
-            item[1],
-            item[2].video_id,
-            item[2].frame_id,
-            item[2].clip_row,
+    if config.candidate_ordering_policy == QA_CANDIDATE_ORDER_ROUND_ROBIN:
+        staged.sort(
+            key=lambda item: (
+                item[0],
+                item[1],
+                item[2].video_id,
+                item[2].frame_id,
+                item[2].clip_row,
+            )
         )
-    )
+    else:
+        staged.sort(
+            key=lambda item: (
+                -float(item[2].score),
+                item[1],
+                item[0],
+                item[2].video_id,
+                item[2].frame_id,
+                item[2].clip_row,
+            )
+        )
     selected: list[CandidateFrame] = []
     seen: set[tuple[str, int]] = set()
     for local_rank, _video_rank, candidate, nomination in staged:
@@ -491,6 +528,7 @@ def build_qa_grounding_result(
                     if len(resolved_variants) == 1
                     else "weighted_rrf"
                 ),
+                "candidate_ordering_policy": config.candidate_ordering_policy,
                 "source_localization_variant_ids": [
                     str(item["variant_id"]) for item in per_variant
                 ],

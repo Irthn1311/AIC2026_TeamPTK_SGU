@@ -295,6 +295,9 @@ class QARuntimePipeline:
                     "question_supported_by_current_provider": None,
                     "question_capability_reason": None,
                     "qa_grounding_policy": QA_VIDEO_CONDITIONED_EVIDENCE_V1,
+                    "qa_candidate_ordering_policy": (
+                        self.video_conditioned_evidence_config.candidate_ordering_policy
+                    ),
                     "qa_localization_policy": None,
                     "include_vi_variant": request.include_vi_variant,
                     "localization_variant_count": 0,
