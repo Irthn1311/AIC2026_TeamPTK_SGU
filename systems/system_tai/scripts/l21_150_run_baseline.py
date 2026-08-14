@@ -1621,6 +1621,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=96,
     )
     parser.add_argument("--qa-object-evidence", action="store_true")
+    parser.add_argument(
+        "--qa-object-ranking-policy",
+        choices=("global-support", "query-conditioned-frame"),
+        default="global-support",
+    )
     parser.add_argument("--qa-ocr-evidence", action="store_true")
     parser.add_argument("--qa-ocr-evidence-frame-budget", type=int, default=10)
     parser.add_argument("--qa-ocr-executable", default="tesseract")
@@ -1652,6 +1657,13 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError(
                 "--qa-object-evidence requires --split dev --task qa "
                 "--qa-video-conditioned-evidence"
+            )
+        if (
+            args.qa_object_ranking_policy != "global-support"
+            and not args.qa_object_evidence
+        ):
+            raise ValueError(
+                "--qa-object-ranking-policy requires --qa-object-evidence"
             )
         if args.qa_keyframe_evidence_bank and (
             args.split != "dev"
@@ -1880,6 +1892,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         qa_object_answer_provider_config = ObjectAnswerProviderConfig(
             enabled=args.qa_object_evidence,
+            ranking_policy=args.qa_object_ranking_policy,
         )
         qa_ocr_answer_provider_config = OCRAnswerProviderConfig(
             enabled=args.qa_ocr_evidence,

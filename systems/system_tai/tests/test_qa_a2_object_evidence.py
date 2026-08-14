@@ -19,6 +19,8 @@ from system_tai.kis.session_schema import QAQueryRequest, SessionConfig
 from system_tai.qa.grounding import QAVideoConditionedEvidenceConfig
 from system_tai.qa.models import QAEvidenceCandidate
 from system_tai.qa.object_provider import (
+    GLOBAL_SUPPORT_RANKING,
+    QUERY_CONDITIONED_FRAME_RANKING,
     ObjectAnswerProviderConfig,
     ObjectEntityAnswerProvider,
     normalize_object_label,
@@ -136,6 +138,26 @@ def _evidence(
     )
 
 
+class _ObjectTextEncoder:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, ...]] = []
+
+    def encode_texts(self, texts):
+        resolved = tuple(texts)
+        self.calls.append(resolved)
+        vectors = []
+        for text in resolved:
+            if text == "Who is visible?" or text == "a photo of person":
+                vectors.append((1.0, 0.0))
+            elif text == "a photo of car":
+                vectors.append((0.0, 1.0))
+            elif text == "a photo of traffic light":
+                vectors.append((0.0, 0.5))
+            else:
+                raise AssertionError(f"unexpected text: {text}")
+        return np.asarray(vectors, dtype=np.float32)
+
+
 def test_object_index_maps_json_ordinal_to_original_frame_and_is_deterministic(
     tmp_path: Path,
 ) -> None:
@@ -200,6 +222,85 @@ def test_object_label_normalization_and_artifact_backed_aggregation(tmp_path: Pa
     assert "target_video" not in serialized
     assert "ground_truth" not in serialized
     assert "accepted_answer" not in serialized
+
+
+def test_query_conditioned_frame_ranking_preserves_frame_answer_tuples(
+    tmp_path: Path,
+) -> None:
+    encoder = _ObjectTextEncoder()
+    provider = ObjectEntityAnswerProvider(
+        index=_index(tmp_path),
+        config=ObjectAnswerProviderConfig(
+            enabled=True,
+            ranking_policy=QUERY_CONDITIONED_FRAME_RANKING,
+        ),
+        text_encoder=encoder,
+    )
+    result, telemetry = provider.answer(
+        query_id="q",
+        question_type=QuestionType.OBJECT_ENTITY,
+        evidence=(_evidence(1, 100), _evidence(2, 200)),
+        output_top_k=4,
+        question_text="Who is visible?",
+    )
+    assert [
+        (prediction.rank, prediction.video_id, prediction.frame_id, prediction.answer)
+        for prediction in result.predictions
+    ] == [
+        (1, "V1", 100, "car"),
+        (2, "V1", 200, "person"),
+        (3, "V1", 100, "traffic light"),
+        (4, "V1", 200, "car"),
+    ]
+    assert encoder.calls == [
+        (
+            "Who is visible?",
+            "a photo of car",
+            "a photo of person",
+            "a photo of traffic light",
+        )
+    ]
+    assert telemetry["object_answer_ranking_policy"] == (
+        QUERY_CONDITIONED_FRAME_RANKING
+    )
+    assert telemetry["top_object_prediction_candidates"][1]["frame_id"] == 200
+    assert telemetry["top_object_prediction_candidates"][1]["frame_label_rank"] == 1
+    serialized = json.dumps(telemetry)
+    assert "ground_truth" not in serialized
+    assert "accepted_answer" not in serialized
+
+
+def test_query_conditioned_frame_ranking_requires_encoder_and_question(
+    tmp_path: Path,
+) -> None:
+    config = ObjectAnswerProviderConfig(
+        enabled=True,
+        ranking_policy=QUERY_CONDITIONED_FRAME_RANKING,
+    )
+    missing_encoder_root = tmp_path / "missing-encoder"
+    missing_encoder_root.mkdir()
+    with pytest.raises(ValueError, match="requires a shared text encoder"):
+        ObjectEntityAnswerProvider(index=_index(missing_encoder_root), config=config)
+
+    missing_question_root = tmp_path / "missing-question"
+    missing_question_root.mkdir()
+    provider = ObjectEntityAnswerProvider(
+        index=_index(missing_question_root),
+        config=config,
+        text_encoder=_ObjectTextEncoder(),
+    )
+    with pytest.raises(ValueError, match="requires non-empty question_text"):
+        provider.answer(
+            query_id="q",
+            question_type=QuestionType.OBJECT_ENTITY,
+            evidence=(_evidence(1, 100),),
+            output_top_k=4,
+        )
+
+
+def test_global_support_ranking_remains_the_default() -> None:
+    config = ObjectAnswerProviderConfig()
+    assert config.ranking_policy == GLOBAL_SUPPORT_RANKING
 
 
 def test_anchor_fallback_is_explicit_and_preserves_authoritative_source_frame(
@@ -606,6 +707,24 @@ def test_l21_object_flag_is_isolated_to_qa_a1_dev() -> None:
         ]
     )
     assert args.qa_object_evidence is True
+    assert args.qa_object_ranking_policy == GLOBAL_SUPPORT_RANKING
+    query_conditioned = runner.build_parser().parse_args(
+        [
+            "--benchmark",
+            "benchmark.json",
+            "--reuse-manifest",
+            "manifest.json",
+            "--output-dir",
+            "out",
+            "--qa-video-conditioned-evidence",
+            "--qa-object-evidence",
+            "--qa-object-ranking-policy",
+            QUERY_CONDITIONED_FRAME_RANKING,
+        ]
+    )
+    assert query_conditioned.qa_object_ranking_policy == (
+        QUERY_CONDITIONED_FRAME_RANKING
+    )
     enabled = ObjectAnswerProviderConfig(enabled=True)
     with pytest.raises(ValueError, match="QA-A2 requires QA DEV"):
         runner.run_l21_150_baseline(

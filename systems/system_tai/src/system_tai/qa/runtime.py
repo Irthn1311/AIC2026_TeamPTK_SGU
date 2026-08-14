@@ -1164,6 +1164,7 @@ class QARuntimePipeline:
                 question_type=q_type,
                 evidence=tuple(item[0] for item in evidence_bank),
                 output_top_k=request.output_top_k,
+                question_text=request.question_en or request.question,
                 warnings=diagnostics["warnings"],
             )
             timings.answer_scoring_seconds = self.clock() - t_object

@@ -5,13 +5,27 @@ from __future__ import annotations
 import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
+
+import numpy as np
 
 from system_tai.evidence.object_artifacts import ObjectArtifactIndex, ObjectFrameEvidence
 from system_tai.preliminary.schemas import QAPrediction
 
 from .models import QAEvidenceCandidate, QAResult
 from .question_types import QuestionType
+
+GLOBAL_SUPPORT_RANKING = "global-support"
+QUERY_CONDITIONED_FRAME_RANKING = "query-conditioned-frame"
+_RANKING_POLICIES = frozenset(
+    {GLOBAL_SUPPORT_RANKING, QUERY_CONDITIONED_FRAME_RANKING}
+)
+
+
+class ObjectTextEncoder(Protocol):
+    """Minimal shared-encoder surface used by query-conditioned object ranking."""
+
+    def encode_texts(self, texts: Sequence[str]) -> np.ndarray: ...
 
 
 def normalize_object_label(label: str) -> str:
@@ -26,6 +40,7 @@ class ObjectAnswerProviderConfig:
     enabled: bool = False
     allow_candidate_anchor_fallback: bool = True
     telemetry_candidate_limit: int = 10
+    ranking_policy: str = GLOBAL_SUPPORT_RANKING
 
     def __post_init__(self) -> None:
         if type(self.enabled) is not bool:
@@ -34,6 +49,11 @@ class ObjectAnswerProviderConfig:
             raise TypeError("allow_candidate_anchor_fallback must be a boolean")
         if not 1 <= self.telemetry_candidate_limit <= 100:
             raise ValueError("telemetry_candidate_limit must be in [1, 100]")
+        if self.ranking_policy not in _RANKING_POLICIES:
+            raise ValueError(
+                "ranking_policy must be 'global-support' or "
+                "'query-conditioned-frame'"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,9 +99,18 @@ class ObjectEntityAnswerProvider:
         *,
         index: ObjectArtifactIndex,
         config: ObjectAnswerProviderConfig,
+        text_encoder: ObjectTextEncoder | None = None,
     ) -> None:
         self.index = index
         self.config = config
+        self.text_encoder = text_encoder
+        if (
+            self.config.ranking_policy == QUERY_CONDITIONED_FRAME_RANKING
+            and self.text_encoder is None
+        ):
+            raise ValueError(
+                "query-conditioned-frame ranking requires a shared text encoder"
+            )
 
     @property
     def enabled(self) -> bool:
@@ -97,12 +126,20 @@ class ObjectEntityAnswerProvider:
         question_type: QuestionType,
         evidence: Sequence[QAEvidenceCandidate],
         output_top_k: int,
+        question_text: str | None = None,
         warnings: list[str] | None = None,
     ) -> tuple[QAResult, dict[str, Any]]:
         if not self.supports(question_type):
             raise ValueError(f"object provider does not support {question_type.value}")
         if not 1 <= output_top_k <= 100:
             raise ValueError("output_top_k must be in [1, 100]")
+        if (
+            self.config.ranking_policy == QUERY_CONDITIONED_FRAME_RANKING
+            and (question_text is None or not question_text.strip())
+        ):
+            raise ValueError(
+                "query-conditioned-frame ranking requires non-empty question_text"
+            )
         emitted_warnings = warnings if warnings is not None else []
         aggregates: dict[str, _LabelAggregate] = {}
         lookup_count = 0
@@ -237,25 +274,106 @@ class ObjectEntityAnswerProvider:
                 item.normalized_label,
             ),
         )
-        predictions: list[QAPrediction] = []
-        used_identity_answers: set[tuple[str, int, str]] = set()
-        for aggregate in ranked:
-            best = aggregate.best_support
-            identity = (best.video_id, best.frame_id, aggregate.normalized_label)
-            if identity in used_identity_answers:
-                continue
-            used_identity_answers.add(identity)
-            predictions.append(
-                QAPrediction(
-                    query_id=query_id,
-                    rank=len(predictions) + 1,
-                    video_id=best.video_id,
-                    frame_id=best.frame_id,
-                    answer=aggregate.normalized_label,
+        prediction_candidates: list[dict[str, Any]] = []
+        if self.config.ranking_policy == GLOBAL_SUPPORT_RANKING:
+            for aggregate in ranked:
+                best = aggregate.best_support
+                prediction_candidates.append(
+                    {
+                        "video_id": best.video_id,
+                        "frame_id": best.frame_id,
+                        "answer": aggregate.normalized_label,
+                        "evidence_rank": best.evidence_rank,
+                        "frame_label_rank": None,
+                        "query_relevance": None,
+                        "confidence": best.confidence,
+                    }
+                )
+        else:
+            assert self.text_encoder is not None
+            assert question_text is not None
+            labels = tuple(sorted(aggregates))
+            prompts = tuple(f"a photo of {label}" for label in labels)
+            encoded = np.asarray(
+                self.text_encoder.encode_texts((question_text, *prompts)),
+                dtype=np.float32,
+            )
+            expected_shape = (len(labels) + 1, encoded.shape[1] if encoded.ndim == 2 else 0)
+            if encoded.ndim != 2 or encoded.shape[0] != len(labels) + 1:
+                raise ValueError(
+                    "object label text encoder returned invalid shape: "
+                    f"{encoded.shape}; expected {expected_shape}"
+                )
+            if encoded.shape[1] <= 0 or not np.isfinite(encoded).all():
+                raise ValueError(
+                    "object label text encoder must return finite non-empty vectors"
+                )
+            norms = np.linalg.norm(encoded, axis=1)
+            if not np.isfinite(norms).all() or np.any(norms <= 0):
+                raise ValueError(
+                    "object label text encoder returned a zero-norm vector"
+                )
+            normalized_vectors = encoded / norms[:, None]
+            relevance = normalized_vectors[1:] @ normalized_vectors[0]
+            relevance_by_label = {
+                label: float(score) for label, score in zip(labels, relevance)
+            }
+
+            by_frame: dict[tuple[str, int], list[tuple[_LabelAggregate, _FrameSupport]]] = {}
+            for aggregate in aggregates.values():
+                for support in aggregate.supports.values():
+                    by_frame.setdefault((support.video_id, support.frame_id), []).append(
+                        (aggregate, support)
+                    )
+            for frame_identity in sorted(by_frame):
+                frame_labels = sorted(
+                    by_frame[frame_identity],
+                    key=lambda item: (
+                        -relevance_by_label[item[0].normalized_label],
+                        -item[1].confidence,
+                        item[0].normalized_label,
+                    ),
+                )
+                for frame_label_rank, (aggregate, support) in enumerate(
+                    frame_labels, start=1
+                ):
+                    prediction_candidates.append(
+                        {
+                            "video_id": support.video_id,
+                            "frame_id": support.frame_id,
+                            "answer": aggregate.normalized_label,
+                            "evidence_rank": support.evidence_rank,
+                            "frame_label_rank": frame_label_rank,
+                            "query_relevance": relevance_by_label[
+                                aggregate.normalized_label
+                            ],
+                            "confidence": support.confidence,
+                        }
+                    )
+            prediction_candidates.sort(
+                key=lambda item: (
+                    item["frame_label_rank"],
+                    item["evidence_rank"],
+                    -item["query_relevance"],
+                    -item["confidence"],
+                    item["video_id"],
+                    item["frame_id"],
+                    item["answer"],
                 )
             )
-            if len(predictions) >= output_top_k:
-                break
+
+        predictions = [
+            QAPrediction(
+                query_id=query_id,
+                rank=index,
+                video_id=item["video_id"],
+                frame_id=item["frame_id"],
+                answer=item["answer"],
+            )
+            for index, item in enumerate(
+                prediction_candidates[:output_top_k], start=1
+            )
+        ]
 
         unsupported_reason = None
         if not predictions:
@@ -296,6 +414,7 @@ class ObjectEntityAnswerProvider:
                 }
             )
         telemetry = {
+            "object_answer_ranking_policy": self.config.ranking_policy,
             "object_artifact_lookup_count": lookup_count,
             "exact_object_frame_hit_count": exact_hits,
             "nearest_object_frame_fallback_count": 0,
@@ -304,6 +423,9 @@ class ObjectEntityAnswerProvider:
             "unique_object_label_count": len(aggregates),
             "object_answer_candidate_count": len(predictions),
             "top_object_candidates": top_candidates,
+            "top_object_prediction_candidates": prediction_candidates[
+                : self.config.telemetry_candidate_limit
+            ],
             "object_evidence": evidence_diagnostics,
         }
         return (

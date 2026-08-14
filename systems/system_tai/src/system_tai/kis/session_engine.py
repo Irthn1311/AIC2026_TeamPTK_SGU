@@ -47,7 +47,10 @@ from system_tai.preliminary.runtime_bridge import (
     qa_predictions_to_top100_query,
     trake_predictions_to_top100_query,
 )
-from system_tai.qa.object_provider import ObjectEntityAnswerProvider
+from system_tai.qa.object_provider import (
+    QUERY_CONDITIONED_FRAME_RANKING,
+    ObjectEntityAnswerProvider,
+)
 from system_tai.qa.ocr_provider import (
     OCRAnswerProvider,
     TesseractCLIBackend,
@@ -161,6 +164,12 @@ class OperationalKISRuntime:
                 object_answer_provider = ObjectEntityAnswerProvider(
                     index=self.object_artifact_index,
                     config=config.qa_object_answer_provider_config,
+                    text_encoder=(
+                        self.shared_encoder
+                        if config.qa_object_answer_provider_config.ranking_policy
+                        == QUERY_CONDITIONED_FRAME_RANKING
+                        else None
+                    ),
                 )
             else:
                 self.object_artifact_index = object_answer_provider.index
