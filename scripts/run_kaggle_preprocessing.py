@@ -314,7 +314,12 @@ def main() -> int:
     parser.add_argument("--visual-batch-size", type=int, default=int(os.environ.get("AIC_VISUAL_BATCH_SIZE", "128")))
     parser.add_argument("--ocr-index-batch-size", type=int, default=int(os.environ.get("AIC_OCR_INDEX_BATCH_SIZE", "256")))
     parser.add_argument("--asr-index-batch-size", type=int, default=int(os.environ.get("AIC_ASR_INDEX_BATCH_SIZE", "256")))
-    parser.add_argument("--object-visualization-limit", type=int, default=int(os.environ.get("AIC_OBJECT_VISUALIZATION_LIMIT", "-1")))
+    parser.add_argument(
+        "--object-visualization-limit",
+        type=int,
+        default=int(os.environ.get("AIC_OBJECT_VISUALIZATION_LIMIT", "0")),
+        help="Max bbox preview images to write. Use 0 to disable and -1 for all; full Kaggle runs should keep this at 0 to avoid filling /kaggle/working.",
+    )
     parser.add_argument("--allow-missing-package", action="store_true")
     parser.add_argument("--skip-visual-report", action="store_true")
     parser.add_argument("--visual-report-limit", type=int, default=int(os.environ.get("AIC_VISUAL_REPORT_LIMIT", "12")))

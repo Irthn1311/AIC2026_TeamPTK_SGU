@@ -28,7 +28,7 @@ python scripts/prepare_kaggle_assets.py
 Pipeline Kaggle chỉ chạy offline preprocessing, không chạy FastAPI/React UI:
 
 1. Keyframe V2 + Visual CLIP FAISS
-2. YOLOE Hybrid V2 object detection + bbox visualizations
+2. YOLOE Hybrid V2 object detection + optional bbox preview visualizations
 3. OCR V2 selected keyframes + OCR Temporal V3 tracking/index
 4. Faster-Whisper ASR V3 + E5 index
 5. Validate/package outputs
@@ -44,6 +44,10 @@ Khi smoke ổn, chạy full:
 ```bash
 python scripts/run_kaggle_preprocessing.py --full
 ```
+
+Full Kaggle runs disable object preview images by default (`--object-visualization-limit 0`)
+so `/kaggle/working` is reserved for parquet/index/package artifacts. Use a small positive
+limit only when you need a preview sample; `-1` writes every bbox image and can fill the disk.
 
 Để kiểm 20 output mỗi nhóm sau khi chạy xong:
 
