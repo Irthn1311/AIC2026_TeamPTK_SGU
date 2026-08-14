@@ -1,0 +1,26 @@
+experiment: TRIAGE_E2E1
+experiment_version: "0.1"
+
+max_predictions: 100
+m1_refine_top_single_event: 10
+m1_refine_top_chains: 5
+t3_selected_delta: 0.05
+ocr_max_grounding_ranks: 20
+
+stage1_exact: true
+qa_solver: MINIMAL_NON_VLM_BASELINE
+
+use_m2: false
+use_m3: false
+use_event_graph: false
+use_vlm: false
+use_agent: false
+use_nvdec_default: false
+
+variants:
+  - P0_COARSE
+  - P1_CANONICAL
+
+benchmark_order:
+  - DEV_CROSS_60
+  - DEV_L21_150
