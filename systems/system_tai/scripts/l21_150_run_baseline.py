@@ -6,10 +6,12 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import subprocess
 import sys
+import uuid
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
@@ -218,6 +220,151 @@ def _load_jsonl(path: Path) -> list[dict[str, Any]]:
                 raise ValueError(f"{path} contains a non-object JSON line")
             records.append(value)
     return records
+
+
+def _write_jsonl_atomic(path: Path, records: Sequence[Mapping[str, Any]]) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with temporary.open("w", encoding="utf-8", newline="") as stream:
+            for record in records:
+                safe_record = _json_safe(record, context=f"{path.name} record")
+                stream.write(
+                    json.dumps(
+                        safe_record,
+                        ensure_ascii=False,
+                        allow_nan=False,
+                        separators=(",", ":"),
+                    )
+                    + "\n"
+                )
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _select_benchmark_queries(
+    benchmark: L21150Benchmark,
+    *,
+    split: str,
+    task: str,
+    query_ids: Sequence[str] | None,
+) -> list[L21150KISQuery | L21150QAQuery | L21150TRAKEQuery]:
+    selected = [
+        query
+        for query in benchmark.queries
+        if (split == "all" or query.split.casefold() == split)
+        and (task == "all" or query.task_type == task)
+    ]
+    if query_ids is None:
+        return selected
+
+    requested: list[str] = []
+    for index, value in enumerate(query_ids):
+        if type(value) is not str or not value.strip() or value != value.strip():
+            raise ValueError(f"query_ids[{index}] must be a non-empty trimmed string")
+        requested.append(value)
+    if len(requested) != len(set(requested)):
+        raise ValueError("query_ids must not contain duplicates")
+    if not requested:
+        raise ValueError("query_ids must not be empty when provided")
+
+    selected_by_id = {query.query_id: query for query in selected}
+    unavailable = sorted(set(requested) - set(selected_by_id))
+    if unavailable:
+        raise ValueError(
+            "query_ids are not available under the selected split/task: "
+            + ", ".join(unavailable)
+        )
+    requested_set = set(requested)
+    return [query for query in selected if query.query_id in requested_set]
+
+
+def _checkpoint_outputs(
+    checkpoints: Sequence[Mapping[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    predictions: list[dict[str, Any]] = []
+    failures: list[dict[str, Any]] = []
+    summaries: list[dict[str, Any]] = []
+    for record in checkpoints:
+        summary = record["summary"]
+        if type(summary) is not dict:
+            raise ValueError("query checkpoint summary must be an object")
+        summaries.append(dict(summary))
+        if record["status"] == "SUCCESS":
+            values = record["predictions"]
+            if type(values) is not list or any(type(value) is not dict for value in values):
+                raise ValueError("successful query checkpoint predictions must be objects")
+            predictions.extend(dict(value) for value in values)
+        else:
+            failure = record["failure"]
+            if type(failure) is not dict:
+                raise ValueError("failed query checkpoint failure must be an object")
+            failures.append(dict(failure))
+    return predictions, failures, summaries
+
+
+def _load_query_checkpoints(
+    path: Path,
+    *,
+    selected: Sequence[L21150KISQuery | L21150QAQuery | L21150TRAKEQuery],
+    experiment_id: str,
+) -> list[dict[str, Any]]:
+    records = _load_jsonl(path)
+    selected_by_id = {query.query_id: query for query in selected}
+    seen: set[str] = set()
+    validated: list[dict[str, Any]] = []
+    for index, record in enumerate(records, start=1):
+        required = {
+            "schema_version",
+            "experiment_id",
+            "query_id",
+            "task",
+            "status",
+            "summary",
+            "predictions",
+            "failure",
+        }
+        if set(record) != required:
+            raise ValueError(f"query checkpoint line {index} has invalid fields")
+        if record["schema_version"] != 1:
+            raise ValueError(f"query checkpoint line {index} has invalid schema_version")
+        if record["experiment_id"] != experiment_id:
+            raise ValueError(f"query checkpoint line {index} experiment_id mismatch")
+        query_id = record["query_id"]
+        if type(query_id) is not str or query_id not in selected_by_id:
+            raise ValueError(f"query checkpoint line {index} has unavailable query_id")
+        if query_id in seen:
+            raise ValueError(f"query checkpoint query_id is duplicated: {query_id}")
+        seen.add(query_id)
+        query = selected_by_id[query_id]
+        if record["task"] != query.task_type:
+            raise ValueError(f"query checkpoint line {index} task mismatch")
+        if record["status"] not in {"SUCCESS", "FAILED"}:
+            raise ValueError(f"query checkpoint line {index} has invalid status")
+        _checkpoint_outputs((record,))
+        if record["status"] == "SUCCESS" and record["failure"] is not None:
+            raise ValueError(f"successful query checkpoint {query_id} has a failure")
+        if record["status"] == "FAILED" and record["predictions"] != []:
+            raise ValueError(f"failed query checkpoint {query_id} has predictions")
+        summary = record["summary"]
+        if (
+            summary.get("query_id") != query_id
+            or summary.get("task") != query.task_type
+            or summary.get("status") != record["status"]
+        ):
+            raise ValueError(f"query checkpoint {query_id} summary mismatch")
+        validated.append(dict(record))
+
+    order = {query.query_id: index for index, query in enumerate(selected)}
+    if [order[record["query_id"]] for record in validated] != sorted(
+        order[record["query_id"]] for record in validated
+    ):
+        raise ValueError("query checkpoints are not in benchmark order")
+    return validated
 
 
 def _response_latency(response: dict[str, Any]) -> float | None:
@@ -522,6 +669,7 @@ def run_l21_150_baseline(
     qa_video_conditioned_evidence_config: QAVideoConditionedEvidenceConfig | None = None,
     qa_object_answer_provider_config: ObjectAnswerProviderConfig | None = None,
     qa_ocr_answer_provider_config: OCRAnswerProviderConfig | None = None,
+    query_ids: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     if not 1 <= top_k <= 100:
         raise ValueError("top_k must be in [1, 100]")
@@ -769,20 +917,100 @@ def run_l21_150_baseline(
     output.mkdir(parents=True, exist_ok=True)
     predictions_path = output / "predictions.jsonl"
     failures_path = output / "failures.jsonl"
-    existing_predictions = _load_jsonl(predictions_path) if resume else []
-    existing_failures = _load_jsonl(failures_path) if resume else []
-    completed_ids = {record["query_id"] for record in existing_predictions}
-    completed_ids.update(record["query_id"] for record in existing_failures)
+    checkpoints_path = output / "query_checkpoints.jsonl"
+    selected = _select_benchmark_queries(
+        benchmark,
+        split=split,
+        task=task,
+        query_ids=query_ids,
+    )
+    checkpoints = (
+        _load_query_checkpoints(
+            checkpoints_path,
+            selected=selected,
+            experiment_id=experiment_id,
+        )
+        if resume and checkpoints_path.is_file()
+        else []
+    )
+    if not resume:
+        _write_jsonl_atomic(checkpoints_path, ())
+        _write_jsonl_atomic(predictions_path, ())
+        _write_jsonl_atomic(failures_path, ())
+    if resume and not checkpoints and (
+        predictions_path.is_file() or failures_path.is_file()
+    ):
+        legacy_predictions = _load_jsonl(predictions_path)
+        legacy_failures = _load_jsonl(failures_path)
+        predictions_by_query: dict[str, list[dict[str, Any]]] = {}
+        for prediction in legacy_predictions:
+            query_id = prediction.get("query_id")
+            if type(query_id) is not str:
+                raise ValueError("legacy prediction is missing query_id")
+            predictions_by_query.setdefault(query_id, []).append(prediction)
+        failures_by_query: dict[str, dict[str, Any]] = {}
+        for failure in legacy_failures:
+            query_id = failure.get("query_id")
+            if type(query_id) is not str or query_id in failures_by_query:
+                raise ValueError("legacy failure has invalid or duplicate query_id")
+            failures_by_query[query_id] = failure
+        overlap = set(predictions_by_query) & set(failures_by_query)
+        if overlap:
+            raise ValueError(
+                "legacy resume outputs contain success/failure overlap: "
+                + ", ".join(sorted(overlap))
+            )
+        selected_by_id = {query.query_id: query for query in selected}
+        unavailable = (set(predictions_by_query) | set(failures_by_query)) - set(
+            selected_by_id
+        )
+        if unavailable:
+            raise ValueError(
+                "legacy resume outputs contain unavailable query IDs: "
+                + ", ".join(sorted(unavailable))
+            )
+        for query in selected:
+            query_predictions = predictions_by_query.get(query.query_id)
+            failure = failures_by_query.get(query.query_id)
+            if query_predictions is not None:
+                latency = query_predictions[0].get("latency_seconds")
+                summary = {
+                    "query_id": query.query_id,
+                    "task": query.task_type,
+                    "status": "SUCCESS",
+                    "prediction_count": len(query_predictions),
+                    "latency_seconds": latency,
+                }
+                checkpoints.append(
+                    {
+                        "schema_version": 1,
+                        "experiment_id": experiment_id,
+                        "query_id": query.query_id,
+                        "task": query.task_type,
+                        "status": "SUCCESS",
+                        "summary": summary,
+                        "predictions": query_predictions,
+                        "failure": None,
+                    }
+                )
+            elif failure is not None:
+                checkpoints.append(
+                    {
+                        "schema_version": 1,
+                        "experiment_id": experiment_id,
+                        "query_id": query.query_id,
+                        "task": query.task_type,
+                        "status": "FAILED",
+                        "summary": {**failure, "status": "FAILED"},
+                        "predictions": [],
+                        "failure": failure,
+                    }
+                )
+        if checkpoints:
+            _write_jsonl_atomic(checkpoints_path, checkpoints)
 
-    selected = [
-        query
-        for query in benchmark.queries
-        if (split == "all" or query.split.casefold() == split)
-        and (task == "all" or query.task_type == task)
-    ]
-    predictions = list(existing_predictions)
-    failures = list(existing_failures)
-    query_summaries: list[dict[str, Any]] = []
+    completed_ids = {record["query_id"] for record in checkpoints}
+    newly_executed_query_count = 0
     kis_translations = (
         kis_query_sidecar.translations if kis_query_sidecar is not None else None
     )
@@ -838,14 +1066,23 @@ def run_l21_150_baseline(
                         "query_variant_id": None,
                     }
                 )
-            predictions.extend(query_predictions)
-            query_summaries.append(
+            summary = {
+                "query_id": query.query_id,
+                "task": query.task_type,
+                "status": "SUCCESS",
+                "prediction_count": len(query_predictions),
+                "latency_seconds": latency,
+            }
+            checkpoints.append(
                 {
+                    "schema_version": 1,
+                    "experiment_id": experiment_id,
                     "query_id": query.query_id,
                     "task": query.task_type,
                     "status": "SUCCESS",
-                    "prediction_count": len(query_predictions),
-                    "latency_seconds": latency,
+                    "summary": summary,
+                    "predictions": query_predictions,
+                    "failure": None,
                 }
             )
         except Exception as exc:
@@ -857,11 +1094,34 @@ def run_l21_150_baseline(
                 "failure_type": type(exc).__name__,
                 "failure_reason": str(exc),
             }
-            failures.append(failure)
-            query_summaries.append({**failure, "status": "FAILED"})
+            checkpoints.append(
+                {
+                    "schema_version": 1,
+                    "experiment_id": experiment_id,
+                    "query_id": query.query_id,
+                    "task": query.task_type,
+                    "status": "FAILED",
+                    "summary": {**failure, "status": "FAILED"},
+                    "predictions": [],
+                    "failure": failure,
+                }
+            )
+        newly_executed_query_count += 1
+        _write_jsonl_atomic(checkpoints_path, checkpoints)
+        predictions, failures, query_summaries = _checkpoint_outputs(checkpoints)
+        _write_jsonl_atomic(predictions_path, predictions)
+        _write_jsonl_atomic(failures_path, failures)
+        print(
+            "L21-150 checkpoint: "
+            f"completed={len(checkpoints)}/{len(selected)} "
+            f"query_id={query.query_id} status={checkpoints[-1]['status']}",
+            flush=True,
+        )
+        if checkpoints[-1]["status"] == "FAILED":
             if fail_fast:
                 break
 
+    predictions, failures, query_summaries = _checkpoint_outputs(checkpoints)
     successful_query_ids = {
         str(summary["query_id"])
         for summary in query_summaries
@@ -873,12 +1133,8 @@ def run_l21_150_baseline(
         top_k,
     )
 
-    with predictions_path.open("w", encoding="utf-8", newline="") as stream:
-        for prediction in predictions:
-            stream.write(json.dumps(prediction, ensure_ascii=False) + "\n")
-    with failures_path.open("w", encoding="utf-8", newline="") as stream:
-        for failure in failures:
-            stream.write(json.dumps(failure, ensure_ascii=False) + "\n")
+    _write_jsonl_atomic(predictions_path, predictions)
+    _write_jsonl_atomic(failures_path, failures)
 
     task_counts = Counter(summary["task"] for summary in query_summaries)
     success_count = sum(summary["status"] == "SUCCESS" for summary in query_summaries)
@@ -936,8 +1192,11 @@ def run_l21_150_baseline(
         "gt_policy": gt_policy,
         "split": split,
         "task": task,
+        "query_id_filter": list(query_ids) if query_ids is not None else None,
         "selected_query_count": len(selected),
         "executed_query_count": len(query_summaries),
+        "newly_executed_query_count": newly_executed_query_count,
+        "resumed_query_count": len(query_summaries) - newly_executed_query_count,
         "successful_query_count": success_count,
         "failed_query_count": len(query_summaries) - success_count,
         "task_counts": dict(sorted(task_counts.items())),
@@ -981,6 +1240,7 @@ def run_l21_150_baseline(
         "outputs": {
             "predictions_jsonl": predictions_path.name,
             "failures_jsonl": failures_path.name,
+            "query_checkpoints_jsonl": checkpoints_path.name,
         },
         "queries": query_summaries,
     }
@@ -1265,6 +1525,14 @@ def build_parser() -> argparse.ArgumentParser:
     manifest.add_argument("--manifest-cache", type=Path)
     parser.add_argument("--split", choices=("dev", "holdout", "all"), default="dev")
     parser.add_argument("--task", choices=("kis", "qa", "trake", "all"), default="all")
+    parser.add_argument(
+        "--query-id",
+        action="append",
+        help=(
+            "Run only this query ID after split/task selection; repeat for multiple IDs. "
+            "Benchmark order is preserved."
+        ),
+    )
     parser.add_argument("--top-k", type=int, default=100)
     parser.add_argument("--refine-top-n", type=int, default=3)
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -1351,6 +1619,12 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
+        if args.query_id is not None and (
+            args.split != "dev" or args.task != "qa"
+        ):
+            raise ValueError(
+                "--query-id selective execution is restricted to --split dev --task qa"
+            )
         if args.qa_video_conditioned_evidence and (
             args.split != "dev" or args.task != "qa"
         ):
@@ -1663,6 +1937,7 @@ def main(argv: list[str] | None = None) -> int:
                     qa_ocr_answer_provider_config=(
                         qa_ocr_answer_provider_config
                     ),
+                    query_ids=args.query_id,
                 )
         finally:
             runtime.close(shutdown_reason="l21_150_baseline_complete")

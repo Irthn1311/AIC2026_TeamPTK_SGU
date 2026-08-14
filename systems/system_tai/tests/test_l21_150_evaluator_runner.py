@@ -616,6 +616,7 @@ def test_every_error_taxonomy_category_is_mechanically_reachable(
 class _FakeRuntime:
     output_root: Path
     fail_query_id: str | None = None
+    interrupt_query_id: str | None = None
     kis_depth_by_query: dict[str, int] | None = None
     duplicate_last_kis_identity: bool = False
 
@@ -635,6 +636,8 @@ class _FakeRuntime:
 
     def handle_query(self, request) -> dict[str, Any]:
         self.calls.append(("kis", request.query_id))
+        if request.query_id == self.interrupt_query_id:
+            raise KeyboardInterrupt("synthetic hard interruption")
         if request.query_id == self.fail_query_id:
             raise RuntimeError("synthetic KIS failure")
         depth = (
@@ -670,6 +673,8 @@ class _FakeRuntime:
 
     def handle_qa_query(self, request) -> dict[str, Any]:
         self.calls.append(("qa", request.query_id))
+        if request.query_id == self.interrupt_query_id:
+            raise KeyboardInterrupt("synthetic hard interruption")
         if request.query_id == self.fail_query_id:
             raise RuntimeError("unsupported answer type fixture")
         return {
@@ -688,6 +693,8 @@ class _FakeRuntime:
 
     def handle_trake_query(self, request) -> dict[str, Any]:
         self.calls.append(("trake", request.query_id))
+        if request.query_id == self.interrupt_query_id:
+            raise KeyboardInterrupt("synthetic hard interruption")
         if request.query_id == self.fail_query_id:
             raise RuntimeError("synthetic TRAKE failure")
         return {
@@ -897,6 +904,217 @@ def test_baseline_fail_fast_stops_after_failure(tmp_path: Path) -> None:
     report, runtime, _ = _run_fake(tmp_path, fail_query_id="QA-X", fail_fast=True)
     assert report["failed_query_count"] == 1
     assert runtime.calls == [("kis", "KIS-X"), ("qa", "QA-X")]
+
+
+def test_selective_query_filter_preserves_benchmark_order(tmp_path: Path) -> None:
+    benchmark = _benchmark(_qa("QA-2"), _qa("QA-1"), _qa("QA-3"))
+    runtime = _FakeRuntime(tmp_path / "runtime")
+    output = tmp_path / "output"
+
+    report = RUNNER.run_l21_150_baseline(
+        benchmark,
+        runtime,
+        output,
+        experiment_id="fixture-selective",
+        split="dev",
+        task="qa",
+        top_k=3,
+        refine_top_n=0,
+        resume=False,
+        fail_fast=True,
+        benchmark_sha256="b" * 64,
+        manifest_sha256="m" * 64,
+        gt_policy="proposed",
+        query_ids=("QA-1", "QA-2"),
+    )
+
+    assert runtime.calls == [("qa", "QA-2"), ("qa", "QA-1")]
+    assert report["query_id_filter"] == ["QA-1", "QA-2"]
+    assert report["selected_query_count"] == 2
+    assert report["successful_query_count"] == 2
+    assert report["outputs"]["query_checkpoints_jsonl"] == "query_checkpoints.jsonl"
+
+
+@pytest.mark.parametrize(
+    ("query_ids", "message"),
+    [
+        (("QA-X", "QA-X"), "must not contain duplicates"),
+        (("QA-MISSING",), "not available under the selected split/task"),
+        ((" QA-X",), "must be a non-empty trimmed string"),
+    ],
+)
+def test_selective_query_filter_rejects_invalid_ids(
+    tmp_path: Path,
+    query_ids: tuple[str, ...],
+    message: str,
+) -> None:
+    runtime = _FakeRuntime(tmp_path / "runtime")
+    with pytest.raises(ValueError, match=message):
+        RUNNER.run_l21_150_baseline(
+            _benchmark(_qa()),
+            runtime,
+            tmp_path / "output",
+            experiment_id="fixture-selective-invalid",
+            split="dev",
+            task="qa",
+            top_k=3,
+            refine_top_n=0,
+            resume=False,
+            fail_fast=True,
+            benchmark_sha256="b" * 64,
+            manifest_sha256="m" * 64,
+            gt_policy="proposed",
+            query_ids=query_ids,
+        )
+    assert runtime.calls == []
+
+
+def test_hard_interruption_checkpoints_and_resume_skips_completed_query(
+    tmp_path: Path,
+) -> None:
+    benchmark = _benchmark(_qa("QA-1"), _qa("QA-2"), _qa("QA-3"))
+    output = tmp_path / "output"
+    first_runtime = _FakeRuntime(
+        tmp_path / "runtime-first",
+        interrupt_query_id="QA-2",
+    )
+    common = {
+        "experiment_id": "fixture-resume",
+        "split": "dev",
+        "task": "qa",
+        "top_k": 3,
+        "refine_top_n": 0,
+        "fail_fast": True,
+        "benchmark_sha256": "b" * 64,
+        "manifest_sha256": "m" * 64,
+        "gt_policy": "proposed",
+        "query_ids": ("QA-1", "QA-2", "QA-3"),
+    }
+
+    with pytest.raises(KeyboardInterrupt, match="synthetic hard interruption"):
+        RUNNER.run_l21_150_baseline(
+            benchmark,
+            first_runtime,
+            output,
+            resume=False,
+            **common,
+        )
+
+    checkpoints = RUNNER._load_jsonl(output / "query_checkpoints.jsonl")
+    predictions = RUNNER._load_jsonl(output / "predictions.jsonl")
+    assert [record["query_id"] for record in checkpoints] == ["QA-1"]
+    assert {record["query_id"] for record in predictions} == {"QA-1"}
+    assert first_runtime.calls == [("qa", "QA-1"), ("qa", "QA-2")]
+
+    resumed_runtime = _FakeRuntime(tmp_path / "runtime-resumed")
+    report = RUNNER.run_l21_150_baseline(
+        benchmark,
+        resumed_runtime,
+        output,
+        resume=True,
+        **common,
+    )
+
+    assert resumed_runtime.calls == [("qa", "QA-2"), ("qa", "QA-3")]
+    assert report["selected_query_count"] == 3
+    assert report["executed_query_count"] == 3
+    assert report["newly_executed_query_count"] == 2
+    assert report["resumed_query_count"] == 1
+    assert report["successful_query_count"] == 3
+    assert report["failed_query_count"] == 0
+    final_predictions = RUNNER._load_jsonl(output / "predictions.jsonl")
+    assert [record["query_id"] for record in final_predictions] == [
+        "QA-1",
+        "QA-2",
+        "QA-3",
+    ]
+
+
+def test_cli_query_id_is_repeatable() -> None:
+    args = RUNNER.build_parser().parse_args(
+        [
+            "--benchmark",
+            "benchmark.json",
+            "--output-dir",
+            "output",
+            "--reuse-manifest",
+            "manifest.json",
+            "--split",
+            "dev",
+            "--task",
+            "qa",
+            "--query-id",
+            "QA-11",
+            "--query-id",
+            "QA-27",
+        ]
+    )
+    assert args.query_id == ["QA-11", "QA-27"]
+
+
+def test_cli_selective_execution_rejects_holdout_before_loading_inputs(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    exit_code = RUNNER.main(
+        [
+            "--benchmark",
+            "missing-benchmark.json",
+            "--output-dir",
+            "output",
+            "--reuse-manifest",
+            "missing-manifest.json",
+            "--split",
+            "holdout",
+            "--task",
+            "qa",
+            "--query-id",
+            "QA-11",
+        ]
+    )
+    assert exit_code == 2
+    assert "restricted to --split dev --task qa" in capsys.readouterr().err
+
+
+def test_resume_migrates_legacy_outputs_without_checkpoint(tmp_path: Path) -> None:
+    benchmark = _benchmark(_qa("QA-1"), _qa("QA-2"))
+    output = tmp_path / "output"
+    first_runtime = _FakeRuntime(tmp_path / "runtime-first")
+    common = {
+        "experiment_id": "fixture-legacy-resume",
+        "split": "dev",
+        "task": "qa",
+        "top_k": 3,
+        "refine_top_n": 0,
+        "fail_fast": True,
+        "benchmark_sha256": "b" * 64,
+        "manifest_sha256": "m" * 64,
+        "gt_policy": "proposed",
+    }
+    RUNNER.run_l21_150_baseline(
+        benchmark,
+        first_runtime,
+        output,
+        resume=False,
+        **common,
+    )
+    expected_predictions = (output / "predictions.jsonl").read_bytes()
+    (output / "query_checkpoints.jsonl").unlink()
+
+    resumed_runtime = _FakeRuntime(tmp_path / "runtime-resumed")
+    report = RUNNER.run_l21_150_baseline(
+        benchmark,
+        resumed_runtime,
+        output,
+        resume=True,
+        **common,
+    )
+
+    assert resumed_runtime.calls == []
+    assert report["successful_query_count"] == 2
+    assert report["newly_executed_query_count"] == 0
+    assert report["resumed_query_count"] == 2
+    assert (output / "predictions.jsonl").read_bytes() == expected_predictions
+    assert len(RUNNER._load_jsonl(output / "query_checkpoints.jsonl")) == 2
 
 
 def test_baseline_output_is_evaluator_compatible(tmp_path: Path) -> None:
