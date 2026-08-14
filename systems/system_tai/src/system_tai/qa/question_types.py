@@ -65,6 +65,12 @@ _OBJECT_ENTITY_PATTERNS = (
     r"\bwhich object\b",
     r"\bwhat item\b",
     r"\bwhat (?:is|was) (?:he|she|the person|the man|the woman) holding\b",
+    r"\bcay trong\b.*\bla gi\b",
+    r"\bloai xe gi\b",
+    r"\bthiet bi gi\b",
+    r"\bwhat crop\b",
+    r"\bwhat type of vehicle(?:s)?\b",
+    r"\bwhat device\b",
 )
 
 _COLOR_PATTERNS = (
@@ -79,7 +85,7 @@ _COLOR_PATTERNS = (
 
 _COUNT_PATTERNS = (
     r"\bbao nhieu\b",
-    r"\bmay\b",
+    r"\bmay (?:nguoi|con|cai|chiec|xe|vat|do vat|chai|qua|mon|lan)\b",
     r"\bso luong\b",
     r"\bhow many\b",
     r"\bhow much\b",

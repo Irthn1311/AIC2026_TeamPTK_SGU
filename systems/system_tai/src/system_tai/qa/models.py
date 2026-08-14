@@ -16,6 +16,7 @@ class QAQuery:
     question: str
     event_description_en: str | None = None
     question_en: str | None = None
+    question_type: QuestionType | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.query_id, str) or not self.query_id.strip():
@@ -24,6 +25,10 @@ class QAQuery:
             raise ValueError("event_description must be a non-empty string")
         if not isinstance(self.question, str) or not self.question.strip():
             raise ValueError("question must be a non-empty string")
+        if self.question_type is not None and not isinstance(
+            self.question_type, QuestionType
+        ):
+            raise TypeError("question_type must be a QuestionType when provided")
 
 
 @dataclass(frozen=True, slots=True)

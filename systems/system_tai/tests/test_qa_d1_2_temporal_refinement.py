@@ -73,11 +73,13 @@ def _candidate(
 def test_temporal_config_is_opt_in_and_validates_bounded_dependencies() -> None:
     default = QAVideoConditionedEvidenceConfig()
     assert default.temporal_refinement_enabled is False
+    assert default.keyframe_evidence_anchors_per_video == 1
     assert default.temporal_seed_anchors_per_video == 3
     assert default.temporal_refinement_video_cap == 32
     assert default.temporal_refinement_total_seed_cap == 96
 
     invalid = (
+        {"keyframe_evidence_anchors_per_video": 2},
         {"temporal_refinement_enabled": True},
         {
             "enabled": True,
@@ -102,6 +104,33 @@ def test_temporal_config_is_opt_in_and_validates_bounded_dependencies() -> None:
             "temporal_refinement_enabled": True,
             "temporal_refinement_video_cap": 2,
             "temporal_refinement_total_seed_cap": 7,
+        },
+        {
+            "enabled": True,
+            "selected_video_cap": 2,
+            "anchors_per_video": 2,
+            "preserve_keyframe_evidence": True,
+            "keyframe_evidence_video_cap": 2,
+            "keyframe_evidence_anchors_per_video": 3,
+        },
+        {
+            "enabled": True,
+            "selected_video_cap": 40,
+            "anchors_per_video": 3,
+            "preserve_keyframe_evidence": True,
+            "keyframe_evidence_video_cap": 40,
+            "keyframe_evidence_anchors_per_video": 3,
+        },
+        {
+            "enabled": True,
+            "selected_video_cap": 2,
+            "anchors_per_video": 3,
+            "preserve_keyframe_evidence": True,
+            "keyframe_evidence_video_cap": 2,
+            "keyframe_evidence_anchors_per_video": 2,
+            "temporal_refinement_enabled": True,
+            "temporal_refinement_video_cap": 2,
+            "temporal_refinement_total_seed_cap": 3,
         },
     )
     for kwargs in invalid:
@@ -342,7 +371,14 @@ class _Engine:
         )
 
 
-def _pipeline(tmp_path: Path, *, refiner=None, temporal=True, engine=None):
+def _pipeline(
+    tmp_path: Path,
+    *,
+    refiner=None,
+    temporal=True,
+    engine=None,
+    keyframe_anchors=1,
+):
     videos = []
     for video_id in ("V1", "V2"):
         path = tmp_path / f"{video_id}.mp4"
@@ -367,6 +403,7 @@ def _pipeline(tmp_path: Path, *, refiner=None, temporal=True, engine=None):
             anchors_per_video=3,
             preserve_keyframe_evidence=True,
             keyframe_evidence_video_cap=2,
+            keyframe_evidence_anchors_per_video=keyframe_anchors,
             temporal_refinement_enabled=temporal,
             temporal_seed_anchors_per_video=3,
             temporal_refinement_video_cap=2,
@@ -521,3 +558,47 @@ def test_feature_off_uses_legacy_refine_query_path(tmp_path: Path) -> None:
     assert refiner.legacy_calls == 1
     assert diagnostics["qa_temporal_refinement_policy"] == "DISABLED"
     assert diagnostics["keyframe_evidence_count"] == 2
+
+
+def test_keyframe_only_multi_anchor_retains_three_per_video_without_temporal_refine(
+    tmp_path: Path,
+) -> None:
+    class _LegacyRefiner(_SelectedRefiner):
+        def refine_query(self, query, config, precomputed_text_embeddings=None):
+            self.legacy_calls += 1
+            records = tuple(
+                _refined(candidate, success=candidate.rank == 1)
+                for candidate in query.candidates
+            )
+            return QueryRefinementOutcome(
+                query.query_id,
+                KISResult(query.query_id, ()),
+                records,
+                (),
+                {},
+            )
+
+        def refine_selected_candidates(self, **kwargs):
+            raise AssertionError("selected-set temporal refinement must stay off")
+
+    pipeline, _encoder, refiner, _decoder, engine = _pipeline(
+        tmp_path,
+        refiner=_LegacyRefiner(),
+        temporal=False,
+        keyframe_anchors=3,
+    )
+    _result, _timings, diagnostics = pipeline.process_qa_query(_request())
+
+    assert refiner.legacy_calls == 1
+    assert refiner.selected_calls == []
+    assert diagnostics["qa_temporal_refinement_policy"] == "DISABLED"
+    assert diagnostics["temporal_seed_candidate_count"] == 0
+    assert diagnostics["keyframe_evidence_count"] == 6
+    assert [(item.video_id, item.provenance["local_anchor_rank"]) for item in engine.evidence] == [
+        ("V1", 1),
+        ("V2", 1),
+        ("V1", 2),
+        ("V2", 2),
+        ("V1", 3),
+        ("V2", 3),
+    ]

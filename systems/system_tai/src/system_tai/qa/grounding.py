@@ -32,6 +32,7 @@ class QAVideoConditionedEvidenceConfig:
     video_rrf_constant: float = 60.0
     preserve_keyframe_evidence: bool = False
     keyframe_evidence_video_cap: int = 32
+    keyframe_evidence_anchors_per_video: int = 1
     temporal_refinement_enabled: bool = False
     temporal_seed_anchors_per_video: int = 3
     temporal_refinement_video_cap: int = 32
@@ -52,6 +53,13 @@ class QAVideoConditionedEvidenceConfig:
         ):
             raise ValueError("keyframe_evidence_video_cap must be an integer >= 1")
         if (
+            type(self.keyframe_evidence_anchors_per_video) is not int
+            or not 1 <= self.keyframe_evidence_anchors_per_video <= 100
+        ):
+            raise ValueError(
+                "keyframe_evidence_anchors_per_video must be in [1, 100]"
+            )
+        if (
             self.preserve_keyframe_evidence
             and self.keyframe_evidence_video_cap > self.selected_video_cap
         ):
@@ -61,6 +69,29 @@ class QAVideoConditionedEvidenceConfig:
         if self.preserve_keyframe_evidence and not self.enabled:
             raise ValueError(
                 "preserve_keyframe_evidence requires video-conditioned evidence"
+            )
+        if (
+            self.keyframe_evidence_anchors_per_video != 1
+            and not self.preserve_keyframe_evidence
+        ):
+            raise ValueError(
+                "multi-anchor keyframe evidence requires the keyframe evidence bank"
+            )
+        if (
+            self.preserve_keyframe_evidence
+            and self.keyframe_evidence_anchors_per_video > self.anchors_per_video
+        ):
+            raise ValueError(
+                "keyframe_evidence_anchors_per_video must not exceed anchors_per_video"
+            )
+        if (
+            self.preserve_keyframe_evidence
+            and self.keyframe_evidence_video_cap
+            * self.keyframe_evidence_anchors_per_video
+            > 100
+        ):
+            raise ValueError(
+                "multi-anchor keyframe evidence capacity must not exceed 100"
             )
         if type(self.temporal_refinement_enabled) is not bool:
             raise ValueError("temporal_refinement_enabled must be a boolean")
@@ -92,6 +123,11 @@ class QAVideoConditionedEvidenceConfig:
                 "temporal_refinement_total_seed_cap must be in [1, 100]"
             )
         if self.temporal_refinement_enabled:
+            if self.keyframe_evidence_anchors_per_video != 1:
+                raise ValueError(
+                    "multi-anchor keyframe-only evidence cannot be combined with "
+                    "temporal refinement"
+                )
             if not (self.enabled and self.preserve_keyframe_evidence):
                 raise ValueError(
                     "temporal_refinement_enabled requires video-conditioned evidence "

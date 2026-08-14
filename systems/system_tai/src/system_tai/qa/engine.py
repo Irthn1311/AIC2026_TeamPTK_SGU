@@ -32,7 +32,9 @@ class QABaselineEngine:
         image_embeddings: dict[tuple[str, int], np.ndarray] | None = None,
         prompt_embeddings: dict[str, np.ndarray] | None = None,
     ) -> QAResult:
-        qtype = classify_question_type(query.question, query.question_en)
+        qtype = query.question_type or classify_question_type(
+            query.question, query.question_en
+        )
         confidence_level = "EXPERIMENTAL" if qtype == QuestionType.YES_NO else "BASELINE"
 
         if qtype == QuestionType.UNSUPPORTED:

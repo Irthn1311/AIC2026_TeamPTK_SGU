@@ -108,6 +108,7 @@ def test_config_default_disabled_and_strict_validation() -> None:
     assert config.enabled is False
     assert config.preserve_keyframe_evidence is False
     assert config.keyframe_evidence_video_cap == 32
+    assert config.keyframe_evidence_anchors_per_video == 1
     assert SessionConfig().qa_video_conditioned_evidence_config == config
     for kwargs in (
         {"enabled": 1},

@@ -237,6 +237,23 @@ def test_anchor_fallback_is_explicit_and_preserves_authoritative_source_frame(
         ("Đây là cảnh ở đâu?", QuestionType.UNSUPPORTED, "NO_SUPPORTED"),
         ("What color is the car?", QuestionType.COLOR, "LEGACY_COLOR_PATTERN"),
         ("How many times?", QuestionType.COUNT, "LEGACY_COUNT_PATTERN"),
+        (
+            "Cây trồng đang được máy thu hoạch trong cảnh là gì?",
+            QuestionType.OBJECT_ENTITY,
+            "OBJECT_ENTITY_PATTERN",
+        ),
+        (
+            "Đoàn xe màu trắng chủ yếu là loại xe gì?",
+            QuestionType.OBJECT_ENTITY,
+            "OBJECT_ENTITY_PATTERN",
+        ),
+        (
+            "Khán giả đang dùng thiết bị gì để quay?",
+            QuestionType.OBJECT_ENTITY,
+            "OBJECT_ENTITY_PATTERN",
+        ),
+        ("Có mấy người trong cảnh?", QuestionType.COUNT, "LEGACY_COUNT_PATTERN"),
+        ("Máy thu hoạch đang chạy.", QuestionType.UNSUPPORTED, "NO_SUPPORTED"),
     ],
 )
 def test_question_classifier_is_conservative(
@@ -664,6 +681,7 @@ def test_l21_qa_a2_provenance_scope_has_precedence(tmp_path: Path) -> None:
         "video_rrf_constant": 60.0,
             "preserve_keyframe_evidence": True,
             "keyframe_evidence_video_cap": 32,
+            "keyframe_evidence_anchors_per_video": 1,
             "temporal_refinement_enabled": False,
             "temporal_seed_anchors_per_video": 3,
             "temporal_refinement_video_cap": 32,
@@ -672,8 +690,9 @@ def test_l21_qa_a2_provenance_scope_has_precedence(tmp_path: Path) -> None:
     assert report["qa_keyframe_evidence_bank"] == {
         "policy": runner.QA_KEYFRAME_EVIDENCE_BANK_V1,
         "enabled": True,
-        "selection": "ONE_PRIMARY_LOCAL_ANCHOR_PER_NOMINATED_VIDEO",
-        "video_cap": 32,
-        "raw_refinement_budget": 1,
+            "selection": "ONE_PRIMARY_LOCAL_ANCHOR_PER_NOMINATED_VIDEO",
+            "video_cap": 32,
+            "anchors_per_video": 1,
+            "raw_refinement_budget": 1,
         "refinement_is_upgrade_not_admission_gate": True,
     }

@@ -548,11 +548,18 @@ class QARuntimePipeline:
             and self.video_conditioned_evidence_config.temporal_refinement_enabled
         )
         if preserve_keyframes and not provider_supported:
-            if temporal_refinement_enabled:
+            if (
+                temporal_refinement_enabled
+                or self.video_conditioned_evidence_config.keyframe_evidence_anchors_per_video
+                > 1
+            ):
                 anchors = select_temporal_seed_anchors(
                     fused_result.ranked_candidates,
                     anchors_per_video=(
                         self.video_conditioned_evidence_config.temporal_seed_anchors_per_video
+                        if temporal_refinement_enabled
+                        else self.video_conditioned_evidence_config
+                        .keyframe_evidence_anchors_per_video
                     ),
                     video_cap=(
                         self.video_conditioned_evidence_config.keyframe_evidence_video_cap
@@ -879,12 +886,26 @@ class QARuntimePipeline:
                 for candidate in anchor_candidates
             )
         elif preserve_keyframes:
-            anchor_candidates = select_primary_keyframe_anchors(
-                fused_result.ranked_candidates,
-                video_cap=(
-                    self.video_conditioned_evidence_config.keyframe_evidence_video_cap
-                ),
-            )
+            if (
+                self.video_conditioned_evidence_config.keyframe_evidence_anchors_per_video
+                > 1
+            ):
+                anchor_candidates = select_temporal_seed_anchors(
+                    fused_result.ranked_candidates,
+                    anchors_per_video=(
+                        self.video_conditioned_evidence_config.keyframe_evidence_anchors_per_video
+                    ),
+                    video_cap=(
+                        self.video_conditioned_evidence_config.keyframe_evidence_video_cap
+                    ),
+                )
+            else:
+                anchor_candidates = select_primary_keyframe_anchors(
+                    fused_result.ranked_candidates,
+                    video_cap=(
+                        self.video_conditioned_evidence_config.keyframe_evidence_video_cap
+                    ),
+                )
             source_candidates = tuple(
                 (candidate, refined_by_rank[candidate.rank])
                 for candidate in anchor_candidates
@@ -1567,6 +1588,7 @@ class QARuntimePipeline:
             question=request.question,
             event_description_en=request.event_description_en,
             question_en=request.question_en,
+            question_type=q_type,
         )
         qa_result = self.qa_engine.answer(
             qa_query,

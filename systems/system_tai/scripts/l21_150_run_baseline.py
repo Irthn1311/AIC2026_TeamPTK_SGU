@@ -1309,6 +1309,9 @@ def run_l21_150_baseline(
                     "keyframe_evidence_video_cap": (
                         resolved_qa_grounding.keyframe_evidence_video_cap
                     ),
+                    "keyframe_evidence_anchors_per_video": (
+                        resolved_qa_grounding.keyframe_evidence_anchors_per_video
+                    ),
                     "temporal_refinement_enabled": (
                         resolved_qa_grounding.temporal_refinement_enabled
                     ),
@@ -1331,9 +1334,14 @@ def run_l21_150_baseline(
                 "selection": (
                     "BOUNDED_MULTI_SEED_LOCAL_ANCHORS_PER_NOMINATED_VIDEO"
                     if resolved_qa_grounding.temporal_refinement_enabled
+                    else "BOUNDED_MULTI_KEYFRAME_ANCHORS_PER_NOMINATED_VIDEO"
+                    if resolved_qa_grounding.keyframe_evidence_anchors_per_video > 1
                     else "ONE_PRIMARY_LOCAL_ANCHOR_PER_NOMINATED_VIDEO"
                 ),
                 "video_cap": resolved_qa_grounding.keyframe_evidence_video_cap,
+                "anchors_per_video": (
+                    resolved_qa_grounding.keyframe_evidence_anchors_per_video
+                ),
                 "raw_refinement_budget": (
                     resolved_qa_grounding.temporal_refinement_total_seed_cap
                     if resolved_qa_grounding.temporal_refinement_enabled
@@ -1597,6 +1605,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=32,
     )
     parser.add_argument(
+        "--qa-keyframe-evidence-anchors-per-video",
+        type=int,
+        default=1,
+    )
+    parser.add_argument(
         "--qa-multi-seed-temporal-refinement",
         action="store_true",
     )
@@ -1648,6 +1661,26 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError(
                 "--qa-keyframe-evidence-bank requires --split dev --task qa "
                 "--qa-video-conditioned-evidence"
+            )
+        if args.qa_keyframe_evidence_anchors_per_video != 1 and (
+            args.split != "dev"
+            or args.task != "qa"
+            or not args.qa_video_conditioned_evidence
+            or not args.qa_keyframe_evidence_bank
+        ):
+            raise ValueError(
+                "--qa-keyframe-evidence-anchors-per-video requires --split dev "
+                "--task qa --qa-video-conditioned-evidence "
+                "--qa-keyframe-evidence-bank"
+            )
+        if (
+            args.qa_multi_seed_temporal_refinement
+            and args.qa_keyframe_evidence_anchors_per_video != 1
+        ):
+            raise ValueError(
+                "--qa-keyframe-evidence-anchors-per-video is a keyframe-only "
+                "ablation and cannot be combined with "
+                "--qa-multi-seed-temporal-refinement"
             )
         if args.qa_multi_seed_temporal_refinement and (
             args.split != "dev"
@@ -1835,6 +1868,9 @@ def main(argv: list[str] | None = None) -> int:
             enabled=args.qa_video_conditioned_evidence,
             preserve_keyframe_evidence=args.qa_keyframe_evidence_bank,
             keyframe_evidence_video_cap=args.qa_keyframe_evidence_video_cap,
+            keyframe_evidence_anchors_per_video=(
+                args.qa_keyframe_evidence_anchors_per_video
+            ),
             temporal_refinement_enabled=args.qa_multi_seed_temporal_refinement,
             temporal_seed_anchors_per_video=args.qa_temporal_seeds_per_video,
             temporal_refinement_video_cap=args.qa_temporal_refinement_video_cap,

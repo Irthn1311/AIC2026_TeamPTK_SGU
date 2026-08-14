@@ -83,6 +83,28 @@ def test_question_classification_precedence():
     assert classify_question_type("Sau đó người phụ nữ làm gì?") == QuestionType.UNSUPPORTED
 
 
+def test_baseline_engine_respects_runtime_preclassified_question_type() -> None:
+    engine = QABaselineEngine()
+    query = QAQuery(
+        "q-preclassified",
+        "Một cảnh không thuộc bộ phân loại legacy.",
+        "Câu hỏi mở không thuộc bộ phân loại legacy.",
+        question_type=QuestionType.COLOR,
+    )
+    candidate = QAEvidenceCandidate("q-preclassified", 1, "V001", 100, 0.9)
+    vector = np.asarray([1.0, 0.0], dtype=np.float32)
+
+    result = engine.answer(
+        query,
+        [candidate],
+        image_embeddings={("V001", 100): vector},
+        prompt_embeddings={"red": vector},
+    )
+
+    assert result.question_type is QuestionType.COLOR
+    assert [(item.rank, item.answer) for item in result.predictions] == [(1, "đỏ")]
+
+
 def test_deterministic_answer_candidate_ordering():
     provider = BaselineQuestionCandidateProvider()
     colors = provider.get_candidates(QuestionType.COLOR)

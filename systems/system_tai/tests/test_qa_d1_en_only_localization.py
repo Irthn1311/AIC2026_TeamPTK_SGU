@@ -269,6 +269,7 @@ def test_l21_runner_cli_qa_policy_defaults_off_and_is_explicit() -> None:
     assert defaults.qa_dev_en_sidecar is None
     assert defaults.qa_keyframe_evidence_bank is False
     assert defaults.qa_keyframe_evidence_video_cap == 32
+    assert defaults.qa_keyframe_evidence_anchors_per_video == 1
     assert defaults.qa_multi_seed_temporal_refinement is False
     assert defaults.qa_temporal_seeds_per_video == 3
     assert defaults.qa_temporal_refinement_video_cap == 32
@@ -290,6 +291,8 @@ def test_l21_runner_cli_qa_policy_defaults_off_and_is_explicit() -> None:
             "--qa-keyframe-evidence-bank",
             "--qa-keyframe-evidence-video-cap",
             "32",
+            "--qa-keyframe-evidence-anchors-per-video",
+            "1",
             "--qa-multi-seed-temporal-refinement",
             "--qa-temporal-seeds-per-video",
             "3",
@@ -305,6 +308,7 @@ def test_l21_runner_cli_qa_policy_defaults_off_and_is_explicit() -> None:
     assert enabled.qa_dev_en_sidecar == SIDECAR_PATH
     assert enabled.qa_keyframe_evidence_bank is True
     assert enabled.qa_keyframe_evidence_video_cap == 32
+    assert enabled.qa_keyframe_evidence_anchors_per_video == 1
     assert enabled.qa_multi_seed_temporal_refinement is True
     assert enabled.qa_temporal_seeds_per_video == 3
     assert enabled.qa_temporal_refinement_video_cap == 16
