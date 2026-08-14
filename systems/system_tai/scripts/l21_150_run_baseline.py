@@ -1979,6 +1979,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         qa_video_conditioned_evidence_config = QAVideoConditionedEvidenceConfig(
             enabled=args.qa_video_conditioned_evidence,
+            selected_video_cap=max(32, args.qa_keyframe_evidence_video_cap),
+            anchors_per_video=max(3, args.qa_keyframe_evidence_anchors_per_video),
             candidate_ordering_policy=args.qa_grounding_candidate_ordering,
             preserve_keyframe_evidence=args.qa_keyframe_evidence_bank,
             keyframe_evidence_video_cap=args.qa_keyframe_evidence_video_cap,
