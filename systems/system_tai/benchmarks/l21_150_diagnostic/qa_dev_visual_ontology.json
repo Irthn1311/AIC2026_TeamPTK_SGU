@@ -1,0 +1,290 @@
+{
+  "schema_version": 1,
+  "ontology_id": "system-tai-l21-qa-dev-visual-ontology-v1",
+  "description": "Diagnostic visual vocabulary authored from DEV question intents only; it contains competing generic categories and no query IDs, target videos, frames, accepted answers, retrieval output, or HOLDOUT content.",
+  "domains": [
+    {
+      "domain_id": "crop",
+      "question_types": [
+        "OBJECT_ENTITY"
+      ],
+      "activation_terms": [
+        "crop",
+        "cây trồng",
+        "thu hoạch"
+      ],
+      "entries": [
+        {
+          "canonical_answer": "lúa",
+          "aliases": [
+            "lúa",
+            "rice",
+            "rice crop"
+          ],
+          "visual_prompts": [
+            "a field of ripe rice plants",
+            "rice crop being harvested",
+            "golden rice paddy"
+          ]
+        },
+        {
+          "canonical_answer": "ngô",
+          "aliases": [
+            "ngô",
+            "bắp",
+            "corn",
+            "maize"
+          ],
+          "visual_prompts": [
+            "a field of corn plants",
+            "maize crop being harvested"
+          ]
+        },
+        {
+          "canonical_answer": "lúa mì",
+          "aliases": [
+            "lúa mì",
+            "wheat"
+          ],
+          "visual_prompts": [
+            "a field of wheat",
+            "wheat crop being harvested"
+          ]
+        },
+        {
+          "canonical_answer": "mía",
+          "aliases": [
+            "mía",
+            "sugarcane"
+          ],
+          "visual_prompts": [
+            "a field of sugarcane",
+            "sugarcane crop being harvested"
+          ]
+        },
+        {
+          "canonical_answer": "đậu nành",
+          "aliases": [
+            "đậu nành",
+            "soybean"
+          ],
+          "visual_prompts": [
+            "a field of soybean plants",
+            "soybean crop being harvested"
+          ]
+        },
+        {
+          "canonical_answer": "rau",
+          "aliases": [
+            "rau",
+            "vegetables"
+          ],
+          "visual_prompts": [
+            "a field of green vegetables",
+            "vegetable crop being harvested"
+          ]
+        },
+        {
+          "canonical_answer": "cỏ",
+          "aliases": [
+            "cỏ",
+            "grass"
+          ],
+          "visual_prompts": [
+            "a field of grass",
+            "grass being cut by a machine"
+          ]
+        }
+      ]
+    },
+    {
+      "domain_id": "vehicle_type",
+      "question_types": [
+        "OBJECT_ENTITY"
+      ],
+      "activation_terms": [
+        "vehicle",
+        "type of vehicle",
+        "loại xe",
+        "đoàn xe",
+        "phương tiện"
+      ],
+      "entries": [
+        {
+          "canonical_answer": "ô tô",
+          "aliases": [
+            "ô tô",
+            "xe ô tô",
+            "car"
+          ],
+          "visual_prompts": [
+            "a passenger car",
+            "a convoy of cars"
+          ]
+        },
+        {
+          "canonical_answer": "xe tải",
+          "aliases": [
+            "xe tải",
+            "truck"
+          ],
+          "visual_prompts": [
+            "a large cargo truck",
+            "a convoy of trucks"
+          ]
+        },
+        {
+          "canonical_answer": "xe buýt",
+          "aliases": [
+            "xe buýt",
+            "bus"
+          ],
+          "visual_prompts": [
+            "a passenger bus",
+            "a line of buses"
+          ]
+        },
+        {
+          "canonical_answer": "xe van",
+          "aliases": [
+            "xe van",
+            "van"
+          ],
+          "visual_prompts": [
+            "a white cargo van",
+            "a convoy of vans"
+          ]
+        },
+        {
+          "canonical_answer": "xe cứu thương",
+          "aliases": [
+            "xe cứu thương",
+            "ambulance"
+          ],
+          "visual_prompts": [
+            "an ambulance emergency vehicle",
+            "a convoy of ambulances"
+          ]
+        },
+        {
+          "canonical_answer": "xe máy",
+          "aliases": [
+            "xe máy",
+            "mô tô",
+            "motorcycle"
+          ],
+          "visual_prompts": [
+            "a motorcycle",
+            "a group of motorcycles"
+          ]
+        },
+        {
+          "canonical_answer": "máy kéo",
+          "aliases": [
+            "máy kéo",
+            "tractor"
+          ],
+          "visual_prompts": [
+            "an agricultural tractor",
+            "a tractor vehicle"
+          ]
+        }
+      ]
+    },
+    {
+      "domain_id": "imaging_device",
+      "question_types": [
+        "OBJECT_ENTITY"
+      ],
+      "activation_terms": [
+        "device",
+        "thiết bị",
+        "chụp",
+        "quay",
+        "observe",
+        "quan sát"
+      ],
+      "entries": [
+        {
+          "canonical_answer": "điện thoại",
+          "aliases": [
+            "điện thoại",
+            "điện thoại thông minh",
+            "smartphone"
+          ],
+          "visual_prompts": [
+            "a person taking a photo with a smartphone",
+            "a smartphone camera held in the air"
+          ]
+        },
+        {
+          "canonical_answer": "máy ảnh",
+          "aliases": [
+            "máy ảnh",
+            "camera"
+          ],
+          "visual_prompts": [
+            "a person taking a photo with a camera",
+            "a handheld photographic camera"
+          ]
+        },
+        {
+          "canonical_answer": "máy quay",
+          "aliases": [
+            "máy quay",
+            "máy quay phim",
+            "video camera"
+          ],
+          "visual_prompts": [
+            "a person filming with a video camera",
+            "a handheld camcorder"
+          ]
+        },
+        {
+          "canonical_answer": "ống nhòm",
+          "aliases": [
+            "ống nhòm",
+            "binoculars"
+          ],
+          "visual_prompts": [
+            "a person looking through binoculars",
+            "a pair of binoculars"
+          ]
+        },
+        {
+          "canonical_answer": "kính thiên văn",
+          "aliases": [
+            "kính thiên văn",
+            "telescope"
+          ],
+          "visual_prompts": [
+            "a person looking through a telescope",
+            "a telescope pointed at the sky"
+          ]
+        },
+        {
+          "canonical_answer": "kính lúp",
+          "aliases": [
+            "kính lúp",
+            "magnifying glass"
+          ],
+          "visual_prompts": [
+            "a child using a magnifying glass",
+            "a handheld magnifying glass"
+          ]
+        },
+        {
+          "canonical_answer": "máy tính bảng",
+          "aliases": [
+            "máy tính bảng",
+            "tablet"
+          ],
+          "visual_prompts": [
+            "a person taking a picture with a tablet",
+            "a handheld tablet computer"
+          ]
+        }
+      ]
+    }
+  ]
+}

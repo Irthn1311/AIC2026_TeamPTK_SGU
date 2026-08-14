@@ -53,6 +53,7 @@ from .question_types import (
     classify_question,
     classify_question_legacy,
 )
+from .visual_ontology import VisualOntologyAnswerCandidateProvider
 
 LEGACY_PHASE_P0 = "LEGACY_PHASE_P0"
 QA_A2_CAPABILITY_AWARE = "QA_A2_CAPABILITY_AWARE"
@@ -174,13 +175,25 @@ class QARuntimePipeline:
         self.video_conditioned_evidence_config = (
             video_conditioned_evidence_config or QAVideoConditionedEvidenceConfig()
         )
-        self.qa_engine = qa_engine or QABaselineEngine()
         self.candidate_provider = candidate_provider or BaselineQuestionCandidateProvider()
+        self.qa_engine = qa_engine or QABaselineEngine(
+            candidate_provider=self.candidate_provider
+        )
         self.object_answer_provider = object_answer_provider
         self.ocr_answer_provider = ocr_answer_provider
         self.clock = clock
 
         self._prompt_cache: dict[str, np.ndarray] = {}
+
+    def _answer_hypotheses(
+        self,
+        question_type: QuestionType,
+        question_text: str,
+    ) -> tuple[Any, ...]:
+        query_aware = getattr(self.candidate_provider, "get_candidates_for_query", None)
+        if callable(query_aware):
+            return tuple(query_aware(question_type, question_text))
+        return self.candidate_provider.get_candidates(question_type)
 
     def get_prompt_embeddings(
         self, prompts: Sequence[str]
@@ -232,6 +245,24 @@ class QARuntimePipeline:
                 self.ocr_answer_provider is not None
                 and self.ocr_answer_provider.enabled
             ),
+            "visual_ontology_provider_enabled": bool(
+                isinstance(
+                    self.candidate_provider,
+                    VisualOntologyAnswerCandidateProvider,
+                )
+                and self.candidate_provider.enabled
+            ),
+            "visual_ontology_provider_identity": (
+                dict(self.candidate_provider.identifiers)
+                if isinstance(
+                    self.candidate_provider,
+                    VisualOntologyAnswerCandidateProvider,
+                )
+                and self.candidate_provider.enabled
+                else None
+            ),
+            "visual_ontology_active_domains": [],
+            "visual_ontology_candidate_count": 0,
             "ocr_backend_identity": (
                 dict(self.ocr_answer_provider.identifiers)
                 if self.ocr_answer_provider is not None
@@ -324,6 +355,12 @@ class QARuntimePipeline:
         qa_a2_enabled = bool(
             self.object_answer_provider is not None
             and self.object_answer_provider.enabled
+        ) or bool(
+            isinstance(
+                self.candidate_provider,
+                VisualOntologyAnswerCandidateProvider,
+            )
+            and self.candidate_provider.enabled
         )
         qa_ocr_enabled = bool(
             self.ocr_answer_provider is not None
@@ -341,7 +378,19 @@ class QARuntimePipeline:
         diagnostics["question_classifier_policy"] = classifier_policy
         diagnostics["question_supported"] = q_type != QuestionType.UNSUPPORTED
 
-        answer_hypotheses = self.candidate_provider.get_candidates(q_type)
+        answer_question_text = request.question_en or request.question
+        answer_hypotheses = self._answer_hypotheses(q_type, answer_question_text)
+        if isinstance(
+            self.candidate_provider,
+            VisualOntologyAnswerCandidateProvider,
+        ) and self.candidate_provider.enabled:
+            diagnostics["visual_ontology_active_domains"] = list(
+                self.candidate_provider.active_domain_ids(
+                    q_type,
+                    answer_question_text,
+                )
+            )
+            diagnostics["visual_ontology_candidate_count"] = len(answer_hypotheses)
         object_provider_supported = bool(
             self.video_conditioned_evidence_config.enabled
             and self.object_answer_provider is not None
@@ -1239,6 +1288,13 @@ class QARuntimePipeline:
         valid_evidence_cands: list[tuple[QAEvidenceCandidate, RefinedCandidate]] = []
 
         cands_for_image_decode = evidence_bank
+        if isinstance(
+            self.candidate_provider,
+            VisualOntologyAnswerCandidateProvider,
+        ) and self.candidate_provider.supports(q_type):
+            cands_for_image_decode = evidence_bank[
+                : self.candidate_provider.config.evidence_frame_budget
+            ]
         if ocr_provider_supported:
             assert self.ocr_answer_provider is not None
             cands_for_image_decode = evidence_bank[
@@ -1571,7 +1627,10 @@ class QARuntimePipeline:
 
         # Step 6: Visual Prompts & Answer Scoring
         if not self.video_conditioned_evidence_config.enabled:
-            answer_hypotheses = self.candidate_provider.get_candidates(q_type)
+            answer_hypotheses = self._answer_hypotheses(
+                q_type,
+                request.question_en or request.question,
+            )
         hypotheses = answer_hypotheses
         all_prompts: list[str] = []
         for hyp in hypotheses:

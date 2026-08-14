@@ -56,6 +56,10 @@ from system_tai.qa.ocr_provider import (
     TesseractCLIBackend,
 )
 from system_tai.qa.runtime import QARuntimePipeline
+from system_tai.qa.visual_ontology import (
+    VisualOntologyAnswerCandidateProvider,
+    load_visual_answer_ontology,
+)
 from system_tai.refinement.engine import ExactFrameRefiner, FrameEmbeddingCache
 from system_tai.refinement.models import Phase3Candidate, RefinementQuery
 from system_tai.refinement.q3_anchor import (
@@ -183,6 +187,18 @@ class OperationalKISRuntime:
             )
         self.ocr_answer_provider = ocr_answer_provider
 
+        self.visual_ontology_provider: (
+            VisualOntologyAnswerCandidateProvider | None
+        ) = None
+        if config.qa_visual_ontology_config.enabled:
+            assert config.qa_visual_ontology_config.ontology_path is not None
+            self.visual_ontology_provider = VisualOntologyAnswerCandidateProvider(
+                load_visual_answer_ontology(
+                    config.qa_visual_ontology_config.ontology_path
+                ),
+                config.qa_visual_ontology_config,
+            )
+
         self.exact_retriever = ExactNumpyRetriever(
             registry=self.registry,
             text_encoder=self.shared_encoder,
@@ -215,6 +231,7 @@ class OperationalKISRuntime:
             video_conditioned_evidence_config=(
                 config.qa_video_conditioned_evidence_config
             ),
+            candidate_provider=self.visual_ontology_provider,
             object_answer_provider=self.object_answer_provider,
             ocr_answer_provider=self.ocr_answer_provider,
             clock=self.clock,
@@ -1104,6 +1121,21 @@ class OperationalKISRuntime:
                     "diagnostic_development_only": True,
                 }
             )
+        if self.config.qa_visual_ontology_config.enabled:
+            assert self.visual_ontology_provider is not None
+            req_manifest_payload.update(
+                {
+                    "qa_visual_ontology_enabled": True,
+                    "qa_visual_ontology_identity": dict(
+                        self.visual_ontology_provider.identifiers
+                    ),
+                    "qa_visual_frame_identity_contract": (
+                        "decoded QA-A1 evidence frame -> original-video absolute frame_id"
+                    ),
+                    "official_ground_truth": False,
+                    "diagnostic_development_only": True,
+                }
+            )
         _write_json(query_dir / "qa_request_manifest.json", req_manifest_payload)
 
         self._successful_query_count += 1
@@ -1444,6 +1476,18 @@ class OperationalKISRuntime:
                 dict(self.ocr_answer_provider.identifiers)
                 if self.ocr_answer_provider is not None
                 else None
+            )
+        if self.config.qa_visual_ontology_config.enabled:
+            visual_config_payload = dataclasses.asdict(
+                self.config.qa_visual_ontology_config
+            )
+            visual_config_payload["ontology_path"] = str(
+                self.config.qa_visual_ontology_config.ontology_path
+            )
+            manifest_payload["qa_visual_ontology_config"] = visual_config_payload
+            assert self.visual_ontology_provider is not None
+            manifest_payload["qa_visual_ontology_identity"] = dict(
+                self.visual_ontology_provider.identifiers
             )
         _write_json(self.output_root / "session_manifest.json", manifest_payload)
 

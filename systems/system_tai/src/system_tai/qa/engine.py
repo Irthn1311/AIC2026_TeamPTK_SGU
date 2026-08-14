@@ -55,7 +55,17 @@ class QABaselineEngine:
                 diagnostics={"confidence_level": confidence_level},
             )
 
-        hypotheses = self.candidate_provider.get_candidates(qtype)
+        query_aware = getattr(
+            self.candidate_provider,
+            "get_candidates_for_query",
+            None,
+        )
+        if callable(query_aware):
+            hypotheses = tuple(
+                query_aware(qtype, query.question_en or query.question)
+            )
+        else:
+            hypotheses = self.candidate_provider.get_candidates(qtype)
         if not hypotheses:
             return QAResult(
                 query_id=query.query_id,

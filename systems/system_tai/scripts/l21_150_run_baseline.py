@@ -37,6 +37,7 @@ from system_tai.qa.grounding import (  # noqa: E402
 )
 from system_tai.qa.object_provider import ObjectAnswerProviderConfig  # noqa: E402
 from system_tai.qa.ocr_provider import OCRAnswerProviderConfig  # noqa: E402
+from system_tai.qa.visual_ontology import VisualOntologyConfig  # noqa: E402
 from system_tai.quality.l21_150_qa_translation import (  # noqa: E402
     QADevTranslationSidecar,
     QATranslationSidecarError,
@@ -89,8 +90,12 @@ FROZEN_TR_A2_D0_TRAKE_DEV_EN_SIDECAR_SHA256 = (
 FROZEN_QA_D0_DEV_EN_SIDECAR_SHA256 = (
     "45929059506de93aac574a6d2d5581691af81ae12405c18d57289485948c1f4d"
 )
+FROZEN_QA_DEV_VISUAL_ONTOLOGY_SHA256 = (
+    "fc19f4ca1ce2e4960463ba054be2f9c351cf874867eb65a2ef9ce2252d644ddc"
+)
 QA_ARTIFACT_BACKED_OBJECT_EVIDENCE = "QA_ARTIFACT_BACKED_OBJECT_EVIDENCE"
 QA_EVIDENCE_GROUNDED_OCR = "QA_EVIDENCE_GROUNDED_OCR"
+QA_VISUAL_ONTOLOGY_CLIP = "QA_VISUAL_ONTOLOGY_CLIP"
 
 
 class L21150Runtime(Protocol):
@@ -669,6 +674,7 @@ def run_l21_150_baseline(
     qa_video_conditioned_evidence_config: QAVideoConditionedEvidenceConfig | None = None,
     qa_object_answer_provider_config: ObjectAnswerProviderConfig | None = None,
     qa_ocr_answer_provider_config: OCRAnswerProviderConfig | None = None,
+    qa_visual_ontology_config: VisualOntologyConfig | None = None,
     query_ids: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     if not 1 <= top_k <= 100:
@@ -721,6 +727,9 @@ def run_l21_150_baseline(
     resolved_qa_ocr_provider = (
         qa_ocr_answer_provider_config or OCRAnswerProviderConfig()
     )
+    resolved_qa_visual_ontology = (
+        qa_visual_ontology_config or VisualOntologyConfig()
+    )
     if resolved_qa_grounding.enabled and (split != "dev" or task != "qa"):
         raise ValueError("QA-A1 is restricted to the QA DEV diagnostic experiment")
     if resolved_qa_object_provider.enabled and (
@@ -731,6 +740,25 @@ def run_l21_150_baseline(
         split != "dev" or task != "qa" or not resolved_qa_grounding.enabled
     ):
         raise ValueError("QA-A3 requires QA DEV with QA-A1 evidence grounding enabled")
+    if resolved_qa_visual_ontology.enabled and (
+        split != "dev" or task != "qa" or not resolved_qa_grounding.enabled
+    ):
+        raise ValueError(
+            "QA visual ontology requires QA DEV with QA-A1 evidence grounding enabled"
+        )
+    if resolved_qa_visual_ontology.enabled and resolved_qa_object_provider.enabled:
+        raise ValueError(
+            "QA visual ontology and QA object evidence are mutually exclusive"
+        )
+    if resolved_qa_visual_ontology.enabled:
+        assert resolved_qa_visual_ontology.ontology_path is not None
+        actual_visual_ontology_sha256 = hashlib.sha256(
+            resolved_qa_visual_ontology.ontology_path.read_bytes()
+        ).hexdigest()
+        if actual_visual_ontology_sha256 != FROZEN_QA_DEV_VISUAL_ONTOLOGY_SHA256:
+            raise ValueError(
+                "QA visual ontology does not match the frozen DEV diagnostic SHA256"
+            )
     if qa_localization_language_policy == "en_only":
         if split != "dev" or task != "qa" or not resolved_qa_grounding.enabled:
             raise ValueError(
@@ -911,6 +939,21 @@ def run_l21_150_baseline(
     ):
         raise ValueError(
             "runtime QA-A3 configuration does not match experiment configuration"
+        )
+    runtime_qa_visual_ontology = getattr(
+        getattr(runtime, "config", None),
+        "qa_visual_ontology_config",
+        None,
+    )
+    if resolved_qa_visual_ontology.enabled and runtime_qa_visual_ontology is None:
+        raise ValueError("runtime is missing the enabled QA visual ontology")
+    if (
+        runtime_qa_visual_ontology is not None
+        and runtime_qa_visual_ontology != resolved_qa_visual_ontology
+    ):
+        raise ValueError(
+            "runtime QA visual ontology configuration does not match experiment "
+            "configuration"
         )
 
     output = Path(output_dir)
@@ -1157,6 +1200,7 @@ def run_l21_150_baseline(
         or resolved_qa_grounding.enabled
         or resolved_qa_object_provider.enabled
         or resolved_qa_ocr_provider.enabled
+        or resolved_qa_visual_ontology.enabled
     )
     qa_capability_scope = [
         scope
@@ -1172,6 +1216,7 @@ def run_l21_150_baseline(
             ),
             (resolved_qa_object_provider.enabled, QA_ARTIFACT_BACKED_OBJECT_EVIDENCE),
             (resolved_qa_ocr_provider.enabled, QA_EVIDENCE_GROUNDED_OCR),
+            (resolved_qa_visual_ontology.enabled, QA_VISUAL_ONTOLOGY_CLIP),
         )
         if enabled
     ]
@@ -1420,6 +1465,26 @@ def run_l21_150_baseline(
                 "diagnostic_development_only": True,
             }
         )
+    if resolved_qa_visual_ontology.enabled:
+        visual_provider = getattr(runtime, "visual_ontology_provider", None)
+        metadata.update(
+            {
+                "qa_visual_ontology_enabled": True,
+                "qa_visual_ontology_identity": (
+                    dict(visual_provider.identifiers)
+                    if visual_provider is not None
+                    else None
+                ),
+                "qa_visual_ontology_frame_budget": (
+                    resolved_qa_visual_ontology.evidence_frame_budget
+                ),
+                "qa_visual_frame_identity_contract": (
+                    "decoded QA-A1 evidence frame -> original-video absolute frame_id"
+                ),
+                "official_ground_truth": False,
+                "diagnostic_development_only": True,
+            }
+        )
     if trake_language_policy == "en_only":
         assert trake_query_sidecar is not None
         metadata["trake_query_experiment"] = {
@@ -1631,6 +1696,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--qa-ocr-executable", default="tesseract")
     parser.add_argument("--qa-ocr-languages", default="eng")
     parser.add_argument("--qa-ocr-page-segmentation-mode", type=int, default=6)
+    parser.add_argument("--qa-visual-ontology", type=Path)
+    parser.add_argument("--qa-visual-ontology-frame-budget", type=int, default=100)
+    parser.add_argument("--qa-visual-ontology-max-active-domains", type=int, default=1)
     return parser
 
 
@@ -1714,6 +1782,19 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError(
                 "--qa-ocr-evidence requires --split dev --task qa "
                 "--qa-video-conditioned-evidence"
+            )
+        if args.qa_visual_ontology is not None and (
+            args.split != "dev"
+            or args.task != "qa"
+            or not args.qa_video_conditioned_evidence
+        ):
+            raise ValueError(
+                "--qa-visual-ontology requires --split dev --task qa "
+                "--qa-video-conditioned-evidence"
+            )
+        if args.qa_visual_ontology is not None and args.qa_object_evidence:
+            raise ValueError(
+                "--qa-visual-ontology conflicts with --qa-object-evidence"
             )
         benchmark = load_l21_150_benchmark(args.benchmark)
         benchmark_sha = hashlib.sha256(args.benchmark.read_bytes()).hexdigest()
@@ -1905,6 +1986,12 @@ def main(argv: list[str] | None = None) -> int:
             ),
             page_segmentation_mode=args.qa_ocr_page_segmentation_mode,
         )
+        qa_visual_ontology_config = VisualOntologyConfig(
+            enabled=args.qa_visual_ontology is not None,
+            ontology_path=args.qa_visual_ontology,
+            evidence_frame_budget=args.qa_visual_ontology_frame_budget,
+            max_active_domains=args.qa_visual_ontology_max_active_domains,
+        )
         session_output = args.output_dir / "runtime"
         config = SessionConfig(
             input_root=args.input_root,
@@ -1924,6 +2011,7 @@ def main(argv: list[str] | None = None) -> int:
             ),
             qa_object_answer_provider_config=qa_object_answer_provider_config,
             qa_ocr_answer_provider_config=qa_ocr_answer_provider_config,
+            qa_visual_ontology_config=qa_visual_ontology_config,
         )
         runtime = OperationalKISRuntime.bootstrap(config)
         try:
@@ -1986,6 +2074,7 @@ def main(argv: list[str] | None = None) -> int:
                     qa_ocr_answer_provider_config=(
                         qa_ocr_answer_provider_config
                     ),
+                    qa_visual_ontology_config=qa_visual_ontology_config,
                     query_ids=args.query_id,
                 )
         finally:

@@ -31,6 +31,13 @@ from .question_types import (
     classify_question_type,
 )
 from .runtime import QAPipelineTimings, QARuntimePipeline
+from .visual_ontology import (
+    VisualAnswerOntology,
+    VisualOntologyAnswerCandidateProvider,
+    VisualOntologyConfig,
+    VisualOntologyError,
+    load_visual_answer_ontology,
+)
 
 __all__ = [
     "AnswerCandidateProvider",
@@ -58,10 +65,15 @@ __all__ = [
     "QuestionClassification",
     "QuestionType",
     "TesseractCLIBackend",
+    "VisualAnswerOntology",
+    "VisualOntologyAnswerCandidateProvider",
+    "VisualOntologyConfig",
+    "VisualOntologyError",
     "classify_question",
     "classify_question_legacy",
     "classify_question_type",
     "classify_ocr_question",
     "normalize_object_label",
     "normalize_ocr_text",
+    "load_visual_answer_ontology",
 ]

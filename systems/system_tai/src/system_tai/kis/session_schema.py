@@ -11,6 +11,7 @@ from typing import Any
 from system_tai.qa.grounding import QAVideoConditionedEvidenceConfig
 from system_tai.qa.object_provider import ObjectAnswerProviderConfig
 from system_tai.qa.ocr_provider import OCRAnswerProviderConfig
+from system_tai.qa.visual_ontology import VisualOntologyConfig
 from system_tai.refinement.models import (
     Q3AnchorRefinementConfig,
     RefinementConfig,
@@ -91,6 +92,9 @@ class SessionConfig:
     qa_ocr_answer_provider_config: OCRAnswerProviderConfig = field(
         default_factory=OCRAnswerProviderConfig
     )
+    qa_visual_ontology_config: VisualOntologyConfig = field(
+        default_factory=VisualOntologyConfig
+    )
 
     def __post_init__(self) -> None:
         if self.reuse_manifest is not None and self.manifest_cache is not None:
@@ -168,6 +172,24 @@ class SessionConfig:
             and not self.qa_video_conditioned_evidence_config.enabled
         ):
             raise ValueError("QA OCR evidence requires QA video-conditioned evidence")
+        if not isinstance(self.qa_visual_ontology_config, VisualOntologyConfig):
+            raise ValueError(
+                "qa_visual_ontology_config must be VisualOntologyConfig"
+            )
+        if (
+            self.qa_visual_ontology_config.enabled
+            and not self.qa_video_conditioned_evidence_config.enabled
+        ):
+            raise ValueError(
+                "QA visual ontology requires QA video-conditioned evidence"
+            )
+        if (
+            self.qa_visual_ontology_config.enabled
+            and self.qa_object_answer_provider_config.enabled
+        ):
+            raise ValueError(
+                "QA visual ontology and QA object evidence are mutually exclusive"
+            )
 
 
 @dataclass(frozen=True, slots=True)
