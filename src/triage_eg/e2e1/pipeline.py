@@ -109,6 +109,7 @@ class CanonicalTriagePipeline:
         )
         self.m1_cache_hits = 0
         self.qa_frame_cache_hits = 0
+        self.trake_non_strict_coarse_paths_dropped = 0
 
     @classmethod
     def load_once(
@@ -523,12 +524,15 @@ class CanonicalTriagePipeline:
             feasible, raw_count = enumerate_feasible_paths(pools)
             for local_path in feasible:
                 global_rows = tuple(int(group.rows[position]) for position in local_path.positions)
-                global_path = DiverseTemporalPath(
-                    local_path.score, global_rows, local_path.region_ids, local_path.event_scores
-                )
                 frames_out = tuple(
                     int(self.runtime.catalog.map_row(global_row)["original_frame_idx"])
                     for global_row in global_rows
+                )
+                if not _strictly_increasing(frames_out):
+                    self.trake_non_strict_coarse_paths_dropped += 1
+                    continue
+                global_path = DiverseTemporalPath(
+                    local_path.score, global_rows, local_path.region_ids, local_path.event_scores
                 )
                 all_paths.append(global_path)
                 chain_by_positions[global_rows] = {
@@ -633,6 +637,9 @@ class CanonicalTriagePipeline:
         return {
             "m1_cache_hits": self.m1_cache_hits,
             "qa_frame_embedding_cache_hits": self.qa_frame_cache_hits,
+            "trake_non_strict_coarse_paths_dropped": (
+                self.trake_non_strict_coarse_paths_dropped
+            ),
             "text_embedding_cache_size": len(self._encoded_text),
             "stage1_score_cache_size": len(self._score_cache),
             "m1_cache_size": len(self._m1_cache),

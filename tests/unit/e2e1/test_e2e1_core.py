@@ -368,7 +368,41 @@ def test_43_trake_output_frame_count_equals_event_count(monkeypatch: pytest.Monk
     assert len(result.predictions[0]["frame_ids"]) == len(plan.events)
 
 
-def test_44_prediction_runner_rejects_non_isolated_directory(tmp_path: Path) -> None:
+def test_44_trake_filters_catalog_monotonic_raw_frame_duplicates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = QueryPlan("T1", "TRAKE", "en", "events", None, (("E1", "a"), ("E2", "b")))
+    pipeline = object.__new__(CanonicalTriagePipeline)
+    pipeline.settings = E2E1Settings()
+    pipeline.groups = [SimpleNamespace(video_id="L01_V001", rows=np.arange(3, dtype=np.int64))]
+    pipeline.runtime = SimpleNamespace(
+        catalog=SimpleNamespace(
+            map_row=lambda row: {"original_frame_idx": (10, 10, 20)[int(row)]}
+        )
+    )
+    pipeline.trake_non_strict_coarse_paths_dropped = 0
+    monkeypatch.setattr(
+        pipeline,
+        "_scores_many",
+        lambda *args: (
+            [np.ones(2, dtype=np.float32)] * 2,
+            np.asarray(((0.9, 0.8, 0.7), (0.8, 0.9, 0.7)), dtype=np.float32),
+            [{}, {}],
+        ),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_fps_and_frames",
+        lambda group: (1.0, np.asarray((10, 10, 20), dtype=np.int64)),
+    )
+
+    chains, _, _ = pipeline._trake_chains(plan)
+
+    assert [chain["frame_ids"] for chain in chains] == [(10, 20)]
+    assert pipeline.trake_non_strict_coarse_paths_dropped == 1
+
+
+def test_45_prediction_runner_rejects_non_isolated_directory(tmp_path: Path) -> None:
     root = tmp_path / "inference"
     root.mkdir()
     (root / "queries.jsonl").write_text(json.dumps(kis_query()) + "\n", encoding="utf-8")
