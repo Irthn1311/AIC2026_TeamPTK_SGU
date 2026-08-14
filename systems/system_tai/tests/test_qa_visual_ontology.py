@@ -266,6 +266,12 @@ def test_distill_qa_scene_prompt_extracts_visual_query() -> None:
         )
         == "the convoy of white vehicles"
     )
+    assert (
+        distill_qa_scene_prompt(
+            "What crop is the machine harvesting in the scene?"
+        )
+        == "crop machine harvesting"
+    )
 
 
 def test_question_classifier_recognizes_new_color_and_entity_patterns() -> None:

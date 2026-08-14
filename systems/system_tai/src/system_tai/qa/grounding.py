@@ -650,6 +650,13 @@ def distill_qa_scene_prompt(text: str) -> str:
             flags=re.IGNORECASE,
         )
         cleaned = re.sub(
+            r"^(?:What type of vehicle|Which type of vehicle|"
+            r"What kind of vehicle)\s+(?:is|are)\s+",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(
             r"^(?:What type of|Which type of|What kind of)\s+",
             "",
             cleaned,
@@ -657,20 +664,20 @@ def distill_qa_scene_prompt(text: str) -> str:
         )
         cleaned = re.sub(
             r"^(?:What animal|Which animal)\s+(?:does|is|was)\s+(?:the )?",
-            "",
+            "animal ",
             cleaned,
             flags=re.IGNORECASE,
         )
         cleaned = re.sub(
             r"^(?:What crop|Which crop)\s+(?:is|was)\s+(?:the )?",
-            "",
+            "crop ",
             cleaned,
             flags=re.IGNORECASE,
         )
         cleaned = re.sub(
             r"^(?:What device|Which device|What tool|Which tool|"
             r"What instrument)\s+(?:is|was)\s+(?:the )?",
-            "",
+            "tool ",
             cleaned,
             flags=re.IGNORECASE,
         )
@@ -687,7 +694,19 @@ def distill_qa_scene_prompt(text: str) -> str:
             flags=re.IGNORECASE,
         )
         cleaned = re.sub(
+            r"^(?:What is the|What are the|What was the|What were the)\s+",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(
             r"^(?:What is|What are|What was|What were)\s+",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(
+            r"^(?:What activity are the|What craft are the)\s+",
             "",
             cleaned,
             flags=re.IGNORECASE,
@@ -699,13 +718,6 @@ def distill_qa_scene_prompt(text: str) -> str:
             flags=re.IGNORECASE,
         )
 
-    cleaned = re.sub(
-        r"\s+(?:sitting on|sitting behind|holding|using to observe .*|worn by the|"
-        r"used in the|mentioned in the headline .*|making up the .*)\?*$",
-        "",
-        cleaned,
-        flags=re.IGNORECASE,
-    )
     cleaned = re.sub(
         r"\s+(?:are in the frame|are in the studio|are clearly visible|"
         r"can be seen|in the scene)\?*$",
