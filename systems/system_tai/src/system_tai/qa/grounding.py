@@ -637,6 +637,24 @@ def distill_qa_scene_prompt(text: str) -> str:
             flags=re.IGNORECASE,
         )
         cleaned = re.sub(
+            r"^What\s+(crop|animal|tool|device|instrument)\s+is\s+the\s+(.*?)\s+(harvesting|using|riding|holding)\s*(.*?)\?*$",
+            r"The \2 \3 \1 \4",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(
+            r"^What color is the\s+(.*?)\s+worn by\s+(?:the\s+)?(.*?)\?*$",
+            r"The \2 wearing a \1",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(
+            r"^What color is the\s+(female|male)?\s*presenter's\s+(outfit|shirt|suit)\?*$",
+            r"The \1 presenter wearing a \2 in the studio",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(
             r"^(?:What color is(?: the)?|Which color is(?: the)?|What color are(?: the)?)\s+",
             "",
             cleaned,
@@ -720,7 +738,7 @@ def distill_qa_scene_prompt(text: str) -> str:
 
     cleaned = re.sub(
         r"\s+(?:are in the frame|are in the studio|are clearly visible|"
-        r"can be seen|in the scene)\?*$",
+        r"can be seen)\?*$",
         "",
         cleaned,
         flags=re.IGNORECASE,

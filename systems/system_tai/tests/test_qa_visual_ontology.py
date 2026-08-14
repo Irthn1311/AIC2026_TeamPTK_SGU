@@ -257,20 +257,20 @@ def test_distill_qa_scene_prompt_extracts_visual_query() -> None:
         distill_qa_scene_prompt(
             "What color is the shirt worn by the woman being interviewed?"
         )
-        == "shirt worn by the woman being interviewed"
+        == "The woman being interviewed wearing a shirt"
     )
     assert (
         distill_qa_scene_prompt(
             "What type of vehicles mainly make up "
             "the convoy of white vehicles in the scene?"
         )
-        == "the convoy of white vehicles"
+        == "the convoy of white vehicles in the scene"
     )
     assert (
         distill_qa_scene_prompt(
             "What crop is the machine harvesting in the scene?"
         )
-        == "crop machine harvesting"
+        == "The machine harvesting crop in the scene"
     )
 
 
