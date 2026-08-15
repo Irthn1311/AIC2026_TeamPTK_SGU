@@ -4,7 +4,6 @@ import numpy as np
 
 from system_tai.preliminary.matching import NormalizedAliasAnswerMatcher
 from system_tai.preliminary.schemas import QAPrediction
-from system_tai.preliminary.validation import validate_ranked_top100
 
 from .answer_candidates import (
     AnswerCandidateProvider,
@@ -13,6 +12,7 @@ from .answer_candidates import (
 from .answer_scoring import CosineEvidenceAnswerScorer, EvidenceAnswerScorer
 from .models import QAEvidenceCandidate, QAQuery, QAResult
 from .question_types import QuestionType, classify_question_type
+from .top100_constructor import construct_ranked_qa_top100
 
 
 class QABaselineEngine:
@@ -20,10 +20,12 @@ class QABaselineEngine:
         self,
         candidate_provider: AnswerCandidateProvider | None = None,
         scorer: EvidenceAnswerScorer | None = None,
+        expand_temporal: bool = False,
     ) -> None:
         self.candidate_provider = candidate_provider or BaselineQuestionCandidateProvider()
         self.scorer = scorer or CosineEvidenceAnswerScorer()
         self.matcher = NormalizedAliasAnswerMatcher(strip_punctuation=True)
+        self.expand_temporal = expand_temporal
 
     def answer(
         self,
@@ -31,6 +33,8 @@ class QABaselineEngine:
         evidence_candidates: Sequence[QAEvidenceCandidate],
         image_embeddings: dict[tuple[str, int], np.ndarray] | None = None,
         prompt_embeddings: dict[str, np.ndarray] | None = None,
+        output_top_k: int | None = None,
+        expand_temporal: bool | None = None,
     ) -> QAResult:
         qtype = query.question_type or classify_question_type(
             query.question, query.question_en
@@ -87,9 +91,8 @@ class QABaselineEngine:
                 raise ValueError(f"Duplicate evidence candidate rank found: {cand.rank}")
             ranks_seen.add(cand.rank)
 
-        # Process candidates
-        predictions: list[QAPrediction] = []
-        seen_keys: set[tuple[str, int, str]] = set()
+        # Process candidates & score hypotheses
+        scored_candidates: list[dict] = []
         scores_by_rank: dict[int, float] = {}
 
         for cand in evidence_candidates:
@@ -105,31 +108,26 @@ class QABaselineEngine:
 
             best_hyp, best_score = scored_hyps[0]
             scores_by_rank[cand.rank] = float(best_score)
-            canonical = best_hyp.canonical_answer
-            norm_ans = self.matcher.normalize(canonical)
-            dedup_key = (cand.video_id, cand.frame_id, norm_ans)
-            if dedup_key in seen_keys:
-                continue
-            seen_keys.add(dedup_key)
-
-            pred = QAPrediction(
-                query_id=query.query_id,
-                rank=cand.rank,
-                video_id=cand.video_id,
-                frame_id=cand.frame_id,
-                answer=canonical,
+            scored_candidates.append(
+                {
+                    "video_id": cand.video_id,
+                    "frame_id": cand.frame_id,
+                    "answers": [hyp.canonical_answer for hyp, _ in scored_hyps[:3]],
+                    "scores": [score for _, score in scored_hyps[:3]],
+                    "evidence_rank": cand.rank,
+                }
             )
-            predictions.append(pred)
 
-        # Sort predictions by evidence rank ascending
-        predictions.sort(key=lambda p: p.rank)
+        target_k = 100 if output_top_k is None else output_top_k
+        use_expansion = self.expand_temporal if expand_temporal is None else expand_temporal
 
-        errors = validate_ranked_top100(
-            predictions, "qa", expected_query_id=query.query_id
+        # Construct metric-aware ranked Top-100 list with temporal diversity
+        predictions: list[QAPrediction] = construct_ranked_qa_top100(
+            query_id=query.query_id,
+            scored_candidates=scored_candidates,
+            output_top_k=target_k,
+            expand_temporal=use_expansion,
         )
-        if errors:
-            msg = "; ".join(e.message for e in errors)
-            raise ValueError(f"P0-A QA validation failed: {msg}")
 
         return QAResult(
             query_id=query.query_id,

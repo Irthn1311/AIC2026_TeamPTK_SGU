@@ -1659,12 +1659,35 @@ class QARuntimePipeline:
             question_en=request.question_en,
             question_type=q_type,
         )
-        qa_result = self.qa_engine.answer(
-            qa_query,
-            tuple(ec for ec, _ in valid_evidence_cands),
-            image_embeddings=image_embeddings_map,
-            prompt_embeddings=prompt_embeddings_map,
+        use_expansion = bool(
+            self.video_conditioned_evidence_config.enabled
+            or getattr(request, "expand_temporal", False)
         )
+        try:
+            qa_result = self.qa_engine.answer(
+                qa_query,
+                tuple(ec for ec, _ in valid_evidence_cands),
+                image_embeddings=image_embeddings_map,
+                prompt_embeddings=prompt_embeddings_map,
+                output_top_k=request.output_top_k,
+                expand_temporal=use_expansion,
+            )
+        except TypeError:
+            try:
+                qa_result = self.qa_engine.answer(
+                    qa_query,
+                    tuple(ec for ec, _ in valid_evidence_cands),
+                    image_embeddings=image_embeddings_map,
+                    prompt_embeddings=prompt_embeddings_map,
+                    output_top_k=request.output_top_k,
+                )
+            except TypeError:
+                qa_result = self.qa_engine.answer(
+                    qa_query,
+                    tuple(ec for ec, _ in valid_evidence_cands),
+                    image_embeddings=image_embeddings_map,
+                    prompt_embeddings=prompt_embeddings_map,
+                )
         timings.answer_scoring_seconds = self.clock() - t_ans
 
         val_errors = validate_ranked_top100(

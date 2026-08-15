@@ -667,6 +667,33 @@ private lightweight Kaggle Dataset, or an uploaded input artifact. Generated man
 and runs must not be committed. Phase 4 refinement and frame semantics are unchanged;
 these startup mechanics do not prove semantic quality or official BTC performance.
 
+### Corpus/index readiness gate
+
+The fail-closed readiness CLI validates a reusable manifest before a contest runtime is
+started. It has three explicit levels: `manifest` verifies schema, fingerprint, rebased
+source paths, file sizes, dimensions recorded in the manifest, and the selected raw-video
+policy; `features` additionally memory-maps every CLIP matrix and validates mapping rows,
+finite/non-zero vectors, physical `clip_row` alignment, and dimension 512; `full` also
+probes every available raw video and proves that every mapped `frame_idx` lies inside the
+original-video bounds.
+
+```bash
+python -m system_tai.validation.readiness \
+  --manifest /kaggle/input/system-tai-manifest/feature_manifest.json \
+  --input-root /kaggle/input \
+  --validation-level features \
+  --raw-video-policy required \
+  --output /kaggle/working/system_tai_outputs/readiness_report.json
+```
+
+The command exits `0` only for `READY` and `2` for `NOT_READY`. Missing raw video can be
+a warning with policy `optional` or a hard error with policy `required`. Duplicate
+mapping rows that carry the same original `frame_idx` remain valid; duplicate physical
+`clip_row` mappings do not. Reports contain counts, fingerprint, bounded issue records,
+and no machine-local artifact paths, embeddings, image bytes, or copied source data.
+`manifest` is the fast bootstrap gate; `features` and especially `full` perform real I/O
+and should be run when a deeper preflight is required.
+
 ## Phase 4.2 long-lived contest operational session
 
 Phase 4.2 introduces a fail-closed, single-process JSON-line IPC session for unified contest operations.

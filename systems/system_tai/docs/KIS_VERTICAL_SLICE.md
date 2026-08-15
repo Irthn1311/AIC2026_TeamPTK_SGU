@@ -592,6 +592,32 @@ The 579.27-second pre-optimization discovery measurement is operational evidence
 retrieval or semantic performance. `/kaggle/working` is ephemeral, generated manifests
 remain outside Git, and Phase 4 exact-frame refinement semantics are unchanged.
 
+## Corpus/index readiness validation
+
+- **Input:** schema-v1 absolute or schema-v2 portable feature manifest, current bounded
+  input root, expected embedding dimension, validation level, and raw-video policy.
+- **Output:** deterministic UTF-8 JSON report with `READY`/`NOT_READY`, manifest identity,
+  corpus counts, feature/raw-video validation counts, duplicate mapped-frame statistics,
+  and structured error/warning records.
+- **Source:** `src/system_tai/validation/readiness.py`.
+- **Status:** `IMPLEMENTED` locally with synthetic manifest, feature, portable-rebase,
+  duplicate-frame, raw-bound, CLI exit-code, and deterministic-report tests. Private
+  full-corpus execution is pending.
+- **Manifest level:** validates schema/discovery version, portable identity/rebase,
+  required source existence and file sizes, recorded dimension, and raw-video policy.
+- **Features level:** additionally memory-maps each NPY and validates finite, non-zero
+  rows, mapping/NPY count, physical row mapping, and configured embedding dimension.
+- **Full level:** additionally probes original raw videos and proves every mapping CSV
+  `frame_idx` is inside `[0, total_frame_count - 1]`.
+- **Frame contract:** duplicate `frame_idx` values are accepted as one-to-many feature
+  evidence for the same shared frame; `clip_row` remains physical provenance and never
+  becomes `frame_id`.
+- **Safety:** no text/image model load, retrieval, ranking, dataset mutation, source copy,
+  embedding export, or machine-local artifact path in the report.
+
+This is an operational correctness gate, not semantic-quality evidence, a shared team
+validator, or confirmation of the official BTC upload format.
+
 ## Phase 4.2 — long-lived contest operational session
 
 - **Input:** stdin JSON-line protocol, portable corpus manifest, and a unified 
