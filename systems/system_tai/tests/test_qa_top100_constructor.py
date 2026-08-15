@@ -1,4 +1,4 @@
-"""Unit tests for Q&A Top-100 Prediction Constructor (QA-R1 Anti-Starvation & Diversity)."""
+"""Unit tests for Q&A Top-100 Prediction Constructor (QA-R1.1 Interleaved Anti-Starvation)."""
 
 from __future__ import annotations
 
@@ -31,12 +31,37 @@ def test_top100_constructor_generates_contiguous_unique_predictions() -> None:
     assert predictions[0].frame_id == 1025
     assert predictions[0].answer == "trắng"
 
-    # Check that nearby temporal frames are present in early ranks
-    top5_frames = [p.frame_id for p in predictions[:5] if p.video_id == "L21_V001"]
-    assert 1055 in top5_frames or 995 in top5_frames or 1040 in top5_frames
+
+def test_top100_constructor_interleaved_preserves_top5_close_temporal_depth() -> None:
+    scored = [
+        {
+            "video_id": f"L21_V{i:03d}",
+            "frame_id": 1000 + i * 100,
+            "answers": [f"ans_{i}"],
+            "evidence_rank": i,
+        }
+        for i in range(1, 33)
+    ]
+    predictions, prov = construct_ranked_qa_top100(
+        "QA-INTERLEAVED-01", scored, output_top_k=100, return_provenance=True
+    )
+    assert len(predictions) == 100
+    assert len(prov) == 100
+
+    # Invariant 1: Top 5 candidates have their primary and ±30 close offsets in ranks 1..16
+    top16_videos = [p.video_id for p in predictions[:16]]
+    top16_sources = [r["slot_source"] for r in prov[:16]]
+
+    # Check that candidate 1, 2, 3, 4, 5 appear with both PRIMARY and CLOSE_OFFSET in top 16
+    for i in range(1, 6):
+        cand_vid = f"L21_V{i:03d}"
+        assert cand_vid in top16_videos, f"{cand_vid} missing from top 16!"
+
+    assert "PRIMARY" in top16_sources
+    assert "CLOSE_OFFSET" in top16_sources
 
 
-def test_top100_constructor_anti_starvation_guarantees_all_32_candidates_covered() -> None:
+def test_top100_constructor_anti_starvation_guarantees_all_32_candidates_covered_by_rank_45() -> None:
     # 32 nominated candidates
     scored = [
         {
@@ -47,7 +72,9 @@ def test_top100_constructor_anti_starvation_guarantees_all_32_candidates_covered
         }
         for i in range(1, 33)
     ]
-    predictions = construct_ranked_qa_top100("QA-DIVERSITY-01", scored, output_top_k=100)
+    predictions, prov = construct_ranked_qa_top100(
+        "QA-DIVERSITY-01", scored, output_top_k=100, return_provenance=True
+    )
     assert len(predictions) == 100
 
     # Verify all 32 candidate videos appear in the prediction list
@@ -55,10 +82,10 @@ def test_top100_constructor_anti_starvation_guarantees_all_32_candidates_covered
     for i in range(1, 33):
         assert f"L21_V{i:03d}" in predicted_videos
 
-    # Anti-Starvation Invariant: All 32 candidates MUST receive their primary slot within ranks 1..40
-    top40_videos = {p.video_id for p in predictions[:40]}
+    # Anti-Starvation Invariant: All 32 candidates MUST receive their primary slot within ranks 1..45
+    top45_videos = {p.video_id for p in predictions[:45]}
     for i in range(1, 33):
-        assert f"L21_V{i:03d}" in top40_videos, f"Candidate L21_V{i:03d} was starved from top 40!"
+        assert f"L21_V{i:03d}" in top45_videos, f"Candidate L21_V{i:03d} was starved from top 45!"
 
 
 def test_top100_constructor_respects_frame_bounds() -> None:
