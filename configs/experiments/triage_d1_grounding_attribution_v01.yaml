@@ -1,0 +1,17 @@
+experiment: TRIAGE_E2ED1
+experiment_version: "0.1"
+primary_benchmark: DEV_CROSS_60
+use_selected_g1: true
+t3_pool_limit: 10
+t3_region_radius_seconds: 3.0
+g1_protected_prefix: 5
+g1_coverage_video_limit: 5
+g1_coverage_regions: 10
+max_review_cases: 18
+run_m1: false
+use_m2: false
+use_m3: false
+use_graph: false
+use_vlm: false
+use_agent: false
+parameter_sweep: false
