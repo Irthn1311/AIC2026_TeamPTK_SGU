@@ -30,7 +30,15 @@ def is_opaque_machine_id(value: str) -> bool:
     text = str(value).strip().casefold()
     if text.startswith("/m/") and len(text) > 3:
         return True
-    return bool(text and text[0].isdigit() and len(text) >= 4 and text.replace("_", "").isalnum())
+    compact = text.replace("_", "")
+    return bool(
+        text.startswith("0")
+        and len(compact) >= 4
+        and compact.isascii()
+        and compact.isalnum()
+        and any(character.isalpha() for character in compact)
+        and any(character.isdigit() for character in compact)
+    )
 
 
 def filter_machine_ids(

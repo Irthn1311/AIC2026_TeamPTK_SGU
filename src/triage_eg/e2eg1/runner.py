@@ -377,8 +377,8 @@ def runtime_summary(
     variants: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
     totals: defaultdict[str, float] = defaultdict(float)
     counter_totals: defaultdict[str, Counter[str]] = defaultdict(Counter)
-    opaque_outputs = 0
-    for run in prediction_runs.values():
+    opaque_outputs: list[dict[str, Any]] = []
+    for benchmark_id, run in prediction_runs.items():
         for variant, value in run["variants"].items():
             totals[variant] += float(value["seconds"])
             counter_totals[variant].update(value["counter_delta"])
@@ -386,10 +386,15 @@ def runtime_summary(
                 variants[variant].append(
                     {"task": result.query_plan["task"], "seconds": result.latency_seconds}
                 )
-            opaque_outputs += sum(
-                is_opaque_machine_id(str(row.get("answer", "")))
+            opaque_outputs.extend(
+                {
+                    "benchmark_id": benchmark_id,
+                    "variant": variant,
+                    "query_id": row["query_id"],
+                    "answer": str(row["answer"]),
+                }
                 for row in value["predictions"]
-                if "answer" in row
+                if "answer" in row and is_opaque_machine_id(str(row["answer"]))
             )
     per_variant = {}
     for variant in VARIANTS:
@@ -412,7 +417,8 @@ def runtime_summary(
         "variants": per_variant,
         "g1_over_g0_runtime_ratio": per_variant["G1_COVERAGE_COARSE"]["total_seconds"] / g0,
         "g2_over_g0_runtime_ratio": per_variant["G2_SAFE_M1"]["total_seconds"] / g0,
-        "qa_opaque_machine_id_output_count": opaque_outputs,
+        "qa_opaque_machine_id_output_count": len(opaque_outputs),
+        "qa_opaque_machine_id_output_samples": opaque_outputs[:20],
         "devices": pipeline.runtime.runtime_manifest().get("devices", {}),
         **pipeline.runtime_diagnostics(),
     }

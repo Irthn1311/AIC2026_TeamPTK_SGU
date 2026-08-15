@@ -363,6 +363,14 @@ def test_31_32_machine_ids_are_not_natural_language_candidates(value: str) -> No
     assert not allowed and filtered == (value,) and is_opaque_machine_id(value)
 
 
+@pytest.mark.parametrize("value", ["2024", "1234", "0901234567", "12.50"])
+def test_numeric_ocr_answers_are_not_misclassified_as_machine_ids(value: str) -> None:
+    allowed, filtered = filter_machine_ids([value])
+    assert allowed == (value,)
+    assert filtered == ()
+    assert not is_opaque_machine_id(value)
+
+
 def test_33_machine_ids_remain_in_diagnostics_and_34_human_labels_allowed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

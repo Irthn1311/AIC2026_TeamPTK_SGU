@@ -236,6 +236,10 @@ def test_post_gt_trake_safety_diagnostic_accepts_one_interval_per_event(
 def test_runtime_and_formal_report_contracts_are_complete(tmp_path: Path) -> None:
     pipeline, run = _run(tmp_path)
     pipeline.runtime = SimpleNamespace(runtime_manifest=lambda: {"devices": {"clip": "cpu"}})
+    for value in run["variants"].values():
+        for row in value["predictions"]:
+            if row.get("query_id") == "Q1":
+                row["answer"] = "2024"
     benchmark = tmp_path / "benchmark"
     _write_jsonl(benchmark / "gt.jsonl", _gt())
     evaluation = evaluate_finalized(run, benchmark, "DEV_CROSS_60", tmp_path / "output")
@@ -246,6 +250,8 @@ def test_runtime_and_formal_report_contracts_are_complete(tmp_path: Path) -> Non
     comparison = compare_variants(evaluations)
     decision = decisions(evaluations, comparison)
     runtime = runtime_summary({"DEV_CROSS_60": run}, pipeline, 0.25)
+    assert runtime["qa_opaque_machine_id_output_count"] == 0
+    assert runtime["qa_opaque_machine_id_output_samples"] == []
     lines = formal_report_lines(
         git_commit="abc123",
         evaluations=evaluations,
