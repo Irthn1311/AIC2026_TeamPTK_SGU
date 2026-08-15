@@ -40,7 +40,7 @@ kis:
 
 # --- Video Q&A Workspace (PROVEN_WINNER + OPTIONAL EXTENSIONS) ---
 qa:
-  status: "PROVEN_WINNER"
+  status: "RELEASE_CANDIDATE"
   output_top_k: 100
   language_policy: "en_only"        # PROVEN_WINNER: en_only translation-augmented localization
   video_conditioned_evidence: true  # PROVEN_WINNER

@@ -79,6 +79,9 @@ class QABaselineEngine:
                 diagnostics={"confidence_level": confidence_level},
             )
 
+        if len(evidence_candidates) > 100:
+            raise ValueError("Cannot exceed 100 predictions: candidate count exceeds 100")
+
         # Validate candidate query_ids and ranks
         ranks_seen = set()
         for cand in evidence_candidates:
