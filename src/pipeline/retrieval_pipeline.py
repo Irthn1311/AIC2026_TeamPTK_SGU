@@ -279,17 +279,24 @@ class RetrievalPipeline:
         logger.info(f"Raw Input: '{raw_text}'")
         logger.info(f"Mode: Global (full database search — target_prefix disabled)")
 
-        # Step 1: Query Parsing & Intent Extraction
+        # Step 1: Deep Query Analysis
         kis_query = self._parser.parse_kis(raw_text, top_k=self._top_k_ret)
         retrieval_text = self._parser.build_retrieval_text(kis_query)
         topic_res = self._parser.extract_topic(raw_text)
         query_topic = topic_res.topic if topic_res.confidence >= 0.3 else None
 
-        logger.info(f"[Step 1/4 - Query Analysis]")
+        # Use IntentScorer weights to scale engine contributions
+        dyn_visual_w = kis_query.retrieval_weights.get("visual", self._visual_weight)
+        dyn_text_w   = kis_query.retrieval_weights.get("ocr",    self._text_weight)
+
+        logger.info(f"[Step 1/4 - Deep Query Analysis]")
         logger.info(f"  • Scene: '{kis_query.parsed_scene}' | Objects: {kis_query.parsed_objects} | Colors: {kis_query.parsed_colors}")
         logger.info(f"  • OCR Hints: {kis_query.ocr_keywords} | Spatial: {kis_query.spatial_hints}")
-        logger.info(f"  • Topic Intent: '{topic_res.topic}' (Conf: {topic_res.confidence:.2f}, Kw: {topic_res.matched_keywords})")
-        logger.info(f"  • Translated CLIP Prompt: '{retrieval_text}'")
+        logger.info(f"  • Persons: {kis_query.persons} | Quantities: {kis_query.quantities}")
+        logger.info(f"  • Negated: {kis_query.negated_attributes} | Must-have: {kis_query.must_have}")
+        logger.info(f"  • Lang mix: {kis_query.language_mix} | Engine weights: {kis_query.retrieval_weights}")
+        logger.info(f"  • Topic Intent: '{topic_res.topic}' (Conf: {topic_res.confidence:.2f})")
+        logger.info(f"  • CLIP Prompt: '{retrieval_text[:100]}'")
 
         # Step 2: Multimodal Candidate Retrieval — always balanced global search
         logger.info(f"[Step 2/4 - Candidate Retrieval]")
@@ -307,14 +314,19 @@ class RetrievalPipeline:
         all_weights = []
         if vis_results:
             all_lists.append(vis_results)
-            all_weights.append(self._visual_weight)
+            all_weights.append(dyn_visual_w)  # dynamic weight from IntentScorer
 
         for text_ret in self._text_rets:
-            q_input = kis_query if getattr(text_ret, "name", "") == "ocr_inmemory" else raw_text
-            txt = text_ret.retrieve(q_input, top_k=self._top_k_ret)
+            # Use pre-built ocr_query for OCR retrievers; raw_text for others
+            if getattr(text_ret, "name", "") == "ocr_inmemory":
+                q_input = kis_query  # backward-compatible path
+                ocr_q   = kis_query.ocr_query or raw_text
+                txt = text_ret.retrieve(q_input, top_k=self._top_k_ret)
+            else:
+                txt = text_ret.retrieve(raw_text, top_k=self._top_k_ret)
             if txt:
                 all_lists.append(txt)
-                all_weights.append(self._text_weight)
+                all_weights.append(dyn_text_w)  # dynamic weight from IntentScorer
                 logger.info(f"  • Text Retrieval ({getattr(text_ret, 'name', 'text')}): {len(txt)} candidates")
 
         # Guard: if no candidates at all, bail early
@@ -380,6 +392,12 @@ class RetrievalPipeline:
         # target_prefix intentionally disabled — full database search
         qa_query      = self._parser.parse_qa(
             event_desc, question, answer_language=answer_lang, target_prefix=""
+        )
+
+        logger.debug(
+            f"[QA] id='{query_id}' answer_type='{qa_query.answer_type}' "
+            f"subtype='{qa_query.answer_subtype}' format='{qa_query.expected_answer_format}' | "
+            f"negated={qa_query.negated_attributes} | weights={qa_query.retrieval_weights}"
         )
 
         if self._vlm is None:

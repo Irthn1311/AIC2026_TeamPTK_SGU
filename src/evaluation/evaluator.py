@@ -46,11 +46,15 @@ class Evaluator:
     For AIC competition:
       - KIS is judged by whether you submit ANY frame from the correct video.
         Exact frame_idx is not required to be pixel-perfect.
-      - This evaluator measures video-level correctness by default.
+      - BTC Final Score is calculated as:
+            Final Score = (1/5) * sum_{k in {1, 5, 20, 50, 100}} R@k
+        where R@k is the highest R-Score achieved in the top-k results.
     """
 
-    def __init__(self, k_values: List[int] = None):
-        self.k_values = k_values or [1, 5, 10]
+    BTC_K_THRESHOLDS = [1, 5, 20, 50, 100]
+
+    def __init__(self, k_values: Optional[List[int]] = None):
+        self.k_values = k_values or self.BTC_K_THRESHOLDS
         self._results: List[QueryResult] = []
 
     def add_result(
@@ -80,6 +84,16 @@ class Evaluator:
         hits = sum(1 for r in self._results if 0 < r.rank <= k)
         return hits / len(self._results)
 
+    def btc_final_score(self) -> float:
+        """
+        Computes the official BTC Final Score metric:
+        Final Score = (1/5) * sum_{k in {1, 5, 20, 50, 100}} R@k
+        """
+        if not self._results:
+            return 0.0
+        r_scores = [self.recall_at_k(k) for k in self.BTC_K_THRESHOLDS]
+        return sum(r_scores) / len(self.BTC_K_THRESHOLDS)
+
     def mrr(self) -> float:
         """Mean Reciprocal Rank."""
         if not self._results:
@@ -101,6 +115,7 @@ class Evaluator:
             "total_queries": n,
             "correct": n_correct,
             "accuracy": round(n_correct / max(n, 1), 4),
+            "BTC_Final_Score": round(self.btc_final_score(), 4),
             "MRR": round(self.mrr(), 4),
             "avg_latency_s": round(self.avg_latency(), 3),
         }
@@ -114,11 +129,12 @@ class Evaluator:
         print("\n" + "=" * 50)
         print(f"  AIC Evaluation Report ({r['total_queries']} queries)")
         print("=" * 50)
-        print(f"  Accuracy:       {r['accuracy']:.1%}")
-        print(f"  MRR:            {r['MRR']:.4f}")
+        print(f"  BTC Final Score: {r['BTC_Final_Score']:.4f} ⭐")
+        print(f"  Accuracy:        {r['accuracy']:.1%}")
+        print(f"  MRR:             {r['MRR']:.4f}")
         for k in self.k_values:
-            print(f"  Recall@{k:<5}  {r[f'Recall@{k}']:.1%}")
-        print(f"  Avg latency:    {r['avg_latency_s']:.2f}s")
+            print(f"  Recall@{k:<5}   {r[f'Recall@{k}']:.1%}")
+        print(f"  Avg latency:     {r['avg_latency_s']:.2f}s")
         print("=" * 50 + "\n")
 
     def save(self, path: str) -> None:
@@ -141,3 +157,4 @@ class Evaluator:
         with open(out, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         logger.info(f"Evaluation saved → {out}")
+

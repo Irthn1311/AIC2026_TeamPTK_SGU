@@ -83,12 +83,47 @@ class KeyframeItem:
 class TextualKISQuery:
     """Dạng 1: Textual Known-Item Search query."""
     raw_text: str
+    # ── Legacy fields (backward-compatible) ──
     parsed_objects: List[str] = field(default_factory=list)
     parsed_scene: str = ""
     parsed_colors: List[str] = field(default_factory=list)
     ocr_keywords: List[str] = field(default_factory=list)
     spatial_hints: List[str] = field(default_factory=list)
     top_k: int = 10
+    # ── Deep analysis fields (new) ──
+    persons: List[Dict[str, Any]] = field(default_factory=list)
+    """[{role_en, gender, count}] — extracted person roles & gender"""
+    quantities: List[Dict[str, Any]] = field(default_factory=list)
+    """[{value:int, entity:str}] — numeric quantities in query"""
+    actions: List[Dict[str, str]] = field(default_factory=list)
+    """[{vi:str, en:str}] — actions/verbs extracted"""
+    temporal_cues: List[Dict[str, Any]] = field(default_factory=list)
+    """[{marker_vi, marker_en, order}] — temporal ordering cues"""
+    negated_attributes: List[str] = field(default_factory=list)
+    """Attributes explicitly negated, e.g. ['áo đỏ', 'phòng học']"""
+    must_have: List[str] = field(default_factory=list)
+    """Positive constraints from non-negated parts of the query"""
+    emotions: List[str] = field(default_factory=list)
+    """Detected emotions/expressions in English, e.g. ['happy', 'tense']"""
+    lighting: str = ""
+    """Lighting/weather context, e.g. 'daytime', 'sunny'"""
+    clothing_details: List[Dict[str, str]] = field(default_factory=list)
+    """[{vi, en, color}] — clothing items with colors"""
+    retrieval_weights: Dict[str, float] = field(
+        default_factory=lambda: {"visual": 0.60, "ocr": 0.25, "caption": 0.15}
+    )
+    """Engine weights {visual, ocr, caption} computed by IntentScorer"""
+    language_mix: Dict[str, float] = field(
+        default_factory=lambda: {"vi": 1.0, "en": 0.0}
+    )
+    """Language ratio {vi, en} detected in raw_text"""
+    # ── Pre-built prompts (set by QueryParser) ──
+    clip_prompt: str = ""
+    """Final English sentence for CLIP text encoder (≤77 tokens)"""
+    ocr_query: str = ""
+    """Lexical keyword string for Qdrant/BM25 OCR search"""
+    vlm_verification_prompt: str = ""
+    """Structured prompt for VLM (includes negations + must_have constraints)"""
 
 
 @dataclass
@@ -96,10 +131,35 @@ class QAQuery:
     """Dạng 2: Question-Answering query."""
     event_description: str
     question: str
-    answer_type: str = "description"  # "count" | "name" | "yes_no" | "description"
-    answer_language: str = "auto"     # "vi" | "en" | "auto"
+    # ── Legacy fields ──
+    answer_type: str = "description"
+    """Coarse type: 'count' | 'color' | 'name' | 'yes_no' | 'description'"""
+    answer_language: str = "auto"
     top_k: int = 20
-    target_prefix: str = ""           # e.g. "L21", "L26"
+    target_prefix: str = ""
+    # ── Deep analysis fields (new) ──
+    answer_subtype: str = "description_general"
+    """
+    Fine-grained answer subtype (15 types):
+    count_people | count_objects | count_events |
+    color_clothing | color_object | color_background |
+    name_person | name_place | name_thing |
+    yes_no_presence | yes_no_action | yes_no_attribute |
+    number_score | number_time | description_general
+    """
+    expected_answer_format: str = "text"
+    """e.g. 'integer', 'color_name', 'person_name', 'yes_no', 'text'"""
+    question_entities: List[Dict[str, Any]] = field(default_factory=list)
+    """Entities extracted from the question itself"""
+    scene_entities: List[Dict[str, Any]] = field(default_factory=list)
+    """Entities extracted from event_description"""
+    negated_attributes: List[str] = field(default_factory=list)
+    """Negated constraints from either question or description"""
+    retrieval_weights: Dict[str, float] = field(
+        default_factory=lambda: {"visual": 0.60, "ocr": 0.25, "caption": 0.15}
+    )
+    vlm_verification_prompt: str = ""
+    """Full VLM prompt embedding question + constraints for Qwen-VL"""
 
 
 @dataclass

@@ -144,12 +144,15 @@ class QAPipeline:
                 continue
 
             # Combined 1-call: relevance + answer together
+            # Use pre-built VLM verification prompt if available (contains negations + constraints)
+            vlm_prompt = getattr(qa_query, "vlm_verification_prompt", None)
+            answer_subtype = getattr(qa_query, "answer_subtype", qa_query.answer_type)
             qa_ans = self._vlm.answer_question(
                 image_path=str(img_path),
-                event_description=qa_query.event_description,
-                question=qa_query.question,
+                event_description=vlm_prompt or qa_query.event_description,
+                question=qa_query.question if not vlm_prompt else "",
                 answer_language=qa_query.answer_language if qa_query.answer_language != "auto" else "vi",
-                answer_type=qa_query.answer_type,
+                answer_type=answer_subtype,
             )
 
             logger.debug(
@@ -302,9 +305,10 @@ class QAPipeline:
 
         full_context = f"{qa_query.event_description} {qa_query.question} {ocr_text}".strip()
         ctx_lower = full_context.lower()
-        q_type = qa_query.answer_type
+        # Use fine-grained subtype if available
+        q_type = getattr(qa_query, "answer_subtype", qa_query.answer_type)
 
-        if q_type == "count":
+        if q_type in ("count", "count_people", "count_objects", "count_events"):
             digits = re.findall(r"\b\d+\b", ocr_text or full_context)
             valid_digits = [d for d in digits if int(d) < 100]
             return valid_digits[0] if valid_digits else "1"

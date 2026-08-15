@@ -1,243 +1,192 @@
 """
-Query Parser for AIC Video Retrieval System (v2 — Accuracy-Optimized).
+Query Parser for AIC Video Retrieval System (v3 — Deep Analysis).
 
-Changes from v1:
-- Extended Vi→En vocabulary: 80+ terms across colors, scenes, sports, clothing, objects.
-- Handles "xanh lá" vs "xanh dương" ambiguity correctly.
-- build_qa_retrieval_text(): New method combining event_description + question keywords
-  → better recall for QA candidates (was using only event_description).
-- build_retrieval_text(): Adds English paraphrase suffix for stronger CLIP alignment.
-- infer_answer_type(): Extracted as a public helper for QAPipeline.
-- Expanded object detection: news broadcast, ceremony, sports equipment.
+Changes from v2:
+- Integrates the full Deep Analysis Pipeline:
+    TextNormalizer → NegationExtractor → DeepEntityExtractor → IntentScorer → PromptBuilder
+- parse_kis():
+    * Populates ALL new TextualKISQuery fields (persons, quantities, actions,
+      temporal_cues, negated_attributes, must_have, emotions, lighting, clothing_details,
+      retrieval_weights, language_mix, clip_prompt, ocr_query, vlm_verification_prompt)
+    * Bilingual (Vi + En) handling via TextNormalizer.detect_language_mix()
+- parse_qa():
+    * answer_subtype (15 fine-grained types) via infer_answer_subtype()
+    * expected_answer_format inference
+    * Populates question_entities, scene_entities, negated_attributes,
+      retrieval_weights, vlm_verification_prompt
+- build_retrieval_text(): returns kis_query.clip_prompt (already computed)
+- build_vlm_verification_prompt(): standalone helper for external callers
+- Bilingual support: both Vi-only and En-only queries work transparently
 """
 
 from __future__ import annotations
 
 import re
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from src.common.types import TextualKISQuery, QAQuery, TRAKEQuery, EventStep
+from src.preprocessing.text_normalizer import TextNormalizer
+from src.preprocessing.negation_extractor import NegationExtractor
+from src.preprocessing.entity_extractor import DeepEntityExtractor, ExtractedEntities
+from src.preprocessing.intent_scorer import IntentScorer
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# ============================================================
-# Color keywords (vi + en) — handles compound colors first
-# ============================================================
-# Order matters: check longer compound terms before single words
-_COLORS_VI_COMPOUND = [
-    ("xanh lá", "green"), ("xanh lá cây", "green"), ("xanh dương", "blue"),
-    ("xanh da trời", "blue"), ("xanh nước biển", "navy blue"),
-    ("đỏ tươi", "bright red"), ("vàng kim", "gold"), ("đen tuyền", "jet black"),
-    ("trắng tinh", "pure white"), ("hồng đậm", "deep pink"), ("cam đỏ", "orange red"),
-]
-_COLORS_VI_SIMPLE = [
-    "đỏ", "xanh", "vàng", "trắng", "đen", "tím", "hồng", "cam", "nâu", "xám",
-    "bạc", "vàng kim", "be", "kem",
-]
-_COLORS_EN = [
-    "red", "blue", "green", "yellow", "white", "black", "purple",
-    "pink", "orange", "brown", "grey", "gray", "silver", "gold", "navy",
-    "turquoise", "beige", "cream",
-]
+# ── Module-level singletons (created once per process) ───────────────────────
+_normalizer = TextNormalizer()
+_neg_extractor = NegationExtractor()
+_entity_extractor = DeepEntityExtractor()
+_intent_scorer = IntentScorer()
+
 
 # ============================================================
-# Scene / environment keywords
-# Priority: specific domain scenes FIRST, then generic outdoor/indoor
+# Answer subtype inference tables
 # ============================================================
-_SCENE_KEYWORDS = {
-    # Specific contexts first (higher specificity → checked first)
-    "sport": [
-        "thể thao", "thi đấu", "vận động viên", "cầu thủ", "sút bóng",
-        "nhảy cao", "chạy đà", "bơi lội", "điền kinh",
-        "sport", "athletic", "race", "jump", "competition", "match", "game",
-        "tournament", "athlete", "player",
-    ],
-    "news": [
-        "bản tin", "thời sự", "tin tức", "phóng sự",
-        "news", "broadcast", "anchor", "reporter",
-    ],
-    "press_conference": ["họp báo", "press conference", "briefing"],
-    "ceremony": ["lễ trao giải", "award ceremony", "trao giải", "khai mạc", "bế mạc"],
-    # Generic location contexts last
-    "outdoor": [
-        "ngoài trời", "đường phố", "quảng trường", "bãi biển", "công viên",
-        "outdoor", "outside", "street", "beach", "park",
-    ],
-    "indoor": [
-        "trong nhà", "phòng họp", "hội trường", "studio", "phòng quay",
-        "hội nghị", "sàn diễn",
-        "indoor", "inside", "hall", "room",
-    ],
-}
-
-# ============================================================
-# Object keywords — expanded for AIC domain
-# ============================================================
-_OBJECT_PATTERNS = {
-    "person": (
-        r"\b(người|diễn giả|phát ngôn viên|vận động viên|cầu thủ|người phát biểu"
-        r"|phóng viên|biên tập viên|nghệ sĩ|ca sĩ|quan chức|lãnh đạo|bộ trưởng"
-        r"|speaker|athlete|player|person|man|woman|reporter|anchor|official)\b"
-    ),
-    "vehicle": r"\b(xe|ô tô|xe buýt|xe tải|xe máy|car|bus|truck|motorcycle|vehicle)\b",
-    "flag": r"\b(cờ|flag|banner|biểu ngữ)\b",
-    "screen": r"\b(màn hình|bảng|screen|board|sign|logo|biểu bảng)\b",
-    "microphone": r"\b(micro|microphone|mic|bục phát biểu|podium)\b",
-    "ball": r"\b(bóng|ball|quả bóng)\b",
-    "medal": r"\b(huy chương|medal|cúp|cup|trophy|giải thưởng)\b",
-    "crowd": r"\b(đám đông|khán giả|cổ động viên|crowd|audience|fans|spectators)\b",
-}
-
-# ============================================================
-# Spatial relationship keywords
-# ============================================================
-_SPATIAL_PATTERNS = [
-    r"(phía\s+\w+|bên\s+\w+|góc\s+\w+)",        # Vietnamese: phía sau, bên trái, góc trên
-    r"(behind|in front of|to the (?:left|right)|above|below|next to|in the background)",
+_SUBTYPE_RULES: List[tuple] = [
+    # (subtype, answer_type, keywords_vi, keywords_en, expected_format)
+    ("count_people",    "count",  ["bao nhiêu người", "mấy người", "số người"],
+                                  ["how many people", "number of people"],        "integer"),
+    ("count_objects",   "count",  ["bao nhiêu cái", "bao nhiêu chiếc", "mấy cái"],
+                                  ["how many objects", "how many items"],          "integer"),
+    ("count_events",    "count",  ["bao nhiêu lần", "mấy lần", "bao nhiêu lượt"],
+                                  ["how many times", "how often"],                "integer"),
+    ("number_score",    "count",  ["tỷ số", "điểm số", "kết quả"],
+                                  ["score", "result", "final score"],             "score"),
+    ("number_time",     "count",  ["mấy giờ", "lúc mấy giờ", "thời điểm"],
+                                  ["what time", "when", "at what hour"],          "time"),
+    ("color_clothing",  "color",  ["màu áo", "màu quần", "màu váy", "mặc màu gì", "màu trang phục"],
+                                  ["color of shirt", "color of clothing", "wearing what color",
+                                   "shirt color", "jersey color", "color of the shirt",
+                                   "color of the jacket", "color of the uniform"], "color_name"),
+    ("color_object",    "color",  ["màu của", "màu bóng", "màu xe", "màu cờ"],
+                                  ["color of the", "what color is"],              "color_name"),
+    ("color_background","color",  ["màu nền", "màu phông", "màu background"],
+                                  ["background color", "color of the background"], "color_name"),
+    ("name_person",     "name",   ["ai ", "tên người", "tên của ai", "người nào"],
+                                  ["who ", "name of person", "whose"],            "person_name"),
+    ("name_place",      "name",   ["ở đâu", "địa điểm", "nơi nào", "tại đâu"],
+                                  ["where", "what place", "location", "venue"],   "place_name"),
+    ("name_thing",      "name",   ["tên chương trình", "tên đội", "tên sản phẩm", "là gì"],
+                                  ["name of team", "name of program", "what is it called"], "thing_name"),
+    ("yes_no_presence", "yes_no", ["có xuất hiện", "có mặt", "có không"],
+                                  ["is there", "does it have", "are there"],      "yes_no"),
+    ("yes_no_action",   "yes_no", ["có đang", "có phải đang", "đang làm gì"],
+                                  ["is doing", "was doing", "did"],               "yes_no"),
+    ("yes_no_attribute","yes_no", ["có mặc", "có mang", "có đội", "có đeo"],
+                                  ["is wearing", "does have", "is holding"],      "yes_no"),
 ]
 
-# ============================================================
-# Vietnamese → English translation maps
-# ============================================================
-_VI_TO_EN_COLORS = {
-    "xanh lá": "green", "xanh lá cây": "green", "xanh dương": "blue",
-    "xanh da trời": "sky blue", "xanh nước biển": "navy blue",
-    "xanh": "blue",  # fallback for ambiguous "xanh"
-    "đỏ": "red", "vàng": "yellow", "trắng": "white", "đen": "black",
-    "tím": "purple", "hồng": "pink", "cam": "orange", "nâu": "brown",
-    "xám": "gray", "bạc": "silver", "vàng kim": "gold", "be": "beige",
-    "kem": "cream",
-}
-
-_VI_TO_EN_SCENES = {
-    "ngoài trời": "outdoor", "trong nhà": "indoor", "sân khấu": "stage",
-    "sân vận động": "stadium", "phòng họp": "conference room",
-    "đường phố": "street", "họp báo": "press conference",
-    "lễ trao giải": "award ceremony", "bản tin": "news broadcast",
-    "phòng quay": "TV studio", "hội trường": "auditorium",
-    "nhà thi đấu": "sports arena", "quảng trường": "public square",
-}
-
-_VI_TO_EN_SPATIAL = {
-    "phía sau": "in the background", "phía trước": "in the foreground",
-    "bên trái": "on the left side", "bên phải": "on the right side",
-    "phía trên": "at the top", "phía dưới": "at the bottom",
-    "bên cạnh": "next to", "góc trên trái": "top-left corner",
-    "góc trên phải": "top-right corner", "góc dưới trái": "bottom-left corner",
-    "trung tâm": "in the center", "giữa": "in the middle",
-}
-
-_VI_TO_EN_ACTIONS = {
-    "đang phát biểu": "is speaking", "đang trình bày": "is presenting",
-    "đang thi đấu": "is competing", "đang chạy": "is running",
-    "đang nhảy": "is jumping", "đang bơi": "is swimming",
-    "đứng": "standing", "ngồi": "sitting", "cầm": "holding",
-    "mặc": "wearing", "đội": "wearing on head",
-}
-
-# ============================================================
-# Answer type keywords
-# ============================================================
-_COUNT_KEYWORDS = ["bao nhiêu", "how many", "mấy", "số lượng", "đếm", "tổng số"]
-_NAME_KEYWORDS = ["ai ", "who ", "tên ", "tên của", "name of", "người nào"]
-_YES_NO_KEYWORDS = ["có không", "yes or no", "có phải", "is it", "có đúng", "phải không"]
+# Fallback coarse type keywords (used when no subtype matches)
+_COUNT_KEYWORDS = ["bao nhiêu", "how many", "mấy", "số lượng", "tổng số"]
 _COLOR_KEYWORDS = ["màu gì", "màu sắc", "what color", "mặc màu", "màu áo"]
+_NAME_KEYWORDS  = ["ai ", "who ", "tên ", "tên của", "name of", "người nào"]
+_YES_NO_KEYWORDS = ["có không", "yes or no", "có phải", "is it", "phải không"]
 
 
 class QueryParser:
     """
-    Converts raw query text into structured query objects.
-    Optimized for CLIP cross-lingual retrieval (Vi→En expansion).
+    Converts raw query text into fully structured query objects (v3).
 
     Usage:
         parser = QueryParser()
-        kis_query = parser.parse_kis("Tìm video người dẫn mặc áo đỏ...")
-        qa_query  = parser.parse_qa("Trong video lễ trao giải...", "Có bao nhiêu người?")
+        kis = parser.parse_kis("3 cầu thủ mặc áo xanh dương đang sút bóng bên trái")
+        qa  = parser.parse_qa("Lễ trao giải SEA Games...", "Màu áo của vận động viên?")
     """
 
-    def __init__(self, topic_classifier: Optional[Any] = None):
+    def __init__(self, topic_classifier=None):
         from src.reasoning.topic_classifier import TopicClassifier
         self.topic_classifier = topic_classifier or TopicClassifier()
 
     def extract_topic(self, raw_text: str):
-        """Extract topic classification result for a query text."""
         return self.topic_classifier.classify_text(raw_text)
 
-    def parse_kis(
-        self,
-        raw_text: str,
-        top_k: int = 100,
-    ) -> TextualKISQuery:
+    # =========================================================
+    # KIS Query Parsing (full Deep Analysis)
+    # =========================================================
+
+    def parse_kis(self, raw_text: str, top_k: int = 100) -> TextualKISQuery:
         """
-        Parse a Textual KIS query with rich entity extraction.
+        Parse a KIS query through the full Deep Analysis pipeline.
+
+        Pipeline:
+          1. TextNormalizer  → clean + abbrev expand + number-word convert
+          2. detect_language_mix → vi/en ratios
+          3. NegationExtractor → negated_attrs + must_have
+          4. DeepEntityExtractor → 12 entity categories
+          5. IntentScorer → retrieval_weights
+          6. PromptBuilder → clip_prompt + ocr_query + vlm_verification_prompt
+          7. Pack into TextualKISQuery
         """
-        text_lower = raw_text.lower()
+        # Stage 1: Normalize
+        normalized = _normalizer.normalize(raw_text)
+        lang_mix   = _normalizer.detect_language_mix(raw_text)
 
-        # --- Extract colors (compound-first to avoid partial match) ---
-        colors: List[str] = []
-        processed_text = text_lower
-        for vi_compound, _ in _COLORS_VI_COMPOUND:
-            if vi_compound in processed_text:
-                colors.append(vi_compound)
-                processed_text = processed_text.replace(vi_compound, "")
-        # Then simple colors on what remains
-        for vi_color in _COLORS_VI_SIMPLE:
-            if vi_color in processed_text and vi_color not in [c.split()[0] for c in colors]:
-                colors.append(vi_color)
-        for en_color in _COLORS_EN:
-            if re.search(rf"\b{en_color}\b", text_lower):
-                colors.append(en_color)
-        colors = list(dict.fromkeys(colors))  # deduplicate, preserve order
+        # Stage 2: Negation extraction (on original text — normalizer may distort scope)
+        neg_result = _neg_extractor.extract(raw_text)
 
-        # --- Extract objects ---
-        objects: List[str] = []
-        for obj_label, pattern in _OBJECT_PATTERNS.items():
-            if re.search(pattern, raw_text, re.IGNORECASE):
-                objects.append(obj_label)
+        # Stage 3: Entity extraction
+        entities   = _entity_extractor.extract(normalized, lang_mix)
 
-        # --- Extract scene ---
-        scene = ""
-        for scene_label, keywords in _SCENE_KEYWORDS.items():
-            if any(kw in text_lower for kw in keywords):
-                scene = scene_label
-                break
+        # Stage 4: Intent scoring
+        weights    = _intent_scorer.score(entities)
 
-        # --- Extract OCR hints ---
-        ocr_hints: List[str] = []
-        quoted = re.findall(r'["\']([\w\s]{2,})["\']', raw_text)
-        ocr_hints.extend(quoted)
-        # ALL CAPS words (logos, channel names like VTV1, VNPT...)
-        caps_words = re.findall(r'\b[A-Z][A-Z0-9]{1,}\b', raw_text)
-        ocr_hints.extend([w for w in caps_words if w not in ("TV", "HD", "OK", "AI")])
-        ocr_hints = list(dict.fromkeys(ocr_hints))
+        # Stage 5: Build prompts
+        clip_prompt = self._build_clip_prompt(entities, raw_text, lang_mix)
+        ocr_query   = self._build_ocr_query(entities, neg_result)
+        vlm_prompt  = self.build_vlm_verification_prompt(
+            description=raw_text,
+            question=None,
+            neg_result=neg_result,
+            entities=entities,
+        )
 
-        # --- Extract spatial hints ---
-        spatial_hints: List[str] = []
-        for pat in _SPATIAL_PATTERNS:
-            matches = re.findall(pat, text_lower)
-            for m in matches:
-                hint = m if isinstance(m, str) else " ".join(m).strip()
-                if hint:
-                    spatial_hints.append(hint)
-        spatial_hints = list(dict.fromkeys(spatial_hints))
+        # Stage 6: Pack legacy fields (backward compatibility)
+        parsed_colors  = [c["vi"] for c in entities.colors]
+        parsed_objects = entities.objects
+        parsed_scene   = entities.scene_type
+        ocr_keywords   = entities.ocr_hints
+        spatial_hints  = [s["vi"] for s in entities.spatial]
 
         query = TextualKISQuery(
             raw_text=raw_text,
-            parsed_objects=list(dict.fromkeys(objects)),
-            parsed_scene=scene,
-            parsed_colors=colors,
-            ocr_keywords=ocr_hints,
+            # Legacy
+            parsed_objects=parsed_objects,
+            parsed_scene=parsed_scene,
+            parsed_colors=parsed_colors,
+            ocr_keywords=ocr_keywords,
             spatial_hints=spatial_hints,
             top_k=top_k,
+            # Deep analysis
+            persons=entities.persons,
+            quantities=entities.quantities,
+            actions=entities.actions,
+            temporal_cues=entities.temporal_cues,
+            negated_attributes=neg_result.negated_attributes,
+            must_have=neg_result.must_have,
+            emotions=entities.emotions,
+            lighting=entities.lighting,
+            clothing_details=entities.clothing_details,
+            retrieval_weights=weights.as_dict(),
+            language_mix=lang_mix,
+            # Prompts
+            clip_prompt=clip_prompt,
+            ocr_query=ocr_query,
+            vlm_verification_prompt=vlm_prompt,
         )
 
         logger.debug(
-            f"[QueryParser] KIS: objects={query.parsed_objects}, "
-            f"colors={query.parsed_colors}, scene='{query.parsed_scene}', "
-            f"ocr={query.ocr_keywords}"
+            f"[QueryParser.KIS] lang={lang_mix} | scene='{parsed_scene}' | "
+            f"objects={parsed_objects} | colors={parsed_colors} | "
+            f"persons={entities.persons} | quantities={entities.quantities} | "
+            f"negated={neg_result.negated_attributes} | must={neg_result.must_have} | "
+            f"weights={weights.as_dict()} | clip='{clip_prompt[:80]}'"
         )
         return query
+
+    # =========================================================
+    # QA Query Parsing
+    # =========================================================
 
     def parse_qa(
         self,
@@ -248,9 +197,36 @@ class QueryParser:
         target_prefix: str = "",
     ) -> QAQuery:
         """
-        Parse a Q&A query with answer type inference.
+        Parse a Q&A query with deep entity + subtype analysis.
         """
-        answer_type = self.infer_answer_type(question)
+        # Coarse + fine-grained type
+        answer_type, answer_subtype, expected_format = self.infer_answer_subtype(question)
+
+        # Entity extraction on both parts
+        norm_desc = _normalizer.normalize(event_description)
+        norm_q    = _normalizer.normalize(question)
+
+        scene_ents = _entity_extractor.extract(norm_desc)
+        q_ents     = _entity_extractor.extract(norm_q)
+
+        # Negation in both
+        neg_desc = _neg_extractor.extract(event_description)
+        neg_q    = _neg_extractor.extract(question)
+        all_negated = list(dict.fromkeys(
+            neg_desc.negated_attributes + neg_q.negated_attributes
+        ))
+
+        # Retrieval weights (based on scene description)
+        weights = _intent_scorer.score(scene_ents)
+
+        # VLM verification prompt
+        vlm_prompt = self.build_vlm_verification_prompt(
+            description=event_description,
+            question=question,
+            neg_result=neg_desc,
+            entities=scene_ents,
+            answer_subtype=answer_subtype,
+        )
 
         return QAQuery(
             event_description=event_description,
@@ -259,151 +235,293 @@ class QueryParser:
             answer_language=answer_language,
             top_k=top_k,
             target_prefix=target_prefix,
+            # Deep analysis
+            answer_subtype=answer_subtype,
+            expected_answer_format=expected_format,
+            question_entities=[{
+                "colors": q_ents.colors, "objects": q_ents.objects,
+                "persons": q_ents.persons, "actions": q_ents.actions,
+            }],
+            scene_entities=[{
+                "colors": scene_ents.colors, "objects": scene_ents.objects,
+                "persons": scene_ents.persons, "scene": scene_ents.scene_type,
+                "clothing": scene_ents.clothing_details,
+            }],
+            negated_attributes=all_negated,
+            retrieval_weights=weights.as_dict(),
+            vlm_verification_prompt=vlm_prompt,
         )
 
-    def infer_answer_type(self, question: str) -> str:
+    # =========================================================
+    # Answer Subtype Inference
+    # =========================================================
+
+    def infer_answer_subtype(self, question: str) -> tuple:
         """
-        Infer answer type from question text.
-        Returns: "count" | "color" | "name" | "yes_no" | "description"
+        Infer fine-grained answer subtype (15 types).
+
+        Returns:
+            (answer_type: str, answer_subtype: str, expected_format: str)
         """
         q_lower = question.lower()
+        for subtype, ans_type, kw_vi, kw_en, fmt in _SUBTYPE_RULES:
+            if any(kw in q_lower for kw in kw_vi + kw_en):
+                return ans_type, subtype, fmt
 
+        # Fallback coarse
         if any(kw in q_lower for kw in _COUNT_KEYWORDS):
-            return "count"
-        elif any(kw in q_lower for kw in _COLOR_KEYWORDS):
-            return "color"
-        elif any(kw in q_lower for kw in _NAME_KEYWORDS):
-            return "name"
-        elif any(kw in q_lower for kw in _YES_NO_KEYWORDS):
-            return "yes_no"
-        else:
-            return "description"
+            return "count", "count_objects", "integer"
+        if any(kw in q_lower for kw in _COLOR_KEYWORDS):
+            return "color", "color_object", "color_name"
+        if any(kw in q_lower for kw in _NAME_KEYWORDS):
+            return "name", "name_thing", "text"
+        if any(kw in q_lower for kw in _YES_NO_KEYWORDS):
+            return "yes_no", "yes_no_presence", "yes_no"
 
-    # ============================================================
-    # Build CLIP retrieval text (KIS)
-    # ============================================================
+        return "description", "description_general", "text"
 
-    def _build_en_sentence(self, kis_query: "TextualKISQuery") -> str:
+    # Legacy compatibility alias
+    def infer_answer_type(self, question: str) -> str:
+        ans_type, _, _ = self.infer_answer_subtype(question)
+        return ans_type
+
+    # =========================================================
+    # Retrieval Text Builders
+    # =========================================================
+
+    def build_retrieval_text(self, kis_query: TextualKISQuery) -> str:
         """
-        Pillar 4: Build a complete, natural English sentence for CLIP.
-
-        CLIP ViT-B/32 was pre-trained on English image captions.
-        Full sentences like "A photo of a news anchor in a TV studio, wearing blue"
-        outperform keyword fragments like "news indoor wearing blue anchor".
-
-        Template: "A photo of [subject] [action] in [location], [colors], [spatial]."
+        Return the pre-built CLIP prompt from the query struct.
+        Falls back to building it on-the-fly if clip_prompt is empty.
         """
-        raw_lower = kis_query.raw_text.lower()
+        if kis_query.clip_prompt:
+            return kis_query.clip_prompt
+        # Fallback: build on-the-fly
+        return self._build_clip_prompt_from_legacy(kis_query)
 
-        # 1. Subject/role from objects
-        subject = "a scene"
-        if "person" in kis_query.parsed_objects:
-            if any(w in raw_lower for w in ("mc", "dẫn chương trình", "phát thanh", "anchor", "phát biểu")):
-                subject = "a news anchor or TV host"
-            elif any(w in raw_lower for w in ("phụ nữ", "nữ", "woman", "cô")):
-                subject = "a woman"
-            elif any(w in raw_lower for w in ("đàn ông", "nam", "man", "ông", "anh")):
-                subject = "a man"
+    def build_qa_retrieval_text(self, qa_query: QAQuery) -> str:
+        """
+        Build retrieval text for QA by merging event_description + question keywords.
+        """
+        kis = self.parse_kis(qa_query.event_description, top_k=100)
+        base_text = self.build_retrieval_text(kis)
+
+        # Append visual keywords from the question
+        q_lower = qa_query.question.lower()
+        q_ents = _entity_extractor.extract(q_lower)
+        extras = []
+        for c in q_ents.colors:
+            extras.append(c["en"] + " color")
+        for obj in q_ents.objects:
+            if obj not in base_text:
+                extras.append(obj)
+
+        return base_text + (". " + ", ".join(extras) if extras else "")
+
+    # =========================================================
+    # VLM Verification Prompt Builder
+    # =========================================================
+
+    def build_vlm_verification_prompt(
+        self,
+        description: str,
+        question: Optional[str],
+        neg_result=None,
+        entities: Optional[ExtractedEntities] = None,
+        answer_subtype: str = "description_general",
+    ) -> str:
+        """
+        Build a structured VLM prompt embedding:
+          - Scene context
+          - What the image MUST contain (must_have)
+          - What the image must NOT contain (negated_attributes)
+          - The specific question to answer
+          - Answer format guidance per subtype
+
+        Returns a single string to pass directly to QwenVLClient.answer_question().
+        """
+        parts: List[str] = []
+
+        # 1. Scene context
+        parts.append(f"Scene context: {description.strip()}")
+
+        # 2. Visual constraints from entities
+        if entities:
+            if entities.persons:
+                pnames = [p.get("role_en") or p.get("gender", "person") for p in entities.persons]
+                parts.append(f"Expected subject(s): {', '.join(pnames)}.")
+            if entities.scene_type:
+                parts.append(f"Setting: {entities.scene_type}.")
+            if entities.colors:
+                color_strs = [f"{c['en']} ({c['target']})" for c in entities.colors]
+                parts.append(f"Color cues: {', '.join(color_strs)}.")
+            if entities.clothing_details:
+                cloth_strs = [f"{c['en']}" + (f" ({c['color']})" if c.get('color') else "")
+                              for c in entities.clothing_details]
+                parts.append(f"Clothing: {', '.join(cloth_strs)}.")
+            if entities.emotions:
+                parts.append(f"Emotion cues: {', '.join(entities.emotions)}.")
+            if entities.ocr_hints:
+                parts.append(f"Look for visible text: {', '.join(entities.ocr_hints)}.")
+
+        # 3. Negation constraints
+        if neg_result:
+            constraint_text = neg_result.to_vlm_constraint_text()
+            if constraint_text:
+                parts.append(constraint_text)
+
+        # 4. The question
+        if question:
+            parts.append(f"\nQuestion to answer: {question.strip()}")
+
+        # 5. Answer format guidance
+        format_guide = {
+            "count_people":     "Answer with a single integer (number of people).",
+            "count_objects":    "Answer with a single integer (number of objects).",
+            "count_events":     "Answer with a single integer (number of times/events).",
+            "number_score":     "Answer in score format like '2-1' or '3:0'.",
+            "number_time":      "Answer with the time shown, e.g. '19:00' or '7 giờ tối'.",
+            "color_clothing":   "Answer with the color name of the clothing item.",
+            "color_object":     "Answer with the color name of the described object.",
+            "color_background": "Answer with the color name of the background.",
+            "name_person":      "Answer with the person's name or role.",
+            "name_place":       "Answer with the place or location name.",
+            "name_thing":       "Answer with the name of the thing/program/team.",
+            "yes_no_presence":  "Answer 'Có' (Yes) or 'Không' (No).",
+            "yes_no_action":    "Answer 'Có' (Yes) or 'Không' (No).",
+            "yes_no_attribute": "Answer 'Có' (Yes) or 'Không' (No).",
+            "description_general": "Describe what you observe in the image.",
+        }
+        guide = format_guide.get(answer_subtype, "Answer concisely based on what you see.")
+        parts.append(f"Answer format: {guide}")
+        parts.append("If the image does not contain relevant content, answer 'Không tìm thấy'.")
+
+        return "\n".join(parts)
+
+    # =========================================================
+    # Internal: CLIP Prompt Builders
+    # =========================================================
+
+    def _build_clip_prompt(
+        self,
+        entities: ExtractedEntities,
+        raw_text: str,
+        lang_mix: Dict[str, float],
+    ) -> str:
+        """
+        Build a natural English sentence for CLIP from extracted entities.
+        Template: "A photo of [subject] [action] in [setting], [color], [spatial]."
+        Stays within 77-token limit.
+        """
+        parts: List[str] = []
+
+        # 1. Subject
+        if entities.persons:
+            p = entities.persons[0]
+            role = p.get("role_en", "")
+            gender = p.get("gender", "")
+            if role:
+                subject = f"a {gender + ' ' if gender else ''}{role}".strip()
+            elif gender:
+                subject = f"a {gender}"
             else:
                 subject = "a person"
+            if len(entities.persons) > 1 or any(
+                q.get("entity", "") in ("người", "people", "person") for q in entities.quantities
+            ):
+                n = next(
+                    (q["value"] for q in entities.quantities
+                     if q.get("entity", "") in ("người", "people", "person")), None
+                )
+                subject = f"{n} {role or 'people'}" if n else f"multiple {role or 'people'}"
+        elif entities.objects:
+            subject = f"a {entities.objects[0]}"
+        else:
+            subject = "a scene"
 
-        extra_objects = [obj for obj in kis_query.parsed_objects if obj != "person"]
+        parts.append(f"A photo of {subject}")
 
-        # 2. Scene/location
-        scene_phrases = {
+        # 2. Actions
+        if entities.actions:
+            action_str = " and ".join(a["en"] for a in entities.actions[:2])
+            parts.append(action_str)
+
+        # 3. Setting
+        if entities.scene_type:
+            parts.append(f"in {entities.scene_type}")
+
+        # 4. Additional objects
+        extra_objs = [o for o in entities.objects if "person" not in o][:2]
+        if extra_objs:
+            parts.append("with " + ", ".join(extra_objs))
+
+        # 5. Colors + clothing
+        color_phrases = []
+        for c in entities.colors[:3]:
+            if c["target"] != "unspecified":
+                color_phrases.append(f"{c['en']} {c['target']}")
+            else:
+                color_phrases.append(c["en"])
+        if color_phrases:
+            parts.append("," + " and ".join(color_phrases))
+
+        # 6. Spatial
+        if entities.spatial:
+            sp_str = ", ".join(s["en"] for s in entities.spatial[:2])
+            parts.append("," + sp_str)
+
+        # 7. Emotions
+        if entities.emotions:
+            parts.append(f", looking {entities.emotions[0]}")
+
+        # 8. OCR hints
+        if entities.ocr_hints:
+            parts.append(f". Text visible: {' '.join(entities.ocr_hints[:3])}")
+
+        sentence = " ".join(parts)
+
+        # Append truncated original if mixed/Vi language for better recall
+        if lang_mix.get("vi", 0) > 0.3:
+            raw_truncated = raw_text[:80]
+            sentence = f"{sentence}. {raw_truncated}"
+
+        # Hard truncate at ~400 chars to stay within CLIP 77-token limit
+        return sentence[:400].strip()
+
+    def _build_clip_prompt_from_legacy(self, kis_query: TextualKISQuery) -> str:
+        """Fallback: build CLIP prompt from legacy TextualKISQuery fields."""
+        from src.preprocessing.entity_extractor import _COLOR_SIMPLE_VI
+        color_parts = [_COLOR_SIMPLE_VI.get(c, c) for c in kis_query.parsed_colors]
+        scene_map = {
             "news": "a TV news studio", "outdoor": "an outdoor setting",
             "indoor": "an indoor setting", "sport": "a sports venue",
             "press_conference": "a press conference", "ceremony": "an award ceremony",
         }
-        location = scene_phrases.get(kis_query.parsed_scene, "") if kis_query.parsed_scene else ""
-
-        # 3. Colors
-        color_parts = [_VI_TO_EN_COLORS.get(c, c) for c in kis_query.parsed_colors]
-        clothing_words = ("mặc", "áo", "quần", "trang phục", "váy", "đầm")
-        if color_parts:
-            color_phrase = ("wearing " if any(w in raw_lower for w in clothing_words) else "color ") + " and ".join(color_parts)
-        else:
-            color_phrase = ""
-
-        # 4. Actions (exclude wearing — already covered by color_phrase)
-        action_parts = []
-        for vi_act, en_act in _VI_TO_EN_ACTIONS.items():
-            if vi_act in raw_lower and en_act not in ("wearing", "wearing on head"):
-                action_parts.append(en_act)
-
-        # 5. Spatial
-        spatial_parts = []
-        for hint in kis_query.spatial_hints:
-            for vi, en in _VI_TO_EN_SPATIAL.items():
-                if vi in hint:
-                    spatial_parts.append(en)
-                    break
-
-        # Build sentence
+        loc = scene_map.get(kis_query.parsed_scene, kis_query.parsed_scene)
+        subject = "a person" if "person" in kis_query.parsed_objects else "a scene"
         sentence = f"A photo of {subject}"
-        if action_parts:
-            sentence += " " + " and ".join(action_parts)
-        if location:
-            sentence += f" in {location}"
-        if extra_objects:
-            sentence += ", with " + ", ".join(extra_objects)
-        if color_phrase:
-            sentence += f", {color_phrase}"
-        if spatial_parts:
-            sentence += ", " + ", ".join(spatial_parts)
+        if loc:
+            sentence += f" in {loc}"
+        if color_parts:
+            sentence += ", " + " and ".join(color_parts)
         if kis_query.ocr_keywords:
             sentence += f". Text visible: {' '.join(kis_query.ocr_keywords)}"
+        raw_truncated = kis_query.raw_text[:100]
+        return f"{sentence}. {raw_truncated}"
 
-        return sentence.strip()
-
-    def build_retrieval_text(self, kis_query: "TextualKISQuery") -> str:
-        """
-        Build retrieval prompt for CLIP (v4 — Full English Sentence Strategy).
-
-        Pillar 4: Generates a structured English sentence FIRST (for CLIP alignment),
-        then appends the original Vietnamese text (for OCR/keyword recall).
-        CLIP ViT-B/32 max = 77 tokens — sentence kept to ~50 tokens.
-        """
-        en_sentence = self._build_en_sentence(kis_query)
-        # Truncate raw Vietnamese to prevent 77-token overflow
-        raw_truncated = kis_query.raw_text[:100] if len(kis_query.raw_text) > 100 else kis_query.raw_text
-        return f"{en_sentence}. {raw_truncated}"
-
-
-    # ============================================================
-    # Build CLIP retrieval text (Q&A)
-    # ============================================================
-
-    def build_qa_retrieval_text(self, qa_query: "QAQuery") -> str:
-        """
-        Build retrieval text for Q&A queries.
-        Combines event_description + question visual keywords for better recall.
-
-        Strategy:
-          - Start with event_description (the scene context)
-          - Extract visual keywords from the question (colors, objects, etc.)
-          - Append English translation for CLIP
-        """
-        # Parse the event description as a KIS query to get structured fields
-        kis = self.parse_kis(qa_query.event_description, top_k=100)
-        base_text = self.build_retrieval_text(kis)
-
-        # Extract visual keywords from the question itself
-        q_lower = qa_query.question.lower()
-        question_visual_parts = []
-
-        # Extract colors from question
-        for vi_color, en_color in _VI_TO_EN_COLORS.items():
-            if vi_color in q_lower:
-                question_visual_parts.append(f"{en_color} color")
-                break
-
-        # Extract objects from question
-        for obj_label, pattern in _OBJECT_PATTERNS.items():
-            if re.search(pattern, qa_query.question, re.IGNORECASE):
-                if obj_label not in base_text:
-                    question_visual_parts.append(obj_label)
-
-        if question_visual_parts:
-            return base_text + ". " + ", ".join(question_visual_parts)
-        return base_text
+    def _build_ocr_query(self, entities: ExtractedEntities, neg_result) -> str:
+        """Build a lexical keyword string for Qdrant/BM25 OCR search."""
+        parts = list(entities.ocr_hints)
+        # Add person roles
+        for p in entities.persons:
+            if p.get("role_en"):
+                parts.append(p["role_en"])
+        # Add quantities (e.g. "3 people")
+        for q in entities.quantities:
+            parts.append(f"{q['value']} {q['entity']}")
+        # Add raw text without negated parts
+        raw = entities.raw_text
+        for neg in neg_result.negated_attributes:
+            raw = raw.replace(neg, "")
+        parts.append(raw[:100])
+        return " ".join(filter(None, parts)).strip()
