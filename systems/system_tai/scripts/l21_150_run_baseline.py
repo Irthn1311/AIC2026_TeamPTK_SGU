@@ -1710,6 +1710,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--qa-visual-ontology", type=Path)
     parser.add_argument("--qa-visual-ontology-frame-budget", type=int, default=100)
     parser.add_argument("--qa-visual-ontology-max-active-domains", type=int, default=1)
+    parser.add_argument(
+        "--qa-unsupported-provider-fallback",
+        action="store_true",
+        default=os.environ.get("QA_UNSUPPORTED_PROVIDER_FALLBACK_V1", "").lower() in ("1", "true", "yes"),
+        help="Allow UNSUPPORTED queries to proceed with QA ranking if provider hypotheses and evidence are available.",
+    )
     return parser
 
 
@@ -2035,6 +2041,7 @@ def main(argv: list[str] | None = None) -> int:
             qa_object_answer_provider_config=qa_object_answer_provider_config,
             qa_ocr_answer_provider_config=qa_ocr_answer_provider_config,
             qa_visual_ontology_config=qa_visual_ontology_config,
+            qa_unsupported_provider_fallback=args.qa_unsupported_provider_fallback,
         )
         runtime = OperationalKISRuntime.bootstrap(config)
         try:

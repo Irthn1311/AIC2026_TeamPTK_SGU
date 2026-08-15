@@ -349,3 +349,110 @@ def test_engine_max_100_behavior():
         engine.answer(
             query, cands_101, image_embeddings=img_embs_101, prompt_embeddings=prompts
         )
+
+
+def test_capability_driven_unsupported_recovery_flag_off():
+    # Flag OFF: UNSUPPORTED query must unconditionally return empty predictions
+    engine = QABaselineEngine(allow_unsupported_provider_fallback=False)
+    query = QAQuery("q_unsupp", "Mô tả sự kiện", "Câu hỏi lạ không có pattern?")
+    cands = [QAEvidenceCandidate("q_unsupp", 1, "V001", 100, 0.9)]
+    res = engine.answer(query, cands)
+    assert len(res.predictions) == 0
+    assert res.question_type == QuestionType.UNSUPPORTED
+    assert res.diagnostics.get("confidence_level") == "UNSUPPORTED"
+
+
+def test_capability_driven_unsupported_recovery_flag_on_success():
+    # Flag ON: UNSUPPORTED query with provider hypotheses and scored evidence must produce valid predictions
+    class CustomFallbackProvider:
+        def get_candidates_for_query(self, qtype, text):
+            return (
+                AnswerHypothesis("xe hơi", ("car", "xe"), visual_prompts=("car", "xe")),
+                AnswerHypothesis("xe buýt", ("bus", "xe bus"), visual_prompts=("bus", "xe bus")),
+            )
+        def get_candidates(self, qtype):
+            return self.get_candidates_for_query(qtype, "")
+
+    engine = QABaselineEngine(
+        candidate_provider=CustomFallbackProvider(),
+        allow_unsupported_provider_fallback=True,
+    )
+    query = QAQuery("q_unsupp", "Mô tả sự kiện", "Câu hỏi lạ không có pattern?", question_type=QuestionType.UNSUPPORTED)
+    img_vec = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+    cands = [
+        QAEvidenceCandidate("q_unsupp", 1, "V001", 100, 0.9),
+        QAEvidenceCandidate("q_unsupp", 2, "V002", 200, 0.8),
+    ]
+    img_embs = {
+        ("V001", 100): img_vec,
+        ("V002", 200): img_vec,
+    }
+    prompts = {"car": img_vec, "bus": img_vec}
+
+    res = engine.answer(query, cands, image_embeddings=img_embs, prompt_embeddings=prompts)
+    assert len(res.predictions) > 0
+    assert res.question_type == QuestionType.UNSUPPORTED
+    assert res.diagnostics.get("confidence_level") == "FALLBACK"
+    assert res.predictions[0].rank == 1
+    assert res.predictions[0].video_id == "V001"
+    assert res.predictions[0].answer in ("xe hơi", "xe buýt")
+
+
+def test_capability_driven_unsupported_recovery_flag_on_no_hypotheses():
+    # Flag ON: UNSUPPORTED query with NO provider hypotheses must return empty predictions
+    class EmptyProvider:
+        def get_candidates_for_query(self, qtype, text):
+            return ()
+        def get_candidates(self, qtype):
+            return ()
+
+    engine = QABaselineEngine(
+        candidate_provider=EmptyProvider(),
+        allow_unsupported_provider_fallback=True,
+    )
+    query = QAQuery("q_unsupp", "Mô tả sự kiện", "Câu hỏi lạ không có pattern?", question_type=QuestionType.UNSUPPORTED)
+    cands = [QAEvidenceCandidate("q_unsupp", 1, "V001", 100, 0.9)]
+    res = engine.answer(query, cands)
+    assert len(res.predictions) == 0
+    assert res.question_type == QuestionType.UNSUPPORTED
+    assert res.diagnostics.get("confidence_level") == "UNSUPPORTED"
+
+
+def test_capability_driven_unsupported_recovery_flag_on_no_evidence():
+    # Flag ON: UNSUPPORTED query with NO evidence candidates must return empty predictions
+    class CustomFallbackProvider:
+        def get_candidates_for_query(self, qtype, text):
+            return (AnswerHypothesis("xe hơi", ("car",)),)
+        def get_candidates(self, qtype):
+            return self.get_candidates_for_query(qtype, "")
+
+    engine = QABaselineEngine(
+        candidate_provider=CustomFallbackProvider(),
+        allow_unsupported_provider_fallback=True,
+    )
+    query = QAQuery("q_unsupp", "Mô tả sự kiện", "Câu hỏi lạ không có pattern?", question_type=QuestionType.UNSUPPORTED)
+    res = engine.answer(query, [])
+    assert len(res.predictions) == 0
+    assert res.question_type == QuestionType.UNSUPPORTED
+    assert res.diagnostics.get("confidence_level") == "UNSUPPORTED"
+
+
+def test_capability_driven_unsupported_recovery_provider_error_fail_closed():
+    # Flag ON: If provider raises an exception, must fail-closed and return empty predictions
+    class BrokenProvider:
+        def get_candidates_for_query(self, qtype, text):
+            raise RuntimeError("Provider service exploded")
+        def get_candidates(self, qtype):
+            raise RuntimeError("Provider service exploded")
+
+    engine = QABaselineEngine(
+        candidate_provider=BrokenProvider(),
+        allow_unsupported_provider_fallback=True,
+    )
+    query = QAQuery("q_unsupp", "Mô tả sự kiện", "Câu hỏi lạ không có pattern?", question_type=QuestionType.UNSUPPORTED)
+    cands = [QAEvidenceCandidate("q_unsupp", 1, "V001", 100, 0.9)]
+    res = engine.answer(query, cands)
+    assert len(res.predictions) == 0
+    assert res.question_type == QuestionType.UNSUPPORTED
+    assert res.diagnostics.get("confidence_level") == "UNSUPPORTED"
+

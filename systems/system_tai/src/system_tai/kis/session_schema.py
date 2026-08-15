@@ -95,6 +95,7 @@ class SessionConfig:
     qa_visual_ontology_config: VisualOntologyConfig = field(
         default_factory=VisualOntologyConfig
     )
+    qa_unsupported_provider_fallback: bool = False
 
     def __post_init__(self) -> None:
         if self.reuse_manifest is not None and self.manifest_cache is not None:

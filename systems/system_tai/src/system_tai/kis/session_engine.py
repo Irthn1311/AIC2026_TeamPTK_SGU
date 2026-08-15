@@ -234,6 +234,7 @@ class OperationalKISRuntime:
             candidate_provider=self.visual_ontology_provider,
             object_answer_provider=self.object_answer_provider,
             ocr_answer_provider=self.ocr_answer_provider,
+            allow_unsupported_provider_fallback=config.qa_unsupported_provider_fallback,
             clock=self.clock,
         )
 

@@ -21,11 +21,13 @@ class QABaselineEngine:
         candidate_provider: AnswerCandidateProvider | None = None,
         scorer: EvidenceAnswerScorer | None = None,
         expand_temporal: bool = False,
+        allow_unsupported_provider_fallback: bool = False,
     ) -> None:
         self.candidate_provider = candidate_provider or BaselineQuestionCandidateProvider()
         self.scorer = scorer or CosineEvidenceAnswerScorer()
         self.matcher = NormalizedAliasAnswerMatcher(strip_punctuation=True)
         self.expand_temporal = expand_temporal
+        self.allow_unsupported_provider_fallback = allow_unsupported_provider_fallback
 
     def answer(
         self,
@@ -39,9 +41,13 @@ class QABaselineEngine:
         qtype = query.question_type or classify_question_type(
             query.question, query.question_en
         )
-        confidence_level = "EXPERIMENTAL" if qtype == QuestionType.YES_NO else "BASELINE"
+        confidence_level = (
+            "FALLBACK"
+            if qtype == QuestionType.UNSUPPORTED
+            else ("EXPERIMENTAL" if qtype == QuestionType.YES_NO else "BASELINE")
+        )
 
-        if qtype == QuestionType.UNSUPPORTED:
+        if qtype == QuestionType.UNSUPPORTED and not self.allow_unsupported_provider_fallback:
             return QAResult(
                 query_id=query.query_id,
                 question_type=qtype,
@@ -56,27 +62,32 @@ class QABaselineEngine:
                 question_type=qtype,
                 predictions=[],
                 unsupported_reason="No evidence candidates provided",
-                diagnostics={"confidence_level": confidence_level},
+                diagnostics={"confidence_level": "UNSUPPORTED" if qtype == QuestionType.UNSUPPORTED else confidence_level},
             )
 
-        query_aware = getattr(
-            self.candidate_provider,
-            "get_candidates_for_query",
-            None,
-        )
-        if callable(query_aware):
-            hypotheses = tuple(
-                query_aware(qtype, query.question_en or query.question)
+        try:
+            query_aware = getattr(
+                self.candidate_provider,
+                "get_candidates_for_query",
+                None,
             )
-        else:
-            hypotheses = self.candidate_provider.get_candidates(qtype)
+            if callable(query_aware):
+                hypotheses = tuple(
+                    query_aware(qtype, query.question_en or query.question)
+                )
+            else:
+                hypotheses = self.candidate_provider.get_candidates(qtype)
+        except Exception:
+            # Fail closed on provider error
+            hypotheses = ()
+
         if not hypotheses:
             return QAResult(
                 query_id=query.query_id,
                 question_type=qtype,
                 predictions=[],
                 unsupported_reason="No answer hypotheses available for question type",
-                diagnostics={"confidence_level": confidence_level},
+                diagnostics={"confidence_level": "UNSUPPORTED" if qtype == QuestionType.UNSUPPORTED else confidence_level},
             )
 
         if len(evidence_candidates) > 100:

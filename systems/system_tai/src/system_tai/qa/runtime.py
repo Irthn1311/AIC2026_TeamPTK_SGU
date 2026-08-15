@@ -164,6 +164,7 @@ class QARuntimePipeline:
         candidate_provider: AnswerCandidateProvider | None = None,
         object_answer_provider: ObjectEntityAnswerProvider | None = None,
         ocr_answer_provider: OCRAnswerProvider | None = None,
+        allow_unsupported_provider_fallback: bool = False,
         clock: Callable[[], float] = time.perf_counter,
     ) -> None:
         self.exact_retriever = exact_retriever
@@ -177,8 +178,10 @@ class QARuntimePipeline:
             video_conditioned_evidence_config or QAVideoConditionedEvidenceConfig()
         )
         self.candidate_provider = candidate_provider or BaselineQuestionCandidateProvider()
+        self.allow_unsupported_provider_fallback = allow_unsupported_provider_fallback
         self.qa_engine = qa_engine or QABaselineEngine(
-            candidate_provider=self.candidate_provider
+            candidate_provider=self.candidate_provider,
+            allow_unsupported_provider_fallback=self.allow_unsupported_provider_fallback,
         )
         self.object_answer_provider = object_answer_provider
         self.ocr_answer_provider = ocr_answer_provider
