@@ -41,20 +41,21 @@ class QABaselineEngine:
         qtype = query.question_type or classify_question_type(
             query.question, query.question_en
         )
-        confidence_level = (
-            "FALLBACK"
-            if qtype == QuestionType.UNSUPPORTED
-            else ("EXPERIMENTAL" if qtype == QuestionType.YES_NO else "BASELINE")
-        )
 
-        if qtype == QuestionType.UNSUPPORTED and not self.allow_unsupported_provider_fallback:
-            return QAResult(
-                query_id=query.query_id,
-                question_type=qtype,
-                predictions=[],
-                unsupported_reason="Open-ended or unsupported question pattern in B1",
-                diagnostics={"confidence_level": "UNSUPPORTED"},
-            )
+        if qtype == QuestionType.UNSUPPORTED:
+            if not self.allow_unsupported_provider_fallback:
+                return QAResult(
+                    query_id=query.query_id,
+                    question_type=qtype,
+                    predictions=[],
+                    unsupported_reason="Open-ended or unsupported question pattern in B1",
+                    diagnostics={"confidence_level": "UNSUPPORTED"},
+                )
+            confidence_level = "FALLBACK"
+        elif qtype == QuestionType.YES_NO:
+            confidence_level = "EXPERIMENTAL"
+        else:
+            confidence_level = "BASELINE"
 
         if not evidence_candidates:
             return QAResult(
@@ -62,24 +63,39 @@ class QABaselineEngine:
                 question_type=qtype,
                 predictions=[],
                 unsupported_reason="No evidence candidates provided",
-                diagnostics={"confidence_level": "UNSUPPORTED" if qtype == QuestionType.UNSUPPORTED else confidence_level},
+                diagnostics={
+                    "confidence_level": (
+                        "UNSUPPORTED"
+                        if qtype == QuestionType.UNSUPPORTED
+                        else confidence_level
+                    )
+                },
             )
 
-        try:
+        query_text = query.question_en or query.question
+        if qtype == QuestionType.UNSUPPORTED:
+            try:
+                query_aware = getattr(
+                    self.candidate_provider,
+                    "get_candidates_for_query",
+                    None,
+                )
+                if callable(query_aware):
+                    hypotheses = tuple(query_aware(qtype, query_text))
+                else:
+                    hypotheses = tuple(self.candidate_provider.get_candidates(qtype))
+            except Exception:
+                hypotheses = ()
+        else:
             query_aware = getattr(
                 self.candidate_provider,
                 "get_candidates_for_query",
                 None,
             )
             if callable(query_aware):
-                hypotheses = tuple(
-                    query_aware(qtype, query.question_en or query.question)
-                )
+                hypotheses = tuple(query_aware(qtype, query_text))
             else:
-                hypotheses = self.candidate_provider.get_candidates(qtype)
-        except Exception:
-            # Fail closed on provider error
-            hypotheses = ()
+                hypotheses = tuple(self.candidate_provider.get_candidates(qtype))
 
         if not hypotheses:
             return QAResult(
@@ -87,7 +103,13 @@ class QABaselineEngine:
                 question_type=qtype,
                 predictions=[],
                 unsupported_reason="No answer hypotheses available for question type",
-                diagnostics={"confidence_level": "UNSUPPORTED" if qtype == QuestionType.UNSUPPORTED else confidence_level},
+                diagnostics={
+                    "confidence_level": (
+                        "UNSUPPORTED"
+                        if qtype == QuestionType.UNSUPPORTED
+                        else confidence_level
+                    )
+                },
             )
 
         if len(evidence_candidates) > 100:

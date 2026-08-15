@@ -438,7 +438,7 @@ def test_capability_driven_unsupported_recovery_flag_on_no_evidence():
 
 
 def test_capability_driven_unsupported_recovery_provider_error_fail_closed():
-    # Flag ON: If provider raises an exception, must fail-closed and return empty predictions
+    # Flag ON: If provider raises an exception on UNSUPPORTED, must fail-closed and return empty predictions
     class BrokenProvider:
         def get_candidates_for_query(self, qtype, text):
             raise RuntimeError("Provider service exploded")
@@ -455,4 +455,23 @@ def test_capability_driven_unsupported_recovery_provider_error_fail_closed():
     assert len(res.predictions) == 0
     assert res.question_type == QuestionType.UNSUPPORTED
     assert res.diagnostics.get("confidence_level") == "UNSUPPORTED"
+
+
+def test_supported_question_type_provider_exception_propagates():
+    # Supported types (e.g. COLOR) must NOT swallow provider exceptions (preserving legacy behavior)
+    class BrokenProvider:
+        def get_candidates_for_query(self, qtype, text):
+            raise RuntimeError("Provider broken for supported type")
+        def get_candidates(self, qtype):
+            raise RuntimeError("Provider broken for supported type")
+
+    engine = QABaselineEngine(
+        candidate_provider=BrokenProvider(),
+        allow_unsupported_provider_fallback=True,
+    )
+    query = QAQuery("q_color", "Mô tả sự kiện", "Chiếc xe màu gì?", question_type=QuestionType.COLOR)
+    cands = [QAEvidenceCandidate("q_color", 1, "V001", 100, 0.9)]
+    with pytest.raises(RuntimeError, match="Provider broken for supported type"):
+        engine.answer(query, cands)
+
 
