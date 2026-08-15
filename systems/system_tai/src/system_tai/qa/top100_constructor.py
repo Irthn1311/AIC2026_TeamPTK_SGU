@@ -1,6 +1,7 @@
-"""Ranked Top-100 Answer List Constructor for Video Q&A (QA-R1.1 Interleaved Anti-Starvation).
+"""Ranked Top-100 Answer List Constructor for Video Q&A.
 
-Conforms to Master PDF Decision 10 with interleaved coverage and early close temporal depth.
+Defaults to the proven Score-Champion policy: `temporal_dense_v1` (conforming to Master PDF Decision 10).
+Preserves frame bounds clamping, deterministic deduplication, contiguous ranks, and P0-A validation.
 """
 
 from __future__ import annotations
@@ -19,31 +20,16 @@ def construct_ranked_qa_top100(
     output_top_k: int = 100,
     *,
     expand_temporal: bool = True,
+    policy: str = "temporal_dense_v1",
     return_provenance: bool = False,
 ) -> list[QAPrediction] | tuple[list[QAPrediction], list[dict[str, Any]]]:
     """Build an optimal, metric-aware Top-100 prediction list for Video Q&A.
 
-    QA-R1.1 Interleaved Anti-Starvation Allocation Geometry:
-    1. Phase 1 (Top 1..5 Primary & Close Temporal Depth):
-       - Candidates 1..5 emit primary + close offsets (±30, +15)
-       - Ranks ~1..16: Preserves elite early temporal depth for top candidates.
-    2. Phase 2 (Anti-Starvation Video Coverage for Candidates 6..32):
-       - Candidates 6..N emit 1 primary prediction each
-       - Ranks ~17..43: Guarantees all 32 candidate videos receive a slot by ~rank 43.
-    3. Phase 3 (Alternative Answer Hypotheses for Top 10 Candidates):
-       - Ranks ~44..53: Hypothesis #2 for top candidates.
-    4. Phase 4 (Medium Temporal Neighborhood for Top 16 Candidates):
-       - Ranks ~54..80: Round-robin offsets [±60, ±45, ±90, ±120].
-    5. Phase 5 (Close Offsets for Candidates 6..32):
-       - Ranks ~81..95: Offsets [±30, ±60] for candidate videos 6..32.
-    6. Phase 6 (Wide Temporal Fallback):
-       - Ranks ~96..100: Offsets [±150..±300] to fill remaining slots up to target_k.
-
-    Guarantees:
-    - Invariant 1: Top 5 candidates have immediate close temporal depth (±30) before rank 17.
-    - Invariant 2: All 32 nominated candidate videos are represented by ~rank 43 (Anti-Starvation).
-    - Invariant 3: Frame bounds clamping (0 <= frame_id <= total_frames).
-    - Invariant 4: Contiguous ranks 1..N and max 100 predictions.
+    Policies:
+    - 'temporal_dense_v1' (DEFAULT / SCORE CHAMPION): Tier 1..7 dense temporal expansion
+      prioritizing high-density temporal evidence (±30..±120) for Top 10 candidates in Ranks 1..50.
+    - 'anti_starvation_v1' (EXPERIMENTAL): Breadth-first coverage across all 32 candidate videos.
+    - 'interleaved_v1' (EXPERIMENTAL): Interleaved coverage with top-5 close temporal depth.
     """
     if not scored_candidates or output_top_k <= 0:
         return ([], []) if return_provenance else []
@@ -129,180 +115,80 @@ def construct_ranked_qa_top100(
             raise ValueError(f"P0-A QA validation failed: {msg}")
         return (predictions, provenance_records) if return_provenance else predictions
 
-    num_candidates = len(scored_candidates)
+    # --------------------------------------------------------------------------
+    # SCORE CHAMPION POLICY: temporal_dense_v1 (Proven baseline in e133378)
+    # --------------------------------------------------------------------------
+    if policy == "temporal_dense_v1":
+        # Tier 1: Primary Top-1 candidate
+        c0 = scored_candidates[0]
+        max0 = c0.get("total_frames") or c0.get("max_frame_id")
+        _try_add(c0["video_id"], c0["frame_id"], c0["answers"][0], max_frame=max0, candidate_rank=1, slot_source="TIER1_PRIMARY", offset_frames=0)
 
-    # --------------------------------------------------------------------------
-    # Phase 1: Top 1..5 Primary & Close Temporal Depth (±30, +15)
-    # Target Ranks: ~1..16
-    # --------------------------------------------------------------------------
-    for idx in range(min(5, num_candidates)):
-        c = scored_candidates[idx]
-        max_f = c.get("total_frames") or c.get("max_frame_id")
-        cand_rank = c.get("evidence_rank", idx + 1)
-        if not c.get("answers"):
-            continue
-        # Primary frame
-        _try_add(
-            c["video_id"],
-            c["frame_id"],
-            c["answers"][0],
-            max_frame=max_f,
-            candidate_rank=cand_rank,
-            slot_source="PRIMARY",
-            offset_frames=0,
-        )
-        # Close positive offset (+30)
-        _try_add(
-            c["video_id"],
-            c["frame_id"] + 30,
-            c["answers"][0],
-            max_frame=max_f,
-            candidate_rank=cand_rank,
-            slot_source="CLOSE_OFFSET",
-            offset_frames=30,
-        )
-        # Close negative offset (-30)
-        _try_add(
-            c["video_id"],
-            c["frame_id"] - 30,
-            c["answers"][0],
-            max_frame=max_f,
-            candidate_rank=cand_rank,
-            slot_source="CLOSE_OFFSET",
-            offset_frames=-30,
-        )
-        # Top-1 gets additional fine offset (+15)
-        if idx == 0:
-            _try_add(
-                c["video_id"],
-                c["frame_id"] + 15,
-                c["answers"][0],
-                max_frame=max_f,
-                candidate_rank=cand_rank,
-                slot_source="CLOSE_OFFSET",
-                offset_frames=15,
-            )
+        # Tier 2: Top-1 immediate temporal neighbors (+30, -30) & Top-2 primary
+        _try_add(c0["video_id"], c0["frame_id"] + 30, c0["answers"][0], max_frame=max0, candidate_rank=1, slot_source="TIER2_OFFSET", offset_frames=30)
+        _try_add(c0["video_id"], c0["frame_id"] - 30, c0["answers"][0], max_frame=max0, candidate_rank=1, slot_source="TIER2_OFFSET", offset_frames=-30)
+        if len(scored_candidates) > 1:
+            c1 = scored_candidates[1]
+            max1 = c1.get("total_frames") or c1.get("max_frame_id")
+            _try_add(c1["video_id"], c1["frame_id"], c1["answers"][0], max_frame=max1, candidate_rank=2, slot_source="TIER2_PRIMARY", offset_frames=0)
+        _try_add(c0["video_id"], c0["frame_id"] + 15, c0["answers"][0], max_frame=max0, candidate_rank=1, slot_source="TIER2_OFFSET", offset_frames=15)
 
-    # --------------------------------------------------------------------------
-    # Phase 2: Anti-Starvation Video Coverage for Remaining Candidates 6..32
-    # Target Ranks: ~17..43
-    # --------------------------------------------------------------------------
-    for idx in range(5, num_candidates):
-        c = scored_candidates[idx]
-        max_f = c.get("total_frames") or c.get("max_frame_id")
-        cand_rank = c.get("evidence_rank", idx + 1)
-        if c.get("answers"):
-            _try_add(
-                c["video_id"],
-                c["frame_id"],
-                c["answers"][0],
-                max_frame=max_f,
-                candidate_rank=cand_rank,
-                slot_source="PRIMARY",
-                offset_frames=0,
-            )
-
-    # --------------------------------------------------------------------------
-    # Phase 3: Alternative Answer Hypotheses for Top 10 Candidates
-    # Target Ranks: ~44..53
-    # --------------------------------------------------------------------------
-    for idx in range(min(10, num_candidates)):
-        c = scored_candidates[idx]
-        if len(c.get("answers", [])) > 1:
+        # Tier 3: Primary predictions for candidates 2..10 & close neighbors (±30)
+        for idx, c in enumerate(scored_candidates[1:10], start=2):
+            if not c.get("answers"):
+                continue
             max_f = c.get("total_frames") or c.get("max_frame_id")
-            cand_rank = c.get("evidence_rank", idx + 1)
-            _try_add(
-                c["video_id"],
-                c["frame_id"],
-                c["answers"][1],
-                max_frame=max_f,
-                candidate_rank=cand_rank,
-                slot_source="ALT_ANSWER",
-                offset_frames=0,
-            )
-            _try_add(
-                c["video_id"],
-                c["frame_id"] + 30,
-                c["answers"][1],
-                max_frame=max_f,
-                candidate_rank=cand_rank,
-                slot_source="ALT_ANSWER_OFFSET",
-                offset_frames=30,
-            )
+            _try_add(c["video_id"], c["frame_id"], c["answers"][0], max_frame=max_f, candidate_rank=idx, slot_source="TIER3_PRIMARY", offset_frames=0)
+            _try_add(c["video_id"], c["frame_id"] + 30, c["answers"][0], max_frame=max_f, candidate_rank=idx, slot_source="TIER3_OFFSET", offset_frames=30)
+            _try_add(c["video_id"], c["frame_id"] - 30, c["answers"][0], max_frame=max_f, candidate_rank=idx, slot_source="TIER3_OFFSET", offset_frames=-30)
 
-    # --------------------------------------------------------------------------
-    # Phase 4: Medium Temporal Neighborhood for Top 16 Candidates (Round-Robin)
-    # Target Ranks: ~54..80
-    # --------------------------------------------------------------------------
-    medium_offsets = [60, -60, 45, -45, 90, -90, 120, -120]
-    for offset in medium_offsets:
-        if len(predictions) >= target_k:
-            break
-        for idx in range(min(16, num_candidates)):
+        # Tier 4: Alternative answer hypotheses for top 3 candidates
+        for idx, c in enumerate(scored_candidates[:3], start=1):
+            if len(c.get("answers", [])) > 1:
+                max_f = c.get("total_frames") or c.get("max_frame_id")
+                alt_ans = c["answers"][1]
+                _try_add(c["video_id"], c["frame_id"], alt_ans, max_frame=max_f, candidate_rank=idx, slot_source="TIER4_ALT_ANSWER", offset_frames=0)
+                _try_add(c["video_id"], c["frame_id"] + 30, alt_ans, max_frame=max_f, candidate_rank=idx, slot_source="TIER4_ALT_OFFSET", offset_frames=30)
+
+        # Tier 5: Medium temporal neighborhood for top 10 candidates (+60, -60, +45, -45, +90, -90, +120, -120)
+        medium_offsets = [60, -60, 45, -45, 90, -90, 120, -120]
+        for offset in medium_offsets:
             if len(predictions) >= target_k:
                 break
-            c = scored_candidates[idx]
-            if c.get("answers"):
-                max_f = c.get("total_frames") or c.get("max_frame_id")
-                cand_rank = c.get("evidence_rank", idx + 1)
-                _try_add(
-                    c["video_id"],
-                    c["frame_id"] + offset,
-                    c["answers"][0],
-                    max_frame=max_f,
-                    candidate_rank=cand_rank,
-                    slot_source="MEDIUM_OFFSET",
-                    offset_frames=offset,
-                )
+            for idx, c in enumerate(scored_candidates[:10], start=1):
+                if len(predictions) >= target_k:
+                    break
+                if c.get("answers"):
+                    max_f = c.get("total_frames") or c.get("max_frame_id")
+                    _try_add(c["video_id"], c["frame_id"] + offset, c["answers"][0], max_frame=max_f, candidate_rank=idx, slot_source="TIER5_MEDIUM_OFFSET", offset_frames=offset)
 
-    # --------------------------------------------------------------------------
-    # Phase 5: Close Temporal Offsets for Candidates 6..32 (±30, ±60)
-    # Target Ranks: ~81..95
-    # --------------------------------------------------------------------------
-    for offset in [30, -30, 60, -60]:
-        if len(predictions) >= target_k:
-            break
-        for idx in range(5, num_candidates):
+        # Tier 6: Candidates 11..N and their temporal offsets
+        for idx, c in enumerate(scored_candidates[10:], start=11):
             if len(predictions) >= target_k:
                 break
-            c = scored_candidates[idx]
-            if c.get("answers"):
-                max_f = c.get("total_frames") or c.get("max_frame_id")
-                cand_rank = c.get("evidence_rank", idx + 1)
-                _try_add(
-                    c["video_id"],
-                    c["frame_id"] + offset,
-                    c["answers"][0],
-                    max_frame=max_f,
-                    candidate_rank=cand_rank,
-                    slot_source="LATE_CANDIDATE_OFFSET",
-                    offset_frames=offset,
-                )
+            if not c.get("answers"):
+                continue
+            max_f = c.get("total_frames") or c.get("max_frame_id")
+            _try_add(c["video_id"], c["frame_id"], c["answers"][0], max_frame=max_f, candidate_rank=idx, slot_source="TIER6_PRIMARY", offset_frames=0)
+            for offset in [30, -30, 60, -60, 90, -90]:
+                if len(predictions) >= target_k:
+                    break
+                _try_add(c["video_id"], c["frame_id"] + offset, c["answers"][0], max_frame=max_f, candidate_rank=idx, slot_source="TIER6_OFFSET", offset_frames=offset)
 
-    # --------------------------------------------------------------------------
-    # Phase 6: Wide Temporal Neighborhood Fallback up to target_k (Max 100)
-    # Target Ranks: ~96..100
-    # --------------------------------------------------------------------------
-    wider_offsets = [150, -150, 180, -180, 210, -210, 240, -240, 270, -270, 300, -300]
-    for offset in wider_offsets:
-        if len(predictions) >= target_k:
-            break
-        for idx in range(num_candidates):
+        # Tier 7: Wider temporal coverage up to target_k (max 100)
+        wider_offsets = [150, -150, 180, -180, 210, -210, 240, -240, 270, -270, 300, -300]
+        for offset in wider_offsets:
             if len(predictions) >= target_k:
                 break
-            c = scored_candidates[idx]
-            if c.get("answers"):
-                max_f = c.get("total_frames") or c.get("max_frame_id")
-                cand_rank = c.get("evidence_rank", idx + 1)
-                _try_add(
-                    c["video_id"],
-                    c["frame_id"] + offset,
-                    c["answers"][0],
-                    max_frame=max_f,
-                    candidate_rank=cand_rank,
-                    slot_source="WIDE_OFFSET",
-                    offset_frames=offset,
-                )
+            for idx, c in enumerate(scored_candidates, start=1):
+                if len(predictions) >= target_k:
+                    break
+                if c.get("answers"):
+                    max_f = c.get("total_frames") or c.get("max_frame_id")
+                    _try_add(c["video_id"], c["frame_id"] + offset, c["answers"][0], max_frame=max_f, candidate_rank=idx, slot_source="TIER7_WIDE_OFFSET", offset_frames=offset)
+
+    else:
+        raise ValueError(f"Unknown QA Top-100 constructor policy: {policy}")
 
     # Final Validation
     errors = validate_ranked_top100(
@@ -312,6 +198,6 @@ def construct_ranked_qa_top100(
     )
     if errors:
         msg = "; ".join(e.message for e in errors)
-        raise ValueError(f"P0-A QA validation failed: {msg}")
+        raise ValueError(f"construct_ranked_qa_top100 validation failed for {query_id}: {msg}")
 
     return (predictions, provenance_records) if return_provenance else predictions
