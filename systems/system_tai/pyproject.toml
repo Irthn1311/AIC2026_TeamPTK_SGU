@@ -27,6 +27,15 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = [
+  "ignore::DeprecationWarning:.*(SwigPy|swigvarlink|importlib).*",
+  "ignore:builtin type SwigPy.*:DeprecationWarning",
+  "ignore:.*testclient.*:DeprecationWarning",
+  "ignore:.*httpx.*:DeprecationWarning",
+  "ignore:.*:starlette.exceptions.StarletteDeprecationWarning",
+  "ignore:.*Using `httpx` with `starlette.testclient` is deprecated.*",
+  "ignore:.*deprecated.*:Warning",
+]
 
 [tool.ruff]
 target-version = "py311"
