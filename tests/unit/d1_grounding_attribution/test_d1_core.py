@@ -375,6 +375,13 @@ def test_trake_global_ranking_reproduces_frozen_visible_output() -> None:
     )
     assert query["t3_global_ranking_reproduced"] is True
     assert query["best_correct_video_chain_global_rank"] is not None
+    assert {
+        "target_within_video_rank",
+        "target_global_rank",
+        "correct_video_rank",
+        "nearest_btc_distance",
+        "nearest_t3_distance",
+    } <= set(query["events"][0])
 
 
 def test_trake_global_ranking_mismatch_fails_closed() -> None:

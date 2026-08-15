@@ -196,7 +196,16 @@ def audit_trake_query(
             for key, value in row.items()
             if key not in {"target_frames", "t3_candidates", "intervals"}
         }
-        public["gt_intervals"] = [list(interval) for interval in row["intervals"]]
+        public.update(
+            {
+                "gt_intervals": [list(interval) for interval in row["intervals"]],
+                "target_within_video_rank": row["best_target_within_video_rank"],
+                "target_global_rank": row["best_target_global_frame_rank"],
+                "correct_video_rank": row["correct_video_rank_by_best_frame"],
+                "nearest_btc_distance": row["nearest_btc_distance_to_gt_frames"],
+                "nearest_t3_distance": row["t3_best_distance_to_gt"],
+            }
+        )
         event_rows.append(public)
     target_frame_pools = [list(row["target_frames"]) for row in internal_events]
     btc_chain = strict_target_chain_exists(target_frame_pools)
