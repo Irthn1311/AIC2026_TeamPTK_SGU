@@ -1,6 +1,18 @@
-"""Retrieval interfaces and candidate construction."""
+"""Retrieval interfaces, FAISS vector index, BM25 text search, and multimodal fusion."""
 
+from .bm25_search import (
+    BM25Document,
+    BM25Index,
+    BM25TextRetriever,
+    tokenize_text,
+)
 from .candidates import CandidateConstructor
+from .faiss_index import (
+    FaissVectorIndex,
+    FaissVectorRetriever,
+    VectorRecord,
+)
+from .hybrid_fusion import HybridFusionRetriever
 from .multi_query import (
     QueryLanguage,
     QueryVariant,
@@ -22,19 +34,27 @@ from .video_restricted import (
 )
 
 __all__ = [
+    "BM25Document",
+    "BM25Index",
+    "BM25TextRetriever",
     "CandidateConstructor",
     "ExactNumpyRetriever",
+    "FaissVectorIndex",
+    "FaissVectorRetriever",
+    "FullCorpusVideoMaximaOutcome",
+    "HybridFusionRetriever",
     "QueryLanguage",
     "QueryVariant",
     "QueryVariantType",
-    "VectorSearch",
-    "FullCorpusVideoMaximaOutcome",
     "RestrictedFrameHit",
+    "VectorRecord",
+    "VectorSearch",
+    "VideoConditionedKeyframeConfig",
+    "VideoConditionedKeyframeDiversity",
+    "VIDEO_CONDITIONED_KEYFRAME_DIVERSITY",
     "VideoMaximumHit",
     "VideoRestrictedFeatureSearcher",
     "VideoRestrictedSearchOutcome",
-    "VIDEO_CONDITIONED_KEYFRAME_DIVERSITY",
-    "VideoConditionedKeyframeConfig",
-    "VideoConditionedKeyframeDiversity",
     "WeightedRRFRetriever",
+    "tokenize_text",
 ]
