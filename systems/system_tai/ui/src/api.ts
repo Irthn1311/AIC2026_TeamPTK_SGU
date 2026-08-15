@@ -3,7 +3,7 @@
  * Interacts directly with the live Backend REST API.
  */
 
-import type { Candidate, KisAnswer, QaAnswer, TrakeChain } from './types'
+import type { Candidate, QaAnswer, TrakeChain } from './types'
 
 const API_BASE = '/api/v1'
 
@@ -25,112 +25,103 @@ export async function apiSearchKis(
   filters: string[] = [],
   variants: string[] = []
 ): Promise<Candidate[]> {
-  if (!query.trim()) return []
   try {
     const res = await fetch(`${API_BASE}/kis/search`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        query: query.trim(),
+        query,
         filters,
         query_variants: variants,
         top_k: 100,
-        interaction_mode: 'interactive',
       }),
     })
-    if (res.ok) {
-      const json: ResponseEnvelope<{ candidates: Candidate[] }> = await res.json()
-      if (json.data && Array.isArray(json.data.candidates)) {
-        return json.data.candidates
-      }
-    }
-  } catch (err) {
-    console.error('API KIS search error:', err)
+    if (!res.ok) return []
+    const json: ResponseEnvelope<{ candidates: Candidate[] }> = await res.json()
+    return json.data.candidates || []
+  } catch {
+    return []
   }
-  return []
 }
 
-export async function apiSearchQa(
-  event: string,
-  question: string,
-  temporal: string = 'during',
-  answerType: string = 'automatic'
-): Promise<{ candidates: Candidate[]; answers: QaAnswer[]; detectedType?: string }> {
-  if (!event.trim() && !question.trim()) {
-    return { candidates: [], answers: [], detectedType: undefined }
-  }
+export async function apiRefineKis(
+  videoId: string,
+  centerFrameId: number,
+  windowSeconds: number = 1.0
+): Promise<{ recommendedFrame: number; neighbors: Array<{ id: number; timestamp: string }> }> {
   try {
-    const res = await fetch(`${API_BASE}/qa/search`, {
+    const res = await fetch(`${API_BASE}/kis/refine`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        event_description: event.trim(),
-        question: question.trim(),
-        temporal_relation: temporal.toLowerCase(),
-        answer_type: answerType.toLowerCase(),
+        video_id: videoId,
+        center_actual_frame_id: centerFrameId,
+        window_seconds: windowSeconds,
+      }),
+    })
+    if (!res.ok) return { recommendedFrame: centerFrameId, neighbors: [] }
+    const json: ResponseEnvelope<{ recommended_frame: number; neighboring_frames: Array<{ id: number; timestamp: string }> }> = await res.json()
+    return {
+      recommendedFrame: json.data.recommended_frame,
+      neighbors: json.data.neighboring_frames || [],
+    }
+  } catch {
+    return { recommendedFrame: centerFrameId, neighbors: [] }
+  }
+}
+
+export async function apiSearchQa(
+  eventDescription: string,
+  question: string,
+  temporalRelation: string = 'during',
+  suggestedAnswerType: string = 'auto'
+): Promise<{ candidates: Candidate[]; answers: QaAnswer[] }> {
+  try {
+    const res = await fetch(`${API_BASE}/qa/ask`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        event_description: eventDescription,
+        question,
+        temporal_relation: temporalRelation,
+        suggested_answer_type: suggestedAnswerType,
         top_k: 100,
       }),
     })
-    if (res.ok) {
-      const json: ResponseEnvelope<{
-        candidates: Candidate[]
-        answers: QaAnswer[]
-        detected_answer_type: string
-      }> = await res.json()
-      if (json.data) {
-        return {
-          candidates: json.data.candidates || [],
-          answers: json.data.answers || [],
-          detectedType: json.data.detected_answer_type,
-        }
-      }
+    if (!res.ok) return { candidates: [], answers: [] }
+    const json: ResponseEnvelope<{ candidates: Candidate[]; answers: QaAnswer[] }> = await res.json()
+    return {
+      candidates: json.data.candidates || [],
+      answers: json.data.answers || [],
     }
-  } catch (err) {
-    console.error('API QA search error:', err)
+  } catch {
+    return { candidates: [], answers: [] }
   }
-  return { candidates: [], answers: [], detectedType: undefined }
 }
 
-export async function apiSearchTrake(events: string[]): Promise<TrakeChain[]> {
-  const filteredEvents = events.map((e) => e.trim()).filter(Boolean)
-  if (filteredEvents.length === 0) return []
+export async function apiSearchTrake(
+  events: string[]
+): Promise<TrakeChain[]> {
   try {
     const res = await fetch(`${API_BASE}/trake/search`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        events: filteredEvents,
+        events,
         top_k_chains: 100,
-        beam_width: 100,
       }),
     })
-    if (res.ok) {
-      const json: ResponseEnvelope<{
-        chains: Array<{ videoId: string; frames: number[]; confidence: number }>
-      }> = await res.json()
-      if (json.data && Array.isArray(json.data.chains)) {
-        return json.data.chains.map((c) => ({
-          videoId: c.videoId,
-          frames: (c.frames.length >= 3
-            ? c.frames.slice(0, 3)
-            : [c.frames[0] || 0, c.frames[1] || 0, c.frames[2] || 0]) as [
-            number,
-            number,
-            number,
-          ],
-          confidence: c.confidence,
-        }))
-      }
-    }
-  } catch (err) {
-    console.error('API TRAKE search error:', err)
+    if (!res.ok) return []
+    const json: ResponseEnvelope<{ chains?: TrakeChain[]; top_chains?: TrakeChain[] }> = await res.json()
+    return json.data.chains || json.data.top_chains || []
+  } catch {
+    return []
   }
-  return []
 }
 
 export async function apiValidateSubmission(
   taskType: 'KIS' | 'Q&A' | 'TRAKE',
-  records: Array<{ videoId: string; frameId?: number; frames?: number[]; answer?: string }>
+  records: Record<string, unknown>[]
 ): Promise<{ valid: boolean; errors: string[]; warnings: string[] }> {
   try {
     const res = await fetch(`${API_BASE}/submissions/validate`, {
@@ -138,26 +129,33 @@ export async function apiValidateSubmission(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         task_type: taskType,
-        records: records.map((r) => ({
-          video_id: r.videoId,
-          frame_id: r.frameId,
-          frame_ids: r.frames,
-          answer: r.answer,
-        })),
+        records,
       }),
     })
-    if (res.ok) {
-      const json: ResponseEnvelope<{
-        valid: boolean
-        errors: string[]
-        warnings: string[]
-      }> = await res.json()
-      if (json.data) {
-        return json.data
-      }
+    if (!res.ok) return { valid: false, errors: [`HTTP error ${res.status}`], warnings: [] }
+    const json: ResponseEnvelope<{ valid: boolean; errors: string[]; warnings: string[] }> = await res.json()
+    return {
+      valid: json.data.valid,
+      errors: json.data.errors || [],
+      warnings: json.data.warnings || [],
     }
-  } catch (err) {
-    console.error('API validation error:', err)
+  } catch (err: unknown) {
+    return { valid: false, errors: [String(err)], warnings: [] }
   }
-  return { valid: true, errors: [], warnings: [] }
+}
+
+export async function apiExportSubmission(
+  taskType: 'KIS' | 'Q&A' | 'TRAKE',
+  records: Record<string, unknown>[]
+): Promise<Blob> {
+  const res = await fetch(`${API_BASE}/submissions/export`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      task_type: taskType,
+      records,
+    }),
+  })
+  if (!res.ok) throw new Error(`HTTP error ${res.status}`)
+  return await res.blob()
 }

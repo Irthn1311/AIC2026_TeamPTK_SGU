@@ -1,6 +1,6 @@
+import '@testing-library/jest-dom'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 import { initialKis, initialQa, initialTrake, useWorkspaceStore } from './store'
 import { kisCsv, normalizeAnswer, qaCsv, trakeCsv, validateChain, validateKis } from './utils'
@@ -32,19 +32,6 @@ const mockCandidates = [
   },
 ]
 
-beforeEach(() => {
-  vi.useFakeTimers()
-  useWorkspaceStore.setState({
-    activeTask: 'KIS',
-    mode: 'Interactive',
-    history: [],
-    historyOpen: false,
-    kis: { ...initialKis },
-    qa: { ...initialQa },
-    trake: { ...initialTrake, events: [...initialTrake.events] },
-  })
-})
-
 function populateKisResults() {
   useWorkspaceStore.setState((s) => ({
     kis: {
@@ -58,6 +45,19 @@ function populateKisResults() {
 }
 
 describe('AIC retrieval workspace', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    useWorkspaceStore.setState({
+      activeTask: 'KIS',
+      mode: 'Interactive',
+      history: [],
+      historyOpen: false,
+      kis: { ...initialKis },
+      qa: { ...initialQa },
+      trake: { ...initialTrake, events: [...initialTrake.events] },
+    })
+  })
+
   it('renders candidates when results exist', () => {
     render(<App />)
     act(() => populateKisResults())
