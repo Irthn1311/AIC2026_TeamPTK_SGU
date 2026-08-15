@@ -69,7 +69,7 @@ class SystemConfigData(BaseModel):
             "ocr": True,
             "object": True,
             "metadata": True,
-            "asr": False,
+            "asr": True,
             "temporal_refinement": True,
         }
     )
@@ -107,10 +107,7 @@ class KisRefineRequest(BaseModel):
     request_context: RequestContext = Field(default_factory=RequestContext)
     video_id: str
     center_actual_frame_id: int
-    before_seconds: float = 2.0
-    after_seconds: float = 2.0
-    step_frames: int = 1
-    top_k: int = 10
+    window_seconds: float = 1.0
 
 
 class KisRefineData(BaseModel):
@@ -120,10 +117,10 @@ class KisRefineData(BaseModel):
     semantic_interval: list[int] = Field(default_factory=list)
     neighboring_frames: list[FrameNeighbor] = Field(default_factory=list)
     recommended_frame: int
-    evidence_summary: str = "Visual moment localized"
+    evidence_summary: str
 
 
-# --- Q&A Search, Localize & Verify ---
+# --- Q&A Ask, Localize & Verify ---
 class QaAskRequest(BaseModel):
     query_id: str | None = None
     request_context: RequestContext = Field(default_factory=RequestContext)
@@ -132,7 +129,7 @@ class QaAskRequest(BaseModel):
     event_description_en: str | None = None
     question_en: str | None = None
     temporal_relation: str = "during"
-    answer_type: str = "automatic"
+    suggested_answer_type: str = "auto"
     top_k: int = 100
     interaction_mode: str = "interactive"
 
@@ -142,14 +139,14 @@ class QaAnswerItem(BaseModel):
     frameId: int
     answer: str
     confidence: float
-    validation: Literal["VALID", "INVALID"] = "VALID"
+    validation: str = "VALID"
 
 
 class QaAskData(BaseModel):
     execution_id: str
     normalized_event: str
     normalized_question: str
-    detected_answer_type: str
+    detected_answer_type: str = "auto"
     total_candidates: int
     candidates: list[CandidateItem] = Field(default_factory=list)
     answers: list[QaAnswerItem] = Field(default_factory=list)
@@ -161,11 +158,7 @@ class QaLocalizeRequest(BaseModel):
     request_context: RequestContext = Field(default_factory=RequestContext)
     video_id: str
     anchor_actual_frame_id: int
-    event_description: str
-    question: str
     temporal_relation: str = "during"
-    before_seconds: float = 3.0
-    after_seconds: float = 3.0
 
 
 class QaLocalizeData(BaseModel):
@@ -175,8 +168,8 @@ class QaLocalizeData(BaseModel):
     evidence_interval: list[int] = Field(default_factory=list)
     representative_frames: list[int] = Field(default_factory=list)
     recommended_frame: int
-    evidence_summary: str = "Grounded evidence frame identified"
-    answer_hypotheses: list[str] = Field(default_factory=list)
+    evidence_summary: str
+    answer_hypotheses: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class QaVerifyRequest(BaseModel):
@@ -184,9 +177,6 @@ class QaVerifyRequest(BaseModel):
     request_context: RequestContext = Field(default_factory=RequestContext)
     video_id: str
     actual_frame_id: int
-    evidence_start_seconds: float = 0.0
-    evidence_end_seconds: float = 0.0
-    question: str
     canonical_answer: str
 
 
@@ -196,7 +186,7 @@ class QaVerifyData(BaseModel):
     supported: bool = True
     confidence: float = 1.0
     answer_evidence_consistency: bool = True
-    evidence_summary: str = "Verified consistent with video evidence"
+    evidence_summary: str
     verification_reasons: list[str] = Field(default_factory=list)
 
 
@@ -246,6 +236,34 @@ class TrakeVerifyData(BaseModel):
     evidence_consistency: bool = True
     confidence: float = 1.0
     violations: list[str] = Field(default_factory=list)
+
+
+# --- Evidence & Video Frame Detail DTOs ---
+class EvidenceDetailData(BaseModel):
+    video_id: str
+    actual_frame_id: int
+    timestamp: str
+    visual_feature_available: bool = True
+    ocr_text: str | None = None
+    asr_transcript: str | None = None
+    object_detections: list[dict[str, Any]] = Field(default_factory=list)
+    neighboring_keyframes: list[int] = Field(default_factory=list)
+
+
+class VideoFrameItem(BaseModel):
+    actual_frame_id: int
+    keyframe_order: int
+    timestamp: str
+    pts_time: float = 0.0
+
+
+class VideoFramesData(BaseModel):
+    video_id: str
+    fps: float = 25.0
+    duration_seconds: float = 0.0
+    total_frames: int = 0
+    keyframe_count: int = 0
+    frames: list[VideoFrameItem] = Field(default_factory=list)
 
 
 # --- Submission Validate & Export ---

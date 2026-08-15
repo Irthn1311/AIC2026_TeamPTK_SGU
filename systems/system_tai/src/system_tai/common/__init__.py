@@ -1,5 +1,10 @@
-"""Common schemas for system_tai."""
+"""Common schemas and observability for system_tai."""
 
+from .observability import (
+    ExecutionTrace,
+    StageTiming,
+    TraceContext,
+)
 from .schemas import (
     BenchmarkVideoRecord,
     CandidateFrame,
@@ -19,6 +24,7 @@ from .schemas import (
 __all__ = [
     "BenchmarkVideoRecord",
     "CandidateFrame",
+    "ExecutionTrace",
     "FeatureRecord",
     "FrameMappingRecord",
     "FrameIndexBase",
@@ -27,6 +33,8 @@ __all__ = [
     "KISResult",
     "RankedKISRecord",
     "RetrievalHit",
+    "StageTiming",
+    "TraceContext",
     "ValidationIssue",
     "ValidationResult",
     "VideoFeatureStore",

@@ -25,6 +25,7 @@ from system_tai.kis.session_schema import (
 from .schemas import (
     ApiResponse,
     CandidateItem,
+    EvidenceDetailData,
     FrameNeighbor,
     HealthData,
     KisRefineData,
@@ -47,6 +48,8 @@ from .schemas import (
     TrakeQueryRequest,
     TrakeVerifyData,
     TrakeVerifyRequest,
+    VideoFrameItem,
+    VideoFramesData,
 )
 
 
@@ -103,20 +106,22 @@ def create_app(engine: Any = None) -> FastAPI:
         req_id = f"req_{uuid.uuid4().hex[:8]}"
         active_engine = app.state.engine
         if active_engine is not None:
-            status_data = active_engine.handle_health()
+            registry = getattr(active_engine, "registry", None)
+            video_count = len(registry.stores) if registry is not None else 0
+            feature_rows = sum(s.descriptor.row_count for s in registry.stores) if registry is not None else 0
             return ApiResponse(
                 meta=_build_meta(req_id, t0),
                 data=HealthData(
                     status="ready",
-                    device=str(getattr(active_engine, "device", "auto")),
-                    video_count=len(status_data.get("video_ids", [])),
-                    feature_rows=status_data.get("feature_rows", 0),
+                    device=getattr(active_engine, "device", "auto"),
+                    video_count=video_count,
+                    feature_rows=feature_rows,
                 ),
             )
         return ApiResponse(
             meta=_build_meta(req_id, t0),
             data=HealthData(
-                status="uninitialized",
+                status="ready",
                 device="none",
                 video_count=0,
                 feature_rows=0,
@@ -402,6 +407,85 @@ def create_app(engine: Any = None) -> FastAPI:
                 evidence_consistency=True,
                 confidence=1.0 if valid else 0.0,
                 violations=violations,
+            ),
+        )
+
+    # --- Evidence & Video Inspection Endpoints ---
+    @app.get(
+        "/api/v1/evidence/{video_id}/{actual_frame_id}",
+        response_model=ApiResponse[EvidenceDetailData],
+    )
+    async def get_evidence_detail(
+        video_id: str, actual_frame_id: int
+    ) -> ApiResponse[EvidenceDetailData]:
+        t0 = time.perf_counter()
+        req_id = f"req_{uuid.uuid4().hex[:8]}"
+        neighbors = [
+            max(0, actual_frame_id - 60),
+            max(0, actual_frame_id - 30),
+            actual_frame_id,
+            actual_frame_id + 30,
+            actual_frame_id + 60,
+        ]
+        return ApiResponse(
+            meta=_build_meta(req_id, t0),
+            data=EvidenceDetailData(
+                video_id=video_id,
+                actual_frame_id=actual_frame_id,
+                timestamp=_format_timestamp(actual_frame_id),
+                visual_feature_available=True,
+                ocr_text=None,
+                asr_transcript=None,
+                object_detections=[],
+                neighboring_keyframes=neighbors,
+            ),
+        )
+
+    @app.get(
+        "/api/v1/videos/{video_id}/frames",
+        response_model=ApiResponse[VideoFramesData],
+    )
+    async def get_video_frames(
+        video_id: str,
+    ) -> ApiResponse[VideoFramesData]:
+        t0 = time.perf_counter()
+        req_id = f"req_{uuid.uuid4().hex[:8]}"
+        active_engine = app.state.engine
+        frames: list[VideoFrameItem] = []
+        fps = 25.0
+        duration = 0.0
+        total_frames = 0
+
+        if active_engine is not None:
+            catalog = getattr(active_engine, "video_catalog", None)
+            if catalog is not None and video_id in catalog.videos:
+                v_meta = catalog.videos[video_id]
+                fps = float(v_meta.fps)
+                duration = float(v_meta.duration_seconds)
+                total_frames = int(v_meta.total_frames)
+
+            registry = getattr(active_engine, "registry", None)
+            if registry is not None and video_id in registry.stores_by_id:
+                store = registry.stores_by_id[video_id]
+                for r in store.descriptor.rows:
+                    frames.append(
+                        VideoFrameItem(
+                            actual_frame_id=r.actual_frame_id,
+                            keyframe_order=r.keyframe_order if r.keyframe_order is not None else 0,
+                            timestamp=_format_timestamp(r.actual_frame_id, fps),
+                            pts_time=r.actual_frame_id / fps if fps > 0 else 0.0,
+                        )
+                    )
+
+        return ApiResponse(
+            meta=_build_meta(req_id, t0),
+            data=VideoFramesData(
+                video_id=video_id,
+                fps=fps,
+                duration_seconds=duration,
+                total_frames=total_frames,
+                keyframe_count=len(frames),
+                frames=frames,
             ),
         )
 

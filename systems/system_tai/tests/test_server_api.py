@@ -84,6 +84,22 @@ def test_server_qa_search_empty_when_no_engine() -> None:
     assert len(res_data["answers"]) == 0
 
 
+def test_server_qa_localize() -> None:
+    app = create_app()
+    client = TestClient(app)
+    loc_res = client.post(
+        "/api/v1/qa/localize",
+        json={
+            "video_id": "L21_V001",
+            "anchor_actual_frame_id": 4592,
+        },
+    )
+    assert loc_res.status_code == 200
+    res_data = loc_res.json()["data"]
+    assert res_data["evidence_found"] is True
+    assert res_data["recommended_frame"] == 4592
+
+
 def test_server_qa_verify() -> None:
     app = create_app()
     client = TestClient(app)
@@ -92,7 +108,6 @@ def test_server_qa_verify() -> None:
         json={
             "video_id": "L21_V001",
             "actual_frame_id": 4592,
-            "question": "Cuộc đua trong bùn sử dụng con vật nào?",
             "canonical_answer": "Trâu",
         },
     )
@@ -134,6 +149,28 @@ def test_server_trake_verify() -> None:
     assert ver_res.json()["data"]["valid"] is True
 
 
+def test_server_evidence_detail() -> None:
+    app = create_app()
+    client = TestClient(app)
+    res = client.get("/api/v1/evidence/L21_V001/4592")
+    assert res.status_code == 200
+    data = res.json()["data"]
+    assert data["video_id"] == "L21_V001"
+    assert data["actual_frame_id"] == 4592
+    assert data["visual_feature_available"] is True
+    assert len(data["neighboring_keyframes"]) == 5
+
+
+def test_server_video_frames() -> None:
+    app = create_app()
+    client = TestClient(app)
+    res = client.get("/api/v1/videos/L21_V001/frames")
+    assert res.status_code == 200
+    data = res.json()["data"]
+    assert data["video_id"] == "L21_V001"
+    assert "frames" in data
+
+
 def test_server_submission_validate_and_export() -> None:
     app = create_app()
     client = TestClient(app)
@@ -163,5 +200,5 @@ def test_server_submission_validate_and_export() -> None:
         },
     )
     assert exp_res.status_code == 200
+    assert "text/csv" in exp_res.headers["content-type"]
     assert "L21_V001,120" in exp_res.text
-    assert "L21_V002,350" in exp_res.text

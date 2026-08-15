@@ -1,0 +1,87 @@
+# ==============================================================================================================
+# AIC 2026 SYSTEM TAI - CANONICAL PRODUCTION & TOURNAMENT CONFIGURATION
+# Profile: system_tai_production_v1
+# Specification: Sheet 08 & Sheet 09 Accepted V1
+# ==============================================================================================================
+
+version: "1.0.0"
+profile_name: "system_tai_production_v1"
+environment: "production"
+
+# --- Hardware & Acceleration ---
+system:
+  device: "auto"                    # auto | cuda | cpu
+  allow_model_download: true
+  num_workers: 4
+  log_level: "INFO"
+  chunk_size: 50000                 # Vector retrieval matrix chunk size
+
+# --- Core Retrieval & Embedding ---
+retrieval:
+  clip_model: "ViT-B/32"
+  vector_index_backend: "faiss"     # faiss | numpy
+  faiss_index_type: "exact_ip"      # exact_ip | ivf_flat
+  bm25_k1: 1.5
+  bm25_b: 0.75
+  rrf_k: 60.0
+  fusion_weights:
+    vector: 1.0
+    bm25_text: 0.35
+    asr_speech: 0.25
+
+# --- Textual KIS (Known-Item Search) Workspace ---
+kis:
+  top_k_candidates: 100
+  coarse_to_fine_refinement: true
+  refine_top_n_anchors: 3
+  temporal_window_seconds: 2.0      # [-2s, +2s] around keyframe anchor
+  sampling_stride_frames: 1         # dense 1-frame stride during local refinement
+
+# --- Video Q&A Workspace (Visual + OCR + ASR + Visual Ontology) ---
+qa:
+  output_top_k: 100
+  language_policy: "en_only"        # en_only translation-augmented localization
+  video_conditioned_evidence: true
+  keyframe_evidence_bank: true
+  temporal_refinement:
+    enabled: true
+    max_video_candidates: 8         # Top-8 candidate videos for raw refinement
+    seeds_per_video: 1              # Best anchor per video
+    total_seed_cap: 8               # Fast execution cap
+    temporal_window_frames: 60      # [-30, +30] raw video window
+  evidence_providers:
+    visual_ontology:
+      enabled: true
+      ontology_path: "benchmarks/l21_150_diagnostic/qa_dev_visual_ontology.json"
+    ocr:
+      enabled: true
+      executable: "tesseract"
+      languages: ["eng", "vie"]
+      evidence_frame_budget: 8      # Fast OCR frame budget
+      page_segmentation_mode: 6
+    asr:
+      enabled: true
+      model_size: "base"
+      language: "vi"
+      sample_rate: 16000
+  ranking_policy: "decision_10_ranked_top100"  # Tier 1..7 RALC ranked constructor
+
+# --- TRAKE (Temporal Retrieval Across Key Events) Workspace ---
+trake:
+  search_strategy: "video_first"    # video_first restricted candidate search
+  candidate_video_cap: 32
+  anchors_per_video_event: 10
+  solver_algorithm: "bounded_beam"  # bounded_beam | dynamic_programming
+  beam_width: 100
+  output_top_k_chains: 100
+  enforce_strict_temporal_order: true  # Frame_1 < Frame_2 < ... < Frame_N
+  shared_raw_region_refinement: true
+
+# --- Submission & Validation Rules (BTC P0-A) ---
+submission:
+  schema_version: "1.0"
+  max_rows_per_query: 100
+  rank_policy: "strictly_contiguous_1_to_n"
+  uniqueness_policy: "strictly_no_duplicates"
+  coordinate_space: "frame_idx"     # convert actual_frame_id -> official frame_idx
+  export_format: "csv"              # UTF-8 without BOM
