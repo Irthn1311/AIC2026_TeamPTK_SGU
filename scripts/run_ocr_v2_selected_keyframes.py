@@ -110,7 +110,7 @@ def load_selected_keyframes(selected_root: Path, video_ids: list[str] | None, sk
     return rows
 
 
-def init_models(device: str, vietocr_config: Path) -> tuple[Any, Any | None, str]:
+def init_models(device: str, vietocr_config: Path, no_vietocr: bool = False) -> tuple[Any, Any | None, str]:
     import easyocr
     import torch
 
@@ -125,6 +125,10 @@ def init_models(device: str, vietocr_config: Path) -> tuple[Any, Any | None, str
     print(f"  [1/2] 🧠 Loading EasyOCR Detector (gpu={use_gpu}, device={target_device}) ...")
     detector = easyocr.Reader(["vi", "en"], gpu=use_gpu)
     print("  [1/2] ✅ EasyOCR Detector Ready!")
+
+    if no_vietocr:
+        print("  [2/2] ⚡ VietOCR disabled (--easyocr-only). Using High-Speed EasyOCR GPU Batch mode!")
+        return detector, None, "disabled_easyocr_fast_mode"
 
     print("  [2/2] 🧠 Loading VietOCR Recognizer ...")
     recognizer = None
@@ -289,6 +293,7 @@ def main() -> None:
     parser.add_argument("--shard-idx", type=int, default=0, help="Zero-indexed shard ID for this process.")
     parser.add_argument("--no-aggregate", action="store_true", help="Write per-video JSONL only. Useful for GPU sharded runs.")
     parser.add_argument("--aggregate-only", action="store_true", help="Merge existing per-video JSONL files without loading OCR models.")
+    parser.add_argument("--easyocr-only", "--no-vietocr", action="store_true", help="Skip VietOCR 1-by-1 crops and run EasyOCR in high-speed GPU batch mode.")
     parser.add_argument("--resume", action="store_true", default=True, help="Skip videos that already have non-empty per-video JSONL.")
     parser.add_argument("--no-resume", action="store_false", dest="resume", help="Force recomputing existing per-video JSONL.")
     args = parser.parse_args()
@@ -335,7 +340,7 @@ def main() -> None:
         video_groups = {k: v for k, v in video_groups.items() if k in shard_vids}
         print(f"[GPU Shard {args.shard_idx + 1}/{args.num_shards}] Processing {len(video_groups)} assigned videos.")
 
-    detector, recognizer, recognizer_status = init_models(args.device, resolve_path(args.vietocr_config))
+    detector, recognizer, recognizer_status = init_models(args.device, resolve_path(args.vietocr_config), no_vietocr=args.easyocr_only)
 
     rows: list[dict[str, Any]] = []
     errors = 0
