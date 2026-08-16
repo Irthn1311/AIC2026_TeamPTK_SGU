@@ -14,6 +14,13 @@ VIETOCR_WEIGHTS_URLS = [
     "https://github.com/pjh2512/vietocr/releases/download/v0.1/vgg_transformer.pth",
     "https://vocr.vn/data/vietocr/vgg_transformer.pth",
 ]
+OPEN_CLIP_REPO_ID = "timm/vit_base_patch32_clip_224.openai"
+OPEN_CLIP_FILENAME = "open_clip_model.safetensors"
+DEFAULT_FASTER_WHISPER_MODEL = "large-v3-turbo"
+
+
+def _resolve(path: str | Path) -> Path:
+    return Path(path).expanduser().resolve(strict=False)
 
 
 def _download_with_progress(url: str, destination: Path) -> Path:
