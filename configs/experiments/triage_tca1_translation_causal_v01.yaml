@@ -1,0 +1,37 @@
+experiment: TRIAGE_TCA1_TRANSLATION_CAUSAL
+version: "0.1"
+scope: DIAGNOSTIC_ONLY
+benchmark: DEV_CROSS_60
+selected_variant: G1_COVERAGE_COARSE
+arms:
+  A0: CANONICAL_VI_OPUS_VERIFIED_CLIP_EXACT_STAGE1_T3_G1
+  A1: EXACT_FROZEN_FAIL_REFERENCE_EN_VERIFIED_CLIP_EXACT_STAGE1_T3_G1
+frozen_review:
+  review_rows: 100
+  verdict_counts:
+    PASS: 49
+    CONDITIONAL: 34
+    FAIL: 17
+  fail_override_count: 17
+negative_controls:
+  clip_input_byte_identical: true
+  embedding_rtol: 0.0
+  embedding_atol: 1.0e-6
+  score_vector_rtol: 0.0
+  score_vector_atol: 1.0e-6
+causal_classification:
+  rule: >-
+    CLEAR_POSITIVE_CAUSAL_SIGNAL only when FinalScore improves, at least two of
+    FAIL target-global rank, FAIL T3 hits, and FAIL-query official score improve,
+    and no paired diagnostic is negative. NO_MEANINGFUL_CAUSAL_SIGNAL only when
+    FinalScore and all three paired diagnostics are unchanged. Otherwise emit
+    LIMITED_OR_MIXED_CAUSAL_SIGNAL. Never claim translation is the sole root cause.
+disabled:
+  m1: true
+  m2: true
+  m3: true
+  event_graph: true
+  vlm: true
+  agent: true
+  parameter_sweep: true
+production_policy_changed: false
