@@ -10,21 +10,18 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CACHE_ROOT = PROJECT_ROOT / ".model_cache"
 DEFAULT_OCR_CACHE_ROOT = PROJECT_ROOT / ".ocr_cache"
 YOLOE_RELEASE_BASE_URL = "https://github.com/ultralytics/assets/releases/download/v8.4.0"
-VIETOCR_WEIGHTS_URL = "https://vocr.vn/data/vietocr/vgg_transformer.pth"
-OPEN_CLIP_REPO_ID = "timm/vit_base_patch32_clip_224.openai"
-OPEN_CLIP_FILENAME = "open_clip_model.safetensors"
-DEFAULT_FASTER_WHISPER_MODEL = "large-v3-turbo"
-
-
-def _resolve(path: str | Path) -> Path:
-    return Path(path).expanduser().resolve(strict=False)
+VIETOCR_WEIGHTS_URLS = [
+    "https://github.com/pjh2512/vietocr/releases/download/v0.1/vgg_transformer.pth",
+    "https://vocr.vn/data/vietocr/vgg_transformer.pth",
+]
 
 
 def _download_with_progress(url: str, destination: Path) -> Path:
     destination = destination.expanduser().resolve(strict=False)
     destination.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = destination.with_suffix(destination.suffix + ".tmp")
-    with urllib.request.urlopen(url) as response, tmp_path.open("wb") as out_file:
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=15) as response, tmp_path.open("wb") as out_file:
         total = int(response.headers.get("Content-Length") or 0)
         downloaded = 0
         started = time.time()
@@ -54,7 +51,25 @@ def ensure_vietocr_weights(destination: str | Path | None = None) -> Path:
     target = _resolve(destination or (DEFAULT_OCR_CACHE_ROOT / "temp" / "vgg_transformer.pth"))
     if target.is_file() and target.stat().st_size > 0:
         return target
-    return _download_with_progress(VIETOCR_WEIGHTS_URL, target)
+
+    # 1. Look for pre-downloaded weights in /kaggle/input if available
+    for p in Path("/kaggle/input").rglob("vgg_transformer.pth") if Path("/kaggle").exists() else []:
+        if p.is_file() and p.stat().st_size > 10_000_000:
+            print(f"✅ Found VietOCR weights in Kaggle input: {p}")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            import shutil
+            shutil.copy2(p, target)
+            return target
+
+    # 2. Try candidate URLs with timeout and progress
+    for url in VIETOCR_WEIGHTS_URLS:
+        try:
+            print(f"Downloading VietOCR weights from: {url}")
+            return _download_with_progress(url, target)
+        except Exception as exc:
+            print(f"⚠️ Failed download from {url}: {exc}")
+
+    raise RuntimeError("Failed to download VietOCR weights from all candidate URLs.")
 
 
 def ensure_yoloe_weights(model_name: str, cache_root: str | Path | None = None) -> Path:
