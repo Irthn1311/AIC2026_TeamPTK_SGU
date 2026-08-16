@@ -1,13 +1,15 @@
 # ==============================================================================================================
 # QA-R2H1 KAGGLE RUNNER & STRICT EVALUATOR (A/B RUNNER)
-# Control Arm   : QA-R2G1 Champion (total_seed_cap=16, count_far_alt_micro=False)
-# Treatment Arm : QA-R2H1 (total_seed_cap=16, count_far_alt_micro=True)
+# Control Arm   : QA-R2G1 Champion (total_seed_cap=16, count_far_alt_micro=OFF)
+# Treatment Arm : QA-R2H1 (total_seed_cap=16, count_far_alt_micro=ON)
 # ==============================================================================================================
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -26,216 +28,281 @@ REPO_DIR = Path("/kaggle/working/AIC2026_TeamPTK_SGU")
 if not REPO_DIR.exists():
     REPO_DIR = Path(".")
 
-BENCHMARK_PATH = REPO_DIR / "systems" / "system_tai" / "benchmarks" / "l21_150_diagnostic" / "benchmark.json"
-DEV_EN_SIDECAR_PATH = REPO_DIR / "systems" / "system_tai" / "benchmarks" / "l21_150_diagnostic" / "qa_dev_translations_en.json"
-VISUAL_ONTOLOGY_PATH = REPO_DIR / "systems" / "system_tai" / "benchmarks" / "l21_150_diagnostic" / "qa_dev_visual_ontology.json"
+SYSTEM_DIR = REPO_DIR / "systems" / "system_tai"
+BENCHMARK_PATH = SYSTEM_DIR / "benchmarks" / "l21_150_diagnostic" / "benchmark.json"
+DEV_EN_SIDECAR_PATH = SYSTEM_DIR / "benchmarks" / "l21_150_diagnostic" / "qa_dev_translations_en.json"
+ONTOLOGY_PATH = SYSTEM_DIR / "benchmarks" / "l21_150_diagnostic" / "qa_dev_visual_ontology.json"
+MANIFEST_CACHE_PATH = Path("/kaggle/working/manifest_cache.json")
+RUNNER_SCRIPT = SYSTEM_DIR / "scripts" / "l21_150_run_baseline.py"
 
-CONTROL_OUT_DIR = Path("/kaggle/working/output/qa_r2h1_control_cap16")
-TREATMENT_OUT_DIR = Path("/kaggle/working/output/qa_r2h1_treatment_count_far_alt")
+CONTROL_DIR = Path("/kaggle/working/output/qa_r2h1_control_cap16")
+TREATMENT_DIR = Path("/kaggle/working/output/qa_r2h1_treatment_count_far_alt")
 
-CONTROL_OUT_DIR.mkdir(parents=True, exist_ok=True)
-TREATMENT_OUT_DIR.mkdir(parents=True, exist_ok=True)
-
-# --------------------------------------------------------------------------------------------------------------
-# STEP 1: BASE COMMAND DEFINITION
-# --------------------------------------------------------------------------------------------------------------
-BASE_CMD = [
-    sys.executable,
-    str(REPO_DIR / "systems" / "system_tai" / "scripts" / "l21_150_run_baseline.py"),
-    "--split", "dev",
-    "--task", "qa",
-    "--benchmark", str(BENCHMARK_PATH),
-    "--qa-video-conditioned-evidence",
-    "--qa-grounding-candidate-ordering", "fused_temporal_first",
-    "--qa-localization-language-policy", "en_only",
-    "--qa-dev-en-sidecar", str(DEV_EN_SIDECAR_PATH),
-    "--qa-keyframe-evidence-bank",
-    "--qa-keyframe-evidence-video-cap", "8",
-    "--qa-keyframe-evidence-anchors-per-video", "3",
-    "--qa-multi-seed-temporal-refinement",
-    "--qa-temporal-seeds-per-video", "2",
-    "--qa-temporal-refinement-video-cap", "8",
-    "--qa-temporal-refinement-total-seed-cap", "16",
-    "--qa-secondary-temporal-micro-budget",
-    "--qa-primary-11-12-micro-coverage",
-    "--qa-tier3-primary-first",
-    "--qa-tier3-negative-offset-first",
-    "--qa-unsupported-provider-fallback",
-    "--qa-visual-ontology", str(VISUAL_ONTOLOGY_PATH),
-]
-
-# --------------------------------------------------------------------------------------------------------------
-# STEP 2: EXECUTE CONTROL ARM
-# --------------------------------------------------------------------------------------------------------------
+# ==============================================================================================================
+# STEP 1: VALIDATING FROZEN BENCHMARK & SIDECAR ARTIFACTS SHA256
+# ==============================================================================================================
 print("\n" + "=" * 110)
-print("RUNNING CONTROL ARM: QA-R2G1 (total_seed_cap=16, count_far_alt_micro=OFF)")
-print("=" * 110)
-t0_ctl = time.time()
-ctl_cmd = list(BASE_CMD) + ["--output-dir", str(CONTROL_OUT_DIR)]
-subprocess.run(ctl_cmd, check=True)
-t_ctl = time.time() - t0_ctl
-print(f"Control Arm finished in {t_ctl:.2f}s.")
-
-# --------------------------------------------------------------------------------------------------------------
-# STEP 3: EXECUTE TREATMENT ARM
-# --------------------------------------------------------------------------------------------------------------
-print("\n" + "=" * 110)
-print("RUNNING TREATMENT ARM: QA-R2H1 (total_seed_cap=16, count_far_alt_micro=ON)")
-print("=" * 110)
-t0_trt = time.time()
-trt_cmd = list(BASE_CMD) + ["--qa-count-far-alt-micro", "--output-dir", str(TREATMENT_OUT_DIR)]
-subprocess.run(trt_cmd, check=True)
-t_trt = time.time() - t0_trt
-print(f"Treatment Arm finished in {t_trt:.2f}s.")
-
-# --------------------------------------------------------------------------------------------------------------
-# STEP 4: STRICT EVALUATION & COMPARATIVE AUDIT
-# --------------------------------------------------------------------------------------------------------------
-print("\n" + "=" * 110)
-print("STRICT EVALUATION & COMPARATIVE AUDIT (CONTROL vs TREATMENT)")
+print("STEP 1: VALIDATING FROZEN BENCHMARK & SIDECAR ARTIFACTS SHA256")
 print("=" * 110)
 
-def normalize_text(text: str) -> str:
-    text = unicodedata.normalize("NFKD", str(text)).casefold()
-    text = "".join(ch for ch in text if not unicodedata.combining(ch))
-    text = "".join(ch if ch.isalnum() else " " for ch in text)
-    return " ".join(text.split())
+EXPECTED_SHA = {
+    "benchmark.json": "02f0bfc27053a9e532abb8c2cba9ead8f9923d7600993145c57b315f5e55ad1a",
+    "qa_dev_translations_en.json": "45929059506de93aac574a6d2d5581691af81ae12405c18d57289485948c1f4d",
+    "qa_dev_visual_ontology.json": "fc19f4ca1ce2e4960463ba054be2f9c351cf874867eb65a2ef9ce2252d644ddc",
+}
+
+for p, name in [
+    (BENCHMARK_PATH, "benchmark.json"),
+    (DEV_EN_SIDECAR_PATH, "qa_dev_translations_en.json"),
+    (ONTOLOGY_PATH, "qa_dev_visual_ontology.json"),
+]:
+    if not p.exists():
+        raise FileNotFoundError(f"Missing required artifact: {p}")
+    actual_sha = hashlib.sha256(p.read_bytes()).hexdigest()
+    expected = EXPECTED_SHA[name]
+    if actual_sha != expected:
+        raise ValueError(f"SHA256 mismatch for {name}:\n  expected: {expected}\n  actual:   {actual_sha}")
+    print(f"  [PASS] {name:<30} SHA256: {actual_sha[:16]}...")
 
 bm_data = json.loads(BENCHMARK_PATH.read_text(encoding="utf-8"))
-dev_queries = [
+qa_dev_queries = [
     q for q in bm_data.get("queries", [])
     if str(q.get("split", "")).upper() == "DEV" and str(q.get("task_type", q.get("task", ""))).lower() == "qa"
 ]
-qa_dev_map = {q["query_id"]: q for q in dev_queries}
+qa_dev_map = {q["query_id"]: q for q in qa_dev_queries}
+assert len(qa_dev_queries) == 38, f"Expected 38 QA DEV queries, got {len(qa_dev_queries)}"
 
-def evaluate_predictions(preds_path: Path):
-    if not preds_path.exists():
-        return {}
-    preds_by_query = {}
-    with open(preds_path, "r", encoding="utf-8") as f:
-        for line in f:
-            if not line.strip(): continue
-            row = json.loads(line)
-            preds_by_query.setdefault(row["query_id"], []).append(row)
+def normalize_text(t: str) -> str:
+    if not t:
+        return ""
+    t = unicodedata.normalize("NFKC", str(t)).casefold()
+    return "".join(c for c in t if c.isalnum() or c.isspace()).strip()
 
-    eval_res = {}
-    for qid, qdata in qa_dev_map.items():
-        q_preds = preds_by_query.get(qid, [])
-        t_vid = qdata.get("video_id")
-        gt_s, gt_e = map(int, qdata.get("proposed_interval", [0, 0]))
-        gold_ans = set(normalize_text(a) for a in qdata.get("accepted_answers", []))
-        if qdata.get("answer"):
-            gold_ans.add(normalize_text(qdata["answer"]))
+# ==============================================================================================================
+# STEP 2: EXECUTION FUNCTION FOR EXPERIMENT ARMS
+# ==============================================================================================================
+def run_arm(count_far_alt_micro: bool, out_dir: Path) -> float:
+    if out_dir.exists():
+        shutil.rmtree(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-        hit_rank = None
-        hit_frame = None
-        hit_ans = None
-        vid_match = False
-        ans_match = False
+    cmd = [
+        sys.executable,
+        str(RUNNER_SCRIPT),
+        "--benchmark", str(BENCHMARK_PATH),
+        "--manifest-cache", str(MANIFEST_CACHE_PATH),
+        "--input-root", "/kaggle/input",
+        "--split", "dev",
+        "--task", "qa",
+        "--device", "auto",
+        "--allow-model-download",
+        "--output-dir", str(out_dir),
+        "--top-k", "100",
+        "--qa-video-conditioned-evidence",
+        "--qa-keyframe-evidence-bank",
+        "--qa-localization-language-policy", "en_only",
+        "--qa-dev-en-sidecar", str(DEV_EN_SIDECAR_PATH),
+        "--qa-multi-seed-temporal-refinement",
+        "--qa-temporal-seeds-per-video", "2",
+        "--qa-temporal-refinement-video-cap", "8",
+        "--qa-temporal-refinement-total-seed-cap", "16",
+        "--qa-secondary-temporal-micro-budget",
+        "--qa-primary-11-12-micro-coverage",
+        "--qa-tier3-primary-first",
+        "--qa-tier3-negative-offset-first",
+        "--qa-visual-ontology", str(ONTOLOGY_PATH),
+        "--qa-ocr-evidence",
+        "--qa-ocr-languages", "eng+vie",
+        "--qa-ocr-evidence-frame-budget", "8",
+        "--qa-unsupported-provider-fallback",
+    ]
+    if count_far_alt_micro:
+        cmd.append("--qa-count-far-alt-micro")
 
-        for p in q_preds:
-            r = p["rank"]
-            v = p["video_id"]
-            f_id = p["frame_id"]
-            ans_norm = normalize_text(p.get("answer", ""))
+    desc = "QA-R2H1 Treatment (count_far_alt_micro=ON)" if count_far_alt_micro else "QA-R2G1 Control (count_far_alt_micro=OFF)"
+    print(f"\nExecuting {desc} -> {out_dir.name}...")
+    t0 = time.time()
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    t_elapsed = time.time() - t0
+    if res.returncode != 0:
+        print("[ERROR] Runner stderr:")
+        print(res.stderr)
+        raise RuntimeError(f"Runner failed with exit code {res.returncode}")
+    print(f"Finished in {t_elapsed:.2f}s.")
+    return t_elapsed
 
-            if v == t_vid:
-                vid_match = True
-            if ans_norm in gold_ans:
-                ans_match = True
+# ==============================================================================================================
+# STEP 3: RUN CONTROL AND TREATMENT ARMS
+# ==============================================================================================================
+print("\n" + "=" * 110)
+print("RUNNING EXPERIMENT ARMS (A/B)")
+print("=" * 110)
 
-            if hit_rank is None and v == t_vid and ans_norm in gold_ans and (gt_s <= f_id <= gt_e):
-                hit_rank = r
-                hit_frame = f_id
-                hit_ans = p.get("answer")
+t_ctrl = run_arm(count_far_alt_micro=False, out_dir=CONTROL_DIR)
+t_treat = run_arm(count_far_alt_micro=True, out_dir=TREATMENT_DIR)
 
-        eval_res[qid] = {
-            "query_id": qid,
-            "has_preds": len(q_preds) > 0,
-            "pred_count": len(q_preds),
-            "video_match": vid_match,
-            "answer_match": ans_match,
-            "hit_rank": hit_rank,
-            "hit_frame": hit_frame,
-            "hit_answer": hit_ans,
-            "predictions": q_preds,
-        }
-    return eval_res
+# ==============================================================================================================
+# STEP 4: STRICT BENCHMARK EVALUATOR
+# ==============================================================================================================
+def evaluate_run(out_dir: Path) -> dict:
+    pred_files = list(out_dir.glob("**/qa_predictions.jsonl"))
+    ev_files = list(out_dir.glob("**/qa_evidence.json"))
+    assert len(pred_files) == 38, f"Expected 38 prediction files in {out_dir}, got {len(pred_files)}"
+    assert len(ev_files) == 38, f"Expected 38 evidence files in {out_dir}, got {len(ev_files)}"
 
-ctl_preds_path = CONTROL_OUT_DIR / "qa_predictions.jsonl"
-trt_preds_path = TREATMENT_OUT_DIR / "qa_predictions.jsonl"
+    preds_by_qid: dict[str, list[dict]] = {}
+    for pf in pred_files:
+        for line in pf.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                row = json.loads(line)
+                preds_by_qid.setdefault(row["query_id"], []).append(row)
+    for qid in preds_by_qid:
+        preds_by_qid[qid].sort(key=lambda x: int(x["rank"]))
 
-ctl_eval = evaluate_predictions(ctl_preds_path)
-trt_eval = evaluate_predictions(trt_preds_path)
+    ev_by_qid: dict[str, dict] = {}
+    for ef in ev_files:
+        d = json.loads(ef.read_text(encoding="utf-8"))
+        ev_by_qid[d["query_id"]] = d
 
-def calc_score(eval_res):
-    n_queries = len(qa_dev_map)
-    weights = {1: 1.0, 5: 1.0, 20: 1.0, 50: 1.0, 100: 1.0}
-    r_counts = {1: 0, 5: 0, 20: 0, 50: 0, 100: 0}
-    for qid, res in eval_res.items():
-        hr = res["hit_rank"]
-        if hr is not None:
-            for k in [1, 5, 20, 50, 100]:
-                if hr <= k:
-                    r_counts[k] += 1
-    weighted_sum = sum(r_counts[k] * weights[k] for k in weights)
-    total_possible = n_queries * sum(weights.values())
-    score = weighted_sum / total_possible
-    return score, r_counts
+    r1_hits, r5_hits, r20_hits, r50_hits, r100_hits = 0, 0, 0, 0, 0
+    video_hits, answer_hits, full_hits, pred_producing_queries = 0, 0, 0, 0
+    full_hit_details: dict[str, dict] = {}
 
-ctl_score, ctl_rc = calc_score(ctl_eval)
-trt_score, trt_rc = calc_score(trt_eval)
+    for q in qa_dev_queries:
+        qid = q["query_id"]
+        target_vid = q["video_id"]
+        s, e = map(int, q.get("proposed_interval", [0, 0]))
+        raw_answers = q.get("accepted_answers") or [q.get("answer", "")]
+        gold_answers = [normalize_text(a) for a in raw_answers if a]
 
-print(f"\n{'Metric':<25} | {'Control (R2G1)':<20} | {'Treatment (R2H1)':<20} | {'Delta'}")
+        preds = preds_by_qid.get(qid, [])
+        if len(preds) > 0:
+            pred_producing_queries += 1
+
+        vid_hit = any(p.get("video_id") == target_vid for p in preds)
+        ans_hit = any(p.get("video_id") == target_vid and normalize_text(p.get("answer", "")) in gold_answers for p in preds)
+
+        best_rank = None
+        best_frame = None
+        best_ans = None
+        for p in preds:
+            pf = int(p.get("frame_id", -1))
+            if p.get("video_id") == target_vid and s <= pf <= e and normalize_text(p.get("answer", "")) in gold_answers:
+                best_rank = int(p["rank"])
+                best_frame = pf
+                best_ans = p.get("answer")
+                break
+
+        if vid_hit: video_hits += 1
+        if ans_hit: answer_hits += 1
+        if best_rank is not None:
+            full_hits += 1
+            full_hit_details[qid] = {"rank": best_rank, "frame_id": best_frame, "answer": best_ans}
+            if best_rank <= 1: r1_hits += 1
+            if best_rank <= 5: r5_hits += 1
+            if best_rank <= 20: r20_hits += 1
+            if best_rank <= 50: r50_hits += 1
+            if best_rank <= 100: r100_hits += 1
+
+    avg_r1 = r1_hits / 38.0
+    avg_r5 = r5_hits / 38.0
+    avg_r20 = r20_hits / 38.0
+    avg_r50 = r50_hits / 38.0
+    avg_r100 = r100_hits / 38.0
+    score = (avg_r1 + avg_r5 + avg_r20 + avg_r50 + avg_r100) / 5.0
+
+    return {
+        "pred_producing_queries": pred_producing_queries,
+        "video_hits": video_hits,
+        "answer_hits": answer_hits,
+        "full_hits": full_hits,
+        "r1_hits": r1_hits,
+        "r5_hits": r5_hits,
+        "r20_hits": r20_hits,
+        "r50_hits": r50_hits,
+        "r100_hits": r100_hits,
+        "avg_r1": avg_r1,
+        "avg_r5": avg_r5,
+        "avg_r20": avg_r20,
+        "avg_r50": avg_r50,
+        "avg_r100": avg_r100,
+        "score": score,
+        "full_hit_details": full_hit_details,
+        "preds_by_qid": preds_by_qid,
+        "ev_by_qid": ev_by_qid,
+    }
+
+print("\nEvaluating Control Arm...")
+ctrl_eval = evaluate_run(CONTROL_DIR)
+print("Evaluating Treatment Arm...")
+treat_eval = evaluate_run(TREATMENT_DIR)
+
+# ==============================================================================================================
+# STEP 5: COMPARATIVE AUDIT & SCORE SUMMARY
+# ==============================================================================================================
+print("\n" + "=" * 110)
+print("QA-R2H1 COMPARATIVE SUMMARY TABLE (CONTROL vs TREATMENT)")
+print("=" * 110)
+print(f"{'Metric':<25} | {'Control (R2G1)':<20} | {'Treatment (R2H1)':<20} | {'Delta'}")
 print("-" * 80)
-print(f"{'Execution Time':<25} | {t_ctl:.2f}s{'':<15} | {t_trt:.2f}s{'':<15} | {t_trt - t_ctl:+.2f}s")
-print(f"{'Predictions-Producing':<25} | {sum(1 for r in ctl_eval.values() if r['has_preds'])}/38{'':<16} | {sum(1 for r in trt_eval.values() if r['has_preds'])}/38{'':<16} | 0")
-print(f"{'Video Matches':<25} | {sum(1 for r in ctl_eval.values() if r['video_match'])}/38{'':<16} | {sum(1 for r in trt_eval.values() if r['video_match'])}/38{'':<16} | {sum(1 for r in trt_eval.values() if r['video_match']) - sum(1 for r in ctl_eval.values() if r['video_match']):+d}")
-print(f"{'Answer Matches':<25} | {sum(1 for r in ctl_eval.values() if r['answer_match'])}/38{'':<16} | {sum(1 for r in trt_eval.values() if r['answer_match'])}/38{'':<16} | {sum(1 for r in trt_eval.values() if r['answer_match']) - sum(1 for r in ctl_eval.values() if r['answer_match']):+d}")
-print(f"{'Full Hits (R<=100)':<25} | {ctl_rc[100]}/38{'':<16} | {trt_rc[100]}/38{'':<16} | {trt_rc[100] - ctl_rc[100]:+d}")
-print(f"{'R@20':<25} | {ctl_rc[20]}/38{'':<16} | {trt_rc[20]}/38{'':<16} | {trt_rc[20] - ctl_rc[20]:+d}")
-print(f"{'R@50':<25} | {ctl_rc[50]}/38{'':<16} | {trt_rc[50]}/38{'':<16} | {trt_rc[50] - ctl_rc[50]:+d}")
-print(f"{'R@100':<25} | {ctl_rc[100]}/38{'':<16} | {trt_rc[100]}/38{'':<16} | {trt_rc[100] - ctl_rc[100]:+d}")
-print(f"{'Strict Score':<25} | {ctl_score:.6f} ({int(ctl_score*190)}/190){'':<4} | {trt_score:.6f} ({int(trt_score*190)}/190){'':<4} | {trt_score - ctl_score:+.6f}")
+print(f"{'Execution Time':<25} | {t_ctrl:.2f}s{'':<15} | {t_treat:.2f}s{'':<15} | {t_treat - t_ctrl:+.2f}s")
+print(f"{'Predictions-Producing':<25} | {ctrl_eval['pred_producing_queries']}/38{'':<16} | {treat_eval['pred_producing_queries']}/38{'':<16} | 0")
+print(f"{'Video Matches':<25} | {ctrl_eval['video_hits']}/38{'':<16} | {treat_eval['video_hits']}/38{'':<16} | {treat_eval['video_hits'] - ctrl_eval['video_hits']:+d}")
+print(f"{'Answer Matches':<25} | {ctrl_eval['answer_hits']}/38{'':<16} | {treat_eval['answer_hits']}/38{'':<16} | {treat_eval['answer_hits'] - ctrl_eval['answer_hits']:+d}")
+print(f"{'Full Hits (R<=100)':<25} | {ctrl_eval['full_hits']}/38{'':<16} | {treat_eval['full_hits']}/38{'':<16} | {treat_eval['full_hits'] - ctrl_eval['full_hits']:+d}")
+print(f"{'R@20':<25} | {ctrl_eval['r20_hits']}/38{'':<16} | {treat_eval['r20_hits']}/38{'':<16} | {treat_eval['r20_hits'] - ctrl_eval['r20_hits']:+d}")
+print(f"{'R@50':<25} | {ctrl_eval['r50_hits']}/38{'':<16} | {treat_eval['r50_hits']}/38{'':<16} | {treat_eval['r50_hits'] - ctrl_eval['r50_hits']:+d}")
+print(f"{'R@100':<25} | {ctrl_eval['r100_hits']}/38{'':<16} | {treat_eval['r100_hits']}/38{'':<16} | {treat_eval['r100_hits'] - ctrl_eval['r100_hits']:+d}")
+print(f"{'Strict Score':<25} | {ctrl_eval['score']:.6f} ({int(ctrl_eval['score']*190)}/190){'':<4} | {treat_eval['score']:.6f} ({int(treat_eval['score']*190)}/190){'':<4} | {treat_eval['score'] - ctrl_eval['score']:+.6f}")
 
+# ==============================================================================================================
+# STEP 6: PROTECTED HITS REGRESSION AUDIT
+# ==============================================================================================================
 print("\n" + "=" * 110)
 print("PROTECTED HITS REGRESSION AUDIT (ALL 6 PREVIOUS STRICT HITS)")
 print("=" * 110)
 PROTECTED_HITS = ["QA-13", "QA-08", "QA-27", "QA-46", "QA-10", "QA-45"]
-print(f"{'Query ID':<10} | {'Control Hit Rank':<18} | {'Treatment Hit Rank':<20} | {'Status'}")
-print("-" * 75)
+print(f"{'Query ID':<10} | {'Control Hit Rank':<22} | {'Treatment Hit Rank':<22} | {'Status'}")
+print("-" * 80)
 for qid in PROTECTED_HITS:
-    c_hr = ctl_eval.get(qid, {}).get("hit_rank")
-    t_hr = trt_eval.get(qid, {}).get("hit_rank")
-    c_f = ctl_eval.get(qid, {}).get("hit_frame")
-    t_f = trt_eval.get(qid, {}).get("hit_frame")
-    status = "PROTECTED ✅" if t_hr is not None and t_hr <= 100 and (c_hr is None or t_hr <= c_hr or t_hr <= 100) else "REGRESSION ❌"
-    print(f"{qid:<10} | Rank {str(c_hr):<5} (Frame {str(c_f)}) | Rank {str(t_hr):<5} (Frame {str(t_f)})  | {status}")
+    c_info = ctrl_eval["full_hit_details"].get(qid)
+    t_info = treat_eval["full_hit_details"].get(qid)
+    c_str = f"Rank {c_info['rank']} (f={c_info['frame_id']})" if c_info else "NONE"
+    t_str = f"Rank {t_info['rank']} (f={t_info['frame_id']})" if t_info else "NONE"
+    status = "PROTECTED ✅" if (t_info and t_info["rank"] <= 100) else "REGRESSION ❌"
+    print(f"{qid:<10} | {c_str:<22} | {t_str:<22} | {status}")
 
+# ==============================================================================================================
+# STEP 7: TARGET QUERY AUDIT & CAUSAL TRACE: QA-20
+# ==============================================================================================================
 print("\n" + "=" * 110)
-print("TARGET QUERY AUDIT & CAUSAL TRACE: QA-20")
+print("TARGET QUERY AUDIT & CAUSAL TRACE: QA-20 (L21_V007)")
 print("=" * 110)
-q20_c = ctl_eval.get("QA-20", {})
-q20_t = trt_eval.get("QA-20", {})
-print(f"Control Arm   -> Hit Rank: {q20_c.get('hit_rank')} | Hit Frame: {q20_c.get('hit_frame')} | Hit Answer: {q20_c.get('hit_answer')}")
-print(f"Treatment Arm -> Hit Rank: {q20_t.get('hit_rank')} | Hit Frame: {q20_t.get('hit_frame')} | Hit Answer: {q20_t.get('hit_answer')}")
 
-q20_preds = q20_t.get("predictions", [])
+q20_c = ctrl_eval["full_hit_details"].get("QA-20")
+q20_t = treat_eval["full_hit_details"].get("QA-20")
+print(f"Control Arm   -> Hit: {q20_c}")
+print(f"Treatment Arm -> Hit: {q20_t}")
+
+q20_preds = treat_eval["preds_by_qid"].get("QA-20", [])
 print("\n--- QA-20 Treatment Final Predictions (Ranks 75..100) ---")
 for p in q20_preds:
-    if p["rank"] >= 75:
-        is_hit = (p["video_id"] == "L21_V007" and 14610 <= p["frame_id"] <= 14670 and normalize_text(p["answer"]) == "2")
+    if int(p["rank"]) >= 75:
+        is_hit = (p["video_id"] == "L21_V007" and 14610 <= int(p["frame_id"]) <= 14670 and normalize_text(p["answer"]) == "2")
         hit_mark = " <--- STRICT FULL HIT! 🎯" if is_hit else ""
         print(f"  Rank {p['rank']:<3}: video={p['video_id']}, frame={p['frame_id']}, answer='{p.get('answer')}'{hit_mark}")
 
+# ==============================================================================================================
+# STEP 8: ALL 38 DEV QUERIES FULL-HIT AUDIT & RANK SHIFTS
+# ==============================================================================================================
 print("\n" + "=" * 110)
 print("ALL 38 DEV QUERIES FULL-HIT AUDIT & RANK SHIFTS")
 print("=" * 110)
 print(f"{'Query ID':<10} | {'Control Hit Rank':<18} | {'Treatment Hit Rank':<20} | {'Delta':<10} | {'Status'}")
 print("-" * 75)
 for qid in sorted(qa_dev_map.keys()):
-    c_hr = ctl_eval.get(qid, {}).get("hit_rank")
-    t_hr = trt_eval.get(qid, {}).get("hit_rank")
+    c_hr = ctrl_eval["full_hit_details"].get(qid, {}).get("rank")
+    t_hr = treat_eval["full_hit_details"].get(qid, {}).get("rank")
     if c_hr is not None or t_hr is not None:
         delta_str = f"{t_hr - c_hr:+d}" if (c_hr is not None and t_hr is not None) else ("+NEW" if c_hr is None else "-LOST")
         if c_hr is None and t_hr is not None: status = "GAINED HIT 🎯"
