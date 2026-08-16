@@ -26,6 +26,7 @@ class QABaselineEngine:
         primary_11_12_micro_coverage: bool = False,
         tier3_primary_first: bool = False,
         tier3_negative_offset_first: bool = False,
+        count_far_alt_micro: bool = False,
     ) -> None:
         self.candidate_provider = candidate_provider or BaselineQuestionCandidateProvider()
         self.scorer = scorer or CosineEvidenceAnswerScorer()
@@ -36,6 +37,7 @@ class QABaselineEngine:
         self.primary_11_12_micro_coverage = primary_11_12_micro_coverage
         self.tier3_primary_first = tier3_primary_first
         self.tier3_negative_offset_first = tier3_negative_offset_first
+        self.count_far_alt_micro = count_far_alt_micro
 
     def answer(
         self,
@@ -173,6 +175,40 @@ class QABaselineEngine:
                 }
             )
 
+        # Optional QA-R2H1: Bounded Far-Offset Rescored Alternate Candidate for COUNT queries
+        auxiliary_count_far_candidates: list[dict[str, Any]] | None = None
+        if self.count_far_alt_micro and qtype == QuestionType.COUNT and len(scored_candidates) >= 4:
+            source_cand = scored_candidates[3]
+            target_far_frame = int(source_cand["frame_id"]) + 90
+            max_f = source_cand.get("total_frames") or source_cand.get("max_frame_id")
+            if target_far_frame >= 0 and (max_f is None or target_far_frame <= int(max_f)):
+                img_emb = None
+                if image_embeddings is not None:
+                    img_emb = image_embeddings.get((source_cand["video_id"], target_far_frame))
+                if img_emb is not None:
+                    aux_cand_obj = QAEvidenceCandidate(
+                        query_id=query.query_id,
+                        rank=len(evidence_candidates) + 1,
+                        video_id=source_cand["video_id"],
+                        frame_id=target_far_frame,
+                        retrieval_score=1.0,
+                    )
+                    scored_aux_hyps = self.scorer.score_answers(
+                        aux_cand_obj, hypotheses, img_emb, prompt_embeddings
+                    )
+                    if scored_aux_hyps and len(scored_aux_hyps) > 1:
+                        auxiliary_count_far_candidates = [
+                            {
+                                "video_id": source_cand["video_id"],
+                                "frame_id": target_far_frame,
+                                "answers": [hyp.canonical_answer for hyp, _ in scored_aux_hyps[:3]],
+                                "scores": [score for _, score in scored_aux_hyps[:3]],
+                                "candidate_rank": 4,
+                                "offset_frames": 90,
+                                "total_frames": max_f,
+                            }
+                        ]
+
         target_k = 100 if output_top_k is None else output_top_k
         use_expansion = self.expand_temporal if expand_temporal is None else expand_temporal
 
@@ -186,6 +222,8 @@ class QABaselineEngine:
             primary_11_12_micro_coverage=self.primary_11_12_micro_coverage,
             tier3_primary_first=self.tier3_primary_first,
             tier3_negative_offset_first=self.tier3_negative_offset_first,
+            count_far_alt_micro=self.count_far_alt_micro,
+            auxiliary_count_far_candidates=auxiliary_count_far_candidates,
         )
 
         return QAResult(

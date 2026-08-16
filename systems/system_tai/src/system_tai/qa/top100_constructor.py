@@ -26,6 +26,8 @@ def construct_ranked_qa_top100(
     primary_11_12_micro_coverage: bool = False,
     tier3_primary_first: bool = False,
     tier3_negative_offset_first: bool = False,
+    count_far_alt_micro: bool = False,
+    auxiliary_count_far_candidates: Sequence[dict[str, Any]] | None = None,
 ) -> list[QAPrediction] | tuple[list[QAPrediction], list[dict[str, Any]]]:
     """Build an optimal, metric-aware Top-100 prediction list for Video Q&A.
 
@@ -275,6 +277,27 @@ def construct_ranked_qa_top100(
                     )
                     if added:
                         secondary_slots_emitted += 1
+
+        # Optional QA-R2H1 Bounded Far-Offset Rescored Alternate Micro-Slot for COUNT queries (Max 1 slot)
+        if count_far_alt_micro and auxiliary_count_far_candidates:
+            count_far_alt_slots_emitted = 0
+            for c in auxiliary_count_far_candidates:
+                if len(predictions) >= target_k or count_far_alt_slots_emitted >= 1:
+                    break
+                if len(c.get("answers", [])) > 1:
+                    max_f = c.get("total_frames") or c.get("max_frame_id")
+                    alt_ans = c["answers"][1]
+                    added = _try_add(
+                        c["video_id"],
+                        c["frame_id"],
+                        alt_ans,
+                        max_frame=max_f,
+                        candidate_rank=c.get("candidate_rank", 4),
+                        slot_source="TIER5_COUNT_FAR_ALT_MICRO",
+                        offset_frames=c.get("offset_frames", 0),
+                    )
+                    if added:
+                        count_far_alt_slots_emitted += 1
 
         # Tier 5 (Phase B): Medium temporal neighborhood for top 10 candidates (+90, -90, +120, -120)
         medium_offsets_b = [90, -90, 120, -120]

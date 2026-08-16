@@ -186,6 +186,7 @@ class QARuntimePipeline:
             primary_11_12_micro_coverage=self.video_conditioned_evidence_config.primary_11_12_micro_coverage,
             tier3_primary_first=self.video_conditioned_evidence_config.tier3_primary_first,
             tier3_negative_offset_first=self.video_conditioned_evidence_config.tier3_negative_offset_first,
+            count_far_alt_micro=self.video_conditioned_evidence_config.count_far_alt_micro,
         )
         self.object_answer_provider = object_answer_provider
         self.ocr_answer_provider = ocr_answer_provider
@@ -1640,6 +1641,34 @@ class QARuntimePipeline:
         image_embeddings_map: dict[tuple[str, int], np.ndarray] = {}
         for (ev_cand, _), img_vec in zip(valid_evidence_cands, img_embeddings_batch):
             image_embeddings_map[(ev_cand.video_id, ev_cand.frame_id)] = img_vec.astype(np.float32)
+
+        # Optional QA-R2H1: Bounded Far-Offset Rescored Alternate Embedding for COUNT queries
+        if (
+            self.video_conditioned_evidence_config.count_far_alt_micro
+            and q_type == QuestionType.COUNT
+            and len(valid_evidence_cands) >= 4
+        ):
+            source_ev_cand, _ = valid_evidence_cands[3]
+            far_target_frame = source_ev_cand.frame_id + 90
+            try:
+                video_record = self.raw_video_registry.get(source_ev_cand.video_id)
+                probe = self.decoder.probe(video_record)
+                if 0 <= far_target_frame < probe.total_frames:
+                    dec_req = DecodeRequest(
+                        probe=probe,
+                        frame_ids=(far_target_frame,),
+                        max_decoded_frames=500,
+                    )
+                    dec_res = self.decoder.decode(dec_req)
+                    if dec_res.frames:
+                        far_frame_obj = dec_res.frames[0]
+                        if far_frame_obj.absolute_frame_id == far_target_frame:
+                            far_img_vec = self.shared_encoder.encode_images([far_frame_obj.image])[0]
+                            image_embeddings_map[(source_ev_cand.video_id, far_target_frame)] = far_img_vec.astype(np.float32)
+            except Exception as exc:
+                diagnostics["warnings"].append(
+                    f"COUNT far-offset decode/encode failed for {source_ev_cand.video_id} frame {far_target_frame}: {exc}"
+                )
 
         # Step 6: Visual Prompts & Answer Scoring
         if not self.video_conditioned_evidence_config.enabled:

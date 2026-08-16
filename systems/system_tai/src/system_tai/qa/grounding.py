@@ -51,6 +51,7 @@ class QAVideoConditionedEvidenceConfig:
     primary_11_12_micro_coverage: bool = False
     tier3_primary_first: bool = False
     tier3_negative_offset_first: bool = False
+    count_far_alt_micro: bool = False
 
     def __post_init__(self) -> None:
         if type(self.enabled) is not bool:
@@ -63,6 +64,8 @@ class QAVideoConditionedEvidenceConfig:
             raise ValueError("tier3_primary_first must be a boolean")
         if type(self.tier3_negative_offset_first) is not bool:
             raise ValueError("tier3_negative_offset_first must be a boolean")
+        if type(self.count_far_alt_micro) is not bool:
+            raise ValueError("count_far_alt_micro must be a boolean")
         if type(self.selected_video_cap) is not int or self.selected_video_cap < 1:
             raise ValueError("selected_video_cap must be an integer >= 1")
         if type(self.anchors_per_video) is not int or self.anchors_per_video < 1:
