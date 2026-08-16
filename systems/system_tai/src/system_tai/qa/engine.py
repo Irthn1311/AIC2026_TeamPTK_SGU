@@ -24,6 +24,7 @@ class QABaselineEngine:
         allow_unsupported_provider_fallback: bool = False,
         secondary_temporal_micro_budget: bool = False,
         primary_11_12_micro_coverage: bool = False,
+        tier3_primary_first: bool = False,
     ) -> None:
         self.candidate_provider = candidate_provider or BaselineQuestionCandidateProvider()
         self.scorer = scorer or CosineEvidenceAnswerScorer()
@@ -32,6 +33,7 @@ class QABaselineEngine:
         self.allow_unsupported_provider_fallback = allow_unsupported_provider_fallback
         self.secondary_temporal_micro_budget = secondary_temporal_micro_budget
         self.primary_11_12_micro_coverage = primary_11_12_micro_coverage
+        self.tier3_primary_first = tier3_primary_first
 
     def answer(
         self,
@@ -180,6 +182,7 @@ class QABaselineEngine:
             expand_temporal=use_expansion,
             secondary_temporal_micro_budget=self.secondary_temporal_micro_budget,
             primary_11_12_micro_coverage=self.primary_11_12_micro_coverage,
+            tier3_primary_first=self.tier3_primary_first,
         )
 
         return QAResult(

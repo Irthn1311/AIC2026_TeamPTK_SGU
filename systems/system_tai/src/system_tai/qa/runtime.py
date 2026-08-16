@@ -184,6 +184,7 @@ class QARuntimePipeline:
             allow_unsupported_provider_fallback=self.allow_unsupported_provider_fallback,
             secondary_temporal_micro_budget=self.video_conditioned_evidence_config.secondary_temporal_micro_budget,
             primary_11_12_micro_coverage=self.video_conditioned_evidence_config.primary_11_12_micro_coverage,
+            tier3_primary_first=self.video_conditioned_evidence_config.tier3_primary_first,
         )
         self.object_answer_provider = object_answer_provider
         self.ocr_answer_provider = ocr_answer_provider

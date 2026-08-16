@@ -24,6 +24,7 @@ def construct_ranked_qa_top100(
     return_provenance: bool = False,
     secondary_temporal_micro_budget: bool = False,
     primary_11_12_micro_coverage: bool = False,
+    tier3_primary_first: bool = False,
 ) -> list[QAPrediction] | tuple[list[QAPrediction], list[dict[str, Any]]]:
     """Build an optimal, metric-aware Top-100 prediction list for Video Q&A.
 
@@ -136,13 +137,41 @@ def construct_ranked_qa_top100(
         _try_add(c0["video_id"], c0["frame_id"] + 15, c0["answers"][0], max_frame=max0, candidate_rank=1, slot_source="TIER2_OFFSET", offset_frames=15)
 
         # Tier 3: Primary predictions for candidates 2..10 & close neighbors (±30)
-        for idx, c in enumerate(scored_candidates[1:10], start=2):
-            if not c.get("answers"):
-                continue
-            max_f = c.get("total_frames") or c.get("max_frame_id")
-            _try_add(c["video_id"], c["frame_id"], c["answers"][0], max_frame=max_f, candidate_rank=idx, slot_source="TIER3_PRIMARY", offset_frames=0)
-            _try_add(c["video_id"], c["frame_id"] + 30, c["answers"][0], max_frame=max_f, candidate_rank=idx, slot_source="TIER3_OFFSET", offset_frames=30)
-            _try_add(c["video_id"], c["frame_id"] - 30, c["answers"][0], max_frame=max_f, candidate_rank=idx, slot_source="TIER3_OFFSET", offset_frames=-30)
+        if tier3_primary_first:
+            # Phase T3-A: Direct anchors for candidates 2..10 in candidate order
+            for idx, c in enumerate(scored_candidates[1:10], start=2):
+                if len(predictions) >= target_k:
+                    break
+                if not c.get("answers"):
+                    continue
+                max_f = c.get("total_frames") or c.get("max_frame_id")
+                _try_add(c["video_id"], c["frame_id"], c["answers"][0], max_frame=max_f, candidate_rank=idx, slot_source="TIER3_PRIMARY", offset_frames=0)
+
+            # Phase T3-B: +30 offsets for candidates 2..10 in candidate order
+            for idx, c in enumerate(scored_candidates[1:10], start=2):
+                if len(predictions) >= target_k:
+                    break
+                if not c.get("answers"):
+                    continue
+                max_f = c.get("total_frames") or c.get("max_frame_id")
+                _try_add(c["video_id"], c["frame_id"] + 30, c["answers"][0], max_frame=max_f, candidate_rank=idx, slot_source="TIER3_OFFSET", offset_frames=30)
+
+            # Phase T3-C: -30 offsets for candidates 2..10 in candidate order
+            for idx, c in enumerate(scored_candidates[1:10], start=2):
+                if len(predictions) >= target_k:
+                    break
+                if not c.get("answers"):
+                    continue
+                max_f = c.get("total_frames") or c.get("max_frame_id")
+                _try_add(c["video_id"], c["frame_id"] - 30, c["answers"][0], max_frame=max_f, candidate_rank=idx, slot_source="TIER3_OFFSET", offset_frames=-30)
+        else:
+            for idx, c in enumerate(scored_candidates[1:10], start=2):
+                if not c.get("answers"):
+                    continue
+                max_f = c.get("total_frames") or c.get("max_frame_id")
+                _try_add(c["video_id"], c["frame_id"], c["answers"][0], max_frame=max_f, candidate_rank=idx, slot_source="TIER3_PRIMARY", offset_frames=0)
+                _try_add(c["video_id"], c["frame_id"] + 30, c["answers"][0], max_frame=max_f, candidate_rank=idx, slot_source="TIER3_OFFSET", offset_frames=30)
+                _try_add(c["video_id"], c["frame_id"] - 30, c["answers"][0], max_frame=max_f, candidate_rank=idx, slot_source="TIER3_OFFSET", offset_frames=-30)
 
         # Tier 4: Alternative answer hypotheses for top 3 candidates
         for idx, c in enumerate(scored_candidates[:3], start=1):
