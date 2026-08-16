@@ -47,7 +47,8 @@ def resolve_path(path: str | Path) -> Path:
     return path if path.is_absolute() else PROJECT_ROOT / path
 
 
-def load_selected_keyframes(selected_root: Path, video_ids: list[str] | None) -> list[dict[str, Any]]:
+def load_selected_keyframes(selected_root: Path, video_ids: list[str] | None, skip_video_ids: set[str] | None = None) -> list[dict[str, Any]]:
+    skip_set = skip_video_ids or set()
     requested = {v.strip() for v in video_ids or [] if v.strip()}
     video_dirs = sorted(p for p in selected_root.iterdir() if p.is_dir() and "_V" in p.name and p.name.startswith("L"))
     if requested:
@@ -56,6 +57,9 @@ def load_selected_keyframes(selected_root: Path, video_ids: list[str] | None) ->
         if missing:
             raise FileNotFoundError(f"Missing selected keyframe dirs: {missing}")
 
+    if skip_set:
+        video_dirs = [p for p in video_dirs if p.name not in skip_set]
+
     rows: list[dict[str, Any]] = []
     for video_dir in video_dirs:
         map_path = video_dir / "keyframe_btc_map.csv"
@@ -63,8 +67,10 @@ def load_selected_keyframes(selected_root: Path, video_ids: list[str] | None) ->
             map_path = video_dir / "keyframe_v2_map.csv"
         if map_path.exists():
             df = pd.read_csv(map_path)
-            for idx, row in df.iterrows():
-                image_path = resolve_path(row.get("image_path", ""))
+            records = df.to_dict("records")
+            for idx, row in enumerate(records):
+                img_path = str(row.get("image_path", ""))
+                image_path = Path(img_path) if Path(img_path).is_absolute() else PROJECT_ROOT / img_path
                 rows.append({
                     "video_id": str(row.get("video_id", video_dir.name)),
                     "keyframe_name": image_path.name,
@@ -274,16 +280,19 @@ def main() -> None:
         print(json.dumps(aggregate_per_video_outputs(output_dir, args.video_id), ensure_ascii=False, indent=2))
         return
 
-    items = load_selected_keyframes(selected_root, args.video_id)
+    existing_video_ids: set[str] = set()
     if args.resume:
         existing_video_ids = {p.stem for p in per_video_dir.glob("*.jsonl") if p.stat().st_size > 0}
         if existing_video_ids:
-            skipped = len([v for v in (args.video_id or set(i["video_id"] for i in items)) if v in existing_video_ids])
-            items = [item for item in items if str(item.get("video_id", "")) not in existing_video_ids]
-            print(f"[OCR V2 Resume] Skipped {skipped} already completed videos, {len(items)} keyframe items remaining.")
+            print(f"[OCR V2 Resume] Found {len(existing_video_ids)} completed videos on disk, skipping them...")
+
+    print("📂 Fast-loading keyframe metadata CSVs...")
+    t_load = time.time()
+    items = load_selected_keyframes(selected_root, args.video_id, skip_video_ids=existing_video_ids)
+    print(f"✅ Loaded {len(items)} remaining keyframe items in {time.time() - t_load:.2f}s!")
 
     if not items:
-        print("[OCR V2 Resume] No remaining items to process.")
+        print("[OCR V2 Resume] No remaining items to process. All videos complete!")
         if not args.no_aggregate:
             print(json.dumps(aggregate_per_video_outputs(output_dir, args.video_id), ensure_ascii=False, indent=2))
         return
