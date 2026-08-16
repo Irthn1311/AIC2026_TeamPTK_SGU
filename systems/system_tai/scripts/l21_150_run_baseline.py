@@ -1734,6 +1734,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=os.environ.get("QA_TIER3_PRIMARY_FIRST_V1", "").lower() in ("1", "true", "yes"),
         help="Enable primary-first ordering within Tier 3 for candidates 2..10 (QA-R2F2).",
     )
+    parser.add_argument(
+        "--qa-tier3-negative-offset-first",
+        action="store_true",
+        default=os.environ.get("QA_TIER3_NEGATIVE_OFFSET_FIRST_V1", "").lower() in ("1", "true", "yes"),
+        help="Enable negative-offset-first (-30 before +30) within Tier 3 primary-first (QA-R2F3).",
+    )
     return parser
 
 
@@ -1851,6 +1857,18 @@ def main(argv: list[str] | None = None) -> int:
         ):
             raise ValueError(
                 "--qa-tier3-primary-first requires --split dev --task qa "
+                "--qa-video-conditioned-evidence --qa-keyframe-evidence-bank "
+                "--qa-localization-language-policy en_only"
+            )
+        if args.qa_tier3_negative_offset_first and (
+            args.split != "dev"
+            or args.task != "qa"
+            or not args.qa_video_conditioned_evidence
+            or not args.qa_keyframe_evidence_bank
+            or args.qa_localization_language_policy != "en_only"
+        ):
+            raise ValueError(
+                "--qa-tier3-negative-offset-first requires --split dev --task qa "
                 "--qa-video-conditioned-evidence --qa-keyframe-evidence-bank "
                 "--qa-localization-language-policy en_only"
             )
@@ -2056,6 +2074,7 @@ def main(argv: list[str] | None = None) -> int:
             secondary_temporal_micro_budget=args.qa_secondary_temporal_micro_budget,
             primary_11_12_micro_coverage=args.qa_primary_11_12_micro_coverage,
             tier3_primary_first=args.qa_tier3_primary_first,
+            tier3_negative_offset_first=args.qa_tier3_negative_offset_first,
         )
         qa_object_answer_provider_config = ObjectAnswerProviderConfig(
             enabled=args.qa_object_evidence,
