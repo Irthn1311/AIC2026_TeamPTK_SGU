@@ -24,6 +24,8 @@ from src.preprocessing.model_assets import ensure_vietocr_weights
 
 
 def setup_e_drive_cache() -> None:
+    if Path("/kaggle").exists():
+        return
     cache_root = PROJECT_ROOT / ".ocr_cache"
     home = cache_root / "home"
     temp = cache_root / "temp"
@@ -246,6 +248,8 @@ def main() -> None:
     parser.add_argument("--max-images", type=int, default=0)
     parser.add_argument("--no-aggregate", action="store_true", help="Write per-video JSONL only. Useful for GPU sharded runs.")
     parser.add_argument("--aggregate-only", action="store_true", help="Merge existing per-video JSONL files without loading OCR models.")
+    parser.add_argument("--resume", action="store_true", default=True, help="Skip videos that already have non-empty per-video JSONL.")
+    parser.add_argument("--no-resume", action="store_false", dest="resume", help="Force recomputing existing per-video JSONL.")
     args = parser.parse_args()
 
     started = time.time()
@@ -261,46 +265,64 @@ def main() -> None:
         return
 
     items = load_selected_keyframes(selected_root, args.video_id)
+    if args.resume:
+        existing_video_ids = {p.stem for p in per_video_dir.glob("*.jsonl") if p.stat().st_size > 0}
+        if existing_video_ids:
+            skipped = len([v for v in (args.video_id or set(i["video_id"] for i in items)) if v in existing_video_ids])
+            items = [item for item in items if str(item.get("video_id", "")) not in existing_video_ids]
+            print(f"[OCR V2 Resume] Skipped {skipped} already completed videos, {len(items)} keyframe items remaining.")
+
+    if not items:
+        print("[OCR V2 Resume] No remaining items to process.")
+        if not args.no_aggregate:
+            print(json.dumps(aggregate_per_video_outputs(output_dir, args.video_id), ensure_ascii=False, indent=2))
+        return
+
     if args.max_images and args.max_images > 0:
         items = items[: args.max_images]
     detector, recognizer, recognizer_status = init_models(args.device, resolve_path(args.vietocr_config))
 
+    video_groups: dict[str, list[dict[str, Any]]] = {}
+    for item in items:
+        video_groups.setdefault(str(item["video_id"]), []).append(item)
+
     rows: list[dict[str, Any]] = []
     errors = 0
-    for item in tqdm(items, desc="OCR V2 selected keyframes"):
-        image_path = Path(item["keyframe_path"])
-        record = {
-            **item,
-            "detections": [],
-            "combined_text": "",
-            "mean_confidence": 0.0,
-            "num_text_boxes": 0,
-            "ocr_status": "ok",
-            "error": "",
-        }
-        try:
-            detections, combined, mean_conf = ocr_image(
-                image_path,
-                detector,
-                recognizer,
-                min_confidence=args.min_confidence,
-                scale_factor=args.scale_factor,
-                pad_px=args.pad_px,
-            )
-            record["detections"] = detections
-            record["combined_text"] = combined
-            record["mean_confidence"] = round(mean_conf, 4)
-            record["num_text_boxes"] = len(detections)
-        except Exception as exc:
-            errors += 1
-            record["ocr_status"] = "error"
-            record["error"] = repr(exc)
-        rows.append(record)
+    for video_id, v_items in tqdm(video_groups.items(), desc="OCR V2 per-video"):
+        v_records = []
+        for item in v_items:
+            image_path = Path(item["keyframe_path"])
+            record = {
+                **item,
+                "detections": [],
+                "combined_text": "",
+                "mean_confidence": 0.0,
+                "num_text_boxes": 0,
+                "ocr_status": "ok",
+                "error": "",
+            }
+            try:
+                detections, combined, mean_conf = ocr_image(
+                    image_path,
+                    detector,
+                    recognizer,
+                    min_confidence=args.min_confidence,
+                    scale_factor=args.scale_factor,
+                    pad_px=args.pad_px,
+                )
+                record["detections"] = detections
+                record["combined_text"] = combined
+                record["mean_confidence"] = round(mean_conf, 4)
+                record["num_text_boxes"] = len(detections)
+            except Exception as exc:
+                errors += 1
+                record["ocr_status"] = "error"
+                record["error"] = repr(exc)
+            v_records.append(record)
+            rows.append(record)
 
-    for video_id, group in pd.DataFrame(rows).groupby("video_id"):
-        path = per_video_dir / f"{video_id}.jsonl"
-        group_records = group.to_dict("records")
-        path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in group_records), encoding="utf-8")
+        v_path = per_video_dir / f"{video_id}.jsonl"
+        v_path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in v_records), encoding="utf-8")
 
     summary_extra = {
         "selected_root": str(selected_root),
