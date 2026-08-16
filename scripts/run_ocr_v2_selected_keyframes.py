@@ -113,8 +113,14 @@ def init_models(device: str, vietocr_config: Path) -> tuple[Any, Any | None, str
 
     use_gpu = device != "cpu" and torch.cuda.is_available()
     target_device = device if (use_gpu and device.startswith("cuda")) else ("cuda" if use_gpu else "cpu")
+    if use_gpu and target_device.startswith("cuda"):
+        try:
+            torch.cuda.set_device(target_device)
+        except Exception:
+            pass
+
     print(f"  [1/2] 🧠 Loading EasyOCR Detector (gpu={use_gpu}, device={target_device}) ...")
-    detector = easyocr.Reader(["vi", "en"], gpu=use_gpu, device=target_device)
+    detector = easyocr.Reader(["vi", "en"], gpu=use_gpu)
     print("  [1/2] ✅ EasyOCR Detector Ready!")
 
     print("  [2/2] 🧠 Loading VietOCR Recognizer ...")
