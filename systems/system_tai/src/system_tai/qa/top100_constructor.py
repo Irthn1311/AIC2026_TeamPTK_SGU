@@ -22,6 +22,7 @@ def construct_ranked_qa_top100(
     expand_temporal: bool = True,
     policy: str = "temporal_dense_v1",
     return_provenance: bool = False,
+    secondary_temporal_micro_budget: bool = False,
 ) -> list[QAPrediction] | tuple[list[QAPrediction], list[dict[str, Any]]]:
     """Build an optimal, metric-aware Top-100 prediction list for Video Q&A.
 
@@ -150,9 +151,72 @@ def construct_ranked_qa_top100(
                 _try_add(c["video_id"], c["frame_id"], alt_ans, max_frame=max_f, candidate_rank=idx, slot_source="TIER4_ALT_ANSWER", offset_frames=0)
                 _try_add(c["video_id"], c["frame_id"] + 30, alt_ans, max_frame=max_f, candidate_rank=idx, slot_source="TIER4_ALT_OFFSET", offset_frames=30)
 
-        # Tier 5: Medium temporal neighborhood for top 10 candidates (+60, -60, +45, -45, +90, -90, +120, -120)
-        medium_offsets = [60, -60, 45, -45, 90, -90, 120, -120]
-        for offset in medium_offsets:
+        # Tier 5 (Phase A): Medium temporal neighborhood for top 10 candidates (+60, -60, +45, -45)
+        medium_offsets_a = [60, -60, 45, -45]
+        for offset in medium_offsets_a:
+            if len(predictions) >= target_k:
+                break
+            for idx, c in enumerate(scored_candidates[:10], start=1):
+                if len(predictions) >= target_k:
+                    break
+                if c.get("answers"):
+                    max_f = c.get("total_frames") or c.get("max_frame_id")
+                    _try_add(c["video_id"], c["frame_id"] + offset, c["answers"][0], max_frame=max_f, candidate_rank=idx, slot_source="TIER5_MEDIUM_OFFSET", offset_frames=offset)
+
+        # Optional QA-R2E.1 Micro-Budget for Secondary Temporal Anchors (Max 20 successful slots)
+        if secondary_temporal_micro_budget:
+            sec_eligible: list[tuple[int, dict[str, Any]]] = []
+            for orig_idx, c in enumerate(scored_candidates):
+                loc_rank = c.get("local_anchor_rank")
+                nom_rank = c.get("video_nomination_rank")
+                if (
+                    type(loc_rank) is int
+                    and loc_rank == 2
+                    and type(nom_rank) is int
+                    and 1 <= nom_rank <= 10
+                ):
+                    sec_eligible.append((orig_idx, c))
+
+            sec_eligible.sort(key=lambda item: (item[1]["video_nomination_rank"], item[0]))
+
+            secondary_slots_emitted = 0
+            for orig_idx, c in sec_eligible:
+                if len(predictions) >= target_k or secondary_slots_emitted >= 20:
+                    break
+                if not c.get("answers"):
+                    continue
+                max_f = c.get("total_frames") or c.get("max_frame_id")
+                ans = c["answers"][0]
+                # Attempt -30
+                if secondary_slots_emitted < 20 and len(predictions) < target_k:
+                    added = _try_add(
+                        c["video_id"],
+                        c["frame_id"] - 30,
+                        ans,
+                        max_frame=max_f,
+                        candidate_rank=orig_idx + 1,
+                        slot_source="TIER5_SECONDARY_MICRO_OFFSET",
+                        offset_frames=-30,
+                    )
+                    if added:
+                        secondary_slots_emitted += 1
+                # Attempt +30
+                if secondary_slots_emitted < 20 and len(predictions) < target_k:
+                    added = _try_add(
+                        c["video_id"],
+                        c["frame_id"] + 30,
+                        ans,
+                        max_frame=max_f,
+                        candidate_rank=orig_idx + 1,
+                        slot_source="TIER5_SECONDARY_MICRO_OFFSET",
+                        offset_frames=30,
+                    )
+                    if added:
+                        secondary_slots_emitted += 1
+
+        # Tier 5 (Phase B): Medium temporal neighborhood for top 10 candidates (+90, -90, +120, -120)
+        medium_offsets_b = [90, -90, 120, -120]
+        for offset in medium_offsets_b:
             if len(predictions) >= target_k:
                 break
             for idx, c in enumerate(scored_candidates[:10], start=1):

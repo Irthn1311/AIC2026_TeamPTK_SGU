@@ -1716,6 +1716,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=os.environ.get("QA_UNSUPPORTED_PROVIDER_FALLBACK_V1", "").lower() in ("1", "true", "yes"),
         help="Allow UNSUPPORTED queries to proceed with QA ranking if provider hypotheses and evidence are available.",
     )
+    parser.add_argument(
+        "--qa-secondary-temporal-micro-budget",
+        action="store_true",
+        default=os.environ.get("QA_SECONDARY_TEMPORAL_MICRO_BUDGET_V1", "").lower() in ("1", "true", "yes"),
+        help="Enable late micro-budget (max 20 slots) for secondary temporal anchors (QA-R2E.1).",
+    )
     return parser
 
 
@@ -1797,6 +1803,18 @@ def main(argv: list[str] | None = None) -> int:
         ):
             raise ValueError(
                 "--qa-multi-seed-temporal-refinement requires --split dev --task qa "
+                "--qa-video-conditioned-evidence --qa-keyframe-evidence-bank "
+                "--qa-localization-language-policy en_only"
+            )
+        if args.qa_secondary_temporal_micro_budget and (
+            args.split != "dev"
+            or args.task != "qa"
+            or not args.qa_video_conditioned_evidence
+            or not args.qa_keyframe_evidence_bank
+            or args.qa_localization_language_policy != "en_only"
+        ):
+            raise ValueError(
+                "--qa-secondary-temporal-micro-budget requires --split dev --task qa "
                 "--qa-video-conditioned-evidence --qa-keyframe-evidence-bank "
                 "--qa-localization-language-policy en_only"
             )
@@ -1999,6 +2017,7 @@ def main(argv: list[str] | None = None) -> int:
             temporal_refinement_total_seed_cap=(
                 args.qa_temporal_refinement_total_seed_cap
             ),
+            secondary_temporal_micro_budget=args.qa_secondary_temporal_micro_budget,
         )
         qa_object_answer_provider_config = ObjectAnswerProviderConfig(
             enabled=args.qa_object_evidence,

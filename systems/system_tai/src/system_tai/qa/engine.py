@@ -1,4 +1,4 @@
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 import numpy as np
 
@@ -22,12 +22,14 @@ class QABaselineEngine:
         scorer: EvidenceAnswerScorer | None = None,
         expand_temporal: bool = False,
         allow_unsupported_provider_fallback: bool = False,
+        secondary_temporal_micro_budget: bool = False,
     ) -> None:
         self.candidate_provider = candidate_provider or BaselineQuestionCandidateProvider()
         self.scorer = scorer or CosineEvidenceAnswerScorer()
         self.matcher = NormalizedAliasAnswerMatcher(strip_punctuation=True)
         self.expand_temporal = expand_temporal
         self.allow_unsupported_provider_fallback = allow_unsupported_provider_fallback
+        self.secondary_temporal_micro_budget = secondary_temporal_micro_budget
 
     def answer(
         self,
@@ -144,6 +146,7 @@ class QABaselineEngine:
 
             best_hyp, best_score = scored_hyps[0]
             scores_by_rank[cand.rank] = float(best_score)
+            cand_prov = getattr(cand, "provenance", None)
             scored_candidates.append(
                 {
                     "video_id": cand.video_id,
@@ -151,6 +154,16 @@ class QABaselineEngine:
                     "answers": [hyp.canonical_answer for hyp, _ in scored_hyps[:3]],
                     "scores": [score for _, score in scored_hyps[:3]],
                     "evidence_rank": cand.rank,
+                    "video_nomination_rank": (
+                        cand_prov.get("video_nomination_rank")
+                        if isinstance(cand_prov, (dict, Mapping))
+                        else None
+                    ),
+                    "local_anchor_rank": (
+                        cand_prov.get("local_anchor_rank")
+                        if isinstance(cand_prov, (dict, Mapping))
+                        else None
+                    ),
                 }
             )
 
@@ -163,6 +176,7 @@ class QABaselineEngine:
             scored_candidates=scored_candidates,
             output_top_k=target_k,
             expand_temporal=use_expansion,
+            secondary_temporal_micro_budget=self.secondary_temporal_micro_budget,
         )
 
         return QAResult(

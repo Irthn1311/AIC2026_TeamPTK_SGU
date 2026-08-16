@@ -47,10 +47,13 @@ class QAVideoConditionedEvidenceConfig:
     temporal_seed_anchors_per_video: int = 3
     temporal_refinement_video_cap: int = 32
     temporal_refinement_total_seed_cap: int = 96
+    secondary_temporal_micro_budget: bool = False
 
     def __post_init__(self) -> None:
         if type(self.enabled) is not bool:
             raise ValueError("enabled must be a boolean")
+        if type(self.secondary_temporal_micro_budget) is not bool:
+            raise ValueError("secondary_temporal_micro_budget must be a boolean")
         if type(self.selected_video_cap) is not int or self.selected_video_cap < 1:
             raise ValueError("selected_video_cap must be an integer >= 1")
         if type(self.anchors_per_video) is not int or self.anchors_per_video < 1:
