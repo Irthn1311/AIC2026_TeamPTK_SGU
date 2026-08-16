@@ -152,12 +152,13 @@ def ocr_image(
     min_confidence: float,
     scale_factor: float,
     pad_px: int,
+    batch_size: int = 16,
 ) -> tuple[list[dict[str, Any]], str, float]:
     import torch
     img = Image.open(image_path).convert("RGB")
     img_w, img_h = img.size
     with torch.inference_mode():
-        raw_res = detector.readtext(str(image_path))
+        raw_res = detector.readtext(str(image_path), batch_size=batch_size)
     detections: list[dict[str, Any]] = []
     for bbox, easy_text, easy_conf in raw_res:
         pts = np.array([[int(pt[0]), int(pt[1])] for pt in bbox], dtype=np.int32)
@@ -262,6 +263,9 @@ def main() -> None:
     parser.add_argument("--pad-px", type=int, default=6)
     parser.add_argument("--vietocr-config", default="configs/vietocr_vgg_transformer_local.yaml")
     parser.add_argument("--max-images", type=int, default=0)
+    parser.add_argument("--batch-size", type=int, default=16, help="EasyOCR batch size.")
+    parser.add_argument("--num-shards", type=int, default=1, help="Total number of GPU shards.")
+    parser.add_argument("--shard-idx", type=int, default=0, help="Zero-indexed shard ID for this process.")
     parser.add_argument("--no-aggregate", action="store_true", help="Write per-video JSONL only. Useful for GPU sharded runs.")
     parser.add_argument("--aggregate-only", action="store_true", help="Merge existing per-video JSONL files without loading OCR models.")
     parser.add_argument("--resume", action="store_true", default=True, help="Skip videos that already have non-empty per-video JSONL.")
@@ -299,15 +303,22 @@ def main() -> None:
 
     if args.max_images and args.max_images > 0:
         items = items[: args.max_images]
-    detector, recognizer, recognizer_status = init_models(args.device, resolve_path(args.vietocr_config))
 
     video_groups: dict[str, list[dict[str, Any]]] = {}
     for item in items:
         video_groups.setdefault(str(item["video_id"]), []).append(item)
 
+    if args.num_shards > 1:
+        all_vids = sorted(video_groups.keys())
+        shard_vids = set(v for i, v in enumerate(all_vids) if i % args.num_shards == args.shard_idx)
+        video_groups = {k: v for k, v in video_groups.items() if k in shard_vids}
+        print(f"[GPU Shard {args.shard_idx + 1}/{args.num_shards}] Processing {len(video_groups)} assigned videos.")
+
+    detector, recognizer, recognizer_status = init_models(args.device, resolve_path(args.vietocr_config))
+
     rows: list[dict[str, Any]] = []
     errors = 0
-    for video_id, v_items in tqdm(video_groups.items(), desc="OCR V2 per-video"):
+    for video_id, v_items in tqdm(video_groups.items(), desc=f"OCR V2 [GPU {args.shard_idx}]"):
         v_records = []
         for item in v_items:
             image_path = Path(item["keyframe_path"])
@@ -328,6 +339,7 @@ def main() -> None:
                     min_confidence=args.min_confidence,
                     scale_factor=args.scale_factor,
                     pad_px=args.pad_px,
+                    batch_size=args.batch_size,
                 )
                 record["detections"] = detections
                 record["combined_text"] = combined
