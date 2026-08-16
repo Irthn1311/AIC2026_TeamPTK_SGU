@@ -14,12 +14,15 @@ import pandas as pd
 from PIL import Image
 from tqdm import tqdm
 
-# 🛠️ HOT-FIX PYTHON 3.12 PKGUTIL & PILLOW
+# 🛠️ HOT-FIX PYTHON 3.12 PKGUTIL, FILEFINDER & PILLOW
 import pkgutil
 if not hasattr(pkgutil, "ImpImporter"):
     class ImpImporter:
         pass
     pkgutil.ImpImporter = ImpImporter
+import importlib.machinery
+if not hasattr(importlib.machinery.FileFinder, "find_module"):
+    importlib.machinery.FileFinder.find_module = lambda self, fullname, path=None: None
 import PIL._util
 PIL._util.is_directory = lambda p: os.path.isdir(p)
 PIL._util.is_path = lambda p: isinstance(p, (str, bytes, os.PathLike))
