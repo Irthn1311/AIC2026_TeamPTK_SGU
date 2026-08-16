@@ -123,11 +123,13 @@ def init_models(device: str, vietocr_config: Path) -> tuple[Any, Any | None, str
 
 
 def predict_vietocr(recognizer: Any, crop: Image.Image) -> tuple[str, float | None]:
-    try:
-        text, prob = recognizer.predict(crop, return_prob=True)
-    except TypeError:
-        text = recognizer.predict(crop)
-        prob = None
+    import torch
+    with torch.inference_mode():
+        try:
+            text, prob = recognizer.predict(crop, return_prob=True)
+        except TypeError:
+            text = recognizer.predict(crop)
+            prob = None
     return " ".join(str(text).strip().split()), float(prob) if prob is not None else None
 
 
@@ -139,9 +141,11 @@ def ocr_image(
     scale_factor: float,
     pad_px: int,
 ) -> tuple[list[dict[str, Any]], str, float]:
+    import torch
     img = Image.open(image_path).convert("RGB")
     img_w, img_h = img.size
-    raw_res = detector.readtext(str(image_path))
+    with torch.inference_mode():
+        raw_res = detector.readtext(str(image_path))
     detections: list[dict[str, Any]] = []
     for bbox, easy_text, easy_conf in raw_res:
         pts = np.array([[int(pt[0]), int(pt[1])] for pt in bbox], dtype=np.int32)
