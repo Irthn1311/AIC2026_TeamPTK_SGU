@@ -213,18 +213,35 @@ for qid in PROTECTED_HITS:
     print(f"{qid:<10} | Rank {str(c_hr):<5} (Frame {str(c_f)}) | Rank {str(t_hr):<5} (Frame {str(t_f)})  | {status}")
 
 print("\n" + "=" * 110)
-print("TARGET QUERY AUDIT: QA-20")
+print("TARGET QUERY AUDIT & CAUSAL TRACE: QA-20")
 print("=" * 110)
 q20_c = ctl_eval.get("QA-20", {})
 q20_t = trt_eval.get("QA-20", {})
 print(f"Control Arm   -> Hit Rank: {q20_c.get('hit_rank')} | Hit Frame: {q20_c.get('hit_frame')} | Hit Answer: {q20_c.get('hit_answer')}")
 print(f"Treatment Arm -> Hit Rank: {q20_t.get('hit_rank')} | Hit Frame: {q20_t.get('hit_frame')} | Hit Answer: {q20_t.get('hit_answer')}")
 
-# Print Top-10 predictions for QA-20 in Treatment
-print("\n--- QA-20 Treatment Final Predictions (Ranks 80..100) ---")
 q20_preds = q20_t.get("predictions", [])
+print("\n--- QA-20 Treatment Final Predictions (Ranks 75..100) ---")
 for p in q20_preds:
-    if p["rank"] >= 80:
-        print(f"  Rank {p['rank']:<3}: video={p['video_id']}, frame={p['frame_id']}, answer='{p.get('answer')}'")
+    if p["rank"] >= 75:
+        is_hit = (p["video_id"] == "L21_V007" and 14610 <= p["frame_id"] <= 14670 and normalize_text(p["answer"]) == "2")
+        hit_mark = " <--- STRICT FULL HIT! 🎯" if is_hit else ""
+        print(f"  Rank {p['rank']:<3}: video={p['video_id']}, frame={p['frame_id']}, answer='{p.get('answer')}'{hit_mark}")
 
+print("\n" + "=" * 110)
+print("ALL 38 DEV QUERIES FULL-HIT AUDIT & RANK SHIFTS")
+print("=" * 110)
+print(f"{'Query ID':<10} | {'Control Hit Rank':<18} | {'Treatment Hit Rank':<20} | {'Delta':<10} | {'Status'}")
+print("-" * 75)
+for qid in sorted(qa_dev_map.keys()):
+    c_hr = ctl_eval.get(qid, {}).get("hit_rank")
+    t_hr = trt_eval.get(qid, {}).get("hit_rank")
+    if c_hr is not None or t_hr is not None:
+        delta_str = f"{t_hr - c_hr:+d}" if (c_hr is not None and t_hr is not None) else ("+NEW" if c_hr is None else "-LOST")
+        if c_hr is None and t_hr is not None: status = "GAINED HIT 🎯"
+        elif c_hr is not None and t_hr is None: status = "LOST HIT ❌"
+        elif t_hr < c_hr: status = "IMPROVED 🚀"
+        elif t_hr > c_hr: status = "REGRESSED ⚠️"
+        else: status = "IDENTICAL ✅"
+        print(f"{qid:<10} | Rank {str(c_hr):<13} | Rank {str(t_hr):<15} | {delta_str:<10} | {status}")
 print("=" * 110)
