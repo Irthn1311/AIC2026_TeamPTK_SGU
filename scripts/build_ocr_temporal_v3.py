@@ -464,7 +464,7 @@ def main() -> None:
     if requested:
         video_ids = requested
     else:
-        video_ids = sorted(p.stem for p in (input_dir / "per_video").glob("L21_V*.jsonl"))
+        video_ids = sorted(p.stem for p in (input_dir / "per_video").glob("*.jsonl"))
     if not video_ids:
         raise FileNotFoundError(f"No per-video OCR V2 files found in {input_dir / 'per_video'}")
 

@@ -181,10 +181,9 @@ def ocr_image(
 ) -> tuple[list[dict[str, Any]], str, float]:
     import torch
     img = Image.open(image_path).convert("RGB")
-    img_np = np.array(img)
     img_w, img_h = img.size
     with torch.inference_mode():
-        raw_res = detector.readtext(img_np, batch_size=batch_size)
+        raw_res = detector.readtext(str(image_path), batch_size=batch_size)
     detections: list[dict[str, Any]] = []
     for bbox, easy_text, easy_conf in raw_res:
         pts = np.array([[int(pt[0]), int(pt[1])] for pt in bbox], dtype=np.int32)
