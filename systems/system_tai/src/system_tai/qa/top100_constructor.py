@@ -23,6 +23,7 @@ def construct_ranked_qa_top100(
     policy: str = "temporal_dense_v1",
     return_provenance: bool = False,
     secondary_temporal_micro_budget: bool = False,
+    primary_11_12_micro_coverage: bool = False,
 ) -> list[QAPrediction] | tuple[list[QAPrediction], list[dict[str, Any]]]:
     """Build an optimal, metric-aware Top-100 prediction list for Video Q&A.
 
@@ -162,6 +163,42 @@ def construct_ranked_qa_top100(
                 if c.get("answers"):
                     max_f = c.get("total_frames") or c.get("max_frame_id")
                     _try_add(c["video_id"], c["frame_id"] + offset, c["answers"][0], max_frame=max_f, candidate_rank=idx, slot_source="TIER5_MEDIUM_OFFSET", offset_frames=offset)
+
+        # Optional QA-R2F1 Micro-Coverage for Primary Anchors of Nomination Ranks 11 and 12 (Max 2 successful admissions)
+        if primary_11_12_micro_coverage:
+            prim_eligible: list[tuple[int, dict[str, Any]]] = []
+            for orig_idx, c in enumerate(scored_candidates):
+                loc_rank = c.get("local_anchor_rank")
+                nom_rank = c.get("video_nomination_rank")
+                if (
+                    type(loc_rank) is int
+                    and loc_rank == 1
+                    and type(nom_rank) is int
+                    and nom_rank in (11, 12)
+                ):
+                    prim_eligible.append((orig_idx, c))
+
+            prim_eligible.sort(key=lambda item: (item[1]["video_nomination_rank"], item[0]))
+
+            primary_slots_emitted = 0
+            for orig_idx, c in prim_eligible:
+                if len(predictions) >= target_k or primary_slots_emitted >= 2:
+                    break
+                if not c.get("answers"):
+                    continue
+                max_f = c.get("total_frames") or c.get("max_frame_id")
+                ans = c["answers"][0]
+                added = _try_add(
+                    c["video_id"],
+                    c["frame_id"],
+                    ans,
+                    max_frame=max_f,
+                    candidate_rank=orig_idx + 1,
+                    slot_source="TIER5_PRIMARY_MICRO_COVERAGE",
+                    offset_frames=0,
+                )
+                if added:
+                    primary_slots_emitted += 1
 
         # Optional QA-R2E.1 Micro-Budget for Secondary Temporal Anchors (Max 20 successful slots)
         if secondary_temporal_micro_budget:
