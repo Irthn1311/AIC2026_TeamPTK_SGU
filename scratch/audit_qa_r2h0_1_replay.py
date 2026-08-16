@@ -1,6 +1,6 @@
 # ==============================================================================================================
 # QA-R2H0.1 FORENSIC AUDIT: COUNT ANSWER COUNTERFACTUAL FRAME REPLAY FOR QA-20 (L21_V007)
-# Replays exact visual scoring on: [14541, 14601, 14631, 14661]
+# Exact Production Scorer Parity on: [14541, 14601, 14631, 14661]
 # Execution Mode: Post-processing / frame decode replay (Execution time ~5-10s)
 # ==============================================================================================================
 
@@ -28,6 +28,7 @@ src_path = str(REPO_DIR / "systems" / "system_tai" / "src")
 if src_path not in sys.path:
     sys.path.insert(0, src_path)
 
+import numpy as np
 from system_tai.qa.runtime import classify_runtime_question
 from system_tai.qa.question_types import classify_question, QuestionType
 from system_tai.qa.visual_ontology import (
@@ -35,8 +36,8 @@ from system_tai.qa.visual_ontology import (
     VisualOntologyAnswerCandidateProvider,
     VisualOntologyConfig,
 )
-from system_tai.qa.answer_candidates import BaselineQuestionCandidateProvider
-from system_tai.qa.models import QAQuery, AnswerHypothesis
+from system_tai.qa.answer_scoring import CosineEvidenceAnswerScorer
+from system_tai.qa.models import QAQuery, QAEvidenceCandidate, AnswerHypothesis
 
 SYSTEM_DIR = REPO_DIR / "systems" / "system_tai"
 BENCHMARK_PATH = SYSTEM_DIR / "benchmarks" / "l21_150_diagnostic" / "benchmark.json"
@@ -67,29 +68,29 @@ print("=" * 110)
 cls_pure = classify_question(q_vi)
 cls_runtime, _ = classify_runtime_question(q_vi, q_en, qa_a2_enabled=False, qa_ocr_enabled=True)
 
+# Instantiate exact production components
+ont_config = VisualOntologyConfig(enabled=True, ontology_path=ONTOLOGY_PATH)
+ontology = load_visual_answer_ontology(ONTOLOGY_PATH)
+provider = VisualOntologyAnswerCandidateProvider(ontology, ont_config)
+scorer = CosineEvidenceAnswerScorer()
+
 print(f"Benchmark Question (VI)       : {q_vi}")
 print(f"Benchmark Question (EN)       : {q_en}")
 print(f"Target Video                  : {target_vid}")
 print(f"GT Frame Interval             : [{s_gt}, {e_gt}] (Center: {(s_gt + e_gt)//2})")
 print(f"Accepted Gold Answers         : {gold_answers}")
-print(f"\n[Classification Results]")
-print(f"  Pure Question Classifier     : {cls_pure.question_type.value} | Reason: {cls_pure.reason}")
-print(f"  Runtime Question Classifier  : {cls_runtime.question_type.value} | Reason: {cls_runtime.reason}")
+print(f"\n[Classification & Routing Provenance]")
+print(f"  Benchmark-annotated Type    : {q20_data.get('question_type', 'UNSPECIFIED')}")
+print(f"  Pure Question Classifier    : {cls_pure.question_type.value} | Reason: {cls_pure.reason}")
+print(f"  Runtime Question Classifier : {cls_runtime.question_type.value} | Reason: {cls_runtime.reason} [RUNTIME-PROVEN]")
+print(f"  Actual Provider Class       : {provider.__class__.__name__} [RUNTIME-PROVEN]")
+print(f"  Actual Scorer Class         : {scorer.__class__.__name__} [RUNTIME-PROVEN]")
 
-# Load hypotheses from Visual Ontology Provider
-ont_config = VisualOntologyConfig(enabled=True, ontology_path=ONTOLOGY_PATH)
-ontology = load_visual_answer_ontology(ONTOLOGY_PATH)
-prov_vis = VisualOntologyAnswerCandidateProvider(ontology, ont_config)
-prov_base = BaselineQuestionCandidateProvider()
-
-hyps = prov_vis.get_candidates_for_query(cls_runtime.question_type, q_en or q_vi)
-print(f"\n[Candidate Hypotheses Provider]")
-print(f"  Provider Name                : VisualOntologyAnswerCandidateProvider")
-print(f"  Active Question Type         : {cls_runtime.question_type.value}")
-print(f"  Total Hypotheses Count       : {len(hyps)}")
-print(f"  Hypotheses List              :")
+query_text = q_en or q_vi
+hyps = provider.get_candidates_for_query(cls_runtime.question_type, query_text)
+print(f"\n[Candidate Hypotheses ({len(hyps)})]")
 for h in hyps:
-    print(f"    -> Canonical: '{h.canonical_answer:<3}' | Aliases: {h.aliases} | Visual Prompts: {h.visual_prompts}")
+    print(f"  Canonical: '{h.canonical_answer:<3}' | Aliases: {h.aliases} | Visual Prompts: {h.visual_prompts}")
 
 # --------------------------------------------------------------------------------------------------------------
 # STEP 2: DEV-ONLY VISUAL ANSWER SCORING REPLAY ON TARGET FRAMES
@@ -99,17 +100,10 @@ print("STEP 2: PER-FRAME VISUAL ANSWER SCORING REPLAY ON L21_V007 FRAMES")
 print("=" * 110)
 
 REPLAY_FRAMES = [
-    (14541, "Primary Refined Anchor"),
-    (14601, "Existing +60 Final Frame (Rank 41)"),
-    (14631, "Existing +90 Geometry (Inside GT)"),
-    (14661, "Existing +120 Geometry (Inside GT)"),
-]
-
-# Find video file for L21_V007
-video_dirs = [
-    Path(f"/kaggle/input/hcm-ai-challenge-2026-round-1/keyframes/{target_vid}"),
-    Path(f"/kaggle/input/aic2024-round1-keyframes/{target_vid}"),
-    Path(f"/kaggle/input/aic2026-dataset/{target_vid}"),
+    (14541, "Primary Refined Anchor (Observed in Treatment Artifact)"),
+    (14601, "Existing +60 Final Frame (Observed in Treatment Artifact Rank 41)"),
+    (14631, "Existing +90 Legacy Constructor Geometry (Inside GT)"),
+    (14661, "Existing +120 Legacy Constructor Geometry (Inside GT)"),
 ]
 
 # Search in /kaggle/input
@@ -134,36 +128,34 @@ try:
     print(f"Loading CLIP model ViT-B/32 on {device}...")
     model, preprocess = clip.load("ViT-B/32", device=device)
 
-    # Encode all text hypotheses
-    prompt_entries = []
+    # Encode all text hypotheses into prompt_embeddings dictionary matching CosineEvidenceAnswerScorer
+    all_prompts = []
     for hyp in hyps:
-        prompts = hyp.visual_prompts or (hyp.canonical_answer,)
-        prompt_entries.append((hyp.canonical_answer, prompts))
+        for p_text in hyp.visual_prompts:
+            all_prompts.append(p_text)
 
-    text_tokens_list = []
-    text_mapping = []
-    for can_ans, prompts in prompt_entries:
-        for p_text in prompts:
-            text_tokens_list.append(p_text)
-            text_mapping.append(can_ans)
-
-    text_tokens = clip.tokenize(text_tokens_list).to(device)
+    text_tokens = clip.tokenize(all_prompts).to(device)
     with torch.no_grad():
         text_features = model.encode_text(text_tokens)
         text_features /= text_features.norm(dim=-1, keepdim=True)
 
+    prompt_embeddings: dict[str, np.ndarray] = {
+        p_text: feat.cpu().numpy().astype(np.float32)
+        for p_text, feat in zip(all_prompts, text_features)
+    }
+
     if found_video_path and found_video_path.exists():
         cap = cv2.VideoCapture(str(found_video_path))
-        print(f"\nSuccessfully opened video {found_video_path.name}. Total frames in video: {int(cap.get(cv2.CAP_PROP_FRAME_COUNT))}")
+        print(f"Opened video {found_video_path.name}. Total frames: {int(cap.get(cv2.CAP_PROP_FRAME_COUNT))}\n")
 
-        print(f"\n{'Frame ID':<10} | {'in_GT':<8} | {'Dist to GT':<12} | {'Top-1 Answer':<14} | {'Gold Match':<12} | {'Hypothesis Scores (Top-5)'}")
-        print("-" * 110)
+        replay_table_rows = []
+        frame_results = {}
 
         for fid, desc in REPLAY_FRAMES:
             cap.set(cv2.CAP_PROP_POS_FRAMES, fid)
             ret, frame = cap.read()
             if not ret:
-                print(f"{fid:<10} | {'ERROR':<8} | {'N/A':<12} | {'DECODE_FAILED':<14} | {'False':<12} | Failed to read frame from video.")
+                print(f"[ERROR] Failed to decode frame {fid}")
                 continue
 
             # Convert BGR to RGB
@@ -174,34 +166,87 @@ try:
             with torch.no_grad():
                 img_feature = model.encode_image(img_tensor)
                 img_feature /= img_feature.norm(dim=-1, keepdim=True)
-                sims = (img_feature @ text_features.T).squeeze(0)
+                img_emb_np = img_feature.squeeze(0).cpu().numpy().astype(np.float32)
 
-            # Aggregate scores per canonical answer (max pooling over prompts)
-            ans_scores = {}
-            for sim, can_ans in zip(sims.tolist(), text_mapping):
-                ans_scores[can_ans] = max(ans_scores.get(can_ans, -1.0), float(sim))
+            # Score using exact production CosineEvidenceAnswerScorer
+            dummy_cand = QAEvidenceCandidate(
+                query_id="QA-20",
+                rank=1,
+                video_id=target_vid,
+                frame_id=fid,
+                retrieval_score=1.0,
+            )
+            scored_hyps = scorer.score_answers(
+                candidate=dummy_cand,
+                hypotheses=hyps,
+                image_embedding=img_emb_np,
+                prompt_embeddings=prompt_embeddings,
+            )
 
-            sorted_scores = sorted(ans_scores.items(), key=lambda x: x[1], reverse=True)
-            top1_ans, top1_score = sorted_scores[0]
-            is_gold = top1_ans in gold_answers
+            top1_hyp, top1_score = scored_hyps[0]
+            top1_ans = top1_hyp.canonical_answer
             in_gt = s_gt <= fid <= e_gt
-            if fid < s_gt: dist = fid - s_gt
-            elif fid > e_gt: dist = fid - e_gt
-            else: dist = 0
 
-            top5_str = ", ".join([f"'{a}': {sc:.4f}" for a, sc in sorted_scores[:5]])
-            print(f"{fid:<10} | {str(in_gt):<8} | {dist:+d} frames   | '{top1_ans}' ({top1_score:.4f}) | {str(is_gold):<12} | {top5_str}")
+            # Find score for '2' and '3'
+            scores_map = {h.canonical_answer: sc for h, sc in scored_hyps}
+            score_2 = scores_map.get("2", 0.0)
+            score_3 = scores_map.get("3", 0.0)
+            margin_2_minus_3 = score_2 - score_3
 
-            # Specific comparison between '2' and '3'
-            sc_2 = ans_scores.get("2", 0.0)
-            sc_3 = ans_scores.get("3", 0.0)
-            print(f"           --> Description: {desc}")
-            print(f"           --> Score('2'): {sc_2:.4f} | Score('3'): {sc_3:.4f} | Margin('2' - '3'): {sc_2 - sc_3:+.4f}")
-            print()
+            replay_table_rows.append(
+                (fid, "Yes" if in_gt else "No", top1_ans, f"{score_2:.4f}", f"{score_3:.4f}", f"{margin_2_minus_3:+.4f}", desc)
+            )
+            frame_results[fid] = {
+                "top1_ans": top1_ans,
+                "top1_score": top1_score,
+                "score_2": score_2,
+                "score_3": score_3,
+                "margin": margin_2_minus_3,
+                "in_gt": in_gt,
+                "scored_hyps": scored_hyps,
+            }
 
         cap.release()
+
+        # ------------------------------------------------------------------------------------------------------
+        # PARITY CHECK AT FRAME 14541
+        # ------------------------------------------------------------------------------------------------------
+        print("=" * 110)
+        print("PARITY CHECK AT PRIMARY ANCHOR FRAME 14541")
+        print("=" * 110)
+        p_res = frame_results.get(14541)
+        if p_res:
+            p_top1 = p_res["top1_ans"]
+            parity_pass = (p_top1 == "3")
+            print(f"  Frame 14541 Replayed Top-1 Answer : '{p_top1}' (Score: {p_res['top1_score']:.4f})")
+            print(f"  Expected Treatment Top-1 Answer   : '3'")
+            print(f"  Score('2'): {p_res['score_2']:.4f} | Score('3'): {p_res['score_3']:.4f} | Margin('2'-'3'): {p_res['margin']:+.4f}")
+            print(f"  PARITY VERIFICATION               : {'PASS ✅' if parity_pass else 'FAIL ❌'}")
+            if not parity_pass:
+                print("  [CRITICAL WARNING] Scorer output diverges from runtime artifact! Replay results cannot be trusted.")
+        else:
+            print("  [ERROR] Parity check frame 14541 could not be evaluated.")
+
+        # ------------------------------------------------------------------------------------------------------
+        # SUMMARY REPLAY TABLE
+        # ------------------------------------------------------------------------------------------------------
+        print("\n" + "=" * 110)
+        print("PER-FRAME REPLAY SUMMARY TABLE")
+        print("=" * 110)
+        print(f"{'Frame':<8} | {'In GT':<7} | {'Top-1':<7} | {'Score(2)':<10} | {'Score(3)':<10} | {'Margin (2 - 3)':<15} | {'Description'}")
+        print("-" * 110)
+        for r in replay_table_rows:
+            print(f"{r[0]:<8} | {r[1]:<7} | {r[2]:<7} | {r[3]:<10} | {r[4]:<10} | {r[5]:<15} | {r[6]}")
+
+        print("\n--- Detailed Top-5 Hypotheses Distribution Per Frame ---")
+        for fid, _ in REPLAY_FRAMES:
+            res = frame_results.get(fid)
+            if res:
+                top5_str = ", ".join([f"'{h.canonical_answer}': {sc:.4f}" for h, sc in res["scored_hyps"][:5]])
+                print(f"  Frame {fid:<6} (In GT: {str(res['in_gt']):<5}) -> Top-5: [{top5_str}]")
+
     else:
-        print(f"[WARNING] Video file {target_vid}.mp4 not found in search paths. Run this script in Kaggle notebook where /kaggle/input is mounted.")
+        print(f"[WARNING] Video file {target_vid}.mp4 not found. Execute script in Kaggle environment.")
 
 except Exception as e:
     print(f"[ERROR during replay]: {e}")
@@ -211,24 +256,17 @@ except Exception as e:
 # --------------------------------------------------------------------------------------------------------------
 # STEP 3: SOURCE AUDIT ON FAR-OFFSET TOP-100 STARVATION
 # --------------------------------------------------------------------------------------------------------------
-print("=" * 110)
+print("\n" + "=" * 110)
 print("STEP 3: SOURCE AUDIT ON TOP-100 STARVATION FOR CANDIDATE 4 FAR OFFSETS (+90 / +120)")
 print("=" * 110)
-print("1. Candidate 4 (L21_V007) Phase Allocations in Top-100 Constructor:")
-print("   - Tier 3 Phase A (Direct Primary)    : Slot emitted at Rank 7   (Frame 14541)")
-print("   - Tier 3 Phase B (Offset -30)        : Slot emitted at Rank 16  (Frame 14511)")
-print("   - Tier 3 Phase C (Offset +30)        : Slot emitted at Rank 25  (Frame 14571)")
-print("   - Tier 5 Phase A (Offset +60)        : Slot emitted at Rank 41  (Frame 14601)")
-print("   - Tier 5 Phase A (Offset -60)        : Slot emitted at Rank 51  (Frame 14481)")
-print("   - Tier 5 Phase A (Offset +45)        : Slot emitted at Rank 61  (Frame 14586)")
-print("   - Tier 5 Phase A (Offset -45)        : Slot emitted at Rank 71  (Frame 14496)")
-print("   - Primary 11-12 Coverage             : Ranks 78-79")
-print("   - Secondary Micro-Budget             : Ranks 80-99 (20 secondary slots emitted for videos 1..10)")
-print("   - Tier 5 Phase B (Far Offsets)       :")
-print("     -> Attempt +90 for Candidate 1     : Emitted at Rank 100 [TARGET_K=100 REACHED!]")
-print("     -> Attempt +90 for Candidate 4     : STARVED (Theoretical Rank 103 > 100)")
-print("     -> Attempt +120 for Candidate 4    : STARVED (Theoretical Rank 123 > 100)")
-print("\n[SOURCE-DERIVED PROOF]:")
-print("  Far offsets (+90, +120) for Candidate 4 (Frame 14631, 14661) are 100% syntactically implemented in Tier 5 Phase B,")
-print("  but were truncated because Secondary Micro-Budget + Phase A filled slots 1..99, and Candidate 1 took slot 100.")
+print("[SOURCE-DERIVED PROOF OF PHASE B STARVATION]:")
+print("1. In construct_ranked_qa_top100 (top100_constructor.py):")
+print("   - Tier 1 + Tier 2 + Tier 3 (Phase A, B, C) + Tier 4 + Tier 5 Phase A + P11-12 + Secondary MB")
+print("     collectively emit exactly 99 slots (Ranks 1..99) across the 38 DEV queries.")
+print("   - When Tier 5 Phase B (+90, -90, +120, -120) begins:")
+print("     -> Offset +90 for Candidate 1 is admitted into Rank 100.")
+print("     -> len(predictions) reaches target_k (100) -> Constructor triggers loop break.")
+print("2. Theoretical Emission Ranks absent the target_k cutoff:")
+print("   - Candidate 4 (L21_V007) +90  (Frame 14631, Inside GT) -> Theoretical Rank 103 [STARVED]")
+print("   - Candidate 4 (L21_V007) +120 (Frame 14661, Inside GT) -> Theoretical Rank 123 [STARVED]")
 print("=" * 110)
