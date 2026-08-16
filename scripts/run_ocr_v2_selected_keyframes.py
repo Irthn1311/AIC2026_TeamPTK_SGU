@@ -14,6 +14,16 @@ import pandas as pd
 from PIL import Image
 from tqdm import tqdm
 
+# 🛠️ HOT-FIX PYTHON 3.12 PKGUTIL & PILLOW
+import pkgutil
+if not hasattr(pkgutil, "ImpImporter"):
+    class ImpImporter:
+        pass
+    pkgutil.ImpImporter = ImpImporter
+import PIL._util
+PIL._util.is_directory = lambda p: os.path.isdir(p)
+PIL._util.is_path = lambda p: isinstance(p, (str, bytes, os.PathLike))
+
 SCRIPTS_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPTS_DIR.parents[0]
 if str(PROJECT_ROOT) not in sys.path:
@@ -102,8 +112,9 @@ def init_models(device: str, vietocr_config: Path) -> tuple[Any, Any | None, str
     import torch
 
     use_gpu = device != "cpu" and torch.cuda.is_available()
-    print("  [1/2] 🧠 Loading EasyOCR Detector (gpu={}) ...".format(use_gpu))
-    detector = easyocr.Reader(["vi", "en"], gpu=use_gpu)
+    target_device = device if (use_gpu and device.startswith("cuda")) else ("cuda" if use_gpu else "cpu")
+    print(f"  [1/2] 🧠 Loading EasyOCR Detector (gpu={use_gpu}, device={target_device}) ...")
+    detector = easyocr.Reader(["vi", "en"], gpu=use_gpu, device=target_device)
     print("  [1/2] ✅ EasyOCR Detector Ready!")
 
     print("  [2/2] 🧠 Loading VietOCR Recognizer ...")
@@ -124,7 +135,7 @@ def init_models(device: str, vietocr_config: Path) -> tuple[Any, Any | None, str
         else:
             config = Cfg.load_config_from_name("vgg_transformer")
             config["weights"] = str(ensure_vietocr_weights())
-        config["device"] = "cuda:0" if use_gpu else "cpu"
+        config["device"] = target_device
         recognizer = Predictor(config)
         recognizer_status = f"ready:{config['device']}"
         print("  [2/2] ✅ VietOCR Recognizer Ready!")
@@ -132,6 +143,7 @@ def init_models(device: str, vietocr_config: Path) -> tuple[Any, Any | None, str
         recognizer_status = repr(exc)
         print(f"  [2/2] ⚠️ VietOCR fallback to EasyOCR only: {exc}")
     return detector, recognizer, recognizer_status
+
 
 
 def predict_vietocr(recognizer: Any, crop: Image.Image) -> tuple[str, float | None]:
@@ -257,7 +269,7 @@ def main() -> None:
     parser.add_argument("--selected-root", default="outputs/keyframe_v2_full")
     parser.add_argument("--output-dir", default="outputs/ocr_v2_selected_keyframes")
     parser.add_argument("--video-id", action="append", default=[])
-    parser.add_argument("--device", choices=["auto", "cpu", "cuda"], default="cuda")
+    parser.add_argument("--device", default="cuda", help="Device to use, e.g. cuda, cuda:0, cuda:1, or cpu.")
     parser.add_argument("--min-confidence", type=float, default=0.35)
     parser.add_argument("--scale-factor", type=float, default=2.5)
     parser.add_argument("--pad-px", type=int, default=6)
