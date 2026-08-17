@@ -398,7 +398,14 @@ def write_manifests(
             "git_commit": git_commit,
             "branch": branch,
             "tca1_anchor_is_ancestor": True,
-            "preparation_freeze_sha256": preparation.zip_sha256,
+            "preparation_expected_original_zip_sha256": preparation.zip_sha256,
+            "preparation_source_form": preparation.validation["source_form"],
+            "preparation_original_zip_container_sha256_gate": preparation.validation[
+                "original_zip_container_sha256_gate"
+            ],
+            "preparation_frozen_member_sha256_gate": preparation.validation[
+                "frozen_member_sha256_gate"
+            ],
             "asset_manifest_sha256": sha256_file(asset),
             "index_manifest_sha256": sha256_file(index),
             "gt_loaded_after_both_prediction_hashes": True,

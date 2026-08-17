@@ -178,7 +178,26 @@ def _audit_rows(*, s1_rescue=False) -> dict:
 def test_01_preparation_freeze_hash_and_contract(tmp_path, monkeypatch) -> None:
     value = load_preparation_freeze(_write_preparation(tmp_path, monkeypatch))
     assert value.validation["status"] == "PASS"
+    assert value.validation["source_form"] == "ORIGINAL_FROZEN_ZIP"
     assert value.validation["a0_prediction_sha256"] == EXPECTED_A0_PREDICTION_SHA256
+
+
+def test_01b_kaggle_expanded_preparation_is_member_hash_verified(tmp_path, monkeypatch) -> None:
+    archive_path = _write_preparation(tmp_path, monkeypatch)
+    expanded = tmp_path / "expanded"
+    with ZipFile(archive_path) as archive:
+        archive.extractall(expanded)
+    value = load_preparation_freeze(expanded)
+    assert value.validation["status"] == "PASS"
+    assert value.validation["source_form"] == "KAGGLE_EXPANDED_VERIFIED_MEMBERS"
+    assert value.validation["frozen_member_sha256_gate"] == "PASS"
+    assert (
+        value.validation["original_zip_container_sha256_gate"]
+        == "NOT_AVAILABLE_AFTER_KAGGLE_EXPANSION"
+    )
+    (expanded / "sca1_preparation/decision_context.json").write_text("tampered")
+    with pytest.raises(RuntimeError, match="MEMBER_SHA256_MISMATCH"):
+        load_preparation_freeze(expanded)
 
 
 def test_02_asset_manifest_valid_and_sha_mismatch_fails(tmp_path, monkeypatch) -> None:

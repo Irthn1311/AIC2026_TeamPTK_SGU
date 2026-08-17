@@ -45,16 +45,31 @@ def _sha256_bytes(value: bytes) -> str:
 
 def load_preparation_freeze(source: str | Path) -> PreparationFreeze:
     path = Path(source).expanduser().resolve(strict=True)
-    if not path.is_file() or path.suffix.casefold() != ".zip":
-        raise RuntimeError("SCA1_PREPARATION_FREEZE_MUST_BE_THE_FROZEN_ZIP")
-    zip_digest = sha256_file(path)
-    if zip_digest != FROZEN_PREPARATION_ZIP_SHA256:
-        raise RuntimeError(f"SCA1_PREPARATION_ZIP_SHA256_MISMATCH: {zip_digest}")
-    with ZipFile(path) as archive:
-        names = set(archive.namelist())
-        if names != set(PREPARATION_MEMBER_HASHES):
-            raise RuntimeError(f"SCA1_PREPARATION_MEMBER_SET_MISMATCH: {sorted(names)}")
-        members = {name: archive.read(name) for name in PREPARATION_MEMBER_HASHES}
+    if path.is_file() and path.suffix.casefold() == ".zip":
+        zip_digest = sha256_file(path)
+        if zip_digest != FROZEN_PREPARATION_ZIP_SHA256:
+            raise RuntimeError(f"SCA1_PREPARATION_ZIP_SHA256_MISMATCH: {zip_digest}")
+        with ZipFile(path) as archive:
+            names = set(archive.namelist())
+            if names != set(PREPARATION_MEMBER_HASHES):
+                raise RuntimeError(f"SCA1_PREPARATION_MEMBER_SET_MISMATCH: {sorted(names)}")
+            members = {name: archive.read(name) for name in PREPARATION_MEMBER_HASHES}
+        source_form = "ORIGINAL_FROZEN_ZIP"
+        container_hash_gate = "PASS"
+    elif path.is_dir():
+        actual_paths = {
+            item.relative_to(path).as_posix(): item for item in path.rglob("*") if item.is_file()
+        }
+        if set(actual_paths) != set(PREPARATION_MEMBER_HASHES):
+            raise RuntimeError(
+                f"SCA1_PREPARATION_EXPANDED_MEMBER_SET_MISMATCH: {sorted(actual_paths)}"
+            )
+        members = {name: actual_paths[name].read_bytes() for name in PREPARATION_MEMBER_HASHES}
+        zip_digest = FROZEN_PREPARATION_ZIP_SHA256
+        source_form = "KAGGLE_EXPANDED_VERIFIED_MEMBERS"
+        container_hash_gate = "NOT_AVAILABLE_AFTER_KAGGLE_EXPANSION"
+    else:
+        raise RuntimeError("SCA1_PREPARATION_FREEZE_SOURCE_UNSUPPORTED")
     hashes = {name: _sha256_bytes(value) for name, value in members.items()}
     if hashes != PREPARATION_MEMBER_HASHES:
         raise RuntimeError("SCA1_PREPARATION_MEMBER_SHA256_MISMATCH")
@@ -105,6 +120,9 @@ def load_preparation_freeze(source: str | Path) -> PreparationFreeze:
         model_selection=selection,
         validation={
             "status": "PASS",
+            "source_form": source_form,
+            "frozen_member_sha256_gate": "PASS",
+            "original_zip_container_sha256_gate": container_hash_gate,
             "member_count": len(hashes),
             "expected_catalog_rows": EXPECTED_ROWS,
             "tca1_anchor_commit": TCA1_ANCHOR_COMMIT,
