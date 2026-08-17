@@ -19,7 +19,8 @@ if str(SYSTEM_TAI_SRC) not in sys.path:
     sys.path.insert(0, str(SYSTEM_TAI_SRC))
 
 from system_tai.data.corpus_discovery import DiscoveryValidation
-from system_tai.kis.operational_runtime import OperationalKISRuntime, SessionConfig
+from system_tai.kis.session_engine import OperationalKISRuntime
+from system_tai.kis.session_schema import SessionConfig
 from system_tai.retrieval.multi_variant_fusion import fuse_multi_variant_video_ranks
 from system_tai.retrieval.query_decomposition import QueryVariants, decompose_query
 
