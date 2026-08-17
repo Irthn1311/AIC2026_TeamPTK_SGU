@@ -2,6 +2,7 @@
 
 from .assets import (
     create_asset_zip,
+    extract_pooled_features,
     local_only_load_smoke,
     prepare_offline_asset,
     validate_offline_asset,
@@ -38,6 +39,7 @@ __all__ = [
     "create_asset_zip",
     "create_bundle",
     "evaluate_post_gt",
+    "extract_pooled_features",
     "formal_report",
     "l2_normalize",
     "load_preparation_freeze",

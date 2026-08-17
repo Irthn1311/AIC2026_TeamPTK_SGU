@@ -164,6 +164,31 @@ def validate_offline_asset(asset_root: str | Path) -> dict[str, Any]:
     }
 
 
+def extract_pooled_features(output: Any, *, modality: str) -> Any:
+    """Return the 2-D projected feature tensor across Transformers API variants.
+
+    Older Transformers releases returned a tensor directly from SigLIP2
+    ``get_*_features`` methods. Newer releases return
+    ``BaseModelOutputWithPooling``. A tuple is also possible when
+    ``return_dict=False``. Keep this compatibility boundary in one place so
+    smoke tests and the persisted index use exactly the same representation.
+    """
+
+    features = output if getattr(output, "shape", None) is not None else None
+    if features is None:
+        features = getattr(output, "pooler_output", None)
+    if features is None and isinstance(output, tuple | list) and len(output) > 1:
+        features = output[1]
+    shape = getattr(features, "shape", None)
+    if shape is None:
+        raise RuntimeError(f"SCA1_SIGLIP2_{modality.upper()}_FEATURE_OUTPUT_UNSUPPORTED")
+    if len(shape) != 2:
+        raise RuntimeError(
+            f"SCA1_SIGLIP2_{modality.upper()}_FEATURE_OUTPUT_SHAPE_INVALID: {tuple(shape)}"
+        )
+    return features
+
+
 def local_only_load_smoke(asset_root: str | Path) -> dict[str, Any]:
     """Load the official processor/model without any network fallback."""
 
@@ -193,8 +218,12 @@ def local_only_load_smoke(asset_root: str | Path) -> dict[str, Any]:
         images=[Image.new("RGB", (IMAGE_SIZE, IMAGE_SIZE))], return_tensors="pt"
     )
     with torch.inference_mode():
-        text_features = model.get_text_features(**dict(text_inputs))
-        image_features = model.get_image_features(**dict(image_inputs))
+        text_features = extract_pooled_features(
+            model.get_text_features(**dict(text_inputs)), modality="text"
+        )
+        image_features = extract_pooled_features(
+            model.get_image_features(**dict(image_inputs)), modality="image"
+        )
     feature_shapes = {
         "text": list(text_features.shape),
         "image": list(image_features.shape),
@@ -238,6 +267,7 @@ def create_asset_zip(asset_root: str | Path, output_zip: str | Path) -> dict[str
 __all__ = [
     "ASSET_MANIFEST_VERSION",
     "create_asset_zip",
+    "extract_pooled_features",
     "local_only_load_smoke",
     "prepare_offline_asset",
     "validate_offline_asset",

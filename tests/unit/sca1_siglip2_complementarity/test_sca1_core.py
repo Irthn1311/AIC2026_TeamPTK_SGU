@@ -17,6 +17,7 @@ from triage_eg.diagnostics.sca1_siglip2_complementarity import (
     Siglip2GroundingPipeline,
     classify_complementarity,
     create_bundle,
+    extract_pooled_features,
     l2_normalize,
     load_preparation_freeze,
     oracle_union_diagnostics,
@@ -214,6 +215,21 @@ def test_03_l2_normalization_and_768_shapes() -> None:
     assert text.shape == (3, 768) and image.shape == (4, 768)
     assert np.allclose(np.linalg.norm(text, axis=1), 1.0, atol=1e-6)
     assert np.allclose(np.linalg.norm(image, axis=1), 1.0, atol=1e-6)
+
+
+def test_03b_siglip2_feature_output_compatibility() -> None:
+    direct = np.ones((2, 768), dtype=np.float32)
+    pooled = np.full((2, 768), 2.0, dtype=np.float32)
+    assert extract_pooled_features(direct, modality="text") is direct
+    assert (
+        extract_pooled_features(SimpleNamespace(pooler_output=pooled), modality="text")
+        is pooled
+    )
+    assert extract_pooled_features((np.zeros((2, 4, 768)), pooled), modality="image") is pooled
+    with pytest.raises(RuntimeError, match="FEATURE_OUTPUT_UNSUPPORTED"):
+        extract_pooled_features(SimpleNamespace(pooler_output=None), modality="text")
+    with pytest.raises(RuntimeError, match="FEATURE_OUTPUT_SHAPE_INVALID"):
+        extract_pooled_features(np.ones((2, 4, 768)), modality="image")
 
 
 def test_04_exact_backend_stable_tie_order(monkeypatch) -> None:

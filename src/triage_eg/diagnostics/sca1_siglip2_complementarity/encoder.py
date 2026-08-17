@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 
-from .assets import validate_offline_asset
+from .assets import extract_pooled_features, validate_offline_asset
 from .contracts import (
     EMBEDDING_DIMENSION,
     PROCESSOR_USE_FAST,
@@ -105,7 +105,10 @@ class Siglip2OfflineEncoder:
                 return_tensors="pt",
             )
             with self.torch.inference_mode():
-                features = self.model.get_text_features(**self._to_device(dict(inputs)))
+                features = extract_pooled_features(
+                    self.model.get_text_features(**self._to_device(dict(inputs))),
+                    modality="text",
+                )
             outputs.append(features.detach().float().cpu().numpy())
         matrix = l2_normalize(np.concatenate(outputs, axis=0))
         if matrix.shape != (len(texts), EMBEDDING_DIMENSION):
@@ -122,7 +125,10 @@ class Siglip2OfflineEncoder:
             batch = images[start : start + self.batch_size]
             inputs = self.processor(images=batch, return_tensors="pt")
             with self.torch.inference_mode():
-                features = self.model.get_image_features(**self._to_device(dict(inputs)))
+                features = extract_pooled_features(
+                    self.model.get_image_features(**self._to_device(dict(inputs))),
+                    modality="image",
+                )
             outputs.append(features.detach().float().cpu().numpy())
         matrix = l2_normalize(np.concatenate(outputs, axis=0))
         if matrix.shape != (len(images), EMBEDDING_DIMENSION):
