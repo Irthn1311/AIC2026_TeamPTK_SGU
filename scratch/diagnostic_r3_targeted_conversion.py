@@ -1,5 +1,5 @@
 # ==============================================================================================================
-# Phase R3-S2A: Targeted Conversion Diagnostic (Fast 8-Query Forensic with Exact Champion Budget)
+# Phase R3-S2A: Targeted Conversion Diagnostic (Fast Bounded Forensic with Refined Taxonomy)
 # ==============================================================================================================
 
 import argparse
@@ -11,6 +11,7 @@ import sys
 import time
 import unicodedata
 from collections import Counter
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -36,16 +37,27 @@ from system_tai.qa.grounding import (
     QAVideoConditionedEvidenceConfig,
 )
 
-TARGETED_QUERIES = [
+# 7 Targeted Bounded Queries (Skipping QA-20 to avoid CPU refinement hang)
+DEFAULT_TARGETED_QUERIES = [
     "QA-01",  # S1A / OCR branch (biển cảnh báo)
     "QA-02",  # Object branch
-    "QA-20",  # Object count branch
     "QA-23",  # Color branch
     "QA-26",  # S1A / Visual branch
     "QA-30",  # Action branch
     "QA-31",  # Visual branch
     "QA-46",  # Positive control / Action branch (thủ công thổ cẩm)
 ]
+
+
+class FailureClass(StrEnum):
+    STRICT_HIT = "STRICT_HIT"
+    VIDEO_ABSENT = "VIDEO_ABSENT"
+    TARGET_VIDEO_NO_EVIDENCE = "TARGET_VIDEO_NO_EVIDENCE"
+    TEMPORAL_MISS = "TEMPORAL_MISS"
+    ANSWER_MISS = "ANSWER_MISS"
+    ALLOCATION_MISS = "ALLOCATION_MISS"
+    QUERY_TIMEOUT = "QUERY_TIMEOUT"
+    OTHER_UNKNOWN = "OTHER_UNKNOWN"
 
 
 def normalize_text(t: str) -> str:
@@ -69,9 +81,12 @@ def run_targeted_diagnostic(
     manifest_cache_path: Path,
     input_root: Path = Path("/kaggle/input"),
     device: str = "auto",
+    selected_queries: list[str] | None = None,
 ):
+    target_qids = selected_queries or DEFAULT_TARGETED_QUERIES
+
     print("=" * 125)
-    print("ROUND-3 SPRINT 2A: TARGETED 8-QUERY CONVERSION FORENSIC (EXACT CHAMPION BUDGET)")
+    print("ROUND-3 SPRINT 2A: TARGETED 7-QUERY CONVERSION FORENSIC (BOUNDED PER-QUERY)")
     print("=" * 125)
 
     benchmark_bytes = benchmark_path.read_bytes()
@@ -79,9 +94,9 @@ def run_targeted_diagnostic(
     sidecar_bytes = dev_en_sidecar_path.read_bytes()
     sidecar_sha = hashlib.sha256(sidecar_bytes).hexdigest()
 
-    print(f"Benchmark File: {benchmark_path.name} (SHA256: {benchmark_sha[:16]}...)")
-    print(f"Sidecar File  : {dev_en_sidecar_path.name} (SHA256: {sidecar_sha[:16]}...)")
-    print(f"Targeted Queries: {TARGETED_QUERIES}")
+    print(f"Benchmark File  : {benchmark_path.name} (SHA256: {benchmark_sha[:16]}...)")
+    print(f"Sidecar File    : {dev_en_sidecar_path.name} (SHA256: {sidecar_sha[:16]}...)")
+    print(f"Targeted Queries: {target_qids}")
 
     with open(benchmark_path, encoding="utf-8") as f:
         bm_data = json.load(f)
@@ -137,9 +152,9 @@ def run_targeted_diagnostic(
     forensic_results = []
     classification_counts: Counter[str] = Counter()
 
-    for idx, qid in enumerate(TARGETED_QUERIES, start=1):
+    for idx, qid in enumerate(target_qids, start=1):
         if qid not in all_qa_queries:
-            print(f"[{idx}/{len(TARGETED_QUERIES)}] {qid} NOT FOUND in benchmark queries!")
+            print(f"[{idx}/{len(target_qids)}] {qid} NOT FOUND in benchmark queries!")
             continue
 
         q = all_qa_queries[qid]
@@ -150,7 +165,7 @@ def run_targeted_diagnostic(
         q_en = en_map.get(qid, "")
         branch = q.get("branch", "General")
 
-        print(f"\n[{idx}/{len(TARGETED_QUERIES)}] Processing {qid} ({branch}) [Target: {target_vid}, GT: [{start_f}..{end_f}]]...")
+        print(f"\n[START] [{idx}/{len(target_qids)}] {qid} ({branch:<12}) [Target: {target_vid}, GT: [{start_f}..{end_f}]]...")
         t_q0 = time.time()
         req = QAQueryRequest(
             request_id=f"targeted-{qid}",
@@ -218,20 +233,24 @@ def run_targeted_diagnostic(
                 hit_rank = p.get("rank")
                 break
 
-        # Classify Causal Bottleneck
+        # Classify Causal Bottleneck with Refined Taxonomy
         in_gt_frames = [f for f in target_frames if start_f <= f <= end_f]
         nearest_dist = min([abs(f - start_f) for f in target_frames] + [abs(f - end_f) for f in target_frames]) if target_frames else 999999
         nearest_f = min(target_frames, key=lambda f: min(abs(f - start_f), abs(f - end_f))) if target_frames else None
 
         if hit_rank is not None:
-            stage_failure = "STRICT_HIT"
+            stage_failure = FailureClass.STRICT_HIT
             forensic = f"Rank {hit_rank} ✅"
         elif target_vid not in selected_video_ids:
-            stage_failure = "VIDEO_ABSENT"
-            forensic = f"Target video absent from pool ({len(selected_video_ids)} nominated)"
+            stage_failure = FailureClass.VIDEO_ABSENT
+            pool_preview = ", ".join(selected_video_ids[:8])
+            forensic = f"Target {target_vid} absent from pool ({len(selected_video_ids)} nominated: [{pool_preview}...])"
+        elif len(target_frames) == 0:
+            stage_failure = FailureClass.TARGET_VIDEO_NO_EVIDENCE
+            forensic = f"Target @Nomination Rank {vid_rank_in_pool}, but 0 target-video candidate frames materialized in evidence"
         elif not in_gt_frames:
-            stage_failure = "TEMPORAL_MISS"
-            forensic = f"Video @Rank {vid_rank_in_pool}, 0/{len(target_frames)} frames in GT. Nearest f={nearest_f} (dist={nearest_dist})"
+            stage_failure = FailureClass.TEMPORAL_MISS
+            forensic = f"Target @Nomination Rank {vid_rank_in_pool}, 0/{len(target_frames)} frames in GT. Nearest f={nearest_f} (dist={nearest_dist})"
         else:
             # In-GT frame exists! Check answers produced
             all_answers_on_in_gt = []
@@ -244,60 +263,62 @@ def run_targeted_diagnostic(
 
             correct_answers = [a for a in all_answers_on_in_gt if a in gt_answers]
             if not correct_answers:
-                stage_failure = "ANSWER_MISS"
+                stage_failure = FailureClass.ANSWER_MISS
                 unique_ans = list(set(all_answers_on_in_gt))[:3]
                 forensic = f"{len(in_gt_frames)} in-GT frames, but wrong answers: {unique_ans} (GT: {gt_answers})"
             else:
-                stage_failure = "ALLOCATION_MISS"
+                stage_failure = FailureClass.ALLOCATION_MISS
                 forensic = f"Valid tuple existed pre-Top100, but dropped/ranked > 100"
 
-        classification_counts[stage_failure] += 1
+        classification_counts[stage_failure.value] += 1
         forensic_results.append({
             "qid": qid,
             "branch": branch,
             "target": target_vid,
             "gt_interval": f"[{start_f}..{end_f}]",
-            "vid_rank": vid_rank_in_pool if vid_rank_in_pool is not None else "N/A",
+            "vid_rank": vid_rank_in_pool if vid_rank_in_pool is not None else "ABSENT",
             "candidate_frames": len(target_frames),
             "in_gt_frames": len(in_gt_frames),
             "nearest_frame": f"{nearest_f} (d={nearest_dist})" if nearest_f is not None else "None",
-            "stage_failure": stage_failure,
+            "stage_failure": stage_failure.value,
             "forensic": forensic,
             "time_s": f"{t_elapsed:.2f}s",
         })
 
-        print(f"      -> {stage_failure:<15} [{t_elapsed:.2f}s]: {forensic}")
+        print(f"[END]   [{idx}/{len(target_qids)}] {qid} -> {stage_failure.value:<26} [{t_elapsed:.2f}s]: {forensic}")
 
     # 3. Print Forensic Summary Table
     print("\n" + "=" * 125)
-    print(f"{'Query ID':<8} | {'Branch':<12} | {'Target':<10} | {'GT Interval':<16} | {'VidRank':<8} | {'CandFs':<8} | {'InGT':<6} | {'Failure Class':<16} | {'Time'}")
+    print(f"{'Query ID':<8} | {'Branch':<12} | {'Target':<10} | {'GT Interval':<16} | {'VidRank':<8} | {'CandFs':<8} | {'InGT':<6} | {'Failure Class':<26} | {'Time'}")
     print("-" * 125)
     for r in forensic_results:
-        mark = "✅" if r["stage_failure"] == "STRICT_HIT" else "❌"
-        print(f"{r['qid']:<8} | {r['branch']:<12} | {r['target']:<10} | {r['gt_interval']:<16} | {str(r['vid_rank']):<8} | {r['candidate_frames']:<8} | {r['in_gt_frames']:<6} | {mark} {r['stage_failure']:<14} | {r['time_s']}")
+        mark = "✅" if r["stage_failure"] == FailureClass.STRICT_HIT.value else "❌"
+        print(f"{r['qid']:<8} | {r['branch']:<12} | {r['target']:<10} | {r['gt_interval']:<16} | {str(r['vid_rank']):<8} | {r['candidate_frames']:<8} | {r['in_gt_frames']:<6} | {mark} {r['stage_failure']:<24} | {r['time_s']}")
     print("=" * 125)
 
     # 4. Strategic Decision Analysis
     print("\n" + "=" * 125)
     print("TARGETED CONVERSION SUMMARY & STRATEGY SELECTION")
     print("=" * 125)
-    for cls_name, count in classification_counts.items():
-        print(f"  {cls_name:<20}: {count} / {len(TARGETED_QUERIES)} ({count/len(TARGETED_QUERIES)*100:.1f}%)")
+    for fc in FailureClass:
+        count = classification_counts[fc.value]
+        if count > 0:
+            print(f"  {fc.value:<26}: {count} / {len(target_qids)} ({count/len(target_qids)*100:.1f}%)")
 
-    temp_count = classification_counts["TEMPORAL_MISS"]
-    ans_count = classification_counts["ANSWER_MISS"]
-    alloc_count = classification_counts["ALLOCATION_MISS"]
+    temp_count = classification_counts[FailureClass.TEMPORAL_MISS.value]
+    no_ev_count = classification_counts[FailureClass.TARGET_VIDEO_NO_EVIDENCE.value]
+    ans_count = classification_counts[FailureClass.ANSWER_MISS.value]
+    absent_count = classification_counts[FailureClass.VIDEO_ABSENT.value]
 
     print("\n--- ACTIONABLE ROADMAP ---")
-    if temp_count > ans_count:
-        print(f"🎯 DOMINANT BOTTLENECK IS TEMPORAL_MISS ({temp_count}/{len(TARGETED_QUERIES)} queries).")
-        print("   -> SPRINT 2A: Implement Temporal Localization Rescue (Multi-Anchor + Local Window Expansion).")
-    elif ans_count > temp_count:
-        print(f"🎯 DOMINANT BOTTLENECK IS ANSWER_MISS ({ans_count}/{len(TARGETED_QUERIES)} queries).")
-        print("   -> SPRINT 2A: Implement Multi-Crop / Contextual Visual Answer Scorer / OCR Rescue.")
+    if (temp_count + no_ev_count) > ans_count:
+        print(f"🎯 DOMINANT BOTTLENECK IS TEMPORAL / EVIDENCE LOCALIZATION ({temp_count + no_ev_count}/{len(target_qids)} queries).")
+        print("   -> SPRINT 2A: Prioritize Temporal Localization Rescue (Multi-Anchor + Bounded Window Expansion).")
+    elif ans_count > (temp_count + no_ev_count):
+        print(f"🎯 DOMINANT BOTTLENECK IS ANSWER / VISUAL REASONING ({ans_count}/{len(target_qids)} queries).")
+        print("   -> SPRINT 2A: Prioritize Multi-Crop / Contextual Visual Answer Scorer / OCR Rescue.")
     else:
-        print(f"🎯 BALANCED BOTTLENECK: TEMPORAL_MISS ({temp_count}) and ANSWER_MISS ({ans_count}).")
-        print("   -> Prioritize bounded Temporal Rescue first, followed by Contextual Answer Scorer.")
+        print(f"🎯 BALANCED BOTTLENECK: TEMPORAL ({temp_count + no_ev_count}) vs ANSWER ({ans_count}).")
     print("=" * 125)
 
 
@@ -308,12 +329,15 @@ if __name__ == "__main__":
     parser.add_argument("--manifest-cache", type=Path, default=Path("/kaggle/working/manifest_cache.json"))
     parser.add_argument("--input-root", type=Path, default=Path("/kaggle/input"))
     parser.add_argument("--device", type=str, default="auto")
+    parser.add_argument("--query-id", type=str, default=None, help="Optional single query_id to run")
     args = parser.parse_args()
 
+    selected = [args.query_id] if args.query_id else None
     run_targeted_diagnostic(
         benchmark_path=args.benchmark,
         dev_en_sidecar_path=args.sidecar,
         manifest_cache_path=args.manifest_cache,
         input_root=args.input_root,
         device=args.device,
+        selected_queries=selected,
     )
