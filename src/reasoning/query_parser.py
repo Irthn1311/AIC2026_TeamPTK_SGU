@@ -175,13 +175,11 @@ class QueryParser:
             vlm_verification_prompt=vlm_prompt,
         )
 
-        logger.debug(
-            f"[QueryParser.KIS] lang={lang_mix} | scene='{parsed_scene}' | "
-            f"objects={parsed_objects} | colors={parsed_colors} | "
-            f"persons={entities.persons} | quantities={entities.quantities} | "
-            f"negated={neg_result.negated_attributes} | must={neg_result.must_have} | "
-            f"weights={weights.as_dict()} | clip='{clip_prompt[:80]}'"
-        )
+        logger.info(f"🔄 [Chuyển đổi Ngôn ngữ: Việt ➔ Anh]")
+        logger.info(f"   ► Câu gốc (Vietnamese)  : '{raw_text}'")
+        logger.info(f"   ► CLIP Prompt (English)  : '{clip_prompt}'")
+        if ocr_query:
+            logger.info(f"   ► OCR Query (Text/Logo)  : '{ocr_query}'")
         return query
 
     # =========================================================

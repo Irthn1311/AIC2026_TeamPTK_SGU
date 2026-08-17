@@ -276,44 +276,50 @@ class RetrievalPipeline:
         # Apply preprocessing text cleaning
         raw_text = clean_query(raw_text)
 
-        logger.info(f"\n{'='*70}")
-        logger.info(f"PROCESSING QUERY [id='{query_id}']")
-        logger.info(f"Raw Input: '{raw_text}'")
-        logger.info(f"Mode: Global (full database search — target_prefix disabled)")
+        logger.info(f"\n{'='*75}")
+        logger.info(f"📌 XỬ LÝ QUERY [id='{query_id}']")
+        logger.info(f"   ► Câu gốc (Vietnamese) : '{raw_text}'")
+        logger.info(f"   ► Chế độ tìm kiếm      : Global (Toàn bộ CSDL — 177K keyframes)")
+        logger.info(f"{'-'*75}")
 
-        # Step 1: Deep Query Analysis
+        # Step 1: Deep Query Analysis & Vi -> En translation
         kis_query = self._parser.parse_kis(raw_text, top_k=self._top_k_ret)
         retrieval_text = self._parser.build_retrieval_text(kis_query)
         topic_res = self._parser.extract_topic(raw_text)
         query_topic = topic_res.topic if topic_res.confidence >= 0.3 else None
 
-        # Use IntentScorer weights to scale engine contributions
+        # Dynamic weights from IntentScorer
         dyn_visual_w = kis_query.retrieval_weights.get("visual", self._visual_weight)
         dyn_text_w   = kis_query.retrieval_weights.get("ocr",    self._text_weight)
 
-        logger.info(f"[Step 1/4 - Deep Query Analysis]")
-        logger.info(f"  • Scene: '{kis_query.parsed_scene}' | Objects: {kis_query.parsed_objects} | Colors: {kis_query.parsed_colors}")
-        logger.info(f"  • OCR Hints: {kis_query.ocr_keywords} | Spatial: {kis_query.spatial_hints}")
-        logger.info(f"  • Persons: {kis_query.persons} | Quantities: {kis_query.quantities}")
-        logger.info(f"  • Negated: {kis_query.negated_attributes} | Must-have: {kis_query.must_have}")
-        logger.info(f"  • Lang mix: {kis_query.language_mix} | Engine weights: {kis_query.retrieval_weights}")
-        logger.info(f"  • Topic Intent: '{topic_res.topic}' (Conf: {topic_res.confidence:.2f})")
-        logger.info(f"  • CLIP Prompt: '{retrieval_text[:100]}'")
+        logger.info(f"[BƯỚC 1/5 - PHÂN TÍCH QUERY & CHUYỂN ĐỔI NGÔN NGỮ (Vi ➔ En)]")
+        logger.info(f"  • Tiếng Việt (Gốc)     : '{raw_text}'")
+        logger.info(f"  • Tiếng Anh (CLIP Prompt): '{retrieval_text}'")
+        logger.info(f"  • Bối cảnh (Scene)    : '{kis_query.parsed_scene}' | Vật thể: {kis_query.parsed_objects} | Màu sắc: {kis_query.parsed_colors}")
+        logger.info(f"  • Con người / Vai trò : {kis_query.persons} | Số lượng: {kis_query.quantities}")
+        logger.info(f"  • Trang phục / Chi tiết: {kis_query.clothing_details} | Ánh sáng: '{kis_query.lighting}'")
+        logger.info(f"  • OCR / Từ khóa văn bản: {kis_query.ocr_keywords}")
+        logger.info(f"  • Phủ định (Negated)   : {kis_query.negated_attributes} | Bắt buộc (Must): {kis_query.must_have}")
+        logger.info(f"  • Trọng số Retriever   : Visual={dyn_visual_w:.2f}, OCR/Text={dyn_text_w:.2f}")
+        logger.info(f"  • Phân loại Chủ đề     : '{topic_res.topic}' (Độ tin cậy: {topic_res.confidence:.2f})")
 
-        # Step 2: Multimodal Candidate Retrieval — always balanced global search
-        logger.info(f"[Step 2/4 - Candidate Retrieval]")
+        # Step 2: Multi-Query Expansion Prompts
+        extra_prompts = self._build_expansion_prompts(kis_query, raw_text)
+        logger.info(f"\n[BƯỚC 2/5 - MỞ RỘNG QUERY (MULTI-QUERY EXPANSION)]")
+        logger.info(f"  • Prompt Chính (Primary) : '{retrieval_text}'")
+        for i, ep in enumerate(extra_prompts):
+            logger.info(f"  • Prompt Mở Rộng #{i+1}     : '{ep}'")
 
-        # Global balanced retrieval across all batches (inverse-sqrt slot allocation)
+        # Step 3: Multimodal Candidate Retrieval — balanced global search
+        logger.info(f"\n[BƯỚC 3/5 - TRUY XUẤT VECTOR BAN ĐẦU (FAISS HNSW efSearch=256)]")
         vis_results = self._vis_ret.retrieve_balanced(
             retrieval_text, top_k=self._top_k_ret, max_per_video=5
         )
-        logger.info(f"  • Mode: Global Balanced (all batches, max_per_video=5)")
 
         top1_score = vis_results[0].score if vis_results else 0.0
-        logger.info(f"  • Visual Retrieval (CLIP): {len(vis_results)} candidates (Top 1 cosine: {top1_score:.4f})")
+        logger.info(f"  • Truy xuất Thị giác (CLIP Primary) : {len(vis_results)} ứng viên (Top-1 Cosine: {top1_score:.4f})")
 
-        # Multi-query expansion: try additional prompt variants for better recall
-        extra_prompts = self._build_expansion_prompts(kis_query, raw_text)
+        # Execute expansion queries
         for i, ep in enumerate(extra_prompts):
             try:
                 ep_results = self._vis_ret.retrieve_balanced(
@@ -321,92 +327,85 @@ class RetrievalPipeline:
                 )
                 if ep_results:
                     vis_results.extend(ep_results)
-                    logger.info(f"  • Expansion query #{i+1}: +{len(ep_results)} candidates (prompt='{ep[:60]}')")
+                    logger.info(f"  • Truy xuất bổ sung #{i+1}           : +{len(ep_results)} ứng viên (Top-1 Cosine: {ep_results[0].score:.4f})")
             except Exception as e:
-                logger.debug(f"  • Expansion query #{i+1} failed: {e}")
+                logger.debug(f"  • Query mở rộng #{i+1} không thành công: {e}")
 
         all_lists   = []
         all_weights = []
         if vis_results:
             all_lists.append(vis_results)
-            all_weights.append(dyn_visual_w)  # dynamic weight from IntentScorer
+            all_weights.append(dyn_visual_w)
 
         for text_ret in self._text_rets:
-            # Use pre-built ocr_query for OCR retrievers; raw_text for others
             if getattr(text_ret, "name", "") == "ocr_inmemory":
-                q_input = kis_query  # backward-compatible path
-                ocr_q   = kis_query.ocr_query or raw_text
+                q_input = kis_query
                 txt = text_ret.retrieve(q_input, top_k=self._top_k_ret)
             else:
                 txt = text_ret.retrieve(raw_text, top_k=self._top_k_ret)
             if txt:
                 all_lists.append(txt)
-                all_weights.append(dyn_text_w)  # dynamic weight from IntentScorer
-                logger.info(f"  • Text Retrieval ({getattr(text_ret, 'name', 'text')}): {len(txt)} candidates")
+                all_weights.append(dyn_text_w)
+                logger.info(f"  • Truy xuất Văn bản ({getattr(text_ret, 'name', 'text')}): {len(txt)} ứng viên")
 
-        # Guard: if no candidates at all, bail early
         if not all_lists:
-            logger.warning(f"[KIS] No retrieval candidates for query_id='{query_id}' — check index coverage.")
+            logger.warning(f"[KIS] Không tìm thấy ứng viên nào cho query_id='{query_id}'")
             return None
 
-        # Step 3: RRF Fusion & Topic Soft-Scoring
-        logger.info(f"[Step 3/4 - Fusion & Topic Soft-Scoring]")
+        # Step 4: RRF Fusion & Multi-Stage Reranking
+        logger.info(f"\n[BƯỚC 4/5 - HÒA TRỘN & XẾP HẠNG ĐA TẦNG (FUSION & RERANKING)]")
         fused = self._rrf.fuse(
             all_lists, all_weights,
             top_k=self._top_k_fus,
             max_per_video=5,
             query_topic=query_topic,
-            topic_boost_weight=0.15,  # reduced from 0.20 to avoid over-boosting misclassified topics
+            topic_boost_weight=0.15,
         )
 
         if not fused or (fused[0].score < 0.005 and query_topic is not None):
-            logger.info(f"  [FallbackTrigger] Low conf (score={fused[0].score if fused else 0:.4f}) → Unboosted Search")
+            logger.info(f"  • Fallback: Tắt Topic Boost do độ tin cậy thấp")
             fused = self._rrf.fuse(all_lists, all_weights, top_k=self._top_k_fus, query_topic=None)
-        else:
-            logger.info(f"  • Topic Soft-Scoring Applied: '{query_topic}' (+20%)")
+        elif query_topic:
+            logger.info(f"  • Đã áp dụng Topic Soft-Scoring: '{query_topic}' (+15%)")
 
         if not fused:
-            logger.warning(f"[KIS] No fused results for query_id='{query_id}'")
+            logger.warning(f"[KIS] Không có kết quả sau Fusion cho query_id='{query_id}'")
             return None
 
-        # Step 3.5: Multi-Stage Reranking (CLIP + OCR Keyword Match + Temporal Continuity)
+        # Multi-Stage Reranking
         fused = self._clip_reranker.rerank(kis_query, fused, top_k=self._top_k_fus)
-        fused = self._ocr_reranker.rerank(kis_query, fused, top_k=self._top_k_fus)
-        fused = self._temporal_reranker.rerank(kis_query, fused, top_k=self._top_k_fus)
+        logger.info(f"  • Tầng 1 - CLIP Visual Reranker     : Hoàn tất (Top-1 score: {fused[0].score:.4f})")
 
-        # Step 4: Final Selection + Pillar 1 Score Normalization
-        logger.info(f"[Step 4/4 - Frame Selection]")
+        fused = self._ocr_reranker.rerank(kis_query, fused, top_k=self._top_k_fus)
+        logger.info(f"  • Tầng 2 - OCR Keyword Reranker      : Hoàn tất")
+
+        fused = self._temporal_reranker.rerank(kis_query, fused, top_k=self._top_k_fus)
+        logger.info(f"  • Tầng 3 - Temporal Continuity Rerank: Hoàn tất (Đã tối ưu cụm thời gian)")
+
+        # Step 5: Final Selection & Health Checks
+        logger.info(f"\n[BƯỚC 5/5 - LỰA CHỌN KEYFRAME CỐT LÕI & KIỂM TRA ĐỘ TIN CÂY]")
         best_evidence = self._selector.select_best(fused, query_id=query_id)
         if best_evidence:
-            # Pillar 1: Use real CLIP cosine similarity [0.0–1.0] as confidence
-            # instead of the raw RRF score (which is always ~0.01–0.03)
             clip_conf = round(float(top1_score), 4)
 
-            # Confidence-aware logging
+            # Health warnings
             if clip_conf < 0.20:
-                logger.warning(
-                    f"  ⚠ LOW CONFIDENCE ({clip_conf:.4f}) — result may be unreliable"
-                )
+                logger.warning(f"  ⚠ CẢNH BÁO: Độ tin cậy CLIP thấp ({clip_conf:.4f}) — Kết quả có thể chưa chính xác!")
             if len(fused) >= 2:
                 score_gap = fused[0].score - fused[1].score
                 if score_gap < 0.001:
-                    logger.warning(
-                        f"  ⚠ TIGHT RACE: top-1 and top-2 score gap = {score_gap:.6f}"
-                    )
-            # Check if top-3 are from different videos (divergent results)
+                    logger.warning(f"  ⚠ CẢNH BÁO: Khoảng cách điểm giữa Top 1 & Top 2 rất nhỏ ({score_gap:.6f})")
             top3_vids = list(dict.fromkeys(r.video_id for r in fused[:3]))
             if len(top3_vids) >= 3:
-                logger.info(
-                    f"  ℹ Divergent top-3: {top3_vids} — consider reviewing"
-                )
+                logger.info(f"  ℹ GHI CHÚ: Top 3 ứng viên thuộc 3 video khác nhau ({top3_vids})")
 
             logger.info(
-                f"  FINAL RESULT: Video='{best_evidence.video_id}' | "
+                f"  🏆 KẾT QUẢ CUỐI CÙNG: Video='{best_evidence.video_id}' | "
                 f"Frame={best_evidence.frame_idx} (PTS={best_evidence.pts_time:.2f}s) | "
-                f"CLIP Confidence={clip_conf:.4f}"
+                f"Độ tin cậy CLIP={clip_conf:.4f}"
             )
             best_evidence.confidence = clip_conf
-        logger.info(f"{'='*70}\n")
+        logger.info(f"{'='*75}\n")
         return best_evidence
 
     # ----------------------------------------------------------
