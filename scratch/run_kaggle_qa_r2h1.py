@@ -318,6 +318,22 @@ print(f"\nQA-20 Usable Evidence Candidates (Total: {len(usable_cands)}):")
 for idx, c in enumerate(usable_cands, start=1):
     print(f"  [{idx:02d}] Video: {c.get('video_id'):<10} Frame: {c.get('frame_id'):<8} NomRank: {str(c.get('video_nomination_rank')):<3} LocalRank: {str(c.get('local_anchor_rank')):<3} Answers: {c.get('answers', [])[:3]}")
 
+# Selector verification on usable candidates
+from system_tai.qa.candidate_selectors import select_fourth_unique_primary_candidate
+sel_res = select_fourth_unique_primary_candidate(usable_cands)
+if sel_res is not None:
+    _, sel_cand, sel_prov = sel_res
+    print("\n--- QA-R2H1-v2 Selector Provenance Audit for QA-20 ---")
+    print(f"  Selected Candidate Index (0-based) : {sel_prov.get('primary_index_0_based')}")
+    print(f"  Selected Video ID                  : {sel_prov.get('video_id')}")
+    print(f"  Selected Frame ID                  : {sel_prov.get('frame_id')}")
+    print(f"  Selected Video Nomination Rank     : {sel_prov.get('video_nomination_rank')}")
+    print(f"  Selected Local Anchor Rank         : {sel_prov.get('local_anchor_rank')}")
+    print(f"  Source Provenance Key              : {sel_prov.get('source_key')}")
+    print(f"  Computed Far Target Frame (+90)    : {int(sel_prov.get('frame_id')) + 90}")
+else:
+    print("\n--- QA-R2H1-v2 Selector Provenance Audit for QA-20: FAILED (None returned) ---")
+
 q20_preds = treat_eval["preds_by_qid"].get("QA-20", [])
 print("\n--- QA-20 Treatment Final Predictions (Ranks 75..100) ---")
 for p in q20_preds:

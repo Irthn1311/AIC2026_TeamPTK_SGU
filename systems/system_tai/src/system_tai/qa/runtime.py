@@ -1643,40 +1643,36 @@ class QARuntimePipeline:
             image_embeddings_map[(ev_cand.video_id, ev_cand.frame_id)] = img_vec.astype(np.float32)
 
         # Optional QA-R2H1-v2: Bounded Far-Offset Rescored Alternate Embedding for COUNT queries
-        # Selects the 4th primary evidence candidate in canonical video nomination order
-        primary_valid_cands = [
-            (ev, ref) for (ev, ref) in valid_evidence_cands
-            if (getattr(ref, "local_anchor_rank", None) or 1) == 1
-        ]
-        primary_valid_cands.sort(
-            key=lambda x: getattr(x[1], "video_nomination_rank", None) or getattr(x[0], "rank", 0)
-        )
+        # Selects the 4th primary evidence candidate in canonical video nomination order with fail-closed validation
         if (
             self.video_conditioned_evidence_config.count_far_alt_micro
             and q_type == QuestionType.COUNT
-            and len(primary_valid_cands) >= 4
         ):
-            source_ev_cand, source_ref_cand = primary_valid_cands[3]
-            far_target_frame = source_ev_cand.frame_id + 90
-            try:
-                video_record = self.raw_video_registry.get(source_ev_cand.video_id)
-                probe = self.decoder.probe(video_record)
-                if 0 <= far_target_frame < probe.total_frames:
-                    dec_req = DecodeRequest(
-                        probe=probe,
-                        frame_ids=(far_target_frame,),
-                        max_decoded_frames=500,
+            from system_tai.qa.candidate_selectors import select_fourth_unique_primary_candidate
+            sel_result = select_fourth_unique_primary_candidate(valid_evidence_cands)
+            if sel_result is not None:
+                _, (source_ev_cand, source_ref_cand), source_prov = sel_result
+                far_target_frame = source_ev_cand.frame_id + 90
+                try:
+                    video_record = self.raw_video_registry.get(source_ev_cand.video_id)
+                    probe = self.decoder.probe(video_record)
+                    if 0 <= far_target_frame < probe.total_frames:
+                        dec_req = DecodeRequest(
+                            probe=probe,
+                            frame_ids=(far_target_frame,),
+                            max_decoded_frames=500,
+                        )
+                        dec_res = self.decoder.decode(dec_req)
+                        if dec_res.frames:
+                            far_frame_obj = dec_res.frames[0]
+                            if far_frame_obj.absolute_frame_id == far_target_frame:
+                                far_img_vec = self.shared_encoder.encode_images([far_frame_obj.image])[0]
+                                image_embeddings_map[(source_ev_cand.video_id, far_target_frame)] = far_img_vec.astype(np.float32)
+                                diagnostics["count_far_alt_micro_source"] = source_prov
+                except Exception as exc:
+                    diagnostics["warnings"].append(
+                        f"COUNT far-offset decode/encode failed for {source_ev_cand.video_id} frame {far_target_frame}: {exc}"
                     )
-                    dec_res = self.decoder.decode(dec_req)
-                    if dec_res.frames:
-                        far_frame_obj = dec_res.frames[0]
-                        if far_frame_obj.absolute_frame_id == far_target_frame:
-                            far_img_vec = self.shared_encoder.encode_images([far_frame_obj.image])[0]
-                            image_embeddings_map[(source_ev_cand.video_id, far_target_frame)] = far_img_vec.astype(np.float32)
-            except Exception as exc:
-                diagnostics["warnings"].append(
-                    f"COUNT far-offset decode/encode failed for {source_ev_cand.video_id} frame {far_target_frame}: {exc}"
-                )
 
         # Step 6: Visual Prompts & Answer Scoring
         if not self.video_conditioned_evidence_config.enabled:

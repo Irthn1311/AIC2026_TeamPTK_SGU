@@ -176,50 +176,43 @@ class QABaselineEngine:
             )
 
         # Optional QA-R2H1-v2: Bounded Far-Offset Rescored Alternate Candidate for COUNT queries
-        # Selects the 4th primary evidence candidate in canonical video nomination order
-        primary_scored_cands = [
-            c for c in scored_candidates
-            if (c.get("local_anchor_rank") or 1) == 1
-        ]
-        primary_scored_cands.sort(
-            key=lambda c: c.get("video_nomination_rank") or c.get("evidence_rank", 0)
-        )
+        # Selects the 4th primary evidence candidate in canonical video nomination order with fail-closed validation
         auxiliary_count_far_candidates: list[dict[str, Any]] | None = None
-        if (
-            self.count_far_alt_micro
-            and qtype == QuestionType.COUNT
-            and len(primary_scored_cands) >= 4
-        ):
-            source_cand = primary_scored_cands[3]
-            target_far_frame = int(source_cand["frame_id"]) + 90
-            max_f = source_cand.get("total_frames") or source_cand.get("max_frame_id")
-            if target_far_frame >= 0 and (max_f is None or target_far_frame <= int(max_f)):
-                img_emb = None
-                if image_embeddings is not None:
-                    img_emb = image_embeddings.get((source_cand["video_id"], target_far_frame))
-                if img_emb is not None:
-                    aux_cand_obj = QAEvidenceCandidate(
-                        query_id=query.query_id,
-                        rank=len(evidence_candidates) + 1,
-                        video_id=source_cand["video_id"],
-                        frame_id=target_far_frame,
-                        retrieval_score=1.0,
-                    )
-                    scored_aux_hyps = self.scorer.score_answers(
-                        aux_cand_obj, hypotheses, img_emb, prompt_embeddings
-                    )
-                    if scored_aux_hyps and len(scored_aux_hyps) > 1:
-                        auxiliary_count_far_candidates = [
-                            {
-                                "video_id": source_cand["video_id"],
-                                "frame_id": target_far_frame,
-                                "answers": [hyp.canonical_answer for hyp, _ in scored_aux_hyps[:3]],
-                                "scores": [score for _, score in scored_aux_hyps[:3]],
-                                "candidate_rank": 4,
-                                "offset_frames": 90,
-                                "total_frames": max_f,
-                            }
-                        ]
+        if self.count_far_alt_micro and qtype == QuestionType.COUNT:
+            from system_tai.qa.candidate_selectors import select_fourth_unique_primary_candidate
+            sel_result = select_fourth_unique_primary_candidate(scored_candidates)
+            if sel_result is not None:
+                _, source_cand, source_prov = sel_result
+                target_far_frame = int(source_cand["frame_id"]) + 90
+                max_f = source_cand.get("total_frames") or source_cand.get("max_frame_id")
+                if target_far_frame >= 0 and (max_f is None or target_far_frame <= int(max_f)):
+                    img_emb = None
+                    if image_embeddings is not None:
+                        img_emb = image_embeddings.get((source_cand["video_id"], target_far_frame))
+                    if img_emb is not None:
+                        aux_cand_obj = QAEvidenceCandidate(
+                            query_id=query.query_id,
+                            rank=len(evidence_candidates) + 1,
+                            video_id=source_cand["video_id"],
+                            frame_id=target_far_frame,
+                            retrieval_score=1.0,
+                        )
+                        scored_aux_hyps = self.scorer.score_answers(
+                            aux_cand_obj, hypotheses, img_emb, prompt_embeddings
+                        )
+                        if scored_aux_hyps and len(scored_aux_hyps) > 1:
+                            auxiliary_count_far_candidates = [
+                                {
+                                    "video_id": source_cand["video_id"],
+                                    "frame_id": target_far_frame,
+                                    "answers": [hyp.canonical_answer for hyp, _ in scored_aux_hyps[:3]],
+                                    "scores": [score for _, score in scored_aux_hyps[:3]],
+                                    "candidate_rank": 4,
+                                    "offset_frames": 90,
+                                    "total_frames": max_f,
+                                    "source_provenance": source_prov,
+                                }
+                            ]
 
         target_k = 100 if output_top_k is None else output_top_k
         use_expansion = self.expand_temporal if expand_temporal is None else expand_temporal
