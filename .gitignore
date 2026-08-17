@@ -36,6 +36,16 @@ openai_clip_vit_b32_asset_bundle.zip
 /.tmp_opus_mt_vi_en_download/
 /.tmp_opus_mt_vi_en_runtime/
 
+# Offline SigLIP2 asset and SCA-1 diagnostic index
+/aic2026-siglip2-base-patch16-224/
+/aic2026-siglip2-base-patch16-224.zip
+/sca1_siglip2_index_v01/
+/sca1_siglip2_index_v01.zip
+/triage_eg_sca1_siglip2_index_v01.zip
+/triage_eg_sca1_siglip2_complementarity_v01_bundle.zip
+/.tmp_siglip2_download/
+/.tmp_sca1_runtime/
+
 # Optional offline PyNvVideoCodec wheel asset
 /aic2026-pynvvideocodec-wheel/
 /aic2026-pynvvideocodec-wheel.zip

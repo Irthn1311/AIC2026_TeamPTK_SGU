@@ -1,0 +1,49 @@
+experiment: TRIAGE_SCA1_SIGLIP2_COMPLEMENTARITY
+version: "0.1"
+scope: DIAGNOSTIC_ONLY
+benchmark: DEV_CROSS_60
+selected_variant: G1_COVERAGE_COARSE
+arms:
+  A0: FROZEN_OPENAI_CLIP_GROUNDING
+  S1: SIGLIP2_STANDALONE_GROUNDING
+  U1: POST_GT_ORACLE_UNION_NOT_A_PREDICTION_ARM
+model:
+  model_id: google/siglip2-base-patch16-224
+  exact_revision: 0ad8c6e0ff16615356a08a1ad8c8bbc8930c434e
+  model_safetensors_sha256: 612923381c76ec5a9bed335d1c48827e3f2e506ac31b044b63b2031fadee6a0b
+  image_size: 224
+  patch_size: 16
+  embedding_dimension: 768
+  text_padding: max_length
+  text_truncation: true
+  text_max_length: 64
+  manual_l2_normalization: true
+  processor_use_fast: false
+index:
+  rows: 177321
+  catalog_order: EXACT_FROZEN_STAGE1_GLOBAL_ROW_ORDER
+  persisted_dtype: float16
+  scoring_dtype: float32
+  metric: exact_cosine
+  stable_tie_policy: score_desc_global_row_asc
+decision:
+  global_top100_rescue_threshold: 5
+  trake_oracle_event_delta_threshold: 3
+  trake_oracle_chain_delta_threshold: 2
+  open_when_conditions_met: 2
+isolation:
+  exact_current_opus_english_text: true
+  exact_same_btc_rows: true
+  qa_answer_head: FROZEN_OPENAI_CLIP
+  direct_vietnamese: false
+  fusion: false
+  query_rewrite: false
+  m1: false
+  m2: false
+  m3: false
+  event_graph: false
+  vlm: false
+  agent: false
+  extra_frame_sampling: false
+  parameter_sweep: false
+production_policy_changed: false
