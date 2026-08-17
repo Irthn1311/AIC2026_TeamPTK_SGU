@@ -60,8 +60,8 @@ def run_diagnostic(
         default_output_top_k=100,
     )
     runtime = OperationalKISRuntime.bootstrap(config)
-    retriever = runtime.retriever
-    text_encoder = runtime.text_encoder
+    retriever = runtime.exact_retriever
+    text_encoder = runtime.shared_encoder
 
     print(f"Runtime bootstrapped successfully. Index embedding dim: {retriever.registry.embedding_dimension}")
 
