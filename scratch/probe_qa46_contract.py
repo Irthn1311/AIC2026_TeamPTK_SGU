@@ -254,12 +254,13 @@ def run_qa46_probe(
 
 
 if __name__ == "__main__":
+    default_input = Path("/kaggle/input/datasets") if Path("/kaggle/input/datasets").exists() else Path("/kaggle/input")
     parser = argparse.ArgumentParser(description="Run QA-46 Contract Probe")
     parser.add_argument("--benchmark", type=Path, default=REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "l21_150_diagnostic" / "benchmark.json")
     parser.add_argument("--sidecar", type=Path, default=REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "l21_150_diagnostic" / "qa_dev_translations_en.json")
     parser.add_argument("--ontology", type=Path, default=REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "l21_150_diagnostic" / "qa_dev_visual_ontology.json")
     parser.add_argument("--manifest-cache", type=Path, default=Path("/kaggle/working/manifest_cache.json"))
-    parser.add_argument("--input-root", type=Path, default=Path("/kaggle/input"))
+    parser.add_argument("--input-root", type=Path, default=default_input)
     parser.add_argument("--device", type=str, default="auto")
     args = parser.parse_args()
 
