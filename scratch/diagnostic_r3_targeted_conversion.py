@@ -163,11 +163,24 @@ def run_targeted_diagnostic(
 
         res = runtime.handle_qa_query(req)
         preds = res.get("predictions", [])
-        diagnostics = res.get("diagnostics", {})
         t_elapsed = time.time() - t_q0
+
+        # Read evidence diagnostics JSON artifact created by runtime
+        diagnostics = {}
+        ev_rel_path = res.get("artifacts", {}).get("qa_evidence_json")
+        if ev_rel_path:
+            ev_file = runtime.output_root / ev_rel_path
+            if ev_file.exists():
+                try:
+                    with open(ev_file, encoding="utf-8") as ef:
+                        diagnostics = json.load(ef)
+                except Exception as e:
+                    print(f"      Warning reading {ev_file}: {e}")
 
         # Stage A: Champion Nomination Pool
         selected_video_ids = diagnostics.get("selected_video_ids", [])
+        if not selected_video_ids and preds:
+            selected_video_ids = list(dict.fromkeys([p.get("video_id") for p in preds if p.get("video_id")]))
         vid_rank_in_pool = selected_video_ids.index(target_vid) + 1 if target_vid in selected_video_ids else None
 
         # Stage B: Evidence Bank Records (Internal Candidates before Top100)
