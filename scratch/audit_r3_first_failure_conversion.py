@@ -133,9 +133,12 @@ def run_first_failure_audit(
         req = QAQueryRequest(
             request_id=f"audit-{qid}",
             query_id=qid,
+            event_description=q_vi,
             question=q_vi,
-            question_en=q_en,
-            top_k=100,
+            event_description_en=q_en if q_en else None,
+            question_en=q_en if q_en else None,
+            include_vi_variant=False if q_en else True,
+            output_top_k=100,
         )
 
         res = runtime.handle_qa_query(req)
