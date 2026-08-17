@@ -53,7 +53,6 @@ def run_diagnostic(
 
     config = SessionConfig(
         input_root=input_root,
-        reuse_manifest=True,
         manifest_cache=manifest_cache_path,
         output_root=session_output,
         device=device,
