@@ -401,13 +401,54 @@ class QueryParser:
     # Internal: Open-Domain Vi ➔ En Sentence Translation Engine
     # =========================================================
 
+    # =========================================================
+    # Internal: Open-Domain Vi ➔ En Sentence Translation Engine
+    # =========================================================
+
     def translate_vi_sentence(self, raw_text: str) -> str:
         """
         Translates Vietnamese natural language query to English preserving 100% semantics.
         Replaces visual phrases, objects, natural phenomena, settings, and actions.
+        Does NOT convert untranslated Vietnamese to unaccented Vietnamese junk words.
         """
         _VI2EN_DICT = [
-            # Natural disasters & fire
+            # Alleys, Streets & Urban Scenes
+            ("con hẻm đông người và xe máy", "a crowded narrow alley with people and motorbikes"),
+            ("con hẻm đông người", "crowded narrow alley"), ("hẻm đông người", "crowded narrow alley"),
+            ("con hẻm nhỏ", "narrow alleyway"), ("hẻm nhỏ", "narrow alleyway"),
+            ("con hẻm", "narrow alley"), ("ngõ hẻm", "narrow alley"), ("hẻm", "alley"),
+            ("ngõ phố", "narrow street"), ("con ngõ", "alleyway"),
+            ("đường phố đông người", "crowded city street"), ("đường phố", "city street"),
+            ("con đường", "street"), ("tuyến đường", "thoroughfare"), ("vỉa hè", "sidewalk"),
+            ("ngã tư", "intersection"), ("ngã ba", "three-way junction"),
+            ("bãi đỗ xe", "parking lot"), ("bãi xe", "parking lot"),
+            ("khu dân cư", "residential area"), ("chợ đông người", "crowded market"),
+            ("chợ", "market"), ("siêu thị", "supermarket"), ("công viên", "park"),
+            ("bãi biển", "beach"), ("sân trường", "schoolyard"),
+
+            # Flags, Banners & Decorations
+            ("hai bên treo nhiều cờ việt nam", "hanging many Vietnamese flags on both sides"),
+            ("treo nhiều cờ việt nam", "hanging many Vietnamese flags"),
+            ("cờ đỏ sao vàng", "Vietnamese flag with yellow star"),
+            ("cờ việt nam", "Vietnamese flag"), ("lá cờ việt nam", "Vietnamese flag"),
+            ("hai bên treo nhiều cờ", "hanging many flags on both sides"),
+            ("hai bên treo", "hanging on both sides"), ("treo nhiều cờ", "hanging many flags"),
+            ("treo nhiều", "hanging many"), ("được treo", "hung"), ("treo", "hanging"),
+            ("hai bên đường", "on both sides of the street"), ("hai bên", "on both sides"),
+            ("cờ", "flag"), ("biển hiệu", "signboard"), ("bảng hiệu", "signboard"),
+            ("biểu ngữ", "banner"), ("băng rôn", "banner"), ("đèn lồng", "lanterns"),
+            ("đèn trang trí", "decorative lights"), ("trang trí", "decorated with"),
+
+            # Countryside, Agriculture & Nature
+            ("đang gặt lúa ở đồng ruộng", "harvesting rice in paddy field"),
+            ("gặt lúa trên cánh đồng", "harvesting rice in paddy field"),
+            ("đang gặt lúa", "harvesting rice"), ("gặt lúa", "harvesting rice"),
+            ("cánh đồng lúa", "rice paddy field"), ("đồng ruộng", "rice paddy field"),
+            ("ruộng lúa", "rice paddy field"), ("cánh đồng", "paddy field"),
+            ("nông dân", "farmers"), ("chăn trâu", "herding water buffalo"),
+            ("con trâu", "water buffalo"), ("con bò", "cow"), ("ao cá", "fish pond"),
+
+            # Natural disasters, Fire, Water & Weather
             ("cháy rừng lớn", "large wildfire"), ("cháy rừng", "wildfire"), ("đám cháy lớn", "large fire"),
             ("đám cháy", "fire"), ("lửa lan dọc sườn đồi", "flames spreading along the hillside"),
             ("lửa lan dọc sườn núi", "flames spreading along the mountain slope"),
@@ -423,13 +464,16 @@ class QueryParser:
             ("sạt lở đất", "landslide"), ("sạt lở", "landslide"),
             ("chữa cháy cho", "extinguishing fire at"), ("chữa cháy", "extinguishing fire"),
             ("bị ngập trong lửa", "engulfed in flames"), ("bị ngập", "flooded"),
+            ("bờ sông", "riverbank"), ("bờ biển", "seashore"), ("dòng sông", "river"),
+            ("con sông", "river"), ("cây cầu", "bridge"),
 
             # Sports & Actions
             ("sút bóng vào lưới", "kicking ball into goal"), ("sút bóng", "kicking soccer ball"),
             ("đánh đầu", "heading the ball"), ("chuyền bóng", "passing the ball"),
-            ("cầu thủ bóng đá", "soccer player"), ("cầu thủ", "player"),
+            ("cầu thủ bóng đá", "soccer player"), ("cầu thủ", "soccer player"),
             ("sân vận động đông khán giả", "crowded stadium"), ("sân vận động", "stadium"),
             ("sân bóng", "soccer field"), ("đông khán giả", "crowded with fans"),
+            ("khán giả", "audience fans"), ("cổ động viên", "fans"),
 
             # News & Media
             ("bản tin thời sự", "news broadcast"), ("bản tin", "news broadcast"),
@@ -439,30 +483,42 @@ class QueryParser:
             ("đang nói chuyện", "speaking"), ("nói chuyện", "speaking"),
             ("phát biểu", "speaking"), ("trình bày", "presenting"),
 
-            # People & Clothing
+            # People, Demographics & Clothing
+            ("đông người và xe máy", "crowded with people and motorbikes"),
+            ("tập trung đông người", "crowded gathering of people"),
+            ("đông người", "crowded with people"), ("đám đông", "crowd of people"),
+            ("nhiều người", "many people"), ("người đi bộ", "pedestrians"),
+            ("người qua lại", "passersby"), ("người phụ nữ", "woman"),
+            ("người đàn ông", "man"), ("trẻ em", "children"), ("bé gái", "girl"), ("bé trai", "boy"),
             ("mặc áo vest đen", "wearing black suit"), ("mặc áo vest", "wearing suit jacket"),
             ("mặc áo đỏ", "wearing red shirt"), ("mặc áo xanh", "wearing blue shirt"),
             ("mặc áo trắng", "wearing white shirt"), ("mặc áo phông", "wearing t-shirt"),
             ("áo vest đen", "black suit"), ("áo vest", "suit jacket"), ("áo sơ mi", "dress shirt"),
             ("người lính cứu hỏa", "firefighter"), ("lính cứu hỏa", "firefighters"),
             ("cảnh sát", "police officer"), ("bác sĩ", "doctor"),
+            ("đội nón lá", "wearing conical hat"), ("nón lá", "conical hat"),
 
             # Vehicles & Structures
             ("xe cứu hỏa", "fire truck"), ("máy bay cứu hỏa", "firefighting aircraft"),
             ("máy bay trực thăng", "helicopter"), ("trực thăng", "helicopter"),
             ("máy bay", "airplane"), ("tòa nhà cao tầng", "skyscraper"), ("tòa nhà", "building"),
             ("ngôi nhà", "house"), ("căn nhà", "house"), ("xe ô tô", "car"), ("xe máy", "motorbike"),
+            ("nhiều xe máy", "many motorbikes"), ("xe đạp", "bicycle"), ("xe buýt", "bus"),
+            ("con thuyền", "boat"), ("thuyền", "boat"), ("con tàu", "ship"),
 
-            # Time & Weather
+            # Spatial & Temporal
             ("vào ban đêm", "at night"), ("ban đêm", "at night"), ("buổi tối", "in the evening"),
             ("ban ngày", "during the day"), ("buổi sáng", "in the morning"), ("hoàng hôn", "at sunset"),
+            ("ở giữa", "in the middle"), ("trung tâm", "in the center"),
+            ("bên trái", "on the left"), ("bên phải", "on the right"),
 
-            # Common Stopwords
-            ("tìm cảnh", ""), ("cho tôi thấy", ""), ("hình ảnh về", ""), ("video quay cảnh", ""),
-            ("xuất hiện cảnh", ""), ("đoạn clip quay", ""), ("xác định", ""), ("cho biết", ""),
-            ("tìm đoạn", ""), ("tìm video", ""), ("cho thấy", ""), ("hình ảnh", ""),
+            # Common Stopwords / Fillers to strip
+            ("tìm cảnh một", ""), ("tìm cảnh", ""), ("cho tôi thấy", ""), ("hình ảnh về", ""),
+            ("video quay cảnh", ""), ("xuất hiện cảnh", ""), ("đoạn clip quay", ""),
+            ("xác định", ""), ("cho biết", ""), ("tìm đoạn", ""), ("tìm video", ""),
+            ("cho thấy", ""), ("hình ảnh", ""), ("cảnh một", ""),
 
-            # Prepositions & Quantifiers
+            # Prepositions & Connectors
             (" ngập trong lửa", " engulfed in flames"), (" ngập trong ", " engulfed in "),
             (" cho một ", " at a "), (" cho ", " at "), (" trong ", " in "),
             (" và ", " and "), (" với ", " with "), (" trên ", " on "),
@@ -470,21 +526,65 @@ class QueryParser:
             (" một ", " a "), (" những ", " "), (" các ", " "),
         ]
 
+        _SINGLE_WORD_MAP = {
+            "hẻm": "alley", "ngõ": "alley", "đường": "street", "phố": "street",
+            "cờ": "flag", "lá": "flag", "xe": "vehicle", "máy": "motorbike",
+            "người": "people", "đông": "crowded", "treo": "hanging", "bên": "side",
+            "hai": "two", "nhiều": "many", "cảnh": "scene", "cháy": "fire",
+            "lửa": "flames", "khói": "smoke", "rừng": "forest", "núi": "mountain",
+            "đồi": "hill", "sông": "river", "biển": "sea", "hồ": "lake",
+            "cầu": "bridge", "nhà": "house", "tòa": "building", "áo": "shirt",
+            "quần": "pants", "váy": "skirt", "nón": "hat", "mũ": "hat",
+            "đỏ": "red", "xanh": "blue", "vàng": "yellow", "trắng": "white",
+            "đen": "black", "tím": "purple", "hồng": "pink", "cam": "orange",
+            "nâu": "brown", "xám": "gray", "trái": "left", "phải": "right",
+            "trên": "top", "dưới": "bottom", "giữa": "center", "nam": "male",
+            "nữ": "female", "trai": "boy", "gái": "girl", "ruộng": "paddy field",
+            "lúa": "rice", "nông": "farmer", "đồng": "field", "con": "", "cái": "",
+            "chiếc": "", "bức": "", "tấm": "", "đoạn": "", "bản": "",
+        }
+
+        # Pre-sort phrase dictionary by length descending to match longest phrases first
+        sorted_dict = sorted(_VI2EN_DICT, key=lambda x: len(x[0]), reverse=True)
+
         text = raw_text.strip()
         lowered = text.lower()
 
-        # Phrase substitution (longest matching phrase first)
-        for vi_phrase, en_phrase in _VI2EN_DICT:
+        # Step 1: Phrase substitution
+        for vi_phrase, en_phrase in sorted_dict:
             if vi_phrase in lowered:
-                lowered = lowered.replace(vi_phrase, en_phrase)
+                lowered = lowered.replace(vi_phrase, f" {en_phrase} ")
 
-        # Strip remaining Vietnamese diacritics for fallback words
-        import unicodedata
-        nfkd = unicodedata.normalize('NFKD', lowered)
-        unaccented = "".join([c for c in nfkd if not unicodedata.combining(c)]).replace('đ', 'd').replace('Đ', 'D')
+        # Step 2: Token-level translation and residual Vietnamese filter
+        tokens = lowered.split()
+        clean_tokens = []
+        vi_chars = set("àáảãạăắặằẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđ")
 
-        # Clean punctuation and extra spaces
-        cleaned = re.sub(r'\s+', ' ', unaccented).strip(' .,!?:;')
+        for tok in tokens:
+            word = tok.strip(".,!?:;\"'()")
+            if not word:
+                continue
+
+            # Check single word dictionary fallback
+            if word in _SINGLE_WORD_MAP:
+                trans = _SINGLE_WORD_MAP[word]
+                if trans:
+                    clean_tokens.append(trans)
+                continue
+
+            # Check if word still contains Vietnamese diacritics
+            has_vi_diacritics = any(c in vi_chars for c in word)
+            if has_vi_diacritics:
+                # Filter out untranslated Vietnamese words containing diacritics
+                logger.debug(f"Filter out untranslated Vietnamese token: '{word}'")
+                continue
+
+            # Keep ASCII / English tokens
+            clean_tokens.append(word)
+
+        translated = " ".join(clean_tokens)
+        cleaned = re.sub(r'\s+', ' ', translated).strip(' .,!?:;')
+        cleaned = re.sub(r'\b(in|on|at|with|and|of|for)\s*$', '', cleaned, flags=re.IGNORECASE).strip()
         return cleaned
 
     # =========================================================
@@ -501,16 +601,11 @@ class QueryParser:
         Build a natural English sentence for CLIP from full-sentence translation
         combined with extracted entity tags. Preserves 100% query semantics.
         """
-        # Step 1: Open-domain sentence translation (preserves all key concepts)
         translated_en = self.translate_vi_sentence(raw_text)
 
-        # If translation produced a meaningful sentence, use it as primary base
         if translated_en and len(translated_en) > 3:
-            # Ensure proper prefix
-            if not translated_en.lower().startswith("a photo") and not translated_en.lower().startswith("a scene"):
-                prompt = f"A photo of {translated_en}"
-            else:
-                prompt = translated_en
+            translated_en = re.sub(r"^(a photo of|a scene of|photo of|scene of)\s+", "", translated_en, flags=re.IGNORECASE)
+            prompt = f"A photo of {translated_en}"
             return prompt[:300].strip()
 
         # Fallback: Structured entity assembly if translation is empty
@@ -560,16 +655,20 @@ class QueryParser:
     def _build_ocr_query(self, entities: ExtractedEntities, neg_result) -> str:
         """Build a lexical keyword string for Qdrant/BM25 OCR search."""
         parts = list(entities.ocr_hints)
-        # Add person roles
         for p in entities.persons:
             if p.get("role_en"):
                 parts.append(p["role_en"])
-        # Add quantities (e.g. "3 people")
         for q in entities.quantities:
-            parts.append(f"{q['value']} {q['entity']}")
-        # Add raw text without negated parts
+            if q.get("entity") not in ("con", "cái", "chiếc"):
+                parts.append(f"{q['value']} {q['entity']}")
+
         raw = entities.raw_text
         for neg in neg_result.negated_attributes:
             raw = raw.replace(neg, "")
-        parts.append(raw[:100])
+        clean_raw = re.sub(r'^(tìm cảnh một|tìm cảnh|cảnh một)\s+', '', raw, flags=re.IGNORECASE).strip()
+        
+        # Deduplicate
+        if clean_raw not in parts:
+            parts.append(clean_raw[:100])
+
         return " ".join(filter(None, parts)).strip()
