@@ -154,12 +154,8 @@ def run_arm(count_far_alt_micro: bool, out_dir: Path) -> float:
     desc = "QA-R2H1 Treatment (count_far_alt_micro=ON)" if count_far_alt_micro else "QA-R2G1 Control (count_far_alt_micro=OFF)"
     print(f"\nExecuting {desc} -> {out_dir.name}...")
     t0 = time.time()
-    res = subprocess.run(cmd, capture_output=True, text=True)
+    subprocess.run(cmd, check=True)
     t_elapsed = time.time() - t0
-    if res.returncode != 0:
-        print("[ERROR] Runner stderr:")
-        print(res.stderr)
-        raise RuntimeError(f"Runner failed with exit code {res.returncode}")
     print(f"Finished in {t_elapsed:.2f}s.")
     return t_elapsed
 
