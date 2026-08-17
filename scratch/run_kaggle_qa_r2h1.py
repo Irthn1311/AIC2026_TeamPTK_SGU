@@ -24,12 +24,16 @@ print("=" * 110)
 print("QA-R2H1 STRICT A/B COMPARISON ON KAGGLE")
 print("=" * 110)
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SYSTEM_TAI_SRC = REPO_ROOT / "systems" / "system_tai" / "src"
+if str(SYSTEM_TAI_SRC) not in sys.path:
+    sys.path.insert(0, str(SYSTEM_TAI_SRC))
+
 REPO_DIR = Path("/kaggle/working/AIC2026_TeamPTK_SGU")
 if not REPO_DIR.exists():
-    REPO_DIR = Path(".")
+    REPO_DIR = REPO_ROOT
 
 SYSTEM_DIR = REPO_DIR / "systems" / "system_tai"
-sys.path.insert(0, str(SYSTEM_DIR / "src"))
 
 BENCHMARK_PATH = SYSTEM_DIR / "benchmarks" / "l21_150_diagnostic" / "benchmark.json"
 DEV_EN_SIDECAR_PATH = SYSTEM_DIR / "benchmarks" / "l21_150_diagnostic" / "qa_dev_translations_en.json"
@@ -319,9 +323,17 @@ print(f"Control Arm   -> Hit: {q20_c}")
 print(f"Treatment Arm -> Hit: {q20_t}")
 
 ev_q20 = treat_eval["ev_by_qid"].get("QA-20", {})
+diag_q20 = ev_q20.get("diagnostics", {})
+print("\n--- QA-20 Runtime Diagnostics ---")
+print(f"  Question Type (Runtime)         : {diag_q20.get('question_type', 'N/A')}")
+print(f"  Confidence Level                : {diag_q20.get('confidence_level', 'N/A')}")
+print(f"  Count Far Alt Micro Source      : {diag_q20.get('count_far_alt_micro_source', 'NONE')}")
+if diag_q20.get("warnings"):
+    print(f"  Runtime Warnings                : {diag_q20.get('warnings')}")
+
 usable_cands = ev_q20.get("usable_evidence_candidates", [])
 print(f"\nQA-20 Usable Evidence Candidates (Total: {len(usable_cands)}):")
-for idx, c in enumerate(usable_cands, start=1):
+for idx, c in enumerate(usable_cands[:10], start=1):
     print(f"  [{idx:02d}] Video: {c.get('video_id'):<10} Frame: {c.get('frame_id'):<8} NomRank: {str(c.get('video_nomination_rank')):<3} LocalRank: {str(c.get('local_anchor_rank')):<3} Answers: {c.get('answers', [])[:3]}")
 
 # Selector verification on usable candidates
@@ -341,6 +353,16 @@ else:
     print("\n--- QA-R2H1-v2 Selector Provenance Audit for QA-20: FAILED (None returned) ---")
 
 q20_preds = treat_eval["preds_by_qid"].get("QA-20", [])
+print(f"\n--- QA-20 All Predictions for L21_V007 (Total Top100: {len(q20_preds)}) ---")
+l21_v007_preds = [p for p in q20_preds if p["video_id"] == "L21_V007"]
+if l21_v007_preds:
+    for p in l21_v007_preds:
+        is_hit = (14610 <= int(p["frame_id"]) <= 14670 and normalize_text(p["answer"]) == "2")
+        hit_mark = " <--- STRICT FULL HIT! 🎯" if is_hit else ""
+        print(f"  Rank {p['rank']:<3}: video={p['video_id']}, frame={p['frame_id']}, answer='{p.get('answer')}'{hit_mark}")
+else:
+    print("  No predictions for L21_V007 found in Top 100!")
+
 print("\n--- QA-20 Treatment Final Predictions (Ranks 75..100) ---")
 for p in q20_preds:
     if int(p["rank"]) >= 75:
