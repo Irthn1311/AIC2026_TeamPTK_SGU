@@ -1,5 +1,5 @@
 # ==============================================================================================================
-# Phase R3-S2A: Artifact-First First-Failure Conversion Audit (Zero-Decode, Pure Artifact Post-Hoc)
+# Phase R3-S2A: Artifact-First First-Failure Conversion Audit (Zero-Decode, Pure Post-Hoc)
 # ==============================================================================================================
 
 import argparse
@@ -30,6 +30,7 @@ class FailureClass(StrEnum):
     TEMPORAL_MISS = "TEMPORAL_MISS"
     ANSWER_MISS = "ANSWER_MISS"
     ALLOCATION_MISS = "ALLOCATION_MISS"
+    PRE_TOP100_UNKNOWN = "PRE_TOP100_UNKNOWN"
     NO_PREDICTIONS = "NO_PREDICTIONS"
 
 
@@ -40,24 +41,58 @@ def normalize_text(t: str) -> str:
     return "".join(c for c in t if c.isalnum() or c.isspace()).strip()
 
 
-def find_champion_artifact_roots() -> list[Path]:
-    """Find all potential artifact roots containing qa_predictions.jsonl on Kaggle or locally."""
-    search_dirs = [
-        Path("/kaggle/working/output/qa_r2h1_control_cap16"),
-        Path("/kaggle/working/output/qa_r2g1_control"),
-        Path("/kaggle/working/output"),
+def parse_benchmark_gt_interval(q: dict[str, Any]) -> tuple[int, int]:
+    """Parse GT interval from benchmark query dictionary supporting both schemas."""
+    if "proposed_interval" in q and isinstance(q["proposed_interval"], (list, tuple)) and len(q["proposed_interval"]) == 2:
+        return int(q["proposed_interval"][0]), int(q["proposed_interval"][1])
+    if "start_frame_id" in q and "end_frame_id" in q:
+        return int(q["start_frame_id"]), int(q["end_frame_id"])
+    return -1, -1
+
+
+def verify_benchmark_anchors(qa_dev_queries: list[dict[str, Any]]) -> None:
+    """DEV-only invariant check to prove GT parser correctness against frozen anchors."""
+    q_map = {q["query_id"]: q for q in qa_dev_queries}
+    assert len(qa_dev_queries) == 38, f"Expected 38 QA DEV queries, got {len(qa_dev_queries)}"
+
+    # Anchor 1: QA-13
+    assert "QA-13" in q_map, "QA-13 missing in benchmark"
+    q13_interval = parse_benchmark_gt_interval(q_map["QA-13"])
+    assert q13_interval == (23160, 23220), f"QA-13 expected [23160, 23220], got {q13_interval}"
+    assert q_map["QA-13"].get("video_id") == "L21_V005"
+
+    # Anchor 2: QA-20
+    assert "QA-20" in q_map, "QA-20 missing in benchmark"
+    q20_interval = parse_benchmark_gt_interval(q_map["QA-20"])
+    assert q20_interval == (14610, 14670), f"QA-20 expected [14610, 14670], got {q20_interval}"
+    assert q_map["QA-20"].get("video_id") == "L21_V007"
+
+    # Anchor 3: QA-46
+    assert "QA-46" in q_map, "QA-46 missing in benchmark"
+    q46_interval = parse_benchmark_gt_interval(q_map["QA-46"])
+    assert q46_interval == (8190, 8250), f"QA-46 expected [8190, 8250], got {q46_interval}"
+    assert q_map["QA-46"].get("video_id") == "L21_V016"
+
+    # Invariant: All 38 queries must have valid non-negative intervals with start <= end
+    invalid = [q["query_id"] for q in qa_dev_queries if parse_benchmark_gt_interval(q)[0] < 0 or parse_benchmark_gt_interval(q)[1] < parse_benchmark_gt_interval(q)[0]]
+    assert not invalid, f"Queries with invalid GT intervals: {invalid}"
+
+
+def find_all_prediction_files() -> list[Path]:
+    """Search /kaggle/working and repo directories for any prediction jsonl/json files."""
+    roots = [
         Path("/kaggle/working"),
+        Path("/kaggle/input"),
         REPO_ROOT / "output",
         REPO_ROOT / "scratch",
     ]
+    patterns = ["*qa_predictions.jsonl", "*predictions.jsonl", "*top100.jsonl"]
     found = []
-    for d in search_dirs:
-        if d.exists():
-            # Check if there are any qa_predictions.jsonl files
-            files = list(d.rglob("qa_predictions.jsonl"))
-            if files:
-                found.append(d)
-    return found
+    for r in roots:
+        if r.exists():
+            for pat in patterns:
+                found.extend(list(r.rglob(pat)))
+    return list(dict.fromkeys(found))
 
 
 def run_artifact_first_audit(
@@ -85,29 +120,26 @@ def run_artifact_first_audit(
 
     en_map = {e["query_id"]: e.get("question_en", "") for e in en_sidecar.get("entries", [])}
     qa_dev_queries = [q for q in bm_data["queries"] if q.get("task_type") == "qa" and q.get("split") == "DEV"]
-    print(f"Loaded {len(qa_dev_queries)} QA DEV queries from benchmark.")
 
-    # 1. Resolve Champion Artifact Directory
-    search_roots = [artifact_dir] if artifact_dir else find_champion_artifact_roots()
+    # 1. Strict Invariant Check on Benchmark GT Contract
+    verify_benchmark_anchors(qa_dev_queries)
+    print(f"  [PASS] Benchmark GT contract verified across all 38 queries (QA-13, QA-20, QA-46 anchors exact ✅)")
+
+    # 2. Resolve Champion Artifact Directory
+    all_found_pred_files = find_all_prediction_files()
     print(f"\n--- ARTIFACT SOURCE RESOLUTION ---")
-    print(f"  Searching artifact roots: {[str(r) for r in search_roots]}")
+    print(f"  Available prediction files in environment: {[str(p) for p in all_found_pred_files[:10]]}")
 
     predictions_by_query: dict[str, list[dict]] = {}
-    diagnostics_by_query: dict[str, dict] = {}
     evidence_by_query: dict[str, dict] = {}
 
-    all_pred_files = []
-    for r in search_roots:
-        if r and r.exists():
-            all_pred_files.extend(list(r.rglob("qa_predictions.jsonl")))
-            # Also check top100.jsonl or predictions.jsonl
-            all_pred_files.extend(list(r.rglob("predictions.jsonl")))
+    target_pred_files = [p for p in all_found_pred_files if "control" in str(p)] or all_found_pred_files
+    if artifact_dir and artifact_dir.exists():
+        target_pred_files = list(artifact_dir.rglob("qa_predictions.jsonl")) or list(artifact_dir.rglob("*.jsonl"))
 
-    # Deduplicate files
-    unique_pred_files = list(dict.fromkeys(all_pred_files))
-    print(f"  Found {len(unique_pred_files)} prediction files across search roots.")
+    print(f"  Selected target prediction files: {[str(p) for p in target_pred_files]}")
 
-    for pf in unique_pred_files:
+    for pf in target_pred_files:
         try:
             with open(pf, encoding="utf-8") as f:
                 for line in f:
@@ -115,13 +147,11 @@ def run_artifact_first_audit(
                         p = json.loads(line)
                         qid = p.get("query_id")
                         if qid:
-                            # Keep only one clean set per query (prioritizing control arm)
-                            if qid not in predictions_by_query or "control" in str(pf):
-                                if qid not in predictions_by_query:
-                                    predictions_by_query[qid] = []
-                                predictions_by_query[qid].append(p)
+                            if qid not in predictions_by_query:
+                                predictions_by_query[qid] = []
+                            predictions_by_query[qid].append(p)
 
-            # Check sibling qa_evidence.json or qa_request_manifest.json
+            # Check sibling qa_evidence.json
             ev_file = pf.parent / "qa_evidence.json"
             if ev_file.exists():
                 try:
@@ -132,39 +162,27 @@ def run_artifact_first_audit(
                             evidence_by_query[eqid] = ev_data
                 except Exception:
                     pass
-
-            diag_file = pf.parent / "qa_timings.json"
-            if diag_file.exists():
-                try:
-                    with open(diag_file, encoding="utf-8") as df:
-                        df_data = json.load(df)
-                        dqid = df_data.get("query_id")
-                        if dqid:
-                            diagnostics_by_query[dqid] = df_data
-                except Exception:
-                    pass
-
         except Exception as e:
             print(f"  Warning reading {pf}: {e}")
 
-    # Also search for any requests/ directory
-    for r in search_roots:
-        if r and r.exists():
-            for req_file in r.rglob("requests/**/*.json"):
-                if req_file.name == "qa_evidence.json":
-                    try:
-                        with open(req_file, encoding="utf-8") as ef:
-                            ev_data = json.load(ef)
-                            eqid = ev_data.get("query_id")
-                            if eqid:
-                                evidence_by_query[eqid] = ev_data
-                    except Exception:
-                        pass
+    # Also search for any requests/ directory for pre-Top100 evidence
+    for pf in target_pred_files:
+        req_root = pf.parent / "requests"
+        if req_root.exists():
+            for req_file in req_root.rglob("qa_evidence.json"):
+                try:
+                    with open(req_file, encoding="utf-8") as ef:
+                        ev_data = json.load(ef)
+                        eqid = ev_data.get("query_id")
+                        if eqid:
+                            evidence_by_query[eqid] = ev_data
+                except Exception:
+                    pass
 
-    print(f"  Loaded predictions for {len(predictions_by_query)} queries.")
-    print(f"  Loaded pre-Top100 evidence for {len(evidence_by_query)} queries.")
+    print(f"  Loaded predictions for {len(predictions_by_query)} / 38 queries.")
+    print(f"  Loaded pre-Top100 evidence for {len(evidence_by_query)} / 38 queries.")
 
-    # 2. Classify Each Query
+    # 3. Classify Each Query
     failure_records = []
     class_counts: Counter[str] = Counter()
     class_queries: dict[str, list[str]] = {fc.value: [] for fc in FailureClass}
@@ -172,8 +190,7 @@ def run_artifact_first_audit(
     for idx, q in enumerate(qa_dev_queries, start=1):
         qid = q["query_id"]
         target_vid = q.get("video_id")
-        start_f = int(q.get("start_frame_id", -1))
-        end_f = int(q.get("end_frame_id", -1))
+        start_f, end_f = parse_benchmark_gt_interval(q)
         gt_answers = [normalize_text(a) for a in q.get("accepted_answers", [])]
 
         preds = predictions_by_query.get(qid, [])
@@ -181,7 +198,6 @@ def run_artifact_first_audit(
 
         # Stage A: Champion Nomination Pool
         selected_video_ids = ev_data.get("selected_video_ids", [])
-        # If evidence file not serialized, extract all unique video_ids from final predictions
         if not selected_video_ids and preds:
             selected_video_ids = list(dict.fromkeys([p.get("video_id") for p in preds if p.get("video_id")]))
 
@@ -274,7 +290,7 @@ def run_artifact_first_audit(
             "detail": detail,
         })
 
-    # 3. Print Detailed Table
+    # 4. Print Detailed Table
     print("\n" + "=" * 125)
     print(f"{'Query ID':<8} | {'Target':<10} | {'GT Interval':<16} | {'First Failure Class':<20} | {'Forensic Detail'}")
     print("-" * 125)
@@ -283,7 +299,7 @@ def run_artifact_first_audit(
         print(f"{r['qid']:<8} | {r['target_vid']:<10} | {r['gt_interval']:<16} | {mark} {r['failure_class']:<18} | {r['detail']}")
     print("=" * 125)
 
-    # 4. Print Aggregate Breakdown
+    # 5. Print Aggregate Breakdown
     print("\n" + "=" * 125)
     print("AGGREGATE FIRST-FAILURE BREAKDOWN (N = 38 DEV QUERIES)")
     print("=" * 125)
@@ -296,7 +312,7 @@ def run_artifact_first_audit(
         print(f"{fc.value:<22} | {count:<10} | {pct:<12} | {q_list}")
     print("=" * 125)
 
-    # 5. Strategic Decision Analysis
+    # 6. Strategic Decision Analysis (Fail-Safe: Non-Zero Categories Only)
     print("\n--- STRATEGIC ACTION DECISION BASED ON DOMINANT BOTTLENECK ---")
     miss_counts = {
         FailureClass.VIDEO_ABSENT.value: class_counts[FailureClass.VIDEO_ABSENT.value],
@@ -304,16 +320,23 @@ def run_artifact_first_audit(
         FailureClass.ANSWER_MISS.value: class_counts[FailureClass.ANSWER_MISS.value],
         FailureClass.ALLOCATION_MISS.value: class_counts[FailureClass.ALLOCATION_MISS.value],
     }
-    dominant = max(miss_counts, key=miss_counts.get)
-    print(f"Dominant Miss Category: {dominant} ({miss_counts[dominant]} queries)")
-    if dominant == FailureClass.TEMPORAL_MISS.value:
-        print("🎯 STRATEGY: Prioritize Sprint 2A on Temporal Localization Rescue (Multi-Anchor + Bounded Interval Expansion).")
-    elif dominant == FailureClass.ANSWER_MISS.value:
-        print("🎯 STRATEGY: Prioritize Sprint 2A on Answer Scoring / Multi-Crop Visual Reasoning / OCR.")
-    elif dominant == FailureClass.VIDEO_ABSENT.value:
-        print("🎯 STRATEGY: Video retrieval pool expansion required for the specific absent queries.")
-    elif dominant == FailureClass.ALLOCATION_MISS.value:
-        print("🎯 STRATEGY: Prioritize Tail Allocation tuning.")
+    non_zero_misses = {k: v for k, v in miss_counts.items() if v > 0}
+    if not non_zero_misses:
+        if class_counts[FailureClass.NO_PREDICTIONS.value] > 0:
+            print("⚠️ ARTIFACT STATUS: No prediction artifacts found in current directory. Please provide valid artifact directory.")
+        else:
+            print("🎯 STATUS: All queries are STRICT_HITS (100% Pass)!")
+    else:
+        dominant = max(non_zero_misses, key=non_zero_misses.get)
+        print(f"Dominant Miss Category: {dominant} ({non_zero_misses[dominant]} queries)")
+        if dominant == FailureClass.TEMPORAL_MISS.value:
+            print("🎯 STRATEGY: Prioritize Sprint 2A on Temporal Localization Rescue (Multi-Anchor + Bounded Interval Expansion).")
+        elif dominant == FailureClass.ANSWER_MISS.value:
+            print("🎯 STRATEGY: Prioritize Sprint 2A on Answer Scoring / Multi-Crop Visual Reasoning / OCR.")
+        elif dominant == FailureClass.VIDEO_ABSENT.value:
+            print("🎯 STRATEGY: Video retrieval pool expansion required for the specific absent queries.")
+        elif dominant == FailureClass.ALLOCATION_MISS.value:
+            print("🎯 STRATEGY: Prioritize Tail Allocation tuning.")
     print("=" * 125)
 
 
