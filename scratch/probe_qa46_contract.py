@@ -6,6 +6,8 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
+import subprocess
 import sys
 import time
 import unicodedata
@@ -15,13 +17,19 @@ from typing import Any
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-try:
-    import clip
-except ImportError:
-    if Path("/kaggle").exists():
-        import subprocess
+if Path("/kaggle").exists():
+    try:
+        import clip
+    except ImportError:
         print("Installing openai-clip dependency...")
         subprocess.run([sys.executable, "-m", "pip", "install", "-q", "openai-clip", "ftfy", "regex", "tqdm"], check=False)
+
+    # Ensure tesseract language packages are installed
+    tess_path = shutil.which("tesseract")
+    if not tess_path or not (Path("/usr/share/tesseract-ocr/5/tessdata/vie.traineddata").exists() or Path("/usr/share/tesseract-ocr/4.00/tessdata/vie.traineddata").exists()):
+        print("Installing tesseract-ocr-vie packages...")
+        subprocess.run(["apt-get", "update", "-qq"], check=False)
+        subprocess.run(["apt-get", "install", "-y", "-qq", "tesseract-ocr", "tesseract-ocr-vie", "tesseract-ocr-eng"], check=False)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SYSTEM_TAI_SRC = REPO_ROOT / "systems" / "system_tai" / "src"
@@ -44,6 +52,31 @@ def normalize_text(t: str) -> str:
         return ""
     t = unicodedata.normalize("NFKC", str(t)).casefold()
     return "".join(c for c in t if c.isalnum() or c.isspace()).strip()
+
+
+def resolve_ocr_config() -> OCRAnswerProviderConfig:
+    tess_path = shutil.which("tesseract")
+    available_langs: list[str] = []
+    if tess_path:
+        try:
+            res = subprocess.run([tess_path, "--list-langs"], capture_output=True, text=True, check=False)
+            available_langs = [l.strip() for l in res.stdout.splitlines()[1:] if l.strip()]
+        except Exception:
+            pass
+
+    desired = ("eng", "vie")
+    supported = tuple(l for l in desired if l in available_langs)
+    if not supported:
+        supported = tuple(available_langs[:2]) if available_langs else ("eng",)
+
+    if not available_langs:
+        return OCRAnswerProviderConfig(enabled=False, languages=("eng",))
+
+    return OCRAnswerProviderConfig(
+        enabled=True,
+        languages=supported,
+        evidence_frame_budget=8,
+    )
 
 
 def run_qa46_probe(
@@ -105,11 +138,7 @@ def run_qa46_probe(
         enabled=ontology_path.exists(),
         ontology_path=ontology_path if ontology_path.exists() else None,
     )
-    ocr_config = OCRAnswerProviderConfig(
-        enabled=True,
-        languages=("eng", "vie"),
-        evidence_frame_budget=8,
-    )
+    ocr_config = resolve_ocr_config()
     object_config = ObjectAnswerProviderConfig(enabled=False)
 
     session_output = Path("/kaggle/working/output/qa46_contract_probe") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "qa46_contract_probe"
@@ -129,6 +158,7 @@ def run_qa46_probe(
         qa_object_answer_provider_config=object_config,
     )
 
+    print(f"  input_root                         : {input_root}")
     print(f"  qa_video_conditioned_evidence      : {evidence_config.enabled} (cap={evidence_config.selected_video_cap})")
     print(f"  qa_keyframe_evidence_bank          : {evidence_config.preserve_keyframe_evidence} (cap={evidence_config.keyframe_evidence_video_cap}, anchors={evidence_config.keyframe_evidence_anchors_per_video})")
     print(f"  qa_temporal_refinement             : {evidence_config.temporal_refinement_enabled} (seeds_per_video={evidence_config.temporal_seed_anchors_per_video}, total_seed_cap={evidence_config.temporal_refinement_total_seed_cap})")
@@ -137,7 +167,7 @@ def run_qa46_probe(
     print(f"  tier3_primary_first                : {evidence_config.tier3_primary_first}")
     print(f"  tier3_negative_offset_first        : {evidence_config.tier3_negative_offset_first}")
     print(f"  qa_visual_ontology                 : {visual_config.enabled} (path={visual_config.ontology_path})")
-    print(f"  qa_ocr_evidence                    : {ocr_config.enabled} (budget={ocr_config.evidence_frame_budget})")
+    print(f"  qa_ocr_evidence                    : {ocr_config.enabled} (languages={ocr_config.languages}, budget={ocr_config.evidence_frame_budget})")
     print(f"  qa_object_evidence                 : {object_config.enabled}")
 
     print("\nBootstrapping runtime...")
