@@ -20,7 +20,7 @@ if str(SYSTEM_TAI_SRC) not in sys.path:
 from system_tai.kis.session_engine import OperationalKISRuntime
 from system_tai.kis.session_schema import SessionConfig
 from system_tai.qa.grounding import nominate_qa_videos
-from system_tai.retrieval.multi_query import QueryVariant
+from system_tai.retrieval.multi_query import QueryLanguage, QueryVariant, QueryVariantType
 from system_tai.retrieval.multi_variant_fusion import fuse_multi_variant_video_ranks
 from system_tai.retrieval.query_decomposition import QueryVariants, decompose_query
 from system_tai.retrieval.vector_search import ExactNumpyRetriever
@@ -81,7 +81,13 @@ def run_novelty_audit(
         # In Champion R2G1, question text is translated EN, search maxima, nominate top 16 videos
         champ_text = q_en if q_en else q_vi
         champ_vec = text_encoder.encode(champ_text)
-        champ_var = QueryVariant(variant_id=f"{qid}:champ", text=champ_text, weight=1.0)
+        champ_var = QueryVariant(
+            variant_id=f"{qid}:champ",
+            text=champ_text,
+            language=QueryLanguage.ENGLISH if q_en else QueryLanguage.VIETNAMESE,
+            variant_type=QueryVariantType.ENGLISH_TRANSLATION if q_en else QueryVariantType.VIETNAMESE_DIRECT,
+            weight=1.0,
+        )
         maxima = searcher.search_video_maxima(query_ids=[champ_var.variant_id], query_vectors=[champ_vec])
         champ_noms = nominate_qa_videos(variants=[champ_var], maxima=maxima, config=runtime.qa_pipeline.video_conditioned_evidence_config)
         champ_pool = [item.video_id for item in champ_noms]
