@@ -1,5 +1,5 @@
 # ==============================================================================================================
-# Phase R3-S2A: Artifact-First First-Failure Conversion Audit (Zero-Decode, Pure Post-Hoc)
+# Phase R3-S2A: Bounded Artifact-First First-Failure Conversion Audit (Zero-Decode, No Unbounded Traversal)
 # ==============================================================================================================
 
 import argparse
@@ -17,11 +17,6 @@ from typing import Any
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-SYSTEM_TAI_SRC = REPO_ROOT / "systems" / "system_tai" / "src"
-if str(SYSTEM_TAI_SRC) not in sys.path:
-    sys.path.insert(0, str(SYSTEM_TAI_SRC))
 
 
 class FailureClass(StrEnum):
@@ -78,21 +73,34 @@ def verify_benchmark_anchors(qa_dev_queries: list[dict[str, Any]]) -> None:
     assert not invalid, f"Queries with invalid GT intervals: {invalid}"
 
 
-def find_all_prediction_files() -> list[Path]:
-    """Search /kaggle/working and repo directories for any prediction jsonl/json files."""
-    roots = [
+def resolve_bounded_artifacts(explicit_dir: Path | None = None) -> tuple[Path | None, list[Path], list[Path]]:
+    """Bounded, shallow artifact resolution (max 2 levels) - NEVER traverses /kaggle/input."""
+    print("  [1] Resolving artifact directory (bounded shallow check)...")
+    if explicit_dir and explicit_dir.exists():
+        pred_files = list(explicit_dir.glob("qa_predictions.jsonl")) + list(explicit_dir.glob("*/qa_predictions.jsonl"))
+        req_files = list(explicit_dir.glob("requests/*/qa_evidence.json")) + list(explicit_dir.glob("*/requests/*/qa_evidence.json"))
+        return explicit_dir, pred_files, req_files
+
+    known_roots = [
+        Path("/kaggle/working/output/qa_r2h1_control_cap16"),
+        Path("/kaggle/working/output/qa_r2g1_control"),
+        Path("/kaggle/working/qa_r2h1_control_cap16"),
+        Path("/kaggle/working/output"),
         Path("/kaggle/working"),
-        Path("/kaggle/input"),
-        REPO_ROOT / "output",
-        REPO_ROOT / "scratch",
     ]
-    patterns = ["*qa_predictions.jsonl", "*predictions.jsonl", "*top100.jsonl"]
-    found = []
-    for r in roots:
-        if r.exists():
-            for pat in patterns:
-                found.extend(list(r.rglob(pat)))
-    return list(dict.fromkeys(found))
+
+    for root in known_roots:
+        if not root.exists():
+            continue
+        print(f"      Checking: {root}")
+        # Search at most 2 shallow levels
+        pred_files = list(root.glob("qa_predictions.jsonl")) + list(root.glob("*/qa_predictions.jsonl")) + list(root.glob("*/*/qa_predictions.jsonl"))
+        if pred_files:
+            req_files = list(root.glob("requests/*/qa_evidence.json")) + list(root.glob("*/requests/*/qa_evidence.json")) + list(root.glob("*/*/requests/*/qa_evidence.json"))
+            print(f"      [FOUND] Matched {len(pred_files)} prediction files in {root}")
+            return root, pred_files, req_files
+
+    return None, [], []
 
 
 def run_artifact_first_audit(
@@ -101,7 +109,7 @@ def run_artifact_first_audit(
     artifact_dir: Path | None = None,
 ):
     print("=" * 125)
-    print("ROUND-3 SPRINT 2A: ARTIFACT-FIRST FIRST-FAILURE CONVERSION AUDIT (POST-HOC AUDIT)")
+    print("ROUND-3 SPRINT 2A: BOUNDED ARTIFACT-FIRST CONVERSION AUDIT (ZERO-DECODE)")
     print("=" * 125)
 
     benchmark_bytes = benchmark_path.read_bytes()
@@ -121,25 +129,24 @@ def run_artifact_first_audit(
     en_map = {e["query_id"]: e.get("question_en", "") for e in en_sidecar.get("entries", [])}
     qa_dev_queries = [q for q in bm_data["queries"] if q.get("task_type") == "qa" and q.get("split") == "DEV"]
 
-    # 1. Strict Invariant Check on Benchmark GT Contract
+    # 1. Strict Benchmark Contract Check
     verify_benchmark_anchors(qa_dev_queries)
     print(f"  [PASS] Benchmark GT contract verified across all 38 queries (QA-13, QA-20, QA-46 anchors exact ✅)")
 
-    # 2. Resolve Champion Artifact Directory
-    all_found_pred_files = find_all_prediction_files()
-    print(f"\n--- ARTIFACT SOURCE RESOLUTION ---")
-    print(f"  Available prediction files in environment: {[str(p) for p in all_found_pred_files[:10]]}")
+    # 2. Bounded Artifact Resolution
+    root_dir, pred_files, req_files = resolve_bounded_artifacts(artifact_dir)
 
+    if not pred_files:
+        print("\n" + "=" * 125)
+        print("❌ ARTIFACT_NOT_FOUND: No prediction files found in bounded search paths.")
+        print("   If you have a specific output folder, pass: --artifact-dir <PATH>")
+        print("=" * 125)
+        return
+
+    # 3. Load Predictions
+    print(f"\n  [2] Loading final predictions from {len(pred_files)} files...")
     predictions_by_query: dict[str, list[dict]] = {}
-    evidence_by_query: dict[str, dict] = {}
-
-    target_pred_files = [p for p in all_found_pred_files if "control" in str(p)] or all_found_pred_files
-    if artifact_dir and artifact_dir.exists():
-        target_pred_files = list(artifact_dir.rglob("qa_predictions.jsonl")) or list(artifact_dir.rglob("*.jsonl"))
-
-    print(f"  Selected target prediction files: {[str(p) for p in target_pred_files]}")
-
-    for pf in target_pred_files:
+    for pf in pred_files:
         try:
             with open(pf, encoding="utf-8") as f:
                 for line in f:
@@ -150,39 +157,28 @@ def run_artifact_first_audit(
                             if qid not in predictions_by_query:
                                 predictions_by_query[qid] = []
                             predictions_by_query[qid].append(p)
-
-            # Check sibling qa_evidence.json
-            ev_file = pf.parent / "qa_evidence.json"
-            if ev_file.exists():
-                try:
-                    with open(ev_file, encoding="utf-8") as ef:
-                        ev_data = json.load(ef)
-                        eqid = ev_data.get("query_id")
-                        if eqid:
-                            evidence_by_query[eqid] = ev_data
-                except Exception:
-                    pass
         except Exception as e:
-            print(f"  Warning reading {pf}: {e}")
+            print(f"      Warning reading {pf}: {e}")
 
-    # Also search for any requests/ directory for pre-Top100 evidence
-    for pf in target_pred_files:
-        req_root = pf.parent / "requests"
-        if req_root.exists():
-            for req_file in req_root.rglob("qa_evidence.json"):
-                try:
-                    with open(req_file, encoding="utf-8") as ef:
-                        ev_data = json.load(ef)
-                        eqid = ev_data.get("query_id")
-                        if eqid:
-                            evidence_by_query[eqid] = ev_data
-                except Exception:
-                    pass
+    print(f"      Loaded predictions for {len(predictions_by_query)} / 38 queries.")
 
-    print(f"  Loaded predictions for {len(predictions_by_query)} / 38 queries.")
-    print(f"  Loaded pre-Top100 evidence for {len(evidence_by_query)} / 38 queries.")
+    # 4. Load Pre-Top100 Evidence
+    print(f"\n  [3] Loading pre-Top100 request diagnostics from {len(req_files)} files...")
+    evidence_by_query: dict[str, dict] = {}
+    for rf in req_files:
+        try:
+            with open(rf, encoding="utf-8") as ef:
+                ev_data = json.load(ef)
+                eqid = ev_data.get("query_id")
+                if eqid:
+                    evidence_by_query[eqid] = ev_data
+        except Exception as e:
+            print(f"      Warning reading {rf}: {e}")
 
-    # 3. Classify Each Query
+    print(f"      Loaded pre-Top100 evidence for {len(evidence_by_query)} / 38 queries.")
+
+    # 5. Classify all 38 Queries
+    print(f"\n  [4] Classifying all 38 DEV queries...")
     failure_records = []
     class_counts: Counter[str] = Counter()
     class_queries: dict[str, list[str]] = {fc.value: [] for fc in FailureClass}
@@ -290,7 +286,7 @@ def run_artifact_first_audit(
             "detail": detail,
         })
 
-    # 4. Print Detailed Table
+    # 6. Print Detailed Table
     print("\n" + "=" * 125)
     print(f"{'Query ID':<8} | {'Target':<10} | {'GT Interval':<16} | {'First Failure Class':<20} | {'Forensic Detail'}")
     print("-" * 125)
@@ -299,7 +295,7 @@ def run_artifact_first_audit(
         print(f"{r['qid']:<8} | {r['target_vid']:<10} | {r['gt_interval']:<16} | {mark} {r['failure_class']:<18} | {r['detail']}")
     print("=" * 125)
 
-    # 5. Print Aggregate Breakdown
+    # 7. Print Aggregate Breakdown
     print("\n" + "=" * 125)
     print("AGGREGATE FIRST-FAILURE BREAKDOWN (N = 38 DEV QUERIES)")
     print("=" * 125)
@@ -312,7 +308,7 @@ def run_artifact_first_audit(
         print(f"{fc.value:<22} | {count:<10} | {pct:<12} | {q_list}")
     print("=" * 125)
 
-    # 6. Strategic Decision Analysis (Fail-Safe: Non-Zero Categories Only)
+    # 8. Strategic Decision Analysis (Fail-Safe: Non-Zero Categories Only)
     print("\n--- STRATEGIC ACTION DECISION BASED ON DOMINANT BOTTLENECK ---")
     miss_counts = {
         FailureClass.VIDEO_ABSENT.value: class_counts[FailureClass.VIDEO_ABSENT.value],
@@ -323,7 +319,7 @@ def run_artifact_first_audit(
     non_zero_misses = {k: v for k, v in miss_counts.items() if v > 0}
     if not non_zero_misses:
         if class_counts[FailureClass.NO_PREDICTIONS.value] > 0:
-            print("⚠️ ARTIFACT STATUS: No prediction artifacts found in current directory. Please provide valid artifact directory.")
+            print("⚠️ ARTIFACT STATUS: No prediction artifacts found. Please provide valid artifact directory.")
         else:
             print("🎯 STATUS: All queries are STRICT_HITS (100% Pass)!")
     else:
@@ -341,9 +337,9 @@ def run_artifact_first_audit(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run Artifact-First First-Failure Conversion Audit")
-    parser.add_argument("--benchmark", type=Path, default=REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "l21_150_diagnostic" / "benchmark.json")
-    parser.add_argument("--sidecar", type=Path, default=REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "l21_150_diagnostic" / "qa_dev_translations_en.json")
+    parser = argparse.ArgumentParser(description="Run Bounded Artifact-First Conversion Audit")
+    parser.add_argument("--benchmark", type=Path, default=Path("systems/system_tai/benchmarks/l21_150_diagnostic/benchmark.json"))
+    parser.add_argument("--sidecar", type=Path, default=Path("systems/system_tai/benchmarks/l21_150_diagnostic/qa_dev_translations_en.json"))
     parser.add_argument("--artifact-dir", type=Path, default=None)
     args = parser.parse_args()
 
