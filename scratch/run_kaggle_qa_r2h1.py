@@ -362,3 +362,30 @@ for qid in sorted(qa_dev_map.keys()):
         else: status = "IDENTICAL ✅"
         print(f"{qid:<10} | Rank {str(c_hr):<13} | Rank {str(t_hr):<15} | {delta_str:<10} | {status}")
 print("=" * 110)
+
+# ==============================================================================================================
+# STEP 9: AGGREGATE COUNT FEATURE TELEMETRY ACROSS DEV SET
+# ==============================================================================================================
+print("\n" + "=" * 110)
+print("AGGREGATE COUNT FEATURE TELEMETRY ACROSS RUNTIME COUNT QUERIES")
+print("=" * 110)
+RUNTIME_COUNT_QUERIES = ["QA-03", "QA-20", "QA-21", "QA-24"]
+print(f"Runtime COUNT Queries Identified: {len(RUNTIME_COUNT_QUERIES)} {RUNTIME_COUNT_QUERIES}")
+print(f"{'Query ID':<10} | {'Source Candidate':<25} | {'Far Frame (+90)':<18} | {'Micro Admission':<20}")
+print("-" * 80)
+for qid in RUNTIME_COUNT_QUERIES:
+    ev_data = treat_eval["ev_by_qid"].get(qid, {})
+    usable = ev_data.get("usable_evidence_candidates", [])
+    sel = select_fourth_unique_primary_candidate(usable)
+    if sel is not None:
+        _, cand, prov = sel
+        src_str = f"{prov['video_id']} (f={prov['frame_id']}, nom={prov['video_nomination_rank']})"
+        far_f = int(prov['frame_id']) + 90
+        # Check if far frame is present in treatment preds
+        preds = treat_eval["preds_by_qid"].get(qid, [])
+        admitted = any(p["video_id"] == prov["video_id"] and int(p["frame_id"]) == far_f for p in preds)
+        adm_str = f"ADMITTED ✅ (f={far_f})" if admitted else "NOT ADMITTED ❌"
+        print(f"{qid:<10} | {src_str:<25} | Frame {far_f:<12} | {adm_str:<20}")
+    else:
+        print(f"{qid:<10} | {'NO ELIGIBLE 4TH PRIMARY':<25} | {'N/A':<18} | {'SKIPPED (Fail-closed)'}")
+print("=" * 110)
