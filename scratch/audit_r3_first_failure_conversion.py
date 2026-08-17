@@ -1,5 +1,5 @@
 # ==============================================================================================================
-# Phase R3-S2A: First-Failure Conversion Audit across all 38 DEV queries
+# Phase R3-S2A: Artifact-First First-Failure Conversion Audit (Zero-Decode, Pure Artifact Post-Hoc)
 # ==============================================================================================================
 
 import argparse
@@ -8,6 +8,7 @@ import json
 import math
 import sys
 import time
+import unicodedata
 from collections import Counter
 from enum import StrEnum
 from pathlib import Path
@@ -21,14 +22,6 @@ SYSTEM_TAI_SRC = REPO_ROOT / "systems" / "system_tai" / "src"
 if str(SYSTEM_TAI_SRC) not in sys.path:
     sys.path.insert(0, str(SYSTEM_TAI_SRC))
 
-from system_tai.common.schemas import CandidateFrame
-from system_tai.kis.session_engine import OperationalKISRuntime
-from system_tai.kis.session_schema import QAQueryRequest, SessionConfig
-from system_tai.qa.grounding import (
-    QA_CANDIDATE_ORDER_ROUND_ROBIN,
-    QAVideoConditionedEvidenceConfig,
-)
-
 
 class FailureClass(StrEnum):
     STRICT_HIT = "STRICT_HIT"
@@ -36,22 +29,39 @@ class FailureClass(StrEnum):
     TEMPORAL_MISS = "TEMPORAL_MISS"
     ANSWER_MISS = "ANSWER_MISS"
     ALLOCATION_MISS = "ALLOCATION_MISS"
-    OTHER_UNKNOWN = "OTHER_UNKNOWN"
+    PRE_TOP100_UNKNOWN = "PRE_TOP100_UNKNOWN"
+    NO_PREDICTIONS = "NO_PREDICTIONS"
 
 
-def normalize_ans(a: str) -> str:
-    return " ".join(a.strip().lower().split())
+def normalize_text(t: str) -> str:
+    if not t:
+        return ""
+    t = unicodedata.normalize("NFKC", str(t)).casefold()
+    return "".join(c for c in t if c.isalnum() or c.isspace()).strip()
 
 
-def run_first_failure_audit(
+def find_champion_artifact_dir() -> Path | None:
+    candidates = [
+        Path("/kaggle/working/output/qa_r2h1_control_cap16"),
+        Path("/kaggle/working/output/qa_r2g1_control"),
+        Path("/kaggle/working/output"),
+        REPO_ROOT / "output" / "qa_r2h1_control_cap16",
+        REPO_ROOT / "scratch" / "qa_r2h1_control_cap16",
+    ]
+    for c in candidates:
+        if c.exists():
+            if list(c.glob("**/qa_predictions.jsonl")) or list(c.glob("**/predictions.jsonl")) or list(c.glob("**/requests/*.json")):
+                return c
+    return None
+
+
+def run_artifact_first_audit(
     benchmark_path: Path,
     dev_en_sidecar_path: Path,
-    manifest_cache_path: Path,
-    input_root: Path = Path("/kaggle/input"),
-    device: str = "auto",
+    artifact_dir: Path | None = None,
 ):
     print("=" * 125)
-    print("ROUND-3 SPRINT 2A: FIRST-FAILURE CONVERSION AUDIT (STRICT THREE-STAGE PROVENANCE)")
+    print("ROUND-3 SPRINT 2A: ARTIFACT-FIRST FIRST-FAILURE CONVERSION AUDIT (POST-HOC AUDIT)")
     print("=" * 125)
 
     benchmark_bytes = benchmark_path.read_bytes()
@@ -72,99 +82,83 @@ def run_first_failure_audit(
     qa_dev_queries = [q for q in bm_data["queries"] if q.get("task_type") == "qa" and q.get("split") == "DEV"]
     print(f"Loaded {len(qa_dev_queries)} QA DEV queries from benchmark.")
 
-    # 1. Bootstrap Runtime with Champion R2G1 Configuration
-    print("\n--- CHAMPION REFERENCE CONTRACT ---")
-    print("  Configuration : Champion R2G1 (qa_video_conditioned_evidence=ON, selected_video_cap=16, temporal_refine=ON)")
-    print("  Language      : EN_ONLY via frozen QA-D0 sidecar")
-    print("  Evidence Bank : preserve_keyframe_evidence=ON, keyframe_anchors=1, temporal_seeds=3, total_seed_cap=48")
-    print("  Micro budgets : secondary_temporal=ON, primary_11_12=ON, tier3_primary_first=ON, tier3_negative_offset=ON")
+    # 1. Resolve Champion Artifact Directory
+    resolved_dir = artifact_dir or find_champion_artifact_dir()
+    print(f"\n--- ARTIFACT SOURCE RESOLUTION ---")
+    if resolved_dir:
+        print(f"  [FOUND] Champion Artifact Root: {resolved_dir}")
+    else:
+        print(f"  [WARN] Champion Artifact Directory not found in standard paths.")
 
-    session_output = Path("/kaggle/working/output/r3_failure_audit_runtime") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "r3_failure_audit_runtime"
-    session_output.mkdir(parents=True, exist_ok=True)
+    # Load Predictions and Request Diagnostics
+    predictions_by_query: dict[str, list[dict]] = {}
+    requests_by_query: dict[str, dict] = {}
 
-    evidence_config = QAVideoConditionedEvidenceConfig(
-        enabled=True,
-        selected_video_cap=16,
-        anchors_per_video=5,
-        video_rrf_constant=60.0,
-        candidate_ordering_policy=QA_CANDIDATE_ORDER_ROUND_ROBIN,
-        preserve_keyframe_evidence=True,
-        keyframe_evidence_video_cap=16,
-        keyframe_evidence_anchors_per_video=1,
-        temporal_refinement_enabled=True,
-        temporal_seed_anchors_per_video=3,
-        temporal_refinement_video_cap=16,
-        temporal_refinement_total_seed_cap=48,
-        secondary_temporal_micro_budget=True,
-        primary_11_12_micro_coverage=True,
-        tier3_primary_first=True,
-        tier3_negative_offset_first=True,
-        count_far_alt_micro=False,
-    )
+    if resolved_dir:
+        # Load predictions
+        pred_files = list(resolved_dir.glob("**/qa_predictions.jsonl")) + list(resolved_dir.glob("**/predictions.jsonl"))
+        for pf in pred_files:
+            try:
+                with open(pf, encoding="utf-8") as f:
+                    for line in f:
+                        if line.strip():
+                            p = json.loads(line)
+                            qid = p.get("query_id")
+                            if qid:
+                                predictions_by_query.setdefault(qid, []).append(p)
+            except Exception as e:
+                print(f"  Warning reading {pf}: {e}")
 
-    config = SessionConfig(
-        input_root=input_root,
-        manifest_cache=manifest_cache_path,
-        output_root=session_output,
-        device=device,
-        allow_model_download=True,
-        default_output_top_k=100,
-        qa_video_conditioned_evidence_config=evidence_config,
-    )
-    runtime = OperationalKISRuntime.bootstrap(config)
-    print("Runtime bootstrapped successfully.")
+        # Load requests
+        req_files = list(resolved_dir.glob("**/requests/*.json"))
+        for rf in req_files:
+            try:
+                with open(rf, encoding="utf-8") as f:
+                    rdata = json.load(f)
+                    qid = rdata.get("query_id") or rdata.get("request", {}).get("query_id")
+                    if qid:
+                        requests_by_query[qid] = rdata
+            except Exception as e:
+                print(f"  Warning reading {rf}: {e}")
 
+    print(f"  Loaded predictions for {len(predictions_by_query)} queries.")
+    print(f"  Loaded detailed request diagnostics for {len(requests_by_query)} queries.")
+
+    # 2. Classify Each Query
     failure_records = []
     class_counts: Counter[str] = Counter()
     class_queries: dict[str, list[str]] = {fc.value: [] for fc in FailureClass}
-
-    t0 = time.time()
-    print("\nExecuting Champion inference and auditing failure stages across all 38 queries...")
 
     for idx, q in enumerate(qa_dev_queries, start=1):
         qid = q["query_id"]
         target_vid = q.get("video_id")
         start_f = int(q.get("start_frame_id", -1))
         end_f = int(q.get("end_frame_id", -1))
-        gt_answers = [normalize_ans(a) for a in q.get("accepted_answers", [])]
-        q_vi = q.get("question_vi", "")
-        q_en = en_map.get(qid, "")
+        gt_answers = [normalize_text(a) for a in q.get("accepted_answers", [])]
 
-        req = QAQueryRequest(
-            request_id=f"audit-{qid}",
-            query_id=qid,
-            event_description=q_vi,
-            question=q_vi,
-            event_description_en=q_en if q_en else None,
-            question_en=q_en if q_en else None,
-            include_vi_variant=False if q_en else True,
-            output_top_k=100,
-        )
-
-        res = runtime.handle_qa_query(req)
-        preds = res.get("predictions", [])
-        diagnostics = res.get("diagnostics", {})
+        preds = predictions_by_query.get(qid, [])
+        req_data = requests_by_query.get(qid, {})
+        diag = req_data.get("diagnostics", {})
 
         # Stage A: Champion Nomination Pool
-        selected_video_ids = diagnostics.get("selected_video_ids", [])
+        selected_video_ids = diag.get("selected_video_ids", [])
+        # If diag not serialized, extract all unique video_ids from final predictions
+        if not selected_video_ids and preds:
+            selected_video_ids = list(dict.fromkeys([p.get("video_id") for p in preds if p.get("video_id")]))
 
-        # Stage B: Internal Localized & Scored Candidates Pre-Top100
-        # Check both evidence bank records and usable candidates
-        evidence_records = diagnostics.get("evidence", [])
-        usable_candidates = diagnostics.get("usable_candidates", [])
+        # Stage B: Internal candidates pre-Top100
+        evidence_records = diag.get("evidence", [])
+        usable_candidates = diag.get("usable_candidates", [])
 
-        # Extract all internal candidate frames produced for target video
         target_internal_frames: list[int] = []
-        target_internal_tuples: list[tuple[int, list[str]]] = []  # (frame_id, [answers])
+        target_internal_tuples: list[tuple[int, list[str]]] = []
 
         for ev in evidence_records:
             if ev.get("video_id") == target_vid:
                 f_id = ev.get("output_frame_id") or ev.get("refined_frame_id") or ev.get("candidate_frame_id")
                 if f_id is not None:
                     target_internal_frames.append(int(f_id))
-                    ans_list = []
-                    if ev.get("answer"):
-                        ans_list.append(normalize_ans(str(ev.get("answer"))))
+                    ans_list = [normalize_text(str(ev.get("answer")))] if ev.get("answer") else []
                     target_internal_tuples.append((int(f_id), ans_list))
 
         if not target_internal_frames:
@@ -172,17 +166,17 @@ def run_first_failure_audit(
                 if uc.get("video_id") == target_vid and uc.get("frame_id") is not None:
                     f_id = int(uc.get("frame_id"))
                     target_internal_frames.append(f_id)
-                    ans_list = [normalize_ans(str(a)) for a in uc.get("answers", []) if a]
+                    ans_list = [normalize_text(str(a)) for a in uc.get("answers", []) if a]
                     target_internal_tuples.append((f_id, ans_list))
 
-        # Check 1: STRICT_HIT in final predictions (Ranks 1..100)
+        # Check 1: STRICT_HIT
         hit_rank = None
         hit_frame = None
         hit_ans = None
         for p in preds:
             p_vid = p.get("video_id")
             p_frame = int(p.get("frame_id", -1))
-            p_ans = normalize_ans(str(p.get("answer", "")))
+            p_ans = normalize_text(str(p.get("answer", "")))
             if p_vid == target_vid and start_f <= p_frame <= end_f and p_ans in gt_answers:
                 hit_rank = p.get("rank")
                 hit_frame = p_frame
@@ -192,48 +186,42 @@ def run_first_failure_audit(
         if hit_rank is not None:
             failure_class = FailureClass.STRICT_HIT
             detail = f"Hit at Rank {hit_rank} (f={hit_frame}, ans='{hit_ans}')"
-        elif not preds and not selected_video_ids:
-            failure_class = FailureClass.OTHER_UNKNOWN
-            detail = "Zero predictions & missing provenance (runtime error)"
+        elif not preds:
+            failure_class = FailureClass.NO_PREDICTIONS
+            detail = "Zero predictions in artifact"
         elif target_vid not in selected_video_ids:
-            # Check 2: VIDEO_ABSENT
             failure_class = FailureClass.VIDEO_ABSENT
-            detail = f"Target video absent from champion nomination pool ({len(selected_video_ids)} videos in pool)"
+            detail = f"Target {target_vid} not in nomination pool ({len(selected_video_ids)} videos)"
         else:
-            # Target video is in pool. Check internal frames before Top100
-            in_gt_internal_frames = [f for f in target_internal_frames if start_f <= f <= end_f]
+            # Video is in pool. Check frames
+            all_target_frames = list(dict.fromkeys(target_internal_frames + [int(p.get("frame_id", -1)) for p in preds if p.get("video_id") == target_vid]))
+            in_gt_frames = [f for f in all_target_frames if start_f <= f <= end_f]
 
-            if not in_gt_internal_frames:
-                # Check 3: TEMPORAL_MISS
+            if not in_gt_frames:
                 failure_class = FailureClass.TEMPORAL_MISS
-                nearest_dist = min([abs(f - start_f) for f in target_internal_frames] + [abs(f - end_f) for f in target_internal_frames]) if target_internal_frames else 999999
-                nearest_f = min(target_internal_frames, key=lambda f: min(abs(f - start_f), abs(f - end_f))) if target_internal_frames else None
-                detail = f"Video present, but 0/{len(target_internal_frames)} internal frames in GT [{start_f}..{end_f}]. Nearest f={nearest_f} (dist={nearest_dist})"
+                nearest_dist = min([abs(f - start_f) for f in all_target_frames] + [abs(f - end_f) for f in all_target_frames]) if all_target_frames else 999999
+                nearest_f = min(all_target_frames, key=lambda f: min(abs(f - start_f), abs(f - end_f))) if all_target_frames else None
+                detail = f"Video present, but 0/{len(all_target_frames)} frames in GT [{start_f}..{end_f}]. Nearest f={nearest_f} (dist={nearest_dist})"
             else:
-                # Target video + In-GT internal frame exists!
-                # Check if an accepted answer was generated on in-GT candidates
-                in_gt_answers_pre_top100: list[str] = []
-                for f_id, ans_list in target_internal_tuples:
-                    if start_f <= f_id <= end_f:
-                        in_gt_answers_pre_top100.extend(ans_list)
-
-                # Also check final predictions for in-GT answers
+                # In-GT frame exists. Check answers
+                answers_on_in_gt = []
                 for p in preds:
                     if p.get("video_id") == target_vid and start_f <= int(p.get("frame_id", -1)) <= end_f:
-                        in_gt_answers_pre_top100.append(normalize_ans(str(p.get("answer", ""))))
+                        answers_on_in_gt.append(normalize_text(str(p.get("answer", ""))))
 
-                correct_answers_seen = [a for a in in_gt_answers_pre_top100 if a in gt_answers]
+                for f_id, ans_list in target_internal_tuples:
+                    if start_f <= f_id <= end_f:
+                        answers_on_in_gt.extend(ans_list)
+
+                correct_answers_seen = [a for a in answers_on_in_gt if a in gt_answers]
 
                 if not correct_answers_seen:
-                    # Check 4: ANSWER_MISS
                     failure_class = FailureClass.ANSWER_MISS
-                    unique_seen_ans = list(set(in_gt_answers_pre_top100))[:3]
-                    detail = f"In-GT internal frame exists ({len(in_gt_internal_frames)} frames), but wrong answers: {unique_seen_ans} (GT: {gt_answers})"
+                    unique_seen = list(set(answers_on_in_gt))[:3]
+                    detail = f"In-GT frame exists ({len(in_gt_frames)} frames), but wrong answers: {unique_seen} (GT: {gt_answers})"
                 else:
-                    # Check 5: ALLOCATION_MISS
-                    # Valid tuple (target, in_GT_frame, correct_answer) existed internally, but was dropped from Top 100!
                     failure_class = FailureClass.ALLOCATION_MISS
-                    detail = f"Valid full tuple existed pre-Top100 (f in GT & ans='{correct_answers_seen[0]}'), but was dropped or ranked > 100"
+                    detail = f"Valid full tuple existed internally (f in GT & ans='{correct_answers_seen[0]}'), but was dropped from Top 100"
 
         class_counts[failure_class.value] += 1
         class_queries[failure_class.value].append(qid)
@@ -247,32 +235,29 @@ def run_first_failure_audit(
             "detail": detail,
         })
 
-    elapsed = time.time() - t0
-    print(f"Audit completed in {elapsed:.2f}s.")
-
-    # 2. Print Detailed Summary Table
+    # 3. Print Detailed Table
     print("\n" + "=" * 125)
-    print(f"{'Query ID':<8} | {'Target':<10} | {'GT Interval':<16} | {'First Failure Class':<18} | {'Forensic Detail'}")
+    print(f"{'Query ID':<8} | {'Target':<10} | {'GT Interval':<16} | {'First Failure Class':<20} | {'Forensic Detail'}")
     print("-" * 125)
     for r in failure_records:
         mark = "✅" if r["failure_class"] == "STRICT_HIT" else "❌"
-        print(f"{r['qid']:<8} | {r['target_vid']:<10} | {r['gt_interval']:<16} | {mark} {r['failure_class']:<16} | {r['detail']}")
+        print(f"{r['qid']:<8} | {r['target_vid']:<10} | {r['gt_interval']:<16} | {mark} {r['failure_class']:<18} | {r['detail']}")
     print("=" * 125)
 
-    # 3. Print Aggregate Failure Breakdown
+    # 4. Print Aggregate Breakdown
     print("\n" + "=" * 125)
     print("AGGREGATE FIRST-FAILURE BREAKDOWN (N = 38 DEV QUERIES)")
     print("=" * 125)
-    print(f"{'Failure Class':<20} | {'Count':<10} | {'Percentage':<12} | {'Query IDs'}")
+    print(f"{'Failure Class':<22} | {'Count':<10} | {'Percentage':<12} | {'Query IDs'}")
     print("-" * 125)
     for fc in FailureClass:
         count = class_counts[fc.value]
         pct = f"{count / 38 * 100:.1f}%"
         q_list = ", ".join(class_queries[fc.value]) if class_queries[fc.value] else "None"
-        print(f"{fc.value:<20} | {count:<10} | {pct:<12} | {q_list}")
+        print(f"{fc.value:<22} | {count:<10} | {pct:<12} | {q_list}")
     print("=" * 125)
 
-    # 4. Strategic Decision Analysis
+    # 5. Strategic Decision Analysis
     print("\n--- STRATEGIC ACTION DECISION BASED ON DOMINANT BOTTLENECK ---")
     miss_counts = {
         FailureClass.VIDEO_ABSENT.value: class_counts[FailureClass.VIDEO_ABSENT.value],
@@ -294,18 +279,14 @@ def run_first_failure_audit(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run First-Failure Conversion Audit")
+    parser = argparse.ArgumentParser(description="Run Artifact-First First-Failure Conversion Audit")
     parser.add_argument("--benchmark", type=Path, default=REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "l21_150_diagnostic" / "benchmark.json")
     parser.add_argument("--sidecar", type=Path, default=REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "l21_150_diagnostic" / "qa_dev_translations_en.json")
-    parser.add_argument("--manifest-cache", type=Path, default=Path("/kaggle/working/manifest_cache.json"))
-    parser.add_argument("--input-root", type=Path, default=Path("/kaggle/input"))
-    parser.add_argument("--device", type=str, default="auto")
+    parser.add_argument("--artifact-dir", type=Path, default=None)
     args = parser.parse_args()
 
-    run_first_failure_audit(
+    run_artifact_first_audit(
         benchmark_path=args.benchmark,
         dev_en_sidecar_path=args.sidecar,
-        manifest_cache_path=args.manifest_cache,
-        input_root=args.input_root,
-        device=args.device,
+        artifact_dir=args.artifact_dir,
     )
