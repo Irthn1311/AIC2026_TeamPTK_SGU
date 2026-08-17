@@ -1,11 +1,12 @@
 # ==============================================================================================================
-# Phase R3-S2A: Targeted Conversion Diagnostic (Fast 8-Query GPU Forensic)
+# Phase R3-S2A: Targeted Conversion Diagnostic (Fast 8-Query Forensic with Exact Champion Budget)
 # ==============================================================================================================
 
 import argparse
 import hashlib
 import json
 import math
+import os
 import sys
 import time
 import unicodedata
@@ -43,7 +44,7 @@ TARGETED_QUERIES = [
     "QA-26",  # S1A / Visual branch
     "QA-30",  # Action branch
     "QA-31",  # Visual branch
-    "QA-46",  # S1A / Action branch (thủ công thổ cẩm)
+    "QA-46",  # Positive control / Action branch (thủ công thổ cẩm)
 ]
 
 
@@ -70,7 +71,7 @@ def run_targeted_diagnostic(
     device: str = "auto",
 ):
     print("=" * 125)
-    print("ROUND-3 SPRINT 2A: TARGETED 8-QUERY CONVERSION FORENSIC (GPU FAST RUN)")
+    print("ROUND-3 SPRINT 2A: TARGETED 8-QUERY CONVERSION FORENSIC (EXACT CHAMPION BUDGET)")
     print("=" * 125)
 
     benchmark_bytes = benchmark_path.read_bytes()
@@ -91,7 +92,7 @@ def run_targeted_diagnostic(
     en_map = {e["query_id"]: e.get("question_en", "") for e in en_sidecar.get("entries", [])}
     all_qa_queries = {q["query_id"]: q for q in bm_data["queries"] if q.get("task_type") == "qa"}
 
-    # 1. Bootstrap Runtime on GPU with Champion R2G1 Configuration
+    # 1. Bootstrap Runtime with Exact Champion R2G1 Configuration
     print("\n--- BOOTSTRAPPING CHAMPION RUNTIME ---")
     session_output = Path("/kaggle/working/output/targeted_diagnostic") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "targeted_diagnostic"
     session_output.mkdir(parents=True, exist_ok=True)
@@ -106,9 +107,9 @@ def run_targeted_diagnostic(
         keyframe_evidence_video_cap=16,
         keyframe_evidence_anchors_per_video=1,
         temporal_refinement_enabled=True,
-        temporal_seed_anchors_per_video=3,
-        temporal_refinement_video_cap=16,
-        temporal_refinement_total_seed_cap=48,
+        temporal_seed_anchors_per_video=2,
+        temporal_refinement_video_cap=8,
+        temporal_refinement_total_seed_cap=16,
         secondary_temporal_micro_budget=True,
         primary_11_12_micro_coverage=True,
         tier3_primary_first=True,
@@ -128,7 +129,7 @@ def run_targeted_diagnostic(
     runtime = OperationalKISRuntime.bootstrap(config)
     print("Runtime bootstrapped successfully.")
 
-    # 2. Execute Targeted Queries with High-Precision Stage Logging
+    # 2. Execute Targeted Queries with Exact Stage Logging
     print("\n" + "=" * 125)
     print("EXECUTING TARGETED DIAGNOSTIC QUERIES")
     print("=" * 125)
@@ -149,6 +150,7 @@ def run_targeted_diagnostic(
         q_en = en_map.get(qid, "")
         branch = q.get("branch", "General")
 
+        print(f"\n[{idx}/{len(TARGETED_QUERIES)}] Processing {qid} ({branch}) [Target: {target_vid}, GT: [{start_f}..{end_f}]]...")
         t_q0 = time.time()
         req = QAQueryRequest(
             request_id=f"targeted-{qid}",
@@ -264,7 +266,7 @@ def run_targeted_diagnostic(
             "time_s": f"{t_elapsed:.2f}s",
         })
 
-        print(f"[{idx}/{len(TARGETED_QUERIES)}] {qid:<6} ({branch:<12}) -> {stage_failure:<15} [{t_elapsed:.2f}s]: {forensic}")
+        print(f"      -> {stage_failure:<15} [{t_elapsed:.2f}s]: {forensic}")
 
     # 3. Print Forensic Summary Table
     print("\n" + "=" * 125)
