@@ -39,6 +39,38 @@ CONTROL_DIR = Path("/kaggle/working/output/qa_r2h1_control_cap16")
 TREATMENT_DIR = Path("/kaggle/working/output/qa_r2h1_treatment_count_far_alt")
 
 # ==============================================================================================================
+# STEP 0: SYSTEM ENVIRONMENT & PYTHON PACKAGES CHECK
+# ==============================================================================================================
+print("\n" + "=" * 110)
+print("STEP 0: SYSTEM ENVIRONMENT & PYTHON PACKAGES CHECK")
+print("=" * 110)
+
+print(f"Python interpreter: {sys.executable}")
+print(f"Working directory:  {Path.cwd()}")
+
+print("Checking and installing Python dependencies...")
+subprocess.run(
+    [
+        sys.executable, "-m", "pip", "install", "-q",
+        "openai-clip", "ftfy", "regex", "tqdm", "pytesseract"
+    ],
+    check=True,
+)
+
+print("Checking and installing system Tesseract OCR dependencies...")
+subprocess.run(["apt-get", "update", "-qq"], check=False)
+subprocess.run(
+    [
+        "apt-get", "install", "-y", "-qq",
+        "tesseract-ocr",
+        "tesseract-ocr-vie",
+        "tesseract-ocr-eng",
+        "libtesseract-dev",
+    ],
+    check=False,
+)
+
+# ==============================================================================================================
 # STEP 1: VALIDATING FROZEN BENCHMARK & SIDECAR ARTIFACTS SHA256
 # ==============================================================================================================
 print("\n" + "=" * 110)
