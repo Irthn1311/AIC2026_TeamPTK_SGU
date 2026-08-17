@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import sys
 import time
 import unicodedata
@@ -29,7 +30,6 @@ class FailureClass(StrEnum):
     TEMPORAL_MISS = "TEMPORAL_MISS"
     ANSWER_MISS = "ANSWER_MISS"
     ALLOCATION_MISS = "ALLOCATION_MISS"
-    PRE_TOP100_UNKNOWN = "PRE_TOP100_UNKNOWN"
     NO_PREDICTIONS = "NO_PREDICTIONS"
 
 
@@ -40,19 +40,24 @@ def normalize_text(t: str) -> str:
     return "".join(c for c in t if c.isalnum() or c.isspace()).strip()
 
 
-def find_champion_artifact_dir() -> Path | None:
-    candidates = [
+def find_champion_artifact_roots() -> list[Path]:
+    """Find all potential artifact roots containing qa_predictions.jsonl on Kaggle or locally."""
+    search_dirs = [
         Path("/kaggle/working/output/qa_r2h1_control_cap16"),
         Path("/kaggle/working/output/qa_r2g1_control"),
         Path("/kaggle/working/output"),
-        REPO_ROOT / "output" / "qa_r2h1_control_cap16",
-        REPO_ROOT / "scratch" / "qa_r2h1_control_cap16",
+        Path("/kaggle/working"),
+        REPO_ROOT / "output",
+        REPO_ROOT / "scratch",
     ]
-    for c in candidates:
-        if c.exists():
-            if list(c.glob("**/qa_predictions.jsonl")) or list(c.glob("**/predictions.jsonl")) or list(c.glob("**/requests/*.json")):
-                return c
-    return None
+    found = []
+    for d in search_dirs:
+        if d.exists():
+            # Check if there are any qa_predictions.jsonl files
+            files = list(d.rglob("qa_predictions.jsonl"))
+            if files:
+                found.append(d)
+    return found
 
 
 def run_artifact_first_audit(
@@ -83,46 +88,81 @@ def run_artifact_first_audit(
     print(f"Loaded {len(qa_dev_queries)} QA DEV queries from benchmark.")
 
     # 1. Resolve Champion Artifact Directory
-    resolved_dir = artifact_dir or find_champion_artifact_dir()
+    search_roots = [artifact_dir] if artifact_dir else find_champion_artifact_roots()
     print(f"\n--- ARTIFACT SOURCE RESOLUTION ---")
-    if resolved_dir:
-        print(f"  [FOUND] Champion Artifact Root: {resolved_dir}")
-    else:
-        print(f"  [WARN] Champion Artifact Directory not found in standard paths.")
+    print(f"  Searching artifact roots: {[str(r) for r in search_roots]}")
 
-    # Load Predictions and Request Diagnostics
     predictions_by_query: dict[str, list[dict]] = {}
-    requests_by_query: dict[str, dict] = {}
+    diagnostics_by_query: dict[str, dict] = {}
+    evidence_by_query: dict[str, dict] = {}
 
-    if resolved_dir:
-        # Load predictions
-        pred_files = list(resolved_dir.glob("**/qa_predictions.jsonl")) + list(resolved_dir.glob("**/predictions.jsonl"))
-        for pf in pred_files:
-            try:
-                with open(pf, encoding="utf-8") as f:
-                    for line in f:
-                        if line.strip():
-                            p = json.loads(line)
-                            qid = p.get("query_id")
-                            if qid:
-                                predictions_by_query.setdefault(qid, []).append(p)
-            except Exception as e:
-                print(f"  Warning reading {pf}: {e}")
+    all_pred_files = []
+    for r in search_roots:
+        if r and r.exists():
+            all_pred_files.extend(list(r.rglob("qa_predictions.jsonl")))
+            # Also check top100.jsonl or predictions.jsonl
+            all_pred_files.extend(list(r.rglob("predictions.jsonl")))
 
-        # Load requests
-        req_files = list(resolved_dir.glob("**/requests/*.json"))
-        for rf in req_files:
-            try:
-                with open(rf, encoding="utf-8") as f:
-                    rdata = json.load(f)
-                    qid = rdata.get("query_id") or rdata.get("request", {}).get("query_id")
-                    if qid:
-                        requests_by_query[qid] = rdata
-            except Exception as e:
-                print(f"  Warning reading {rf}: {e}")
+    # Deduplicate files
+    unique_pred_files = list(dict.fromkeys(all_pred_files))
+    print(f"  Found {len(unique_pred_files)} prediction files across search roots.")
+
+    for pf in unique_pred_files:
+        try:
+            with open(pf, encoding="utf-8") as f:
+                for line in f:
+                    if line.strip():
+                        p = json.loads(line)
+                        qid = p.get("query_id")
+                        if qid:
+                            # Keep only one clean set per query (prioritizing control arm)
+                            if qid not in predictions_by_query or "control" in str(pf):
+                                if qid not in predictions_by_query:
+                                    predictions_by_query[qid] = []
+                                predictions_by_query[qid].append(p)
+
+            # Check sibling qa_evidence.json or qa_request_manifest.json
+            ev_file = pf.parent / "qa_evidence.json"
+            if ev_file.exists():
+                try:
+                    with open(ev_file, encoding="utf-8") as ef:
+                        ev_data = json.load(ef)
+                        eqid = ev_data.get("query_id")
+                        if eqid:
+                            evidence_by_query[eqid] = ev_data
+                except Exception:
+                    pass
+
+            diag_file = pf.parent / "qa_timings.json"
+            if diag_file.exists():
+                try:
+                    with open(diag_file, encoding="utf-8") as df:
+                        df_data = json.load(df)
+                        dqid = df_data.get("query_id")
+                        if dqid:
+                            diagnostics_by_query[dqid] = df_data
+                except Exception:
+                    pass
+
+        except Exception as e:
+            print(f"  Warning reading {pf}: {e}")
+
+    # Also search for any requests/ directory
+    for r in search_roots:
+        if r and r.exists():
+            for req_file in r.rglob("requests/**/*.json"):
+                if req_file.name == "qa_evidence.json":
+                    try:
+                        with open(req_file, encoding="utf-8") as ef:
+                            ev_data = json.load(ef)
+                            eqid = ev_data.get("query_id")
+                            if eqid:
+                                evidence_by_query[eqid] = ev_data
+                    except Exception:
+                        pass
 
     print(f"  Loaded predictions for {len(predictions_by_query)} queries.")
-    print(f"  Loaded detailed request diagnostics for {len(requests_by_query)} queries.")
+    print(f"  Loaded pre-Top100 evidence for {len(evidence_by_query)} queries.")
 
     # 2. Classify Each Query
     failure_records = []
@@ -137,18 +177,17 @@ def run_artifact_first_audit(
         gt_answers = [normalize_text(a) for a in q.get("accepted_answers", [])]
 
         preds = predictions_by_query.get(qid, [])
-        req_data = requests_by_query.get(qid, {})
-        diag = req_data.get("diagnostics", {})
+        ev_data = evidence_by_query.get(qid, {})
 
         # Stage A: Champion Nomination Pool
-        selected_video_ids = diag.get("selected_video_ids", [])
-        # If diag not serialized, extract all unique video_ids from final predictions
+        selected_video_ids = ev_data.get("selected_video_ids", [])
+        # If evidence file not serialized, extract all unique video_ids from final predictions
         if not selected_video_ids and preds:
             selected_video_ids = list(dict.fromkeys([p.get("video_id") for p in preds if p.get("video_id")]))
 
         # Stage B: Internal candidates pre-Top100
-        evidence_records = diag.get("evidence", [])
-        usable_candidates = diag.get("usable_candidates", [])
+        evidence_records = ev_data.get("evidence", [])
+        usable_candidates = ev_data.get("usable_candidates", [])
 
         target_internal_frames: list[int] = []
         target_internal_tuples: list[tuple[int, list[str]]] = []
