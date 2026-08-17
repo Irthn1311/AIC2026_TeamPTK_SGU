@@ -144,7 +144,7 @@ def run_targeted_diagnostic(
         languages=("eng", "vie"),
         evidence_frame_budget=8,
     )
-    object_config = ObjectAnswerProviderConfig(enabled=True)
+    object_config = ObjectAnswerProviderConfig(enabled=False)
 
     config = SessionConfig(
         input_root=input_root,

@@ -110,7 +110,7 @@ def run_qa46_probe(
         languages=("eng", "vie"),
         evidence_frame_budget=8,
     )
-    object_config = ObjectAnswerProviderConfig(enabled=True)
+    object_config = ObjectAnswerProviderConfig(enabled=False)
 
     session_output = Path("/kaggle/working/output/qa46_contract_probe") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "qa46_contract_probe"
     session_output.mkdir(parents=True, exist_ok=True)
