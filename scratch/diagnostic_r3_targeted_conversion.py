@@ -141,7 +141,7 @@ def run_targeted_diagnostic(
     )
     ocr_config = OCRAnswerProviderConfig(
         enabled=True,
-        languages="eng+vie",
+        languages=("eng", "vie"),
         evidence_frame_budget=8,
     )
     object_config = ObjectAnswerProviderConfig(enabled=True)

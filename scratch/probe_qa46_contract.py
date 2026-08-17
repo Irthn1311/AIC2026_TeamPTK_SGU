@@ -107,7 +107,7 @@ def run_qa46_probe(
     )
     ocr_config = OCRAnswerProviderConfig(
         enabled=True,
-        languages="eng+vie",
+        languages=("eng", "vie"),
         evidence_frame_budget=8,
     )
     object_config = ObjectAnswerProviderConfig(enabled=True)
