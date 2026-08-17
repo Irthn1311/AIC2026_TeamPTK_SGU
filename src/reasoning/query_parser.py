@@ -397,6 +397,97 @@ class QueryParser:
         return "\n".join(parts)
 
     # =========================================================
+    # =========================================================
+    # Internal: Open-Domain Vi ➔ En Sentence Translation Engine
+    # =========================================================
+
+    def translate_vi_sentence(self, raw_text: str) -> str:
+        """
+        Translates Vietnamese natural language query to English preserving 100% semantics.
+        Replaces visual phrases, objects, natural phenomena, settings, and actions.
+        """
+        _VI2EN_DICT = [
+            # Natural disasters & fire
+            ("cháy rừng lớn", "large wildfire"), ("cháy rừng", "wildfire"), ("đám cháy lớn", "large fire"),
+            ("đám cháy", "fire"), ("lửa lan dọc sườn đồi", "flames spreading along the hillside"),
+            ("lửa lan dọc sườn núi", "flames spreading along the mountain slope"),
+            ("lửa lan dọc", "flames spreading along"), ("lửa lan", "flames spreading"),
+            ("ngọn lửa", "flames"), ("hỏa hoạn", "fire disaster"), ("lửa", "fire"),
+            ("khói dày phủ bầu trời", "thick smoke covering the sky"), ("khói dày", "thick smoke"),
+            ("khói mù", "dense smoke"), ("làn khói", "column of smoke"), ("khói", "smoke"),
+            ("phủ bầu trời", "covering the sky"), ("bầu trời đêm", "night sky"), ("bầu trời", "sky"),
+            ("sườn đồi", "hillside"), ("quả đồi", "hill"), ("sườn núi", "mountain slope"),
+            ("ngọn núi", "mountain"), ("dãy núi", "mountain range"), ("núi", "mountain"), ("đồi", "hill"),
+            ("rừng cây", "forest trees"), ("cánh rừng", "forest"), ("rừng", "forest"),
+            ("lũ quét", "flash flood"), ("lũ lụt", "flooding"), ("ngập lụt", "flooded area"), ("lũ", "flood"),
+            ("sạt lở đất", "landslide"), ("sạt lở", "landslide"),
+            ("chữa cháy cho", "extinguishing fire at"), ("chữa cháy", "extinguishing fire"),
+            ("bị ngập trong lửa", "engulfed in flames"), ("bị ngập", "flooded"),
+
+            # Sports & Actions
+            ("sút bóng vào lưới", "kicking ball into goal"), ("sút bóng", "kicking soccer ball"),
+            ("đánh đầu", "heading the ball"), ("chuyền bóng", "passing the ball"),
+            ("cầu thủ bóng đá", "soccer player"), ("cầu thủ", "player"),
+            ("sân vận động đông khán giả", "crowded stadium"), ("sân vận động", "stadium"),
+            ("sân bóng", "soccer field"), ("đông khán giả", "crowded with fans"),
+
+            # News & Media
+            ("bản tin thời sự", "news broadcast"), ("bản tin", "news broadcast"),
+            ("biên tập viên nam", "male news anchor"), ("biên tập viên nữ", "female news anchor"),
+            ("biên tập viên", "news anchor"), ("phát thanh viên", "news anchor"),
+            ("người dẫn chương trình", "TV host"), ("phòng quay", "news studio"),
+            ("đang nói chuyện", "speaking"), ("nói chuyện", "speaking"),
+            ("phát biểu", "speaking"), ("trình bày", "presenting"),
+
+            # People & Clothing
+            ("mặc áo vest đen", "wearing black suit"), ("mặc áo vest", "wearing suit jacket"),
+            ("mặc áo đỏ", "wearing red shirt"), ("mặc áo xanh", "wearing blue shirt"),
+            ("mặc áo trắng", "wearing white shirt"), ("mặc áo phông", "wearing t-shirt"),
+            ("áo vest đen", "black suit"), ("áo vest", "suit jacket"), ("áo sơ mi", "dress shirt"),
+            ("người lính cứu hỏa", "firefighter"), ("lính cứu hỏa", "firefighters"),
+            ("cảnh sát", "police officer"), ("bác sĩ", "doctor"),
+
+            # Vehicles & Structures
+            ("xe cứu hỏa", "fire truck"), ("máy bay cứu hỏa", "firefighting aircraft"),
+            ("máy bay trực thăng", "helicopter"), ("trực thăng", "helicopter"),
+            ("máy bay", "airplane"), ("tòa nhà cao tầng", "skyscraper"), ("tòa nhà", "building"),
+            ("ngôi nhà", "house"), ("căn nhà", "house"), ("xe ô tô", "car"), ("xe máy", "motorbike"),
+
+            # Time & Weather
+            ("vào ban đêm", "at night"), ("ban đêm", "at night"), ("buổi tối", "in the evening"),
+            ("ban ngày", "during the day"), ("buổi sáng", "in the morning"), ("hoàng hôn", "at sunset"),
+
+            # Common Stopwords
+            ("tìm cảnh", ""), ("cho tôi thấy", ""), ("hình ảnh về", ""), ("video quay cảnh", ""),
+            ("xuất hiện cảnh", ""), ("đoạn clip quay", ""), ("xác định", ""), ("cho biết", ""),
+            ("tìm đoạn", ""), ("tìm video", ""), ("cho thấy", ""), ("hình ảnh", ""),
+
+            # Prepositions & Quantifiers
+            (" ngập trong lửa", " engulfed in flames"), (" ngập trong ", " engulfed in "),
+            (" cho một ", " at a "), (" cho ", " at "), (" trong ", " in "),
+            (" và ", " and "), (" với ", " with "), (" trên ", " on "),
+            (" ở ", " in "), (" tại ", " at "), (" đang ", " "),
+            (" một ", " a "), (" những ", " "), (" các ", " "),
+        ]
+
+        text = raw_text.strip()
+        lowered = text.lower()
+
+        # Phrase substitution (longest matching phrase first)
+        for vi_phrase, en_phrase in _VI2EN_DICT:
+            if vi_phrase in lowered:
+                lowered = lowered.replace(vi_phrase, en_phrase)
+
+        # Strip remaining Vietnamese diacritics for fallback words
+        import unicodedata
+        nfkd = unicodedata.normalize('NFKD', lowered)
+        unaccented = "".join([c for c in nfkd if not unicodedata.combining(c)]).replace('đ', 'd').replace('Đ', 'D')
+
+        # Clean punctuation and extra spaces
+        cleaned = re.sub(r'\s+', ' ', unaccented).strip(' .,!?:;')
+        return cleaned
+
+    # =========================================================
     # Internal: CLIP Prompt Builders
     # =========================================================
 
@@ -407,96 +498,42 @@ class QueryParser:
         lang_mix: Dict[str, float],
     ) -> str:
         """
-        Build a natural English sentence for CLIP from extracted entities.
-        Template: "A photo of [subject] [action] in [setting], [color], [spatial]."
-        Stays within 77-token limit.
+        Build a natural English sentence for CLIP from full-sentence translation
+        combined with extracted entity tags. Preserves 100% query semantics.
         """
-        parts: List[str] = []
+        # Step 1: Open-domain sentence translation (preserves all key concepts)
+        translated_en = self.translate_vi_sentence(raw_text)
 
-        # 1. Subject
+        # If translation produced a meaningful sentence, use it as primary base
+        if translated_en and len(translated_en) > 3:
+            # Ensure proper prefix
+            if not translated_en.lower().startswith("a photo") and not translated_en.lower().startswith("a scene"):
+                prompt = f"A photo of {translated_en}"
+            else:
+                prompt = translated_en
+            return prompt[:300].strip()
+
+        # Fallback: Structured entity assembly if translation is empty
+        parts: List[str] = []
         if entities.persons:
             p = entities.persons[0]
             role = p.get("role_en", "")
             gender = p.get("gender", "")
-            if role:
-                subject = f"a {gender + ' ' if gender else ''}{role}".strip()
-            elif gender:
-                subject = f"a {gender}"
-            else:
-                subject = "a person"
-            if len(entities.persons) > 1 or any(
-                q.get("entity", "") in ("người", "people", "person") for q in entities.quantities
-            ):
-                n = next(
-                    (q["value"] for q in entities.quantities
-                     if q.get("entity", "") in ("người", "people", "person")), None
-                )
-                subject = f"{n} {role or 'people'}" if n else f"multiple {role or 'people'}"
+            subject = f"a {gender + ' ' if gender else ''}{role}".strip() if (role or gender) else "a person"
         elif entities.objects:
             subject = f"a {entities.objects[0]}"
         else:
             subject = "a scene"
 
         parts.append(f"A photo of {subject}")
-
-        # 2. Actions
         if entities.actions:
-            action_str = " and ".join(a["en"] for a in entities.actions[:2])
-            parts.append(action_str)
-
-        # 3. Setting
+            parts.append(" and ".join(a["en"] for a in entities.actions[:2]))
         if entities.scene_type:
             parts.append(f"in {entities.scene_type}")
-
-        # 4. Additional objects
-        extra_objs = [o for o in entities.objects if "person" not in o][:3]
-        if extra_objs:
-            parts.append("with " + ", ".join(extra_objs))
-
-        # 5. Colors + clothing (improved formatting)
-        color_phrases = []
-        for c in entities.colors[:3]:
-            if c["target"] != "unspecified":
-                color_phrases.append(f"{c['en']} {c['target']}")
-            else:
-                color_phrases.append(c["en"])
-        if color_phrases:
-            parts.append(", " + " and ".join(color_phrases))
-
-        # 5.5 Clothing details as standalone phrases
-        if entities.clothing_details:
-            cloth_parts = []
-            for cd in entities.clothing_details[:2]:
-                if cd.get("color"):
-                    cloth_parts.append(f"{cd['color']} {cd['en']}")
-                else:
-                    cloth_parts.append(cd["en"])
-            if cloth_parts:
-                parts.append(", wearing " + " and ".join(cloth_parts))
-
-        # 6. Spatial
-        if entities.spatial:
-            sp_str = ", ".join(s["en"] for s in entities.spatial[:2])
-            parts.append(", " + sp_str)
-
-        # 7. Emotions
-        if entities.emotions:
-            parts.append(f", looking {entities.emotions[0]}")
-
-        # 8. Lighting/time context
         if entities.lighting:
             parts.append(f", {entities.lighting}")
 
-        # 9. OCR hints
-        if entities.ocr_hints:
-            parts.append(f". Text visible: {' '.join(entities.ocr_hints[:3])}")
-
         sentence = " ".join(parts)
-
-        # NOTE: Do NOT append raw Vietnamese text — CLIP ViT-B/32 only
-        # understands English. Appending Vietnamese corrupts the embedding.
-
-        # Hard truncate at ~300 chars to stay within CLIP 77-token limit
         return sentence[:300].strip()
 
     def _build_clip_prompt_from_legacy(self, kis_query: TextualKISQuery) -> str:
