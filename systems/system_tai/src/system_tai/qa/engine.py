@@ -175,10 +175,22 @@ class QABaselineEngine:
                 }
             )
 
-        # Optional QA-R2H1: Bounded Far-Offset Rescored Alternate Candidate for COUNT queries
+        # Optional QA-R2H1-v2: Bounded Far-Offset Rescored Alternate Candidate for COUNT queries
+        # Selects the 4th primary evidence candidate in canonical video nomination order
+        primary_scored_cands = [
+            c for c in scored_candidates
+            if (c.get("local_anchor_rank") or 1) == 1
+        ]
+        primary_scored_cands.sort(
+            key=lambda c: c.get("video_nomination_rank") or c.get("evidence_rank", 0)
+        )
         auxiliary_count_far_candidates: list[dict[str, Any]] | None = None
-        if self.count_far_alt_micro and qtype == QuestionType.COUNT and len(scored_candidates) >= 4:
-            source_cand = scored_candidates[3]
+        if (
+            self.count_far_alt_micro
+            and qtype == QuestionType.COUNT
+            and len(primary_scored_cands) >= 4
+        ):
+            source_cand = primary_scored_cands[3]
             target_far_frame = int(source_cand["frame_id"]) + 90
             max_f = source_cand.get("total_frames") or source_cand.get("max_frame_id")
             if target_far_frame >= 0 and (max_f is None or target_far_frame <= int(max_f)):

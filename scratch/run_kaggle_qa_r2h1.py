@@ -312,6 +312,12 @@ q20_t = treat_eval["full_hit_details"].get("QA-20")
 print(f"Control Arm   -> Hit: {q20_c}")
 print(f"Treatment Arm -> Hit: {q20_t}")
 
+ev_q20 = treat_eval["ev_by_qid"].get("QA-20", {})
+usable_cands = ev_q20.get("usable_evidence_candidates", [])
+print(f"\nQA-20 Usable Evidence Candidates (Total: {len(usable_cands)}):")
+for idx, c in enumerate(usable_cands, start=1):
+    print(f"  [{idx:02d}] Video: {c.get('video_id'):<10} Frame: {c.get('frame_id'):<8} NomRank: {str(c.get('video_nomination_rank')):<3} LocalRank: {str(c.get('local_anchor_rank')):<3} Answers: {c.get('answers', [])[:3]}")
+
 q20_preds = treat_eval["preds_by_qid"].get("QA-20", [])
 print("\n--- QA-20 Treatment Final Predictions (Ranks 75..100) ---")
 for p in q20_preds:

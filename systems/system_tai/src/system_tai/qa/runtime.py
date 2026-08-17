@@ -1642,13 +1642,21 @@ class QARuntimePipeline:
         for (ev_cand, _), img_vec in zip(valid_evidence_cands, img_embeddings_batch):
             image_embeddings_map[(ev_cand.video_id, ev_cand.frame_id)] = img_vec.astype(np.float32)
 
-        # Optional QA-R2H1: Bounded Far-Offset Rescored Alternate Embedding for COUNT queries
+        # Optional QA-R2H1-v2: Bounded Far-Offset Rescored Alternate Embedding for COUNT queries
+        # Selects the 4th primary evidence candidate in canonical video nomination order
+        primary_valid_cands = [
+            (ev, ref) for (ev, ref) in valid_evidence_cands
+            if (getattr(ref, "local_anchor_rank", None) or 1) == 1
+        ]
+        primary_valid_cands.sort(
+            key=lambda x: getattr(x[1], "video_nomination_rank", None) or getattr(x[0], "rank", 0)
+        )
         if (
             self.video_conditioned_evidence_config.count_far_alt_micro
             and q_type == QuestionType.COUNT
-            and len(valid_evidence_cands) >= 4
+            and len(primary_valid_cands) >= 4
         ):
-            source_ev_cand, _ = valid_evidence_cands[3]
+            source_ev_cand, source_ref_cand = primary_valid_cands[3]
             far_target_frame = source_ev_cand.frame_id + 90
             try:
                 video_record = self.raw_video_registry.get(source_ev_cand.video_id)

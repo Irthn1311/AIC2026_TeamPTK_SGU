@@ -201,3 +201,48 @@ def test_non_count_queries_ignore_count_far_alt_micro():
     # No V04 @ 14631 with answer '2' should be present
     v04_far = [p for p in res.predictions if p.video_id == "V04" and p.frame_id == 14631 and p.answer == "2"]
     assert len(v04_far) == 0
+
+
+def test_engine_multiseed_interleaving_selects_fourth_primary_candidate():
+    # Multi-seed interleaving test:
+    # 4 videos with 2 anchors each (8 candidates total)
+    # Physical index 3 is V02 Secondary.
+    # The 4th primary candidate is V04 Primary (physical index 6, frame 14541).
+    cands = [
+        QAEvidenceCandidate(query_id="TEST-03", rank=1, video_id="V01", frame_id=1000, retrieval_score=0.9, provenance={"video_nomination_rank": 1, "local_anchor_rank": 1}),
+        QAEvidenceCandidate(query_id="TEST-03", rank=2, video_id="V01", frame_id=1030, retrieval_score=0.85, provenance={"video_nomination_rank": 1, "local_anchor_rank": 2}),
+        QAEvidenceCandidate(query_id="TEST-03", rank=3, video_id="V02", frame_id=2000, retrieval_score=0.8, provenance={"video_nomination_rank": 2, "local_anchor_rank": 1}),
+        QAEvidenceCandidate(query_id="TEST-03", rank=4, video_id="V02", frame_id=2030, retrieval_score=0.75, provenance={"video_nomination_rank": 2, "local_anchor_rank": 2}),
+        QAEvidenceCandidate(query_id="TEST-03", rank=5, video_id="V03", frame_id=3000, retrieval_score=0.7, provenance={"video_nomination_rank": 3, "local_anchor_rank": 1}),
+        QAEvidenceCandidate(query_id="TEST-03", rank=6, video_id="V03", frame_id=3030, retrieval_score=0.65, provenance={"video_nomination_rank": 3, "local_anchor_rank": 2}),
+        QAEvidenceCandidate(query_id="TEST-03", rank=7, video_id="V04", frame_id=14541, retrieval_score=0.6, provenance={"video_nomination_rank": 4, "local_anchor_rank": 1}),
+        QAEvidenceCandidate(query_id="TEST-03", rank=8, video_id="V04", frame_id=14571, retrieval_score=0.55, provenance={"video_nomination_rank": 4, "local_anchor_rank": 2}),
+    ]
+
+    dummy_vec = np.ones(512, dtype=np.float32)
+    dummy_vec /= np.linalg.norm(dummy_vec)
+    image_embeddings = {
+        (c.video_id, c.frame_id): dummy_vec for c in cands
+    }
+    image_embeddings[("V04", 14631)] = dummy_vec
+    prompt_embeddings = {"3": dummy_vec, "2": dummy_vec, "4": dummy_vec}
+
+    engine = QABaselineEngine(
+        candidate_provider=MockCandidateProvider(),
+        scorer=MockCosineScorer(),
+        expand_temporal=True,
+        secondary_temporal_micro_budget=True,
+        count_far_alt_micro=True,
+    )
+
+    query = QAQuery(query_id="TEST-03", event_description="Event C", question="Có bao nhiêu người trong ảnh?")
+    res = engine.answer(query, cands, image_embeddings=image_embeddings, prompt_embeddings=prompt_embeddings)
+
+    # Prove that V04 @ 14631 with answer '2' was emitted (fourth primary candidate)
+    v04_far = [p for p in res.predictions if p.video_id == "V04" and p.frame_id == 14631 and p.answer == "2"]
+    assert len(v04_far) == 1
+
+    # Prove that V02 @ 2120 (from physical candidate 4: 2030 + 90) was NOT emitted as micro-slot
+    v02_far = [p for p in res.predictions if p.video_id == "V02" and p.frame_id == 2120 and p.answer == "2"]
+    assert len(v02_far) == 0
+
