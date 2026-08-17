@@ -1,5 +1,5 @@
 # ==============================================================================================================
-# Phase R3-S2A: Targeted Conversion Diagnostic (Fast Bounded Forensic with Refined Taxonomy)
+# Phase R3-S2A: Targeted Conversion Diagnostic (Full Champion Contract with Answer Providers)
 # ==============================================================================================================
 
 import argparse
@@ -36,8 +36,10 @@ from system_tai.qa.grounding import (
     QA_CANDIDATE_ORDER_ROUND_ROBIN,
     QAVideoConditionedEvidenceConfig,
 )
+from system_tai.qa.object_provider import ObjectAnswerProviderConfig
+from system_tai.qa.ocr_provider import OCRAnswerProviderConfig
+from system_tai.qa.visual_ontology import VisualOntologyConfig
 
-# 7 Targeted Bounded Queries (Skipping QA-20 to avoid CPU refinement hang)
 DEFAULT_TARGETED_QUERIES = [
     "QA-01",  # S1A / OCR branch (biển cảnh báo)
     "QA-02",  # Object branch
@@ -56,7 +58,6 @@ class FailureClass(StrEnum):
     TEMPORAL_MISS = "TEMPORAL_MISS"
     ANSWER_MISS = "ANSWER_MISS"
     ALLOCATION_MISS = "ALLOCATION_MISS"
-    QUERY_TIMEOUT = "QUERY_TIMEOUT"
     OTHER_UNKNOWN = "OTHER_UNKNOWN"
 
 
@@ -78,6 +79,7 @@ def parse_benchmark_gt_interval(q: dict[str, Any]) -> tuple[int, int]:
 def run_targeted_diagnostic(
     benchmark_path: Path,
     dev_en_sidecar_path: Path,
+    ontology_path: Path,
     manifest_cache_path: Path,
     input_root: Path = Path("/kaggle/input"),
     device: str = "auto",
@@ -86,7 +88,7 @@ def run_targeted_diagnostic(
     target_qids = selected_queries or DEFAULT_TARGETED_QUERIES
 
     print("=" * 125)
-    print("ROUND-3 SPRINT 2A: TARGETED 7-QUERY CONVERSION FORENSIC (BOUNDED PER-QUERY)")
+    print("ROUND-3 SPRINT 2A: TARGETED 7-QUERY CONVERSION FORENSIC (EXACT CHAMPION FULL CONTRACT)")
     print("=" * 125)
 
     benchmark_bytes = benchmark_path.read_bytes()
@@ -96,6 +98,7 @@ def run_targeted_diagnostic(
 
     print(f"Benchmark File  : {benchmark_path.name} (SHA256: {benchmark_sha[:16]}...)")
     print(f"Sidecar File    : {dev_en_sidecar_path.name} (SHA256: {sidecar_sha[:16]}...)")
+    print(f"Ontology File   : {ontology_path.name} (exists={ontology_path.exists()})")
     print(f"Targeted Queries: {target_qids}")
 
     with open(benchmark_path, encoding="utf-8") as f:
@@ -107,7 +110,7 @@ def run_targeted_diagnostic(
     en_map = {e["query_id"]: e.get("question_en", "") for e in en_sidecar.get("entries", [])}
     all_qa_queries = {q["query_id"]: q for q in bm_data["queries"] if q.get("task_type") == "qa"}
 
-    # 1. Bootstrap Runtime with Exact Champion R2G1 Configuration
+    # 1. Bootstrap Runtime with Full Exact Champion R2G1 Configuration (including Answer Providers)
     print("\n--- BOOTSTRAPPING CHAMPION RUNTIME ---")
     session_output = Path("/kaggle/working/output/targeted_diagnostic") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "targeted_diagnostic"
     session_output.mkdir(parents=True, exist_ok=True)
@@ -132,6 +135,17 @@ def run_targeted_diagnostic(
         count_far_alt_micro=False,
     )
 
+    visual_config = VisualOntologyConfig(
+        enabled=ontology_path.exists(),
+        ontology_path=ontology_path if ontology_path.exists() else None,
+    )
+    ocr_config = OCRAnswerProviderConfig(
+        enabled=True,
+        languages="eng+vie",
+        evidence_frame_budget=8,
+    )
+    object_config = ObjectAnswerProviderConfig(enabled=True)
+
     config = SessionConfig(
         input_root=input_root,
         manifest_cache=manifest_cache_path,
@@ -140,6 +154,9 @@ def run_targeted_diagnostic(
         allow_model_download=True,
         default_output_top_k=100,
         qa_video_conditioned_evidence_config=evidence_config,
+        qa_visual_ontology_config=visual_config,
+        qa_ocr_answer_provider_config=ocr_config,
+        qa_object_answer_provider_config=object_config,
     )
     runtime = OperationalKISRuntime.bootstrap(config)
     print("Runtime bootstrapped successfully.")
@@ -165,7 +182,7 @@ def run_targeted_diagnostic(
         q_en = en_map.get(qid, "")
         branch = q.get("branch", "General")
 
-        print(f"\n[START] [{idx}/{len(target_qids)}] {qid} ({branch:<12}) [Target: {target_vid}, GT: [{start_f}..{end_f}]]...")
+        print(f"\n[START] [{idx}/{len(target_qids)}] {qid} ({branch:<12}) [Target: {target_vid}, GT: [{start_f}..{end_f}], Expected Ans: {gt_answers}]...")
         t_q0 = time.time()
         req = QAQueryRequest(
             request_id=f"targeted-{qid}",
@@ -200,37 +217,70 @@ def run_targeted_diagnostic(
             selected_video_ids = list(dict.fromkeys([p.get("video_id") for p in preds if p.get("video_id")]))
         vid_rank_in_pool = selected_video_ids.index(target_vid) + 1 if target_vid in selected_video_ids else None
 
-        # Stage B: Evidence Bank Records (Internal Candidates before Top100)
+        # Stage B: Evidence Bank Records (Exhaustive check across all diagnostic candidate representations)
         evidence_records = diagnostics.get("evidence", [])
         usable_candidates = diagnostics.get("usable_candidates", [])
+        keyframe_records = diagnostics.get("keyframe_evidence_candidates", [])
+        grounding_candidates = diagnostics.get("grounding_candidates", [])
+        generic_records = diagnostics.get("generic_evidence_bank_candidates", [])
 
         target_frames: list[int] = []
         target_answers: list[tuple[int, list[str]]] = []
 
+        # Collect from evidence records
         for ev in evidence_records:
             if ev.get("video_id") == target_vid:
-                f_id = ev.get("output_frame_id") or ev.get("refined_frame_id") or ev.get("candidate_frame_id")
+                f_id = ev.get("output_frame_id") or ev.get("refined_frame_id") or ev.get("candidate_frame_id") or ev.get("frame_id")
                 if f_id is not None:
                     target_frames.append(int(f_id))
                     ans_list = [normalize_text(str(ev.get("answer")))] if ev.get("answer") else []
                     target_answers.append((int(f_id), ans_list))
 
-        if not target_frames:
-            for uc in usable_candidates:
-                if uc.get("video_id") == target_vid and uc.get("frame_id") is not None:
-                    f_id = int(uc.get("frame_id"))
-                    target_frames.append(f_id)
-                    ans_list = [normalize_text(str(a)) for a in uc.get("answers", []) if a]
-                    target_answers.append((f_id, ans_list))
+        # Collect from usable candidates
+        for uc in usable_candidates:
+            if uc.get("video_id") == target_vid and uc.get("frame_id") is not None:
+                f_id = int(uc.get("frame_id"))
+                target_frames.append(f_id)
+                ans_list = [normalize_text(str(a)) for a in uc.get("answers", []) if a]
+                target_answers.append((f_id, ans_list))
+
+        # Collect from keyframe evidence candidates
+        for kf in keyframe_records:
+            if kf.get("video_id") == target_vid and kf.get("frame_id") is not None:
+                target_frames.append(int(kf.get("frame_id")))
+
+        # Collect from grounding candidates
+        for gc in grounding_candidates:
+            if gc.get("video_id") == target_vid and gc.get("frame_id") is not None:
+                target_frames.append(int(gc.get("frame_id")))
+
+        # Collect from generic evidence candidates
+        for gr in generic_records:
+            if gr.get("video_id") == target_vid and gr.get("frame_id") is not None:
+                target_frames.append(int(gr.get("frame_id")))
+
+        # Also collect from final predictions on target video
+        for p in preds:
+            if p.get("video_id") == target_vid and p.get("frame_id") is not None:
+                f_id = int(p.get("frame_id"))
+                target_frames.append(f_id)
+                if p.get("answer"):
+                    target_answers.append((f_id, [normalize_text(str(p.get("answer")))]))
+
+        target_frames = list(dict.fromkeys(target_frames))
 
         # Check Final Top 100 hit
         hit_rank = None
+        hit_frame = None
+        hit_ans = None
         for p in preds:
             p_vid = p.get("video_id")
             p_frame = int(p.get("frame_id", -1))
             p_ans = normalize_text(str(p.get("answer", "")))
             if p_vid == target_vid and start_f <= p_frame <= end_f and p_ans in gt_answers:
                 hit_rank = p.get("rank")
+                hit_frame = p_frame
+                hit_ans = p_ans
                 break
 
         # Classify Causal Bottleneck with Refined Taxonomy
@@ -240,14 +290,14 @@ def run_targeted_diagnostic(
 
         if hit_rank is not None:
             stage_failure = FailureClass.STRICT_HIT
-            forensic = f"Rank {hit_rank} ✅"
+            forensic = f"STRICT HIT at Rank {hit_rank} (f={hit_frame}, ans='{hit_ans}') ✅"
         elif target_vid not in selected_video_ids:
             stage_failure = FailureClass.VIDEO_ABSENT
-            pool_preview = ", ".join(selected_video_ids[:8])
-            forensic = f"Target {target_vid} absent from pool ({len(selected_video_ids)} nominated: [{pool_preview}...])"
+            pool_str = ", ".join(selected_video_ids)
+            forensic = f"Target {target_vid} ABSENT from pool (Nominated 16: [{pool_str}])"
         elif len(target_frames) == 0:
             stage_failure = FailureClass.TARGET_VIDEO_NO_EVIDENCE
-            forensic = f"Target @Nomination Rank {vid_rank_in_pool}, but 0 target-video candidate frames materialized in evidence"
+            forensic = f"Target @Nomination Rank {vid_rank_in_pool}, but 0 target-video candidate frames materialized"
         elif not in_gt_frames:
             stage_failure = FailureClass.TEMPORAL_MISS
             forensic = f"Target @Nomination Rank {vid_rank_in_pool}, 0/{len(target_frames)} frames in GT. Nearest f={nearest_f} (dist={nearest_dist})"
@@ -326,6 +376,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run Targeted Conversion Diagnostic")
     parser.add_argument("--benchmark", type=Path, default=REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "l21_150_diagnostic" / "benchmark.json")
     parser.add_argument("--sidecar", type=Path, default=REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "l21_150_diagnostic" / "qa_dev_translations_en.json")
+    parser.add_argument("--ontology", type=Path, default=REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "l21_150_diagnostic" / "qa_dev_visual_ontology.json")
     parser.add_argument("--manifest-cache", type=Path, default=Path("/kaggle/working/manifest_cache.json"))
     parser.add_argument("--input-root", type=Path, default=Path("/kaggle/input"))
     parser.add_argument("--device", type=str, default="auto")
@@ -336,6 +387,7 @@ if __name__ == "__main__":
     run_targeted_diagnostic(
         benchmark_path=args.benchmark,
         dev_en_sidecar_path=args.sidecar,
+        ontology_path=args.ontology,
         manifest_cache_path=args.manifest_cache,
         input_root=args.input_root,
         device=args.device,
