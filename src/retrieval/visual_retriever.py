@@ -148,7 +148,7 @@ class VisualRetriever(BaseRetriever):
         query: str,
         top_k: int = 100,
         slots_per_batch: Optional[int] = None,
-        max_per_video: int = 2,
+        max_per_video: int = 5,
     ) -> List[SearchResult]:
         """
         Balanced retrieval across ALL batches — solves the L25/L26 dominance problem.
@@ -159,9 +159,8 @@ class VisualRetriever(BaseRetriever):
 
         Strategy:
           1. Search full FAISS index for a large candidate pool.
-          2. For each result, compute its batch-slot allocation.
-             Batches get slots proportional to 1/sqrt(batch_size) so large
-             batches (L26: 79K) don't dominate over small ones (L21: 6K).
+          2. Use ACTUAL batch sizes from MetadataStore (not from search results)
+             for inverse-sqrt slot allocation.
           3. Stop filling a batch's slot once it reaches its allocation.
           4. Re-sort final results by CLIP score descending.
 
@@ -169,9 +168,9 @@ class VisualRetriever(BaseRetriever):
             query:          Natural language query (Vietnamese or English)
             top_k:          Total candidates to return
             slots_per_batch: Fixed slots per batch. If None, uses inverse-sqrt weighting.
-            max_per_video:  Maximum keyframes per video in the balanced output
+            max_per_video:  Maximum keyframes per video in the balanced output (default: 5)
         """
-        # 1. Encode query
+        # 1. Encode query (supports multi-query expansion)
         query_vec = self._encoder.encode_text(query, normalize=True)
 
         # 2. Large FAISS search to get diverse pool
@@ -179,14 +178,21 @@ class VisualRetriever(BaseRetriever):
         search_k = min(n_total, max(top_k * 200, 30000))
         faiss_ids, scores = self._faiss_db.search(query_vec, top_k=search_k)
 
-        # 3. Compute batch sizes from what we've seen in metadata
-        batch_size_map: Dict[str, int] = defaultdict(int)
-        for fid in faiss_ids:
-            if fid < 0:
-                continue
-            meta = self._meta_store.get_by_faiss_id(int(fid))
-            if meta:
-                batch_size_map[meta.video_id.split('_')[0]] += 1
+        # 3. Use ACTUAL batch sizes from MetadataStore for accurate slot allocation
+        #    (previously estimated from search results, which was biased towards large batches)
+        batch_size_map: Dict[str, int] = {}
+        if hasattr(self._meta_store, 'get_batch_sizes'):
+            batch_size_map = self._meta_store.get_batch_sizes()
+
+        # Fallback: if MetadataStore doesn't have batch sizes, estimate from search results
+        if not batch_size_map:
+            batch_size_map = defaultdict(int)
+            for fid in faiss_ids:
+                if fid < 0:
+                    continue
+                meta = self._meta_store.get_by_faiss_id(int(fid))
+                if meta:
+                    batch_size_map[meta.video_id.split('_')[0]] += 1
 
         # 4. Compute slot allocation per batch using inverse-sqrt weighting
         known_batches = list(batch_size_map.keys()) if batch_size_map else [f"L{i}" for i in range(21, 31)]
@@ -199,7 +205,7 @@ class VisualRetriever(BaseRetriever):
             inv_sqrt = {b: 1.0 / math.sqrt(max(s, 1)) for b, s in batch_size_map.items()}
             total_weight = sum(inv_sqrt.values()) or 1.0
             slot_map = {
-                b: max(2, int(round(top_k * inv_sqrt[b] / total_weight)))
+                b: max(3, int(round(top_k * inv_sqrt[b] / total_weight)))
                 for b in known_batches
             }
             # Ensure total slots >= top_k (add remainder to smallest batch)
@@ -225,7 +231,7 @@ class VisualRetriever(BaseRetriever):
                 continue
 
             batch = meta.video_id.split("_")[0]
-            slot_limit = slot_map.get(batch, max(2, top_k // n_batches))
+            slot_limit = slot_map.get(batch, max(3, top_k // n_batches))
 
             # Check batch slot
             if batch_counts[batch] >= slot_limit:
@@ -245,7 +251,10 @@ class VisualRetriever(BaseRetriever):
                 pts_time=meta.pts_time,
                 score=float(score),
                 retriever_source=f"{self.name}_balanced",
-                metadata={"topic_category": getattr(meta, "topic_category", "")},
+                metadata={
+                    "topic_category": getattr(meta, "topic_category", ""),
+                    "clip_score": float(score),  # Store raw CLIP score for CLIPReranker
+                },
             ))
 
             if len(results) >= top_k:

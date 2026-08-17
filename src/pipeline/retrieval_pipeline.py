@@ -27,6 +27,7 @@ from src.embeddings.visual.clip import CLIPEncoder
 from src.preprocessing.text_cleaner import clean_query
 from src.reranking.ocr_reranker import OCRRelevanceReranker
 from src.reranking.temporal_reranker import TemporalReranker
+from src.reranking.clip_reranker import CLIPReranker
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -85,6 +86,7 @@ class RetrievalPipeline:
         # Advanced Rerankers
         self._ocr_reranker      = OCRRelevanceReranker()
         self._temporal_reranker = TemporalReranker()
+        self._clip_reranker     = CLIPReranker(visual_weight=0.6, fusion_weight=0.4)
 
         # BatchRouter: predicts which batch(es) to search when target_prefix is absent
         self._batch_router = BatchRouter(
@@ -303,12 +305,25 @@ class RetrievalPipeline:
 
         # Global balanced retrieval across all batches (inverse-sqrt slot allocation)
         vis_results = self._vis_ret.retrieve_balanced(
-            retrieval_text, top_k=self._top_k_ret, max_per_video=2
+            retrieval_text, top_k=self._top_k_ret, max_per_video=5
         )
-        logger.info(f"  • Mode: Global Balanced (all batches)")
+        logger.info(f"  • Mode: Global Balanced (all batches, max_per_video=5)")
 
         top1_score = vis_results[0].score if vis_results else 0.0
         logger.info(f"  • Visual Retrieval (CLIP): {len(vis_results)} candidates (Top 1 cosine: {top1_score:.4f})")
+
+        # Multi-query expansion: try additional prompt variants for better recall
+        extra_prompts = self._build_expansion_prompts(kis_query, raw_text)
+        for i, ep in enumerate(extra_prompts):
+            try:
+                ep_results = self._vis_ret.retrieve_balanced(
+                    ep, top_k=max(30, self._top_k_ret // 3), max_per_video=3
+                )
+                if ep_results:
+                    vis_results.extend(ep_results)
+                    logger.info(f"  • Expansion query #{i+1}: +{len(ep_results)} candidates (prompt='{ep[:60]}')")
+            except Exception as e:
+                logger.debug(f"  • Expansion query #{i+1} failed: {e}")
 
         all_lists   = []
         all_weights = []
@@ -339,8 +354,9 @@ class RetrievalPipeline:
         fused = self._rrf.fuse(
             all_lists, all_weights,
             top_k=self._top_k_fus,
+            max_per_video=5,
             query_topic=query_topic,
-            topic_boost_weight=0.20,
+            topic_boost_weight=0.15,  # reduced from 0.20 to avoid over-boosting misclassified topics
         )
 
         if not fused or (fused[0].score < 0.005 and query_topic is not None):
@@ -353,7 +369,8 @@ class RetrievalPipeline:
             logger.warning(f"[KIS] No fused results for query_id='{query_id}'")
             return None
 
-        # Step 3.5: Multi-Stage Reranking (OCR Keyword Match + Temporal Continuity)
+        # Step 3.5: Multi-Stage Reranking (CLIP + OCR Keyword Match + Temporal Continuity)
+        fused = self._clip_reranker.rerank(kis_query, fused, top_k=self._top_k_fus)
         fused = self._ocr_reranker.rerank(kis_query, fused, top_k=self._top_k_fus)
         fused = self._temporal_reranker.rerank(kis_query, fused, top_k=self._top_k_fus)
 
@@ -364,6 +381,25 @@ class RetrievalPipeline:
             # Pillar 1: Use real CLIP cosine similarity [0.0–1.0] as confidence
             # instead of the raw RRF score (which is always ~0.01–0.03)
             clip_conf = round(float(top1_score), 4)
+
+            # Confidence-aware logging
+            if clip_conf < 0.20:
+                logger.warning(
+                    f"  ⚠ LOW CONFIDENCE ({clip_conf:.4f}) — result may be unreliable"
+                )
+            if len(fused) >= 2:
+                score_gap = fused[0].score - fused[1].score
+                if score_gap < 0.001:
+                    logger.warning(
+                        f"  ⚠ TIGHT RACE: top-1 and top-2 score gap = {score_gap:.6f}"
+                    )
+            # Check if top-3 are from different videos (divergent results)
+            top3_vids = list(dict.fromkeys(r.video_id for r in fused[:3]))
+            if len(top3_vids) >= 3:
+                logger.info(
+                    f"  ℹ Divergent top-3: {top3_vids} — consider reviewing"
+                )
+
             logger.info(
                 f"  FINAL RESULT: Video='{best_evidence.video_id}' | "
                 f"Frame={best_evidence.frame_idx} (PTS={best_evidence.pts_time:.2f}s) | "
@@ -372,6 +408,68 @@ class RetrievalPipeline:
             best_evidence.confidence = clip_conf
         logger.info(f"{'='*70}\n")
         return best_evidence
+
+    # ----------------------------------------------------------
+    # Multi-Query Expansion
+    # ----------------------------------------------------------
+
+    def _build_expansion_prompts(
+        self,
+        kis_query,
+        raw_text: str,
+    ) -> list:
+        """
+        Generate 2-3 alternative CLIP prompts for the same query to improve recall.
+
+        Different prompt perspectives capture different visual aspects:
+          - Object-focused: emphasizes what things are visible
+          - Scene-focused: emphasizes the setting/environment
+          - Action-focused: emphasizes what's happening
+        """
+        prompts = []
+
+        # Variant 1: Object-focused (if we have objects)
+        objs = kis_query.parsed_objects
+        colors = kis_query.parsed_colors
+        if objs:
+            obj_str = ", ".join(objs[:4])
+            color_part = ""
+            if colors:
+                from src.preprocessing.entity_extractor import _COLOR_SIMPLE_VI
+                en_colors = [_COLOR_SIMPLE_VI.get(c, c) for c in colors[:2]]
+                color_part = f", {' and '.join(en_colors)}"
+            prompts.append(f"A photo showing {obj_str}{color_part}")
+
+        # Variant 2: Scene + subject description (if we have scene info)
+        scene = kis_query.parsed_scene
+        if scene:
+            scene_map = {
+                "news studio": "TV news broadcast studio",
+                "press conference": "press conference with speakers",
+                "stadium": "sports stadium with players",
+                "outdoor": "outdoor scene",
+                "indoor": "indoor scene",
+                "street": "urban street scene",
+                "kitchen": "kitchen cooking scene",
+                "ceremony": "formal ceremony on stage",
+            }
+            scene_en = scene_map.get(scene, scene)
+            persons = kis_query.persons
+            if persons:
+                role = persons[0].get("role_en", "person")
+                prompts.append(f"A {role} in a {scene_en}")
+            else:
+                prompts.append(f"A {scene_en}")
+
+        # Variant 3: Action-focused (if we have actions)
+        actions = kis_query.actions
+        if actions:
+            act_str = " and ".join(a.get("en", "") for a in actions[:2] if a.get("en"))
+            if act_str:
+                prompts.append(f"Someone {act_str}")
+
+        # Limit to 2 expansion prompts to control latency
+        return prompts[:2]
 
     # ----------------------------------------------------------
     # Q&A Sub-Pipeline

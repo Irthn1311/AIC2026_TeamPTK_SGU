@@ -66,7 +66,7 @@ MASTER_PARQUET_COLS = [
 # ============================================================
 FAISS_INDEX_TYPE    = "HNSW"    # Flat | IVFFlat | HNSW | IVF-PQ
 FAISS_HNSW_M        = 32        # HNSW construction parameter
-FAISS_HNSW_EF_SEARCH = 64       # HNSW search parameter
+FAISS_HNSW_EF_SEARCH = 256      # HNSW search parameter (increased from 64 for better recall)
 FAISS_METRIC        = "cosine"  # cosine | l2 | ip
 
 # ============================================================

@@ -266,10 +266,31 @@ class MetadataStore:
         return list(self._video_to_metas.keys())
 
     @property
+    def known_batches(self) -> List[str]:
+        """Return sorted list of unique batch IDs (e.g. ['L21', 'L22', ...])."""
+        if self._df is None:
+            return []
+        return sorted(self._df["batch_id"].unique().tolist())
+
+    @property
     def dataframe(self) -> pd.DataFrame:
         if self._df is None:
             raise RuntimeError("MetadataStore not loaded. Call build() or load() first.")
         return self._df
+
+    def get_batch_sizes(self) -> Dict[str, int]:
+        """
+        Return actual keyframe count per batch from the master parquet.
+
+        Returns:
+            Dict mapping batch_id → total keyframes, e.g. {"L21": 6234, "L26": 79012}.
+
+        Used by VisualRetriever.retrieve_balanced() for accurate inverse-sqrt
+        slot allocation instead of estimating from FAISS search results.
+        """
+        if self._df is None:
+            return {}
+        return self._df.groupby("batch_id").size().to_dict()
 
     def export_faiss_ids_map(self, path: str) -> None:
         """

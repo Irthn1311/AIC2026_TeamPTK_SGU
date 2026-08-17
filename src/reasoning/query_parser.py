@@ -451,11 +451,11 @@ class QueryParser:
             parts.append(f"in {entities.scene_type}")
 
         # 4. Additional objects
-        extra_objs = [o for o in entities.objects if "person" not in o][:2]
+        extra_objs = [o for o in entities.objects if "person" not in o][:3]
         if extra_objs:
             parts.append("with " + ", ".join(extra_objs))
 
-        # 5. Colors + clothing
+        # 5. Colors + clothing (improved formatting)
         color_phrases = []
         for c in entities.colors[:3]:
             if c["target"] != "unspecified":
@@ -463,30 +463,43 @@ class QueryParser:
             else:
                 color_phrases.append(c["en"])
         if color_phrases:
-            parts.append("," + " and ".join(color_phrases))
+            parts.append(", " + " and ".join(color_phrases))
+
+        # 5.5 Clothing details as standalone phrases
+        if entities.clothing_details:
+            cloth_parts = []
+            for cd in entities.clothing_details[:2]:
+                if cd.get("color"):
+                    cloth_parts.append(f"{cd['color']} {cd['en']}")
+                else:
+                    cloth_parts.append(cd["en"])
+            if cloth_parts:
+                parts.append(", wearing " + " and ".join(cloth_parts))
 
         # 6. Spatial
         if entities.spatial:
             sp_str = ", ".join(s["en"] for s in entities.spatial[:2])
-            parts.append("," + sp_str)
+            parts.append(", " + sp_str)
 
         # 7. Emotions
         if entities.emotions:
             parts.append(f", looking {entities.emotions[0]}")
 
-        # 8. OCR hints
+        # 8. Lighting/time context
+        if entities.lighting:
+            parts.append(f", {entities.lighting}")
+
+        # 9. OCR hints
         if entities.ocr_hints:
             parts.append(f". Text visible: {' '.join(entities.ocr_hints[:3])}")
 
         sentence = " ".join(parts)
 
-        # Append truncated original if mixed/Vi language for better recall
-        if lang_mix.get("vi", 0) > 0.3:
-            raw_truncated = raw_text[:80]
-            sentence = f"{sentence}. {raw_truncated}"
+        # NOTE: Do NOT append raw Vietnamese text — CLIP ViT-B/32 only
+        # understands English. Appending Vietnamese corrupts the embedding.
 
-        # Hard truncate at ~400 chars to stay within CLIP 77-token limit
-        return sentence[:400].strip()
+        # Hard truncate at ~300 chars to stay within CLIP 77-token limit
+        return sentence[:300].strip()
 
     def _build_clip_prompt_from_legacy(self, kis_query: TextualKISQuery) -> str:
         """Fallback: build CLIP prompt from legacy TextualKISQuery fields."""
@@ -506,8 +519,8 @@ class QueryParser:
             sentence += ", " + " and ".join(color_parts)
         if kis_query.ocr_keywords:
             sentence += f". Text visible: {' '.join(kis_query.ocr_keywords)}"
-        raw_truncated = kis_query.raw_text[:100]
-        return f"{sentence}. {raw_truncated}"
+        # NOTE: Do NOT append raw Vietnamese text — CLIP ViT-B/32 only understands English
+        return sentence[:300].strip()
 
     def _build_ocr_query(self, entities: ExtractedEntities, neg_result) -> str:
         """Build a lexical keyword string for Qdrant/BM25 OCR search."""
