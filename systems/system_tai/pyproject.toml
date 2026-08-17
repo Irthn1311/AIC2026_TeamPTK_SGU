@@ -27,6 +27,7 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-p no:cacheprovider"
 filterwarnings = [
   "ignore::DeprecationWarning:.*(SwigPy|swigvarlink|importlib).*",
   "ignore:builtin type SwigPy.*:DeprecationWarning",
