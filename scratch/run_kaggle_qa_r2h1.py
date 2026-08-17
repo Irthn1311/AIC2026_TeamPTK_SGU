@@ -29,6 +29,8 @@ if not REPO_DIR.exists():
     REPO_DIR = Path(".")
 
 SYSTEM_DIR = REPO_DIR / "systems" / "system_tai"
+sys.path.insert(0, str(SYSTEM_DIR / "src"))
+
 BENCHMARK_PATH = SYSTEM_DIR / "benchmarks" / "l21_150_diagnostic" / "benchmark.json"
 DEV_EN_SIDECAR_PATH = SYSTEM_DIR / "benchmarks" / "l21_150_diagnostic" / "qa_dev_translations_en.json"
 ONTOLOGY_PATH = SYSTEM_DIR / "benchmarks" / "l21_150_diagnostic" / "qa_dev_visual_ontology.json"
@@ -152,6 +154,10 @@ def run_arm(count_far_alt_micro: bool, out_dir: Path) -> float:
         cmd.append("--qa-count-far-alt-micro")
 
     desc = "QA-R2H1 Treatment (count_far_alt_micro=ON)" if count_far_alt_micro else "QA-R2G1 Control (count_far_alt_micro=OFF)"
+    if out_dir.exists() and len(list(out_dir.glob("**/qa_predictions.jsonl"))) == 38:
+        print(f"\nFound existing 38/38 predictions in {out_dir.name}, skipping re-execution...")
+        return 0.0
+
     print(f"\nExecuting {desc} -> {out_dir.name}...")
     t0 = time.time()
     subprocess.run(cmd, check=True)
