@@ -44,10 +44,12 @@ def parse_existing_artifacts():
     en_map = {e["query_id"]: e.get("question_en", "") for e in en_sidecar.get("entries", [])}
 
     # Find all evidence files
-    ev_files = sorted(OUTPUT_DIR.rglob("*qa_evidence*.json"))
-    pred_files = sorted(OUTPUT_DIR.rglob("*predictions*.json"))
+    ev_files = sorted(OUTPUT_DIR.rglob("qa_evidence.json"))
+    pred_files = sorted(OUTPUT_DIR.rglob("predictions.json"))
 
-    print(f"Found {len(ev_files)} evidence files and {len(pred_files)} prediction files.\n")
+    print(f"Found {len(ev_files)} evidence files and {len(pred_files)} prediction files.")
+    for f in ev_files:
+        print(f"  - Evidence artifact: {f.relative_to(OUTPUT_DIR)}")
 
     # Map request_id / qid -> files
     queries_to_inspect = ["QA-31", "QA-01", "QA-26", "QA-23", "QA-30", "QA-02"]
@@ -58,8 +60,8 @@ def parse_existing_artifacts():
         start_f, end_f = int(q.get("proposed_interval", [-1, -1])[0]), int(q.get("proposed_interval", [-1, -1])[1])
         gt_answers = [normalize_text(a) for a in q.get("accepted_answers", [])]
 
-        matching_ev = [f for f in ev_files if qid in f.name]
-        matching_pred = [f for f in pred_files if qid in f.name]
+        matching_ev = [f for f in ev_files if qid in f.as_posix()]
+        matching_pred = [f for f in pred_files if qid in f.as_posix()]
 
         print("-" * 110)
         print(f"QUERY: {qid} [Target: {target_vid}, GT: [{start_f}..{end_f}], Expected Ans: {gt_answers}]")
