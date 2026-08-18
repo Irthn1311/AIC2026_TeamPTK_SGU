@@ -1,5 +1,5 @@
 # ==============================================================================================================
-# Phase R3-S2A: Triplet Forensic Probe (Strict Runtime-Safe Contract, No Oracle Contamination)
+# Phase R3-S2A: Triplet Forensic Probe (Hardened Runtime-Safe Contract)
 # ==============================================================================================================
 
 import argparse
@@ -97,6 +97,7 @@ def run_triplet_probe(
     enabled_tasks: set[int] | None = None,
 ):
     active_tasks = enabled_tasks or {1, 2, 3}
+    probe_errors: list[str] = []
 
     print("=" * 135)
     print(f"ROUND-3 SPRINT 2A: TRIPLET FORENSIC PROBE (ACTIVE TASKS: {sorted(active_tasks)})")
@@ -172,98 +173,102 @@ def run_triplet_probe(
         print("=" * 135)
         try:
             q31 = all_qa_queries.get("QA-31")
-            if q31:
-                target_vid = q31.get("video_id")
-                start_f, end_f = int(q31["proposed_interval"][0]), int(q31["proposed_interval"][1])
-                gt_answers = [normalize_text(a) for a in q31.get("accepted_answers", [])]
-                q_vi = q31.get("question_vi", "")
-                q_en = en_map.get("QA-31", "")
+            if not q31:
+                raise ValueError("QA-31 not found in benchmark queries")
 
-                print(f"Executing QA-31 [Target: {target_vid}, GT: [{start_f}..{end_f}], Expected Ans: {gt_answers}]...")
-                t_q0 = time.time()
-                req31 = QAQueryRequest(
-                    request_id="triplet-QA-31",
-                    query_id="QA-31",
-                    event_description=q_vi,
-                    question=q_vi,
-                    event_description_en=q_en if q_en else None,
-                    question_en=None,
-                    include_vi_variant=False if q_en else True,
-                    output_top_k=100,
-                    refine_top_n=3,
-                )
-                res31 = runtime.handle_qa_query(req31)
-                preds31 = res31.get("predictions", [])
-                t_elapsed31 = time.time() - t_q0
+            target_vid = q31.get("video_id")
+            start_f, end_f = int(q31["proposed_interval"][0]), int(q31["proposed_interval"][1])
+            gt_answers = [normalize_text(a) for a in q31.get("accepted_answers", [])]
+            q_vi = q31.get("question_vi", "")
+            q_en = en_map.get("QA-31", "")
 
-                diag_file = runtime.output_root / res31.get("artifacts", {}).get("qa_evidence_json", "")
-                diags31 = {}
-                if diag_file.exists():
-                    with open(diag_file, encoding="utf-8") as f:
-                        diags31 = json.load(f)
+            print(f"Executing QA-31 [Target: {target_vid}, GT: [{start_f}..{end_f}], Expected Ans: {gt_answers}]...")
+            t_q0 = time.time()
+            req31 = QAQueryRequest(
+                request_id="triplet-QA-31",
+                query_id="QA-31",
+                event_description=q_vi,
+                question=q_vi,
+                event_description_en=q_en if q_en else None,
+                question_en=None,
+                include_vi_variant=False if q_en else True,
+                output_top_k=100,
+                refine_top_n=3,
+            )
+            res31 = runtime.handle_qa_query(req31)
+            preds31 = res31.get("predictions", [])
+            t_elapsed31 = time.time() - t_q0
 
-                selected_videos31 = diags31.get("selected_video_ids", [])
-                target_in_pool31 = target_vid in selected_videos31
-                rank31 = selected_videos31.index(target_vid) + 1 if target_in_pool31 else None
+            diag_file = runtime.output_root / res31.get("artifacts", {}).get("qa_evidence_json", "")
+            diags31 = {}
+            if diag_file.exists():
+                with open(diag_file, encoding="utf-8") as f:
+                    diags31 = json.load(f)
 
-                scored_ev31 = diags31.get("evidence", [])
-                target_ev31 = [r for r in scored_ev31 if r.get("video_id") == target_vid]
+            selected_videos31 = diags31.get("selected_video_ids", [])
+            target_in_pool31 = target_vid in selected_videos31
+            rank31 = selected_videos31.index(target_vid) + 1 if target_in_pool31 else None
 
-                target_ev_records31 = []
-                for ev in target_ev31:
-                    f_id = ev.get("candidate_frame_id") or ev.get("evidence_frame_id") or ev.get("frame_id")
-                    if f_id is not None:
-                        ans = normalize_text(str(ev.get("answer", "")))
-                        score = float(ev.get("answer_score") or 0.0)
-                        target_ev_records31.append({"frame_id": int(f_id), "answer": ans, "score": score})
+            scored_ev31 = diags31.get("evidence", [])
+            target_ev31 = [r for r in scored_ev31 if r.get("video_id") == target_vid]
 
-                target_ev_frames31 = [r["frame_id"] for r in target_ev_records31]
-                target_preds31 = [int(p.get("frame_id", -1)) for p in preds31 if p.get("video_id") == target_vid]
-                all_frames31 = list(dict.fromkeys(target_ev_frames31 + target_preds31))
-                in_gt31 = [f for f in all_frames31 if start_f <= f <= end_f]
+            target_ev_records31 = []
+            for ev in target_ev31:
+                f_id = ev.get("candidate_frame_id") or ev.get("evidence_frame_id") or ev.get("frame_id")
+                if f_id is not None:
+                    ans = normalize_text(str(ev.get("answer", "")))
+                    score = float(ev.get("answer_score") or 0.0)
+                    target_ev_records31.append({"frame_id": int(f_id), "answer": ans, "score": score})
 
-                valid_pre_top100_31 = [
-                    r for r in target_ev_records31
-                    if start_f <= r["frame_id"] <= end_f and r["answer"] in gt_answers
-                ]
+            target_ev_frames31 = [r["frame_id"] for r in target_ev_records31]
+            target_preds31 = [int(p.get("frame_id", -1)) for p in preds31 if p.get("video_id") == target_vid]
+            all_frames31 = list(dict.fromkeys(target_ev_frames31 + target_preds31))
+            in_gt31 = [f for f in all_frames31 if start_f <= f <= end_f]
 
-                hit_rank31 = None
-                hit_row31 = None
-                for p in preds31:
-                    if p.get("video_id") == target_vid and start_f <= int(p.get("frame_id", -1)) <= end_f and normalize_text(str(p.get("answer", ""))) in gt_answers:
-                        hit_rank31 = p.get("rank")
-                        hit_row31 = p
-                        break
+            valid_pre_top100_31 = [
+                r for r in target_ev_records31
+                if start_f <= r["frame_id"] <= end_f and r["answer"] in gt_answers
+            ]
 
-                nearest_dist31 = min([interval_distance(f, start_f, end_f) for f in all_frames31]) if all_frames31 else 999999
-                nearest_f31 = min(all_frames31, key=lambda f: interval_distance(f, start_f, end_f)) if all_frames31 else None
+            hit_rank31 = None
+            hit_row31 = None
+            for p in preds31:
+                if p.get("video_id") == target_vid and start_f <= int(p.get("frame_id", -1)) <= end_f and normalize_text(str(p.get("answer", ""))) in gt_answers:
+                    hit_rank31 = p.get("rank")
+                    hit_row31 = p
+                    break
 
-                if hit_rank31 is not None:
-                    failure31 = "STRICT_HIT"
-                elif not target_in_pool31:
-                    failure31 = "VIDEO_ABSENT"
-                elif len(target_ev31) == 0 and len(target_preds31) == 0:
-                    failure31 = "TARGET_VIDEO_NO_EVIDENCE"
-                elif len(in_gt31) == 0:
-                    failure31 = "TEMPORAL_MISS"
-                elif len(valid_pre_top100_31) > 0:
-                    failure31 = "ALLOCATION_MISS"
-                else:
-                    failure31 = "ANSWER_MISS"
+            nearest_dist31 = min([interval_distance(f, start_f, end_f) for f in all_frames31]) if all_frames31 else 999999
+            nearest_f31 = min(all_frames31, key=lambda f: interval_distance(f, start_f, end_f)) if all_frames31 else None
 
-                print(f"\n[TASK 1 RESULT] QA-31 -> {failure31} in {t_elapsed31:.2f}s:")
-                print(f"  VidRank (Nomination)         : {rank31 if rank31 else 'ABSENT'}")
-                print(f"  EvRecs (Evidence Records)    : {len(target_ev31)}")
-                print(f"  Evidence Frame/Answer Pairs  : {[(r['frame_id'], r['answer']) for r in target_ev_records31]}")
-                print(f"  InGT Frames Count            : {len(in_gt31)}")
-                print(f"  Nearest Frame to GT          : {nearest_f31} (Distance={nearest_dist31} frames)")
-                print(f"  PreTuple Exists in Evidence? : {'YES ✅' if valid_pre_top100_31 else 'NO ❌'}")
-                print(f"  FinalHit in Top 100?         : {'Rank ' + str(hit_rank31) + ' ✅' if hit_rank31 else 'NO ❌'}")
-                print(f"  Canonical Failure Class      : {failure31}")
+            if hit_rank31 is not None:
+                failure31 = "STRICT_HIT"
+            elif not target_in_pool31:
+                failure31 = "VIDEO_ABSENT"
+            elif len(target_ev31) == 0 and len(target_preds31) == 0:
+                failure31 = "TARGET_VIDEO_NO_EVIDENCE"
+            elif len(in_gt31) == 0:
+                failure31 = "TEMPORAL_MISS"
+            elif len(valid_pre_top100_31) > 0:
+                failure31 = "ALLOCATION_MISS"
+            else:
+                failure31 = "ANSWER_MISS"
+
+            print(f"\n[TASK 1 RESULT] QA-31 -> {failure31} in {t_elapsed31:.2f}s:")
+            print(f"  VidRank (Nomination)         : {rank31 if rank31 else 'ABSENT'}")
+            print(f"  EvRecs (Evidence Records)    : {len(target_ev31)}")
+            print(f"  Evidence Frame/Answer Pairs  : {[(r['frame_id'], r['answer']) for r in target_ev_records31]}")
+            print(f"  InGT Frames Count            : {len(in_gt31)}")
+            print(f"  Nearest Frame to GT          : {nearest_f31} (Distance={nearest_dist31} frames)")
+            print(f"  PreTuple Exists in Evidence? : {'YES ✅' if valid_pre_top100_31 else 'NO ❌'}")
+            print(f"  FinalHit in Top 100?         : {'Rank ' + str(hit_rank31) + ' ✅' if hit_rank31 else 'NO ❌'}")
+            print(f"  Canonical Failure Class      : {failure31}")
         except Exception as exc:
-            print(f"⚠️ Task 1 encountered exception: {exc}")
+            err_msg = f"Task 1 (QA-31) failed: {exc}"
+            print(f"\n⚠️ {err_msg}")
             import traceback
             traceback.print_exc()
+            probe_errors.append(err_msg)
 
     # =========================================================================
     # TASK 2: QA-01 & QA-26 Deterministic Runtime-Safe Query Decomposition Novelty
@@ -272,12 +277,12 @@ def run_triplet_probe(
         print("\n" + "=" * 135)
         print("TASK 2: QA-01 & QA-26 DETERMINISTIC RUNTIME-SAFE QUERY NOVELTY PROBE")
         print("=" * 135)
-        try:
-            searcher = runtime.qa_pipeline.video_restricted_searcher
-            encoder = runtime.shared_encoder
+        searcher = runtime.qa_pipeline.video_restricted_searcher
+        encoder = runtime.shared_encoder
 
-            target_queries = ["QA-01", "QA-26"]
-            for qid in target_queries:
+        target_queries = ["QA-01", "QA-26"]
+        for qid in target_queries:
+            try:
                 q = all_qa_queries[qid]
                 target_vid = q.get("video_id")
                 q_vi = q.get("question_vi", "")
@@ -316,25 +321,25 @@ def run_triplet_probe(
                 variants_obj = decompose_query(query_text_vi=q_vi, query_text_en=q_en)
                 decomp_list = variants_obj.as_list()
 
-                print(f"\n2. Derived Runtime-Safe Query Variants (from query text only):")
-                for v_name, v_text in decomp_list:
-                    print(f"   - {v_name:<18}: '{v_text}'")
-
-                # 3. Search Individual Variants using production search_video_maxima
-                print(f"\n3. Individual Variant Top 16 Nomination Rankings:")
+                print(f"\n2. Derived Runtime-Safe Query Variants & Diagnostic Metadata:")
                 variant_objects: list[QueryVariant] = []
                 variant_vectors = []
                 for v_name, v_text in decomp_list:
                     v_lang = QueryLanguage.VIETNAMESE if v_name == "literal" and not q_en else QueryLanguage.ENGLISH
                     v_type = QueryVariantType.VIETNAMESE_DIRECT if v_lang == QueryLanguage.VIETNAMESE else QueryVariantType.ENGLISH_TRANSLATION
+                    v_weight = 1.0 if v_name == "literal" else 0.8
                     v_id = f"{qid}::{v_name}"
-                    v_obj = QueryVariant(variant_id=v_id, text=v_text, language=v_lang, variant_type=v_type, weight=1.0)
+                    v_obj = QueryVariant(variant_id=v_id, text=v_text, language=v_lang, variant_type=v_type, weight=v_weight)
                     v_vec = encoder.encode(v_text)
                     variant_objects.append(v_obj)
                     variant_vectors.append(v_vec)
+                    print(f"   - {v_name:<18}: text='{v_text}' | lang={v_lang.value} | type={v_type.value} | weight={v_weight}")
 
+                # 3. Search Individual Variants using production search_video_maxima
+                print(f"\n3. Individual Variant Top 16 Nomination Rankings:")
+                for v_obj, v_vec in zip(variant_objects, variant_vectors):
                     single_maxima = searcher.search_video_maxima(
-                        query_ids=[v_id],
+                        query_ids=[v_obj.variant_id],
                         query_vectors=[v_vec],
                     )
                     single_noms = nominate_qa_videos(
@@ -344,7 +349,7 @@ def run_triplet_probe(
                     )
                     v_pool = [n.video_id for n in single_noms]
                     v_rank = v_pool.index(target_vid) + 1 if target_vid in v_pool else "ABSENT"
-                    print(f"   - {v_name:<18} -> Target Rank: {str(v_rank):<7} | Top 16: {v_pool}")
+                    print(f"   - {v_obj.variant_id:<22} -> Target Rank: {str(v_rank):<7} | Top 16: {v_pool}")
 
                 # 4. Fused Multi-Variant Top 16 Nomination
                 multi_qids = [v.variant_id for v in variant_objects]
@@ -366,10 +371,12 @@ def run_triplet_probe(
 
                 novel_recovery = "YES (Target Recovered into Pool) ✅" if fused_rank != "ABSENT" and champ_rank == "ABSENT" else ("TARGET ALREADY PRESENT" if champ_rank != "ABSENT" else "NO (Target Still Absent) ❌")
                 print(f"   👉 NOVEL RECOVERY STATUS FOR {qid}: {novel_recovery}")
-        except Exception as exc:
-            print(f"⚠️ Task 2 encountered exception: {exc}")
-            import traceback
-            traceback.print_exc()
+            except Exception as exc:
+                err_msg = f"Task 2 ({qid}) failed: {exc}"
+                print(f"\n⚠️ {err_msg}")
+                import traceback
+                traceback.print_exc()
+                probe_errors.append(err_msg)
 
     # =========================================================================
     # TASK 3: QA-02, QA-23, QA-30 Temporal Provenance & True Dispersion Analysis
@@ -378,9 +385,9 @@ def run_triplet_probe(
         print("\n" + "=" * 135)
         print("TASK 3: QA-02, QA-23, QA-30 TEMPORAL PROVENANCE & DISPERSION AUDIT")
         print("=" * 135)
-        try:
-            temporal_qids = ["QA-23", "QA-30", "QA-02"]
-            for qid in temporal_qids:
+        temporal_qids = ["QA-23", "QA-30", "QA-02"]
+        for qid in temporal_qids:
+            try:
                 q = all_qa_queries[qid]
                 target_vid = q.get("video_id")
                 start_f, end_f = int(q["proposed_interval"][0]), int(q["proposed_interval"][1])
@@ -467,14 +474,24 @@ def run_triplet_probe(
                     print(f"   - Temporal Spread          : {spread} frames")
                     print(f"   - Nearest Frame to GT      : Frame {nearest_f} (Distance = {nearest_dist} frames)")
                     print(f"   👉 DIAGNOSIS               : {diagnosis}")
-        except Exception as exc:
-            print(f"⚠️ Task 3 encountered exception: {exc}")
-            import traceback
-            traceback.print_exc()
+            except Exception as exc:
+                err_msg = f"Task 3 ({qid}) failed: {exc}"
+                print(f"\n⚠️ {err_msg}")
+                import traceback
+                traceback.print_exc()
+                probe_errors.append(err_msg)
 
+    # Summary & Process Return Code Gate
     print("\n" + "=" * 135)
-    print("TRIPLET FORENSIC PROBE COMPLETED")
-    print("=" * 135)
+    if probe_errors:
+        print("⚠️ TRIPLET PROBE COMPLETED WITH ERRORS:")
+        for err in probe_errors:
+            print(f"  - {err}")
+        print("=" * 135)
+        sys.exit(2)
+    else:
+        print("✅ TRIPLET FORENSIC PROBE COMPLETED SUCCESSFULLY (ALL REQUESTED TASKS PASSED)")
+        print("=" * 135)
 
 
 if __name__ == "__main__":
