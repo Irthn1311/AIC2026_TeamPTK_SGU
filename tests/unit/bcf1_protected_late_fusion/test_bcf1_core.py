@@ -14,6 +14,7 @@ from triage_eg.diagnostics.bcf1_protected_late_fusion import (
     fuse_predictions,
     normalize_qa_answer,
     promotion_decision,
+    run_l21_arm,
     validate_frozen_index,
 )
 from triage_eg.diagnostics.bcf1_protected_late_fusion import runner as runner_module
@@ -204,3 +205,31 @@ def test_11_settings_forbid_sweep_weights_and_production_change() -> None:
         BCF1Settings(weights=True)
     with pytest.raises(ValueError, match="frozen"):
         BCF1Settings(production_policy_changed=True)
+
+
+def test_12_l21_uses_frozen_e2eg1_g1_variant(tmp_path: Path, monkeypatch) -> None:
+    assert runner_module.run_prediction_variant.__module__ == "triage_eg.e2eg1.runner"
+    inference = tmp_path / "inference"
+    inference.mkdir()
+    (inference / "queries.jsonl").write_text("{}\n", encoding="utf-8")
+    calls = []
+
+    def fake_run(pipeline, inference_root, benchmark_id, variant, output_root):
+        calls.append((pipeline, inference_root, benchmark_id, variant, output_root))
+        return {
+            "queries": [{"query_id": "Q1", "task": "KIS", "query": "x"}],
+            "predictions": [{"query_id": "Q1", "video_id": "L01_V001", "frame_id": 1, "rank": 1}],
+            "validation": {"status": "PASS"},
+            "variant": variant,
+        }
+
+    monkeypatch.setattr(runner_module, "run_prediction_variant", fake_run)
+    monkeypatch.setattr(
+        runner_module,
+        "validate_predictions",
+        lambda queries, predictions: ({"status": "PASS"}, []),
+    )
+    result = run_l21_arm(object(), inference, tmp_path / "output", tmp_path / "temporary", "A0")
+    assert calls[0][2:4] == ("DEV_L21_150", "G1_COVERAGE_COARSE")
+    assert result["variant"] == "G1_COVERAGE_COARSE"
+    assert result["validation"]["status"] == "PASS"

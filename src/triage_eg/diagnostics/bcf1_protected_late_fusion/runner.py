@@ -11,8 +11,8 @@ from aic2026_eval.io import read_jsonl, sha256_file, write_json
 from aic2026_eval.scoring import evaluate
 from aic2026_eval.validation import validate_predictions
 from triage_eg.diagnostics.sca1_siglip2_complementarity import validate_siglip2_index
-from triage_eg.e2e1.runner import run_prediction_variant
 from triage_eg.e2eg1.pipeline import is_opaque_machine_id
+from triage_eg.e2eg1.runner import run_prediction_variant
 
 from .attribution import fusion_diagnostics, paired_evaluation
 from .contracts import (
