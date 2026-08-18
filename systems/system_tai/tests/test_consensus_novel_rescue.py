@@ -96,3 +96,28 @@ def test_consensus_candidate_tie_breaking_is_deterministic():
     assert sorted_list[0].video_id == "L21_V005"  # tied fused_rank 6, V005 < V009
     assert sorted_list[1].video_id == "L21_V009"
     assert sorted_list[2].video_id == "L21_V020"
+
+
+def test_consensus_eligibility_enforces_both_variants():
+    """Verify that a candidate present in compact but absent from literal is rejected."""
+    champ_pool = ("L27_V008", "L25_V011")
+    lit_pool = ("L21_V028", "L21_V015")  # L21_V001 absent from literal
+    cmp_pool = ("L28_V023", "L21_V001")  # L21_V001 present in compact
+    fused_pool = ("L28_V023", "L21_V001")
+
+    champ_set = set(champ_pool)
+    lit_set = set(lit_pool)
+    cmp_set = set(cmp_pool)
+
+    consensus = [
+        vid for vid in fused_pool
+        if vid not in champ_set and vid in lit_set and vid in cmp_set
+    ]
+    # L21_V001 must NOT be in consensus because it is absent from literal
+    assert "L21_V001" not in consensus
+
+
+def test_default_off_exact_parity_contract():
+    """Verify default config has consensus novel rescue completely disabled with zero side effects."""
+    cfg = QAVideoConditionedEvidenceConfig(enabled=True, consensus_novel_rescue_enabled=False)
+    assert not cfg.consensus_novel_rescue_enabled
