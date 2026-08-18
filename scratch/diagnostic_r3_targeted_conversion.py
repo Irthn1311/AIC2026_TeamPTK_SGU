@@ -257,11 +257,11 @@ def run_targeted_diagnostic(
 
         target_ev_records = []
         for ev in target_evidence:
-            # Use candidate_frame_id or evidence_frame_id for frame matching (do NOT use output_frame_id)
             f_id = ev.get("candidate_frame_id") or ev.get("evidence_frame_id") or ev.get("frame_id")
             if f_id is not None:
                 ans = normalize_text(str(ev.get("answer", "")))
-                score = float(ev.get("answer_score", 0.0))
+                raw_score = ev.get("answer_score")
+                score = float(raw_score) if raw_score is not None else 0.0
                 target_ev_records.append({"frame_id": int(f_id), "answer": ans, "score": score})
 
         target_ev_frames = [r["frame_id"] for r in target_ev_records]
