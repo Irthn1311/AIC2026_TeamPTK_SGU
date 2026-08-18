@@ -253,6 +253,7 @@ def execute_sidepath_consensus_rescue(
     ConsensusNovelRescueOutcome,
     list[dict[str, Any]],
     list[dict[str, Any]],
+    dict[str, Any],
 ]:
     """
     Executes isolated side-path processing on the single chosen consensus rescued video.
@@ -261,7 +262,7 @@ def execute_sidepath_consensus_rescue(
       2. build_qa_grounding_result
       3. select_temporal_seed_anchors
       4. refiner.refine_selected_candidates
-      5. VideoDecoder.decode & Answer Provider routing
+      5. VideoDecoder.decode & canonical QAEngine answer scoring
       6. merge_rescue_tail (preserves ranks 1..95 strictly)
     """
     q_vi = request.question
@@ -281,6 +282,8 @@ def execute_sidepath_consensus_rescue(
         return list(champion_predictions), outcome, [], [], {}
 
     chosen_vid = outcome.chosen_candidate.video_id
+    rescue_evidence_records: list[dict[str, Any]] = []
+    rescue_candidates: list[RescueCandidate] = []
     stage_telemetry: dict[str, Any] = {
         "chosen_video_id": chosen_vid,
         "restricted_search": {},
@@ -470,24 +473,14 @@ def execute_sidepath_consensus_rescue(
                     if pred.answer:
                         produced_answers.append((pred.answer, 0.5))
 
-            # 2. Try Visual Ontology / Candidate Provider
-            elif candidate_provider is not None and candidate_provider.supports(q_type):
-                cands = candidate_provider.candidates(q_type, prompt=q_vi)
-                if cands:
-                    img_vec = encoder.encode_images([frame_img])[0]
-                    cand_vecs = encoder.encode_texts([c.answer for c in cands])
-                    sims = np.dot(cand_vecs, img_vec)
-                    best_idx = int(np.argmax(sims))
-                    best_ans = cands[best_idx].answer
-                    best_score = float(sims[best_idx])
-                    produced_answers.append((best_ans, best_score))
-
-            # 3. Fallback: QA Engine Direct Prompt
+            # 2. Canonical QA Engine Answer Scoring (Visual Ontology / Baseline)
             if not produced_answers:
                 qa_q = QAQuery(
                     query_id=request.query_id,
                     event_description=q_vi,
                     question=q_vi,
+                    event_description_en=q_en,
+                    question_en=q_en,
                     question_type=q_type,
                 )
                 ev_cand = QAEvidenceCandidate(
@@ -503,11 +496,11 @@ def execute_sidepath_consensus_rescue(
                     qa_q,
                     (ev_cand,),
                     image_embeddings={(chosen_vid, effective_frame_id): img_vec},
-                    output_top_k=3,
+                    output_top_k=5,
                 )
                 for pred in q_res.predictions:
                     if pred.answer:
-                        produced_answers.append((pred.answer, 0.3))
+                        produced_answers.append((pred.answer, float(getattr(pred, "score", 0.5) or 0.5)))
 
             for ans_text, ans_score in produced_answers:
                 rescue_evidence_records.append({
