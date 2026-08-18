@@ -126,6 +126,7 @@ def run_full38_benchmark():
         consensus_novel_rescue_enabled=False,  # Frozen OFF
         bounded_negative_temporal_rescue_enabled=False,  # Frozen OFF
         top1_secondary_refined_rescue_enabled=True,  # S2D1 ON (Treatment)
+        top1_secondary_refined_rescue_span_candidateizer=True,  # S2E1 ON (Treatment)
         top1_secondary_refined_rescue_tail_budget=5,
     )
 
@@ -240,6 +241,11 @@ def run_full38_benchmark():
             "r_at_50": int(q_r_at_k[50]),
             "r_at_100": int(q_r_at_k[100]),
             "final_score": final_score,
+            "hit_details": {
+                "rank": hit_rank,
+                "frame_id": hit_frame,
+                "answer": hit_ans,
+            } if hit_rank is not None else None,
         })
 
     # =========================================================================
@@ -252,6 +258,34 @@ def run_full38_benchmark():
     print("-" * 145)
     for r in query_results:
         print(f"{r['query_id']:<8} | {r['branch']:<15} | {r['target']:<10} | {r['gt_interval']:<14} | {r['pred_count']:<4} | {str(r['hit_rank']):<9} | {r['r_at_1']:<4} | {r['r_at_5']:<4} | {r['r_at_20']:<5} | {r['r_at_50']:<5} | {r['r_at_100']:<6} | {r['final_score']:.4f}")
+    print("=" * 145)
+
+    # =========================================================================
+    # AUDIT OF 6 PROTECTED REFERENCES + QA-23 NEW GAIN
+    # =========================================================================
+    protected_ref_map = {
+        "QA-08": "Historical Protected Hit (~@43)",
+        "QA-10": "Historical Protected Hit (~@88)",
+        "QA-13": "Historical Protected Hit (~@18)",
+        "QA-27": "Historical Protected Hit (~@49)",
+        "QA-45": "Historical Protected Hit (~@22)",
+        "QA-46": "Historical Protected Hit (~@13)",
+        "QA-23": "S2E1 Target Gain Candidate (~@63)",
+    }
+
+    print("\n" + "=" * 145)
+    print("EXPLICIT AUDIT OF 6 PROTECTED REFERENCES + QA-23 NEW GAIN:")
+    print("=" * 145)
+    print(f"{'Query ID':<8} | {'Category':<35} | {'Status':<18} | {'Physical Frame':<16} | {'Answer Text'}")
+    print("-" * 145)
+    q_res_by_id = {r["query_id"]: r for r in query_results}
+    for ref_id, cat_desc in protected_ref_map.items():
+        qr = q_res_by_id.get(ref_id)
+        if qr and qr["hit_rank"] != "-":
+            hd = qr["hit_details"]
+            print(f"{ref_id:<8} | {cat_desc:<35} | STRICT HIT @{qr['hit_rank']:<7} | Frame {str(hd['frame_id']):<10} | {repr(str(hd['answer']))}")
+        else:
+            print(f"{ref_id:<8} | {cat_desc:<35} | NO HIT ❌          | N/A              | N/A")
     print("=" * 145)
 
     # =========================================================================
