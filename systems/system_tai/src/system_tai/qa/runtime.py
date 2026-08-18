@@ -1879,6 +1879,51 @@ class QARuntimePipeline:
                 evidence_records.extend(rescue_ev_records)
                 store_evidence_records()
 
+        # Step 7 (Optional Sprint 2C.1): Bounded Negative Temporal Tail Rescue (Default OFF)
+        if self.video_conditioned_evidence_config.bounded_negative_temporal_rescue_enabled:
+            from system_tai.qa.negative_temporal_rescue import execute_sidepath_negative_temporal_rescue
+            raw_base_predictions = [
+                {
+                    "rank": p.rank,
+                    "video_id": p.video_id,
+                    "frame_id": p.frame_id,
+                    "answer": p.answer,
+                }
+                for p in qa_result.predictions
+            ]
+            merged_preds_dict, neg_rescue_cands, admitted_tuples, neg_stage_telemetry = (
+                execute_sidepath_negative_temporal_rescue(
+                    request=request,
+                    q_type=q_type,
+                    champion_selected_video_ids=selected_video_ids,
+                    champion_refined_candidates=refined_candidates,
+                    champion_predictions=raw_base_predictions,
+                    raw_video_registry=self.raw_video_registry,
+                    decoder=self.decoder,
+                    encoder=self.shared_encoder,
+                    qa_engine=self.qa_engine,
+                    ocr_answer_provider=self.ocr_answer_provider if ocr_provider_supported else None,
+                    ocr_provider_supported=ocr_provider_supported,
+                    config=self.video_conditioned_evidence_config,
+                )
+            )
+            diagnostics["bounded_negative_temporal_rescue"] = neg_stage_telemetry
+            if admitted_tuples:
+                qa_result = dataclasses.replace(
+                    qa_result,
+                    predictions=tuple(
+                        QAPrediction(
+                            query_id=request.query_id,
+                            rank=item["rank"],
+                            video_id=item["video_id"],
+                            frame_id=int(item["frame_id"]),
+                            answer=str(item["answer"]),
+                        )
+                        for item in merged_preds_dict
+                    ),
+                )
+                store_evidence_records()
+
         diagnostics["final_predictions"] = [
             {
                 "rank": prediction.rank,
