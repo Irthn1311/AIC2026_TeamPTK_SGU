@@ -58,6 +58,8 @@ class QAVideoConditionedEvidenceConfig:
     bounded_negative_temporal_rescue_enabled: bool = False
     bounded_negative_temporal_rescue_offsets: tuple[int, ...] = (-100, -200, -300)
     bounded_negative_temporal_rescue_tail_budget: int = 5
+    top1_secondary_refined_rescue_enabled: bool = False
+    top1_secondary_refined_rescue_tail_budget: int = 5
 
     def __post_init__(self) -> None:
         if type(self.enabled) is not bool:
@@ -78,6 +80,10 @@ class QAVideoConditionedEvidenceConfig:
             raise ValueError("bounded_negative_temporal_rescue_offsets must be a non-empty tuple of integers")
         if type(self.bounded_negative_temporal_rescue_tail_budget) is not int or self.bounded_negative_temporal_rescue_tail_budget < 1:
             raise ValueError("bounded_negative_temporal_rescue_tail_budget must be an integer >= 1")
+        if type(self.top1_secondary_refined_rescue_enabled) is not bool:
+            raise ValueError("top1_secondary_refined_rescue_enabled must be a boolean")
+        if type(self.top1_secondary_refined_rescue_tail_budget) is not int or self.top1_secondary_refined_rescue_tail_budget < 1:
+            raise ValueError("top1_secondary_refined_rescue_tail_budget must be an integer >= 1")
         if type(self.secondary_temporal_micro_budget) is not bool:
             raise ValueError("secondary_temporal_micro_budget must be a boolean")
         if type(self.primary_11_12_micro_coverage) is not bool:
