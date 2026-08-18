@@ -116,6 +116,7 @@ def run_audit():
         event_description=q_vi,
         question=q_vi,
         event_description_en=q_en if q_en else None,
+        include_vi_variant=False,
         output_top_k=100,
         refine_top_n=3,
     )
@@ -130,6 +131,7 @@ def run_audit():
         event_description=q_vi,
         question=q_vi,
         event_description_en=q_en if q_en else None,
+        include_vi_variant=False,
         output_top_k=100,
         refine_top_n=3,
     )
