@@ -46,9 +46,9 @@ from system_tai.qa.object_provider import ObjectAnswerProviderConfig
 from system_tai.qa.ocr_provider import OCRAnswerProviderConfig
 from system_tai.qa.visual_ontology import VisualOntologyConfig
 
-TARGETED_QUERIES = [
-    "QA-46",  # Strict positive control (must stay STRICT_HIT @13)
+ALL_TARGETED_QUERIES = [
     "QA-26",  # Treatment target (white vehicles convoy)
+    "QA-46",  # Strict positive control (must stay STRICT_HIT @13)
     "QA-01",  # Blast-radius / False-positive control
     "QA-23",  # Temporal near miss invariance control
 ]
@@ -99,10 +99,11 @@ def run_ab_validation(
     manifest_cache_path: Path,
     input_root: Path = Path("/kaggle/input"),
     device: str = "auto",
+    target_queries: list[str] = ALL_TARGETED_QUERIES,
 ):
     print("=" * 135)
     print("ROUND-3 SPRINT 2B.1: CONSENSUS NOVEL VIDEO RESCUE TARGETED A/B EXPERIMENT")
-    print(f"Targeted Queries: {TARGETED_QUERIES}")
+    print(f"Targeted Queries to Evaluate: {target_queries}")
     print("=" * 135)
 
     with open(benchmark_path, encoding="utf-8") as f:
@@ -168,7 +169,7 @@ def run_ab_validation(
 
     results_table = []
 
-    for qid in TARGETED_QUERIES:
+    for qid in target_queries:
         q = all_qa_queries[qid]
         target_vid = q.get("video_id")
         start_f, end_f = int(q["proposed_interval"][0]), int(q["proposed_interval"][1])
@@ -178,6 +179,8 @@ def run_ab_validation(
 
         print("\n" + "=" * 135)
         print(f"EVALUATING {qid} [Target: {target_vid}, GT: [{start_f}..{end_f}], Accepted: {gt_answers}]")
+        print(f"  Question VI : '{q_vi}'")
+        print(f"  Question EN : '{q_en}'")
         print("=" * 135)
 
         # ---------------------------------------------------------------------
@@ -257,6 +260,7 @@ def run_ab_validation(
         chosen_cand = rescue_meta.get("chosen_candidate")
         chosen_vid = chosen_cand.get("video_id") if chosen_cand else None
         admitted_tuples = rescue_meta.get("admitted_tail_tuples", [])
+        stage_telemetry = rescue_meta.get("stage_telemetry", {})
 
         # Check hit in treatment
         treat_hit_rank = None
@@ -281,22 +285,46 @@ def run_ab_validation(
                 prefix_identical = False
                 break
 
-        rescue_frames = rescue_meta.get("rescue_evidence_frames", [])
-        rescue_answers = rescue_meta.get("rescue_answers", [])
-
         print(f"\n[CONTROL]   {qid}: Hit = {'Rank ' + str(ctrl_hit_rank) if ctrl_hit_rank else 'NO HIT'} in {t_ctrl:.2f}s")
         print(f"[TREATMENT] {qid}: Hit = {'Rank ' + str(treat_hit_rank) if treat_hit_rank else 'NO HIT'} in {t_treat:.2f}s")
-        print(f"  - Consensus Rescue Fired?     : {'YES (Chosen: ' + str(chosen_vid) + ')' if chosen_vid else 'NO (' + rescue_meta.get('reason', '') + ')'}")
+        print(f"  - Consensus Selection Fired?  : {'YES (Chosen: ' + str(chosen_vid) + ')' if chosen_vid else 'NO (' + str(rescue_meta.get('reason', '')) + ')'}")
+        print(f"  - Champion Baseline Top 16    : {diags_treat.get('selected_video_ids', [])}")
+        print(f"  - Literal Top 16              : {rescue_meta.get('literal_top16', [])}")
+        print(f"  - Compact Top 16              : {rescue_meta.get('compact_top16', [])}")
+        print(f"  - Fused Top 16                : {rescue_meta.get('fused_top16', [])}")
         print(f"  - Eligible Consensus List     : {[c['video_id'] for c in rescue_meta.get('all_consensus_candidates', [])]}")
-        print(f"  - Rescue Evidence Frames      : {rescue_frames}")
-        print(f"  - Rescue Produced Answers     : {rescue_answers}")
-        print(f"  - Admitted Tail Tuples (96..100) : {len(admitted_tuples)} tuples -> {[p.get('video_id') + ':' + str(p.get('frame_id')) + ':' + str(p.get('answer')) for p in admitted_tuples]}")
+        
+        # Stage Telemetry Breakdown
+        print(f"\n  --- STAGE-BY-STAGE DOWNSTREAM TELEMETRY ---")
+        if stage_telemetry:
+            re_srch = stage_telemetry.get("restricted_search", {})
+            print(f"  1. Restricted Search Hits     : {re_srch.get('hits_summary', [])}")
+            grd = stage_telemetry.get("grounding", {})
+            print(f"  2. Grounding Candidates       : {grd.get('candidate_count', 0)} candidates -> {grd.get('candidates', [])}")
+            t_seeds = stage_telemetry.get("temporal_seeds", {})
+            print(f"  3. Temporal Seed Selection    : {t_seeds.get('seed_count', 0)} seeds -> {t_seeds.get('seed_frames', [])}")
+            ref = stage_telemetry.get("refinement", {})
+            print(f"  4. Temporal Refinement        : in={ref.get('input_count', 0)}, out={ref.get('output_count', 0)} -> {ref.get('refined_candidates', [])}")
+            ans = stage_telemetry.get("answers", {})
+            print(f"  5. Answer Provider Output     : {ans.get('produced_count', 0)} answers -> {ans.get('answers', [])}")
+            tail = stage_telemetry.get("tail", {})
+            print(f"  6. Admitted Tail Tuples       : {tail.get('admitted_count', 0)} tuples -> {tail.get('admitted_tuples', [])}")
+            if "error" in stage_telemetry:
+                print(f"  ⚠️ STAGE ERROR ENCOUNTERED   : {stage_telemetry['error']}")
+        else:
+            print("  (No side-path stage executed because no candidate was chosen)")
+
+        # Target Candidate Assessment
         for p in admitted_tuples:
             if p.get("video_id") == target_vid:
                 dist = interval_distance(int(p.get("frame_id", -1)), start_f, end_f)
                 ans_match = normalize_text(str(p.get("answer", ""))) in gt_answers
-                print(f"    -> Target Evaluation: Frame {p.get('frame_id')} (Distance to GT [{start_f}..{end_f}]: {dist} frames) | Answer: '{p.get('answer')}' (In GT Accepted: {ans_match})")
-        print(f"  - Ranks 1..95 Exact Parity    : {'PASS ✅' if prefix_identical else 'FAIL ❌'}")
+                print(f"\n  🎯 TARGET VIDEO EVALUATION ({target_vid}):")
+                print(f"     Candidate Frame: {p.get('frame_id')} | Distance to GT [{start_f}..{end_f}]: {dist} frames")
+                print(f"     Produced Answer: '{p.get('answer')}' | Matches Accepted GT {gt_answers}: {ans_match}")
+                print(f"     Final Rank in Submission: Rank {p.get('rank')}")
+
+        print(f"\n  - Ranks 1..95 Exact Parity    : {'PASS ✅' if prefix_identical else 'FAIL ❌'}")
 
         results_table.append({
             "qid": qid,
@@ -321,27 +349,6 @@ def run_ab_validation(
         print(f"{r['qid']:<8} | {r['target']:<10} | {r['ctrl_hit']:<14} | {r['treat_hit']:<14} | {r['chosen_rescue']:<15} | {r['target_rescued']:<18} | {str(r['admitted_tail_count']) + ' tuples':<12} | {r['prefix_parity']}")
     print("=" * 135)
 
-    # Sanity checks
-    qa46_r = next(r for r in results_table if r["qid"] == "QA-46")
-    qa26_r = next(r for r in results_table if r["qid"] == "QA-26")
-    qa01_r = next(r for r in results_table if r["qid"] == "QA-01")
-
-    print("\n--- CAUSAL FINDINGS ---")
-    if qa46_r["ctrl_hit"] == qa46_r["treat_hit"] and qa46_r["prefix_parity"] == "PASS ✅":
-        print("✅ SANITY GATE PASS: QA-46 strict hit is 100% preserved.")
-    else:
-        print("❌ SANITY GATE FAIL: QA-46 regression detected!")
-
-    if qa26_r["chosen_rescue"] == "L21_V009":
-        print(f"🎯 QA-26 CAUSAL TREATMENT: Target L21_V009 successfully admitted by consensus rescue rule! Final Outcome: {qa26_r['treat_hit']}")
-    else:
-        print(f"⚠️ QA-26 WARNING: Chosen rescue video was {qa26_r['chosen_rescue']}")
-
-    if qa01_r["chosen_rescue"] != "L21_V001":
-        print(f"🛡️ QA-01 BLAST-RADIUS CONTROL: Target L21_V001 was correctly NOT admitted. Chosen side-video: {qa01_r['chosen_rescue']}")
-
-    print("=" * 135)
-
 
 if __name__ == "__main__":
     default_input = Path("/kaggle/input/datasets") if Path("/kaggle/input/datasets").exists() else Path("/kaggle/input")
@@ -352,7 +359,10 @@ if __name__ == "__main__":
     parser.add_argument("--manifest-cache", type=Path, default=Path("/kaggle/working/manifest_cache.json"))
     parser.add_argument("--input-root", type=Path, default=default_input)
     parser.add_argument("--device", type=str, default="auto")
+    parser.add_argument("--query", type=str, default="QA-26", help="Query ID to run (e.g. 'QA-26' or 'all')")
     args = parser.parse_args()
+
+    q_list = ALL_TARGETED_QUERIES if args.query.lower() == "all" else [q.strip() for q in args.query.split(",") if q.strip()]
 
     run_ab_validation(
         benchmark_path=args.benchmark,
@@ -361,4 +371,5 @@ if __name__ == "__main__":
         manifest_cache_path=args.manifest_cache,
         input_root=args.input_root,
         device=args.device,
+        target_queries=q_list,
     )

@@ -1809,7 +1809,7 @@ class QARuntimePipeline:
                 }
                 for p in qa_result.predictions
             ]
-            merged_preds_dict, rescue_outcome, rescue_ev_records, admitted_tuples = (
+            merged_preds_dict, rescue_outcome, rescue_ev_records, admitted_tuples, stage_telemetry = (
                 execute_sidepath_consensus_rescue(
                     request=request,
                     q_type=q_type,
@@ -1860,6 +1860,7 @@ class QARuntimePipeline:
                 "rescue_answers": [r.get("answer") for r in rescue_ev_records],
                 "admitted_tail_tuples": admitted_tuples,
                 "tail_rows_changed": len(admitted_tuples),
+                "stage_telemetry": stage_telemetry,
             }
             if admitted_tuples:
                 qa_result = dataclasses.replace(

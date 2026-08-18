@@ -144,7 +144,7 @@ def test_execute_sidepath_consensus_rescue_ineligible_returns_identical_predicti
     # Mock search_video_maxima returning empty dict
     searcher.search_video_maxima.return_value = {}
 
-    merged, outcome, recs, admitted = execute_sidepath_consensus_rescue(
+    merged, outcome, recs, admitted, stage_telemetry = execute_sidepath_consensus_rescue(
         request=req,
         q_type=QuestionType.COLOR,
         variants=(),

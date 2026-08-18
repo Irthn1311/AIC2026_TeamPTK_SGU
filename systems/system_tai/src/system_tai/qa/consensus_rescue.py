@@ -278,11 +278,19 @@ def execute_sidepath_consensus_rescue(
     )
 
     if not outcome.eligible or outcome.chosen_candidate is None:
-        return list(champion_predictions), outcome, [], []
+        return list(champion_predictions), outcome, [], [], {}
 
     chosen_vid = outcome.chosen_candidate.video_id
-    rescue_evidence_records: list[dict[str, Any]] = []
-    rescue_candidates: list[RescueCandidate] = []
+    stage_telemetry: dict[str, Any] = {
+        "chosen_video_id": chosen_vid,
+        "restricted_search": {},
+        "grounding": {},
+        "temporal_seeds": {},
+        "refinement": {},
+        "answers": {},
+        "rescue_candidates_count": 0,
+        "tail": {},
+    }
 
     try:
         store = searcher.registry.get(chosen_vid)
@@ -294,6 +302,20 @@ def execute_sidepath_consensus_rescue(
             query_vectors=event_vectors,
             per_query_result_cap=store.descriptor.row_count,
         )
+
+        hits_summary = []
+        for v_id in variant_ids:
+            h_list = restricted.rankings.get(v_id, {}).get(chosen_vid, ())
+            hits_summary.append({
+                "variant_id": v_id,
+                "hit_count": len(h_list),
+                "top_frames": [h.frame_id for h in h_list[:3]],
+                "top_scores": [float(h.cosine_score) for h in h_list[:3]],
+            })
+        stage_telemetry["restricted_search"] = {
+            "variant_ids": variant_ids,
+            "hits_summary": hits_summary,
+        }
 
         nomination = QAVideoNomination(
             video_id=chosen_vid,
@@ -314,8 +336,21 @@ def execute_sidepath_consensus_rescue(
             output_top_k=5,
         )
 
+        stage_telemetry["grounding"] = {
+            "candidate_count": len(fused_grounding.ranked_candidates),
+            "candidates": [
+                {
+                    "rank": c.rank,
+                    "frame_id": c.frame_id,
+                    "score": float(c.score),
+                    "local_anchor_rank": (c.diagnostic_metadata or {}).get("local_anchor_rank"),
+                }
+                for c in fused_grounding.ranked_candidates
+            ],
+        }
+
         if not fused_grounding.ranked_candidates:
-            return list(champion_predictions), outcome, [], []
+            return list(champion_predictions), outcome, [], [], stage_telemetry
 
         # Canonical Temporal Seed Anchor Selection
         seed_anchors = select_temporal_seed_anchors(
@@ -323,6 +358,11 @@ def execute_sidepath_consensus_rescue(
             anchors_per_video=config.temporal_seed_anchors_per_video,
             video_cap=1,
         )
+
+        stage_telemetry["temporal_seeds"] = {
+            "seed_count": len(seed_anchors),
+            "seed_frames": [c.frame_id for c in seed_anchors],
+        }
 
         phase3_list: list[Phase3Candidate] = [
             Phase3Candidate(
@@ -363,10 +403,24 @@ def execute_sidepath_consensus_rescue(
                 for c in phase3_list
             ]
 
+        stage_telemetry["refinement"] = {
+            "input_count": len(phase3_list),
+            "output_count": len(refined_list),
+            "refined_candidates": [
+                {
+                    "candidate_frame_id": r.candidate_frame_id,
+                    "refined_frame_id": r.refined_frame_id,
+                    "status": r.status.value,
+                    "score": r.refinement_fusion_score,
+                }
+                for r in refined_list
+            ],
+        }
+
         # Video Record Lookup for Decoding
         video_record = raw_video_registry.get(chosen_vid)
         if not video_record or not video_record.raw_video_path or not video_record.raw_video_path.is_file():
-            return list(champion_predictions), outcome, [], []
+            return list(champion_predictions), outcome, [], [], stage_telemetry
 
         probe = decoder.probe(video_record)
 
@@ -483,10 +537,16 @@ def execute_sidepath_consensus_rescue(
                         },
                     )
                 )
+        stage_telemetry["answers"] = {
+            "produced_count": len(produced_answers),
+            "answers": produced_answers,
+        }
+        stage_telemetry["rescue_candidates_count"] = len(rescue_candidates)
     except Exception as exc:
         import sys, traceback
         print(f"[RESCUE ERROR for {chosen_vid}]: {exc}", file=sys.stderr)
         traceback.print_exc()
+        stage_telemetry["error"] = str(exc)
 
     # Merge into predictions tail (ranks 96..100)
     merged_predictions = merge_rescue_tail(
@@ -501,4 +561,18 @@ def execute_sidepath_consensus_rescue(
         if str(p.get("slot_source", "")).startswith("RESCUE_TAIL")
     ]
 
-    return merged_predictions, outcome, rescue_evidence_records, admitted_tuples
+    stage_telemetry["tail"] = {
+        "admitted_count": len(admitted_tuples),
+        "admitted_tuples": [
+            {
+                "rank": p.get("rank"),
+                "video_id": p.get("video_id"),
+                "frame_id": p.get("frame_id"),
+                "answer": p.get("answer"),
+                "slot_source": p.get("slot_source"),
+            }
+            for p in admitted_tuples
+        ],
+    }
+
+    return merged_predictions, outcome, rescue_evidence_records, admitted_tuples, stage_telemetry
