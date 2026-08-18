@@ -80,20 +80,26 @@ _SCENE_MAP: Dict[str, tuple] = {
 
 # ── Object patterns ────────────────────────────────────────────────────────────
 _OBJECT_PATTERNS: Dict[str, str] = {
+    "volcano":     r"\b(núi lửa|núi lửa phun|núi lửa đang phun|volcano|erupting volcano)\b",
     "fire":        r"\b(cháy|cháy rừng|lửa|ngọn lửa|đám cháy|hỏa hoạn|bốc cháy|fire|wildfire|flames)\b",
-    "smoke":       r"\b(khói|khói mù|làn khói|khói dày|smoke)\b",
+    "smoke":       r"\b(khói|khói mù|làn khói|khói dày|cột khói|smoke|smoke plume)\b",
+    "interview":   r"\b(phỏng vấn|được phỏng vấn|trả lời phỏng vấn|interview|interviewed)\b",
+    "straw_hat":   r"\b(mũ rơm|nón rơm|straw hat)\b",
+    "products":    r"\b(sản phẩm|gói sản phẩm|hàng hóa|packaged products|products)\b",
+    "certificate": r"\b(giấy chứng nhận|bằng khen|giấy khen|chứng nhận|certificate|diploma)\b",
+    "patterned":   r"\b(họa tiết|áo họa tiết|hoa văn|patterned)\b",
     "hillside":    r"\b(sườn đồi|quả đồi|đồi|sườn núi|hillside|hill)\b",
     "mountain":    r"\b(núi|ngọn núi|dãy núi|mountain)\b",
     "forest":      r"\b(rừng|cánh rừng|rừng cây|thảm thực vật|forest|woods|trees)\b",
-    "sky":         r"\b(bầu trời|trời|bầu trời đêm|sky)\b",
-    "water":       r"\b(sông|biển|hồ|nước|dòng sông|bờ biển|river|sea|ocean|lake|water)\b",
+    "sky":         r"\b(bầu trời|trời|bầu trời đêm|nền trời|sky)\b",
+    "water":       r"\b(sông|biển|hồ|nước|dòng sông|bờ biển|bãi biển|river|sea|ocean|lake|beach|seashore|water)\b",
     "flood":       r"\b(ngập|ngập lụt|lũ|lũ lụt|lũ quét|flood|flooding)\b",
-    "vehicle":     r"\b(xe|ô tô|xe buýt|xe tải|xe máy|xe cứu hỏa|car|bus|truck|vehicle|fire truck)\b",
+    "vehicle":     r"\b(xe|ô tô|xe buýt|xe tải|xe máy|xe cứu hỏa|car|bus|truck|vehicle|fire truck|motorbike)\b",
     "aircraft":    r"\b(máy bay|máy bay trực thăng|trực thăng|máy bay cứu hỏa|airplane|plane|helicopter)\b",
     "ship":        r"\b(con thuyền|con tàu|thuyền|tàu|canô|ship|boat)\b",
     "building":    r"\b(tòa nhà|ngôi nhà|căn nhà|nhà|bệnh viện|trường học|building|house|structure)\b",
     "firefighter": r"\b(lính cứu hỏa|cảnh sát PCCC|cứu hỏa|firefighter)\b",
-    "animal":      r"\b(chó|mèo|chim|cá|con vật|động vật|đàn cá|dog|cat|bird|fish|animal)\b",
+    "animal":      r"\b(chó|mèo|chim|cá|con vật|động vật|đàn cá|con trâu|con bò|dog|cat|bird|fish|animal)\b",
     "bridge":      r"\b(cây cầu|cầu|bridge)\b",
     "microphone":  r"\b(micro|microphone|mic|bục phát biểu|podium)\b",
     "flag":        r"\b(cờ|flag|banner|biểu ngữ)\b",
@@ -109,7 +115,10 @@ _OBJECT_PATTERNS: Dict[str, str] = {
 
 # ── Action / verb patterns ─────────────────────────────────────────────────────
 _ACTION_MAP: Dict[str, str] = {
-    "đang phát biểu": "speaking", "đang trình bày": "presenting",
+    "được phỏng vấn": "being interviewed", "trả lời phỏng vấn": "answering interview",
+    "phỏng vấn": "interviewed", "đang phun": "erupting", "phun trào": "erupting",
+    "đang gặt lúa": "harvesting rice", "gặt lúa": "harvesting rice",
+    "đang phát biểu": "speaking", "đang trình trình bày": "presenting",
     "đang thi đấu": "competing", "đang chạy": "running",
     "đang nhảy": "jumping", "đang bơi": "swimming",
     "đang sút bóng": "kicking the ball", "đang cầm": "holding",

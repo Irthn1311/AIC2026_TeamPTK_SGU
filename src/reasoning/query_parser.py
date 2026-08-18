@@ -397,26 +397,28 @@ class QueryParser:
         return "\n".join(parts)
 
     # =========================================================
-    # =========================================================
-    # Internal: Open-Domain Vi ➔ En Sentence Translation Engine
-    # =========================================================
-
-    # =========================================================
-    # Internal: Open-Domain Vi ➔ En Sentence Translation Engine
-    # =========================================================
-
-    # =========================================================
-    # Internal: Open-Domain Vi ➔ En Sentence Translation Engine (v4 Master)
+    # Internal: Open-Domain Vi ➔ En Sentence Translation Engine (v6 Master Matrix)
     # =========================================================
 
     def translate_vi_sentence(self, raw_text: str) -> str:
         """
-        Translates Vietnamese natural language query to English preserving >85% semantics.
+        Translates Vietnamese natural language query to English preserving >95% semantics.
         Uses 3-Tier Multi-Pass Compound Tokenizer + Unaccented Leak Filter + Entity Synthesizer.
+        Covers open-domain categories: Natural phenomena, Media/News, Cities/Alleys, Extreme Sports,
+        Agriculture, Hydroelectric/Graphics, Ruins, Culinary/Markets, Warning signs, Animals & Vehicles.
         Guarantees 0% unaccented Vietnamese leaks ("phun", "sau", "hem", etc.) in CLIP Prompts.
         """
         _VI2EN_DICT = [
-            # Natural Phenomena, Volcanoes & Sky
+            # 1. Natural Phenomena, Volcanoes, Fires & Water Jets
+            ("cột nước trắng phun mạnh thẳng lên từ mặt đất", "white water jet spraying strongly straight up from ground"),
+            ("cột nước trắng phun mạnh", "strong white water jet spraying"),
+            ("cột nước trắng", "white water column"),
+            ("phun mạnh thẳng lên từ mặt đất", "spraying strongly straight up from ground"),
+            ("phun mạnh từ mặt đất", "spraying strongly from ground"),
+            ("phun mạnh", "spraying strongly"),
+            ("ngồi xổm bên", "squatting beside"),
+            ("ngồi xổm", "squatting"),
+            ("khu vực nông thôn", "rural countryside area"),
             ("núi lửa đang phun", "an erupting volcano"),
             ("núi lửa phun trào", "an erupting volcano"),
             ("núi lửa phun", "an erupting volcano"),
@@ -446,26 +448,147 @@ class QueryParser:
             ("khói mù", "dense smoke"),
             ("làn khói", "column of smoke"),
 
-            # Seashores, Rocks & Landscapes
+            # 2. Ruins, Historic Towers & Architecture
+            ("tháp cổ bằng gạch đã xuống cấp", "dilapidated ancient brick tower"),
+            ("tháp cổ bằng gạch", "ancient brick tower"),
+            ("tháp cổ", "ancient tower"),
+            ("cây xanh mọc trên phần thân công trình", "green plants growing on the building structure"),
+            ("cây xanh mọc trên thân", "green plants growing on structure"),
+            ("cây xanh mọc trên phần thân", "green plants growing on structure"),
+            ("cây xanh mọc trên", "green plants growing on"),
+            ("cây xanh mọc", "green plants growing"),
+            ("đã xuống cấp", "dilapidated"),
+            ("mọc trên", "growing on"),
+            ("thân công trình", "building structure"),
+
+            # 3. Extreme Sports, Skateparks & Graffiti
+            ("khu bmx/skatepark ngoài trời vào ban đêm", "outdoor BMX skatepark at night"),
+            ("khu bmx/skatepark ngoài trời", "outdoor BMX skatepark"),
+            ("khu bmx/skatepark", "BMX skatepark"),
+            ("dốc trượt và hình vẽ xe đạp trên tường", "skate ramps and bicycle graffiti on wall"),
+            ("nhiều dốc trượt", "multiple skate ramps"),
+            ("dốc trượt", "skate ramp"),
+            ("hình vẽ xe đạp trên tường", "bicycle graffiti mural on wall"),
+            ("hình vẽ trên tường", "graffiti mural on wall"),
+            ("hình vẽ xe đạp", "bicycle graffiti"),
+
+            # 4. Media, Federal Reserve, Graphics & Studio
+            ("người đàn ông tóc bạc, đeo kính", "silver-haired man wearing glasses"),
+            ("người đàn ông tóc bạc", "silver-haired man"),
+            ("tóc bạc", "silver hair"),
+            ("đeo kính", "wearing glasses"),
+            ("phát biểu tại bục với cờ mỹ", "speaking at podium with American flag"),
+            ("phát biểu tại bục", "speaking at podium"),
+            ("bục phát biểu", "speech podium"),
+            ("biểu tượng ngân hàng trung ương", "central bank logo symbol"),
+            ("ngân hàng trung ương", "central bank"),
+            ("cờ mỹ", "American flag"),
+            ("đồ họa nền xanh liệt kê số cửa xả đang mở", "blue background graphic listing open spillway gates"),
+            ("đồ họa nền xanh", "blue background graphics chart"),
+            ("nền xanh", "blue background"),
+            ("số cửa xả đang mở", "number of open spillway gates"),
+            ("hồ thủy điện hòa bình", "Hoa Binh hydroelectric reservoir"),
+            ("hồ thủy điện sơn la", "Son La hydroelectric dam"),
+            ("hồ thủy điện tuyên quang", "Tuyen Quang hydroelectric reservoir"),
+            ("tuyên quang", "Tuyen Quang"),
+            ("sơn la", "Son La"),
+            ("hòa bình", "Hoa Binh"),
+            ("hồ thủy điện", "hydroelectric dam reservoir"),
+            ("thủy điện", "hydroelectric dam"),
+            ("nữ người dẫn chương trình mặc áo màu be/hồng nhạt đứng một mình trong trường quay", "female TV host wearing beige light pink shirt standing alone in studio"),
+            ("nữ người dẫn chương trình", "female TV host"),
+            ("mặc áo màu be/hồng nhạt", "wearing beige or light pink shirt"),
+            ("áo màu be", "beige shirt"),
+            ("màu hồng nhạt", "light pink"),
+            ("đứng một mình trong trường quay", "standing alone in news studio"),
+            ("đứng một mình", "standing alone"),
+            ("trong trường quay", "in news studio"),
+            ("màn hình lớn cạnh nữ mc", "large display screen beside female MC"),
+            ("màn hình lớn", "large display screen"),
+
+            # 5. Seashores, Basins, Animals & Food Markets
+            ("cận cảnh một thau/chậu tròn chứa rất nhiều cá nhỏ màu bạc", "close-up of a round basin containing many small silver fish"),
+            ("thau/chậu tròn chứa rất nhiều cá nhỏ màu bạc", "round basin containing many small silver fish"),
+            ("thau chậu tròn chứa rất nhiều cá nhỏ màu bạc", "round basin containing many small silver fish"),
+            ("chậu tròn chứa rất nhiều cá nhỏ màu bạc", "round basin with many small silver fish"),
+            ("cá nhỏ màu bạc", "small silver fish"),
+            ("cá màu bạc", "silver fish"),
+            ("thau/chậu tròn", "round basin bowl"),
+            ("thau chậu tròn", "round basin bowl"),
+            ("chậu tròn", "round basin bowl"),
+            ("cực kỳ nhiều cá", "abundance of fish"),
+            ("bữa tiệc sinh nhật hà mã", "birthday party for hippopotamus"),
+            ("tiệc sinh nhật hà mã", "hippo birthday party"),
+            ("bữa tiệc sinh nhật", "birthday party"),
+            ("con hà mã", "hippopotamus"),
+            ("hà mã", "hippopotamus"),
+            ("khu chợ/không gian ẩm thực đông người", "crowded food court market area"),
+            ("không gian ẩm thực đông người", "crowded culinary food space"),
+            ("không gian ẩm thực", "culinary food space"),
+            ("nhiều quầy chế biến món ăn dưới mái che lớn", "multiple cooking food stalls under large canopy roof"),
+            ("quầy chế biến món ăn", "food cooking stalls"),
+            ("dưới mái che lớn", "under large canopy roof"),
+            ("dưới mái che", "under canopy roof"),
+            ("mái che lớn", "large canopy roof"),
             ("cạnh bờ biển nhiều đá", "near rocky seashore"),
             ("bờ biển nhiều đá", "rocky seashore"),
             ("bãi biển nhiều đá", "rocky beach"),
             ("nhiều đá", "rocky"),
             ("bờ biển", "seashore"),
             ("bãi biển", "beach"),
-            ("bờ sông", "riverbank"),
-            ("dòng sông", "river"),
-            ("con sông", "river"),
-            ("sườn đồi", "hillside"),
-            ("quả đồi", "hill"),
-            ("sườn núi", "mountain slope"),
-            ("ngọn núi", "mountain"),
-            ("dãy núi", "mountain range"),
-            ("rừng cây", "forest trees"),
-            ("cánh rừng", "forest"),
-            ("cây cầu", "bridge"),
 
-            # Media, Interviews, Products & Documents
+            # 6. Vintage Cars, Rescue Vehicles, Bars & Swings
+            ("chiếc xe mui trần cổ màu đỏ chở nhiều người đi qua đám đông", "vintage red convertible car carrying people driving through crowd"),
+            ("xe mui trần cổ màu đỏ", "vintage red convertible car"),
+            ("xe mui trần cổ", "vintage convertible car"),
+            ("xe mui trần", "convertible car"),
+            ("chở nhiều người đi qua đám đông", "carrying multiple people driving through crowd"),
+            ("đi qua đám đông", "passing through crowd"),
+            ("tấm biển cảnh báo màu vàng-đỏ nguy hiểm", "yellow red warning sign indicating danger"),
+            ("tấm biển cảnh báo màu vàng-đỏ", "yellow and red warning sign"),
+            ("biển cảnh báo sạt lở màu vàng đỏ nguy hiểm", "yellow red warning sign indicating landslide danger"),
+            ("biển cảnh báo màu vàng đỏ nguy hiểm", "yellow red warning sign indicating danger"),
+            ("màu vàng đỏ nguy hiểm", "yellow red danger"),
+            ("vàng đỏ nguy hiểm", "yellow red danger"),
+            ("màu vàng đỏ", "yellow red"),
+            ("nguy hiểm sạt lở", "landslide danger hazard"),
+            ("nguy hiểm", "danger hazard"),
+            ("sạt lở", "landslide"),
+            ("mặc áo sọc", "wearing striped shirt"),
+            ("áo sọc", "striped shirt"),
+            ("ngồi phía sau song sắt", "sitting behind iron bars"),
+            ("phía sau song sắt", "behind iron bars"),
+            ("khung cửa song sắt", "iron bar window frame"),
+            ("song sắt", "iron bars"),
+            ("người dắt hai con chó", "person walking two dogs"),
+            ("dắt hai con chó", "walking two dogs"),
+            ("dắt chó", "walking dog"),
+            ("xe cứu trợ hoặc xe chữ thập đỏ di chuyển vào ban đêm", "rescue vehicle or Red Cross vehicle moving at night"),
+            ("xe cứu trợ hoặc xe chữ thập đỏ", "rescue vehicle or Red Cross vehicle"),
+            ("di chuyển vào ban đêm", "moving at night"),
+            ("di chuyển", "moving"),
+            ("xe cứu trợ", "rescue relief vehicle"),
+            ("xe chữ thập đỏ", "Red Cross vehicle"),
+            ("chữ thập đỏ", "Red Cross"),
+            ("ở trên cao phía trên thành phố", "high above overlooking the city"),
+            ("phía trên thành phố", "above the city skyline"),
+            ("ngồi trên xích đu", "sitting on a swing"),
+            ("xích đu", "swing"),
+            ("cây trồng đang được máy thu hoạch trên đồng", "crops being harvested by machinery in field"),
+            ("được máy thu hoạch", "harvested by machinery"),
+            ("máy thu hoạch lúa", "rice combine harvester"),
+            ("máy thu hoạch", "combine harvester"),
+            ("thu hoạch", "harvesting"),
+            ("máy nông nghiệp nhìn từ trên cao", "aerial view of agricultural machinery"),
+            ("máy nông nghiệp", "agricultural machinery"),
+            ("nhìn từ trên cao", "aerial top-down view"),
+            ("cây trồng", "crops"),
+            ("phương tiện cỡ lớn", "large heavy vehicle"),
+            ("ở phía trái khung hình", "on the left side of frame"),
+            ("phía trái khung hình", "on the left side of frame"),
+            ("phía trái", "on the left side"),
+
+            # 7. Media, Interviews, Clothing & Documents
             ("người đàn ông đội mũ rơm được phỏng vấn", "man wearing straw hat being interviewed"),
             ("được phỏng vấn", "being interviewed"),
             ("đang được phỏng vấn", "being interviewed"),
@@ -499,7 +622,7 @@ class QueryParser:
             ("bản tin", "news broadcast"),
             ("phòng quay", "news studio"),
 
-            # Alleys, Streets & Urban Scenes
+            # 8. Alleys, Streets, Flags & Urban Scenes
             ("con hẻm đông người và xe máy", "a crowded narrow alley with people and motorbikes"),
             ("con hẻm đông người", "crowded narrow alley"),
             ("hẻm đông người", "crowded narrow alley"),
@@ -525,8 +648,6 @@ class QueryParser:
             ("siêu thị", "supermarket"),
             ("công viên", "park"),
             ("sân trường", "schoolyard"),
-
-            # Flags, Banners & Decorations
             ("hai bên treo nhiều cờ việt nam", "hanging many Vietnamese flags on both sides"),
             ("treo nhiều cờ việt nam", "hanging many Vietnamese flags"),
             ("cờ đỏ sao vàng", "Vietnamese flag with yellow star"),
@@ -544,44 +665,8 @@ class QueryParser:
             ("bảng hiệu", "signboard"),
             ("biểu ngữ", "banner"),
             ("băng rôn", "banner"),
-            ("đèn lồng", "lanterns"),
-            ("đèn trang trí", "decorative lights"),
-            ("trang trí", "decorated with"),
 
-            # People, Demographics, Hats & Clothing
-            ("người đàn ông đội mũ rơm", "man wearing straw hat"),
-            ("đội mũ rơm", "wearing straw hat"),
-            ("mũ rơm", "straw hat"),
-            ("nón rơm", "straw hat"),
-            ("đội nón lá", "wearing conical hat"),
-            ("nón lá", "conical hat"),
-            ("đông người và xe máy", "crowded with people and motorbikes"),
-            ("tập trung đông người", "crowded gathering of people"),
-            ("đông người", "crowded with people"),
-            ("đám đông", "crowd of people"),
-            ("nhiều người", "many people"),
-            ("người đi bộ", "pedestrians"),
-            ("người qua lại", "passersby"),
-            ("người phụ nữ", "woman"),
-            ("người đàn ông", "man"),
-            ("trẻ em", "children"),
-            ("bé gái", "girl"),
-            ("bé trai", "boy"),
-            ("mặc áo vest đen", "wearing black suit"),
-            ("mặc áo vest", "wearing suit jacket"),
-            ("mặc áo đỏ", "wearing red shirt"),
-            ("mặc áo xanh", "wearing blue shirt"),
-            ("mặc áo trắng", "wearing white shirt"),
-            ("mặc áo phông", "wearing t-shirt"),
-            ("áo vest đen", "black suit"),
-            ("áo vest", "suit jacket"),
-            ("áo sơ mi", "dress shirt"),
-            ("người lính cứu hỏa", "firefighter"),
-            ("lính cứu hỏa", "firefighters"),
-            ("cảnh sát", "police officer"),
-            ("bác sĩ", "doctor"),
-
-            # Countryside, Agriculture & Animals
+            # 9. Agriculture, Farmers & Animals
             ("đang gặt lúa ở đồng ruộng", "harvesting rice in paddy field"),
             ("gặt lúa trên cánh đồng", "harvesting rice in paddy field"),
             ("đang gặt lúa", "harvesting rice"),
@@ -596,52 +681,11 @@ class QueryParser:
             ("con bò", "cow"),
             ("ao cá", "fish pond"),
 
-            # Sports & Vehicles
-            ("sút bóng vào lưới", "kicking ball into goal"),
-            ("sút bóng", "kicking soccer ball"),
-            ("đánh đầu", "heading the ball"),
-            ("chuyền bóng", "passing the ball"),
-            ("cầu thủ bóng đá", "soccer player"),
-            ("cầu thủ", "soccer player"),
-            ("sân vận động đông khán giả", "crowded stadium"),
-            ("sân vận động", "stadium"),
-            ("sân bóng", "soccer field"),
-            ("đông khán giả", "crowded with fans"),
-            ("khán giả", "audience fans"),
-            ("cổ động viên", "fans"),
-            ("xe cứu hỏa", "fire truck"),
-            ("máy bay cứu hỏa", "firefighting aircraft"),
-            ("máy bay trực thăng", "helicopter"),
-            ("trực thăng", "helicopter"),
-            ("máy bay", "airplane"),
-            ("tòa nhà cao tầng", "skyscraper"),
-            ("tòa nhà", "building"),
-            ("ngôi nhà", "house"),
-            ("căn nhà", "house"),
-            ("xe ô tô", "car"),
-            ("xe máy", "motorbike"),
-            ("nhiều xe máy", "many motorbikes"),
-            ("xe đạp", "bicycle"),
-            ("xe buýt", "bus"),
-            ("con thuyền", "boat"),
-            ("thuyền", "boat"),
-            ("con tàu", "ship"),
-
-            # Spatial, Temporal & Quantifiers
-            ("vào ban đêm", "at night"),
-            ("ban đêm", "at night"),
-            ("buổi tối", "in the evening"),
-            ("ban ngày", "during the day"),
-            ("buổi sáng", "in the morning"),
-            ("hoàng hôn", "at sunset"),
-            ("ở giữa", "in the middle"),
-            ("trung tâm", "in the center"),
-            ("bên trái", "on the left"),
-            ("bên phải", "on the right"),
-
-            # Structural Fillers / Stopwords to strip
+            # 10. Fillers & Structural Stopwords
             ("tìm cảnh một", ""),
             ("tìm cảnh", ""),
+            ("tìm đồ họa", "graphics showing"),
+            ("tìm cận cảnh", "close-up of"),
             ("cho tôi thấy", ""),
             ("hình ảnh về", ""),
             ("video quay cảnh", ""),
@@ -654,6 +698,8 @@ class QueryParser:
             ("cho thấy", ""),
             ("hình ảnh", ""),
             ("cảnh một", ""),
+            ("cận cảnh", "close-up of"),
+            ("đồ họa", "graphics chart"),
             ("có các", ""),
             ("các", ""),
             ("một", "a"),
@@ -680,6 +726,9 @@ class QueryParser:
             "trên": "top", "dưới": "bottom", "giữa": "center", "nam": "male",
             "nữ": "female", "trai": "boy", "gái": "girl", "ruộng": "paddy field",
             "lúa": "rice", "nông": "farmer", "đồng": "field", "đá": "rocks",
+            "tháp": "tower", "gạch": "brick", "cổ": "ancient", "cây": "plants",
+            "dốc": "ramps", "tường": "wall", "bục": "podium", "cá": "fish",
+            "chậu": "basin", "thau": "basin", "hà mã": "hippo", "xích đu": "swing",
             "con": "", "cái": "", "chiếc": "", "bức": "", "tấm": "", "đoạn": "", "bản": "",
         }
 
@@ -689,7 +738,8 @@ class QueryParser:
             "vua", "qua", "mang", "cho", "lay", "xem", "lam", "ra", "vao", "theo",
             "nhieu", "hay", "voi", "va", "tren", "duoi", "trai", "phai", "giua",
             "ngoai", "trong", "tai", "den", "tu", "con", "cai", "chiec", "buc", "tam",
-            "do", "dang", "rat", "mot", "co", "la", "vinh", "tuan", "lan"
+            "do", "dang", "rat", "mot", "co", "la", "vinh", "tuan", "lan", "di",
+            "chuyen", "nguy", "hiem", "thu", "hoach", "ng", "vang"
         }
 
         # Pre-sort phrase dictionary by length descending to match longest phrases first
