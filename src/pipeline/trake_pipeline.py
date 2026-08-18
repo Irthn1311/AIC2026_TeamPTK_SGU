@@ -120,6 +120,9 @@ class TRAKEPipeline:
         self._rrf        = rrf or ReciprocalRankFusion(k=60)
         self._vlm        = vlm_client
         self._selector   = FrameSelector()
+        self.enable_vlm_verify = enable_vlm_verify
+        self.top_k_videos = top_k_videos
+        self.top_k_frames_per_event = top_k_frames_per_event
 
         # Initialize QueryParser for Vi ➔ En event translation
         from src.reasoning.query_parser import QueryParser
