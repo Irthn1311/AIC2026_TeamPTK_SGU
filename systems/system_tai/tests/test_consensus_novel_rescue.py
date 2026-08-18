@@ -121,3 +121,51 @@ def test_default_off_exact_parity_contract():
     """Verify default config has consensus novel rescue completely disabled with zero side effects."""
     cfg = QAVideoConditionedEvidenceConfig(enabled=True, consensus_novel_rescue_enabled=False)
     assert not cfg.consensus_novel_rescue_enabled
+
+
+def test_execute_sidepath_consensus_rescue_ineligible_returns_identical_predictions():
+    """Verify that when no consensus candidate is found, execute_sidepath_consensus_rescue leaves base predictions untouched."""
+    from unittest.mock import MagicMock
+    from system_tai.kis.session_schema import QAQueryRequest
+    from system_tai.qa.consensus_rescue import execute_sidepath_consensus_rescue
+    from system_tai.qa.question_types import QuestionType
+
+    req = QAQueryRequest(
+        request_id="test_req",
+        query_id="QA-99",
+        event_description="test",
+        question="test",
+    )
+    base_preds = [{"rank": 1, "video_id": "L21_V001", "frame_id": 100, "answer": "ans"}]
+    cfg = QAVideoConditionedEvidenceConfig(enabled=True, consensus_novel_rescue_enabled=True)
+
+    searcher = MagicMock()
+    encoder = MagicMock()
+    # Mock search_video_maxima returning empty dict
+    searcher.search_video_maxima.return_value = {}
+
+    merged, outcome, recs, admitted = execute_sidepath_consensus_rescue(
+        request=req,
+        q_type=QuestionType.COLOR,
+        variants=(),
+        event_vectors=(),
+        champion_selected_video_ids=("L21_V001",),
+        champion_predictions=base_preds,
+        searcher=searcher,
+        encoder=encoder,
+        decoder=MagicMock(),
+        refiner=MagicMock(),
+        refinement_config=MagicMock(),
+        weighted_rrf=MagicMock(),
+        raw_video_registry=MagicMock(),
+        candidate_provider=None,
+        ocr_answer_provider=None,
+        qa_engine=MagicMock(),
+        config=cfg,
+    )
+
+    assert merged == base_preds
+    assert not outcome.eligible
+    assert recs == []
+    assert admitted == []
+

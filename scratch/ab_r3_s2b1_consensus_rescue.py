@@ -281,11 +281,21 @@ def run_ab_validation(
                 prefix_identical = False
                 break
 
+        rescue_frames = rescue_meta.get("rescue_evidence_frames", [])
+        rescue_answers = rescue_meta.get("rescue_answers", [])
+
         print(f"\n[CONTROL]   {qid}: Hit = {'Rank ' + str(ctrl_hit_rank) if ctrl_hit_rank else 'NO HIT'} in {t_ctrl:.2f}s")
         print(f"[TREATMENT] {qid}: Hit = {'Rank ' + str(treat_hit_rank) if treat_hit_rank else 'NO HIT'} in {t_treat:.2f}s")
         print(f"  - Consensus Rescue Fired?     : {'YES (Chosen: ' + str(chosen_vid) + ')' if chosen_vid else 'NO (' + rescue_meta.get('reason', '') + ')'}")
         print(f"  - Eligible Consensus List     : {[c['video_id'] for c in rescue_meta.get('all_consensus_candidates', [])]}")
+        print(f"  - Rescue Evidence Frames      : {rescue_frames}")
+        print(f"  - Rescue Produced Answers     : {rescue_answers}")
         print(f"  - Admitted Tail Tuples (96..100) : {len(admitted_tuples)} tuples -> {[p.get('video_id') + ':' + str(p.get('frame_id')) + ':' + str(p.get('answer')) for p in admitted_tuples]}")
+        for p in admitted_tuples:
+            if p.get("video_id") == target_vid:
+                dist = interval_distance(int(p.get("frame_id", -1)), start_f, end_f)
+                ans_match = normalize_text(str(p.get("answer", ""))) in gt_answers
+                print(f"    -> Target Evaluation: Frame {p.get('frame_id')} (Distance to GT [{start_f}..{end_f}]: {dist} frames) | Answer: '{p.get('answer')}' (In GT Accepted: {ans_match})")
         print(f"  - Ranks 1..95 Exact Parity    : {'PASS ✅' if prefix_identical else 'FAIL ❌'}")
 
         results_table.append({

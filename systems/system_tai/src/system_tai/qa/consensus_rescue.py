@@ -11,7 +11,10 @@ import numpy as np
 
 from system_tai.qa.grounding import (
     QAVideoConditionedEvidenceConfig,
+    QAVideoNomination,
+    build_qa_grounding_result,
     nominate_qa_videos,
+    select_temporal_seed_anchors,
 )
 from system_tai.qa.models import (
     QAEvidenceCandidate,
@@ -19,22 +22,29 @@ from system_tai.qa.models import (
 )
 from system_tai.qa.question_types import QuestionType
 from system_tai.qa.rescue_tail import RescueCandidate, merge_rescue_tail
+from system_tai.refinement.models import (
+    Phase3Candidate,
+    RefinementConfig,
+    RefinementStatus,
+)
 from system_tai.refinement.video import DecodeRequest
 from system_tai.retrieval.multi_query import (
     QueryLanguage,
     QueryVariant,
     QueryVariantType,
+    WeightedRRFRetriever,
 )
 from system_tai.retrieval.query_decomposition import decompose_query
 
 if TYPE_CHECKING:
-    from system_tai.decoding.video_decoder import VideoDecoder
     from system_tai.features.query_encoder import SharedOpenAIClipEncoder
     from system_tai.kis.session_schema import QAQueryRequest
     from system_tai.qa.answer_provider import QAAnswerCandidateProvider
     from system_tai.qa.engine import QAEngine
     from system_tai.qa.ocr_provider import OCRAnswerProvider
     from system_tai.qa.raw_registry import RawVideoRegistry
+    from system_tai.refinement.engine import ExactFrameRefiner
+    from system_tai.refinement.video import VideoDecoder
     from system_tai.retrieval.video_evidence import VideoRestrictedFeatureSearcher
 
 
@@ -223,11 +233,16 @@ def execute_sidepath_consensus_rescue(
     *,
     request: QAQueryRequest,
     q_type: QuestionType,
+    variants: Sequence[QueryVariant],
+    event_vectors: Sequence[np.ndarray],
     champion_selected_video_ids: Sequence[str],
     champion_predictions: Sequence[dict[str, Any]],
     searcher: VideoRestrictedFeatureSearcher,
     encoder: SharedOpenAIClipEncoder,
     decoder: VideoDecoder,
+    refiner: ExactFrameRefiner,
+    refinement_config: RefinementConfig,
+    weighted_rrf: WeightedRRFRetriever,
     raw_video_registry: RawVideoRegistry,
     candidate_provider: QAAnswerCandidateProvider | None,
     ocr_answer_provider: OCRAnswerProvider | None,
@@ -241,8 +256,13 @@ def execute_sidepath_consensus_rescue(
 ]:
     """
     Executes isolated side-path processing on the single chosen consensus rescued video.
-    Champion predictions ranks 1..95 and Champion evidence remain immutable.
-    Admitted tuples are merged into tail slots 96..100 using merge_rescue_tail().
+    Reuses the EXACT canonical downstream helpers:
+      1. search_selected_videos
+      2. build_qa_grounding_result
+      3. select_temporal_seed_anchors
+      4. refiner.refine_selected_candidates
+      5. VideoDecoder.decode & Answer Provider routing
+      6. merge_rescue_tail (preserves ranks 1..95 strictly)
     """
     q_vi = request.question
     q_en = request.question_en or request.event_description_en
@@ -266,41 +286,105 @@ def execute_sidepath_consensus_rescue(
 
     try:
         store = searcher.registry.get(chosen_vid)
-        query_text = q_en if q_en else q_vi
-        q_vec = encoder.encode(query_text)
+        variant_ids = [v.variant_id for v in variants]
+        # Canonical Restricted Frame Search
         restricted = searcher.search_selected_videos(
             video_ids=[chosen_vid],
-            query_ids=[request.query_id],
-            query_vectors=[q_vec],
-            per_query_result_cap=min(5, store.descriptor.row_count),
+            query_ids=variant_ids,
+            query_vectors=event_vectors,
+            per_query_result_cap=store.descriptor.row_count,
         )
-        hits = restricted.rankings.get(request.query_id, {}).get(chosen_vid, ())
-    except Exception as exc:
-        return list(champion_predictions), outcome, [], []
 
-    if not hits:
-        return list(champion_predictions), outcome, [], []
+        nomination = QAVideoNomination(
+            video_id=chosen_vid,
+            nomination_rank=1,
+            video_rrf_score=1.0,
+            best_individual_variant_rank=1,
+            per_variant=(),
+        )
 
-    # Process top anchors on rescued video
-    top_anchors = hits[:2]
-    video_record = None
-    try:
+        # Canonical Grounding Candidate Fusion
+        fused_grounding = build_qa_grounding_result(
+            query_id=request.query_id,
+            variants=variants,
+            nominations=(nomination,),
+            restricted=restricted,
+            weighted_rrf=weighted_rrf,
+            config=config,
+            output_top_k=5,
+        )
+
+        if not fused_grounding.ranked_candidates:
+            return list(champion_predictions), outcome, [], []
+
+        # Canonical Temporal Seed Anchor Selection
+        seed_anchors = select_temporal_seed_anchors(
+            fused_grounding.ranked_candidates,
+            anchors_per_video=config.temporal_seed_anchors_per_video,
+            video_cap=1,
+        )
+
+        phase3_list: list[Phase3Candidate] = [
+            Phase3Candidate(
+                query_id=request.query_id,
+                rank=candidate.rank,
+                video_id=candidate.video_id,
+                frame_id=candidate.frame_id,
+                retrieval_score=candidate.score,
+                retrieval_provenance=dict(candidate.diagnostic_metadata or {}),
+            )
+            for candidate in seed_anchors
+        ]
+
+        # Canonical Temporal Refinement
+        refined_list = []
+        if config.temporal_refinement_enabled:
+            ref_outcome = refiner.refine_selected_candidates(
+                query_id=request.query_id,
+                variants=variants,
+                candidates=tuple(phase3_list),
+                config=refinement_config,
+                precomputed_text_embeddings=event_vectors,
+                frame_embedding_cache={},
+            )
+            refined_list = list(ref_outcome.candidates)
+        else:
+            refined_list = [
+                RefinedCandidate(
+                    query_id=c.query_id,
+                    original_candidate_rank=c.rank,
+                    video_id=c.video_id,
+                    candidate_frame_id=c.frame_id,
+                    refined_frame_id=c.frame_id,
+                    status=RefinementStatus.NOT_REFINED,
+                    original_retrieval_provenance=c.retrieval_provenance,
+                )
+                for c in phase3_list
+            ]
+
+        # Video Record Lookup for Decoding
         video_record = raw_video_registry.get(chosen_vid)
-    except KeyError:
-        pass
+        if not video_record or not video_record.raw_video_path or not video_record.raw_video_path.is_file():
+            return list(champion_predictions), outcome, [], []
 
-    if not video_record or not video_record.raw_video_path or not video_record.raw_video_path.is_file():
-        return list(champion_predictions), outcome, [], []
+        probe = decoder.probe(video_record)
 
-    for anchor in top_anchors:
-        cand_frame_id = int(anchor.frame_id)
-        raw_score = float(anchor.cosine_score)
+        for ref_cand in refined_list:
+            cand_frame_id = int(ref_cand.candidate_frame_id)
+            effective_frame_id = (
+                int(ref_cand.refined_frame_id)
+                if ref_cand.status is RefinementStatus.REFINED and ref_cand.refined_frame_id is not None
+                else cand_frame_id
+            )
+            source_status = (
+                "TEMPORAL_REFINED"
+                if ref_cand.status is RefinementStatus.REFINED
+                else "KEYFRAME_ANCHOR"
+            )
 
-        try:
-            probe = decoder.probe(video_record)
             dec_req = DecodeRequest(
                 probe=probe,
-                frame_ids=(cand_frame_id,),
+                frame_ids=(effective_frame_id,),
                 max_decoded_frames=100,
             )
             dec_res = decoder.decode(dec_req)
@@ -310,15 +394,16 @@ def execute_sidepath_consensus_rescue(
             frame_img = dec_res.frames[0].image
             produced_answers: list[tuple[str, float]] = []
 
+            # Canonical Answer Provider Routing:
             # 1. Try OCR if supported
             if ocr_answer_provider is not None and ocr_answer_provider.supports(q_type):
                 ev_cand = QAEvidenceCandidate(
                     query_id=request.query_id,
                     rank=1,
                     video_id=chosen_vid,
-                    frame_id=cand_frame_id,
-                    retrieval_score=raw_score,
-                    source_status="RESCUE_TAIL_CONSENSUS",
+                    frame_id=effective_frame_id,
+                    retrieval_score=1.0,
+                    source_status=source_status,
                 )
                 ocr_res, _ = ocr_answer_provider.answer(
                     query_id=request.query_id,
@@ -335,7 +420,6 @@ def execute_sidepath_consensus_rescue(
                 cands = candidate_provider.candidates(q_type, prompt=q_vi)
                 if cands:
                     img_vec = encoder.encode_images([frame_img])[0]
-                    # Score candidates against image embedding
                     cand_vecs = encoder.encode_texts([c.answer for c in cands])
                     sims = np.dot(cand_vecs, img_vec)
                     best_idx = int(np.argmax(sims))
@@ -343,9 +427,8 @@ def execute_sidepath_consensus_rescue(
                     best_score = float(sims[best_idx])
                     produced_answers.append((best_ans, best_score))
 
-            # 3. Fallback: query context
+            # 3. Fallback: QA Engine Direct Prompt
             if not produced_answers:
-                # Basic direct query prompt answer
                 qa_q = QAQuery(
                     query_id=request.query_id,
                     event_description=q_vi,
@@ -356,15 +439,15 @@ def execute_sidepath_consensus_rescue(
                     query_id=request.query_id,
                     rank=1,
                     video_id=chosen_vid,
-                    frame_id=cand_frame_id,
-                    retrieval_score=raw_score,
-                    source_status="RESCUE_TAIL_CONSENSUS",
+                    frame_id=effective_frame_id,
+                    retrieval_score=1.0,
+                    source_status=source_status,
                 )
                 img_vec = encoder.encode_images([frame_img])[0]
                 q_res = qa_engine.answer(
                     qa_q,
                     (ev_cand,),
-                    image_embeddings={(chosen_vid, cand_frame_id): img_vec},
+                    image_embeddings={(chosen_vid, effective_frame_id): img_vec},
                     output_top_k=3,
                 )
                 for pred in q_res.predictions:
@@ -375,15 +458,17 @@ def execute_sidepath_consensus_rescue(
                 rescue_evidence_records.append({
                     "video_id": chosen_vid,
                     "candidate_frame_id": cand_frame_id,
-                    "evidence_frame_id": cand_frame_id,
+                    "refined_frame_id": ref_cand.refined_frame_id,
+                    "evidence_frame_id": effective_frame_id,
                     "answer": ans_text,
                     "answer_score": ans_score,
-                    "evidence_source": "RESCUE_TAIL_CONSENSUS",
+                    "refinement_status": ref_cand.status.value,
+                    "evidence_source": source_status,
                 })
                 rescue_candidates.append(
                     RescueCandidate(
                         video_id=chosen_vid,
-                        frame_id=cand_frame_id,
+                        frame_id=effective_frame_id,
                         answer=ans_text,
                         rescue_score=ans_score,
                         rescue_source="consensus_novel_video_rescue",
@@ -391,11 +476,14 @@ def execute_sidepath_consensus_rescue(
                             "fused_rank": outcome.chosen_candidate.fused_rank,
                             "literal_rank": outcome.chosen_candidate.literal_rank,
                             "compact_rank": outcome.chosen_candidate.compact_rank,
+                            "anchor_frame": cand_frame_id,
+                            "refined_frame": ref_cand.refined_frame_id,
+                            "refinement_status": ref_cand.status.value,
                         },
                     )
                 )
-        except Exception:
-            continue
+    except Exception:
+        pass
 
     # Merge into predictions tail (ranks 96..100)
     merged_predictions = merge_rescue_tail(
