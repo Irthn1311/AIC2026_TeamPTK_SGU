@@ -10,6 +10,7 @@ import os
 import sys
 import time
 import unicodedata
+import shutil
 from collections import Counter
 from enum import StrEnum
 from pathlib import Path
@@ -18,12 +19,19 @@ from typing import Any
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-try:
-    import clip
-except ImportError:
-    import subprocess
-    print("Installing openai-clip dependency...")
-    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "openai-clip", "ftfy", "regex", "tqdm"], check=False)
+if Path("/kaggle").exists():
+    try:
+        import clip
+    except ImportError:
+        print("Installing openai-clip dependency...")
+        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "openai-clip", "ftfy", "regex", "tqdm"], check=False)
+
+    # Ensure tesseract language packages are installed
+    tess_path = shutil.which("tesseract")
+    if not tess_path or not (Path("/usr/share/tesseract-ocr/5/tessdata/vie.traineddata").exists() or Path("/usr/share/tesseract-ocr/4.00/tessdata/vie.traineddata").exists()):
+        print("Installing tesseract-ocr-vie packages...")
+        subprocess.run(["apt-get", "update", "-qq"], check=False)
+        subprocess.run(["apt-get", "install", "-y", "-qq", "tesseract-ocr", "tesseract-ocr-vie", "tesseract-ocr-eng"], check=False)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SYSTEM_TAI_SRC = REPO_ROOT / "systems" / "system_tai" / "src"
@@ -66,6 +74,31 @@ def normalize_text(t: str) -> str:
         return ""
     t = unicodedata.normalize("NFKC", str(t)).casefold()
     return "".join(c for c in t if c.isalnum() or c.isspace()).strip()
+
+
+def resolve_ocr_config() -> OCRAnswerProviderConfig:
+    tess_path = shutil.which("tesseract")
+    available_langs: list[str] = []
+    if tess_path:
+        try:
+            res = subprocess.run([tess_path, "--list-langs"], capture_output=True, text=True, check=False)
+            available_langs = [l.strip() for l in res.stdout.splitlines()[1:] if l.strip()]
+        except Exception:
+            pass
+
+    desired = ("eng", "vie")
+    supported = tuple(l for l in desired if l in available_langs)
+    if not supported:
+        supported = tuple(available_langs[:2]) if available_langs else ("eng",)
+
+    if not available_langs:
+        return OCRAnswerProviderConfig(enabled=False, languages=("eng",))
+
+    return OCRAnswerProviderConfig(
+        enabled=True,
+        languages=supported,
+        evidence_frame_budget=8,
+    )
 
 
 def parse_benchmark_gt_interval(q: dict[str, Any]) -> tuple[int, int]:
@@ -139,11 +172,7 @@ def run_targeted_diagnostic(
         enabled=ontology_path.exists(),
         ontology_path=ontology_path if ontology_path.exists() else None,
     )
-    ocr_config = OCRAnswerProviderConfig(
-        enabled=True,
-        languages=("eng", "vie"),
-        evidence_frame_budget=8,
-    )
+    ocr_config = resolve_ocr_config()
     object_config = ObjectAnswerProviderConfig(enabled=False)
 
     config = SessionConfig(
@@ -153,6 +182,7 @@ def run_targeted_diagnostic(
         device=device,
         allow_model_download=True,
         default_output_top_k=100,
+        default_refine_top_n=3,
         qa_video_conditioned_evidence_config=evidence_config,
         qa_visual_ontology_config=visual_config,
         qa_ocr_answer_provider_config=ocr_config,
@@ -190,9 +220,10 @@ def run_targeted_diagnostic(
             event_description=q_vi,
             question=q_vi,
             event_description_en=q_en if q_en else None,
-            question_en=q_en if q_en else None,
+            question_en=None,
             include_vi_variant=False if q_en else True,
             output_top_k=100,
+            refine_top_n=3,
         )
 
         res = runtime.handle_qa_query(req)
