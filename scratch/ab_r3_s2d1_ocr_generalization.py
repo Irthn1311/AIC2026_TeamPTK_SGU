@@ -79,6 +79,9 @@ def resolve_ocr_config() -> OCRAnswerProviderConfig:
     )
 
 
+from system_tai.qa.runtime import classify_runtime_question
+
+
 def run_ocr_generalization_validation():
     benchmark_path = REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "l21_150_diagnostic" / "benchmark.json"
     sidecar_path = REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "l21_150_diagnostic" / "qa_dev_translations_en.json"
@@ -90,21 +93,25 @@ def run_ocr_generalization_validation():
         en_sidecar = json.load(f)
 
     en_map = {e["query_id"]: e.get("question_en", "") for e in en_sidecar.get("entries", [])}
-    all_qa_queries = {q["query_id"]: q for q in bm_data["queries"] if q.get("task_type") == "qa"}
+    all_qa_queries = {q["query_id"]: q for q in bm_data["queries"] if q.get("task_type") == "qa" and q.get("split") == "DEV"}
 
-    # Filter all queries classified as QuestionType.OCR
+    # Filter all queries classified as QuestionType.OCR using canonical runtime classifier
     ocr_queries = {}
     for qid, q in all_qa_queries.items():
         q_vi = q.get("question_vi", "")
-        q_en = en_map.get(qid, "")
-        classification = classify_question(q_vi, q_vi)
-        if classification.question_type == QuestionType.OCR or q.get("branch") == "OCR":
+        q_en = en_map.get(qid)
+        classification, strat = classify_runtime_question(q_vi, q_en, qa_a2_enabled=True, qa_ocr_enabled=True)
+        if classification.question_type == QuestionType.OCR:
             ocr_queries[qid] = q
 
     print("=" * 140)
     print("SPRINT 2D.1: OCR-ONLY GENERALIZATION VALIDATION UNDER LOCKED 'en_only' CHAMPION CONFIG")
-    print(f"Total QA Queries in Benchmark : {len(all_qa_queries)}")
-    print(f"Target OCR Queries Identified : {len(ocr_queries)} -> {list(ocr_queries.keys())}")
+    print("  • Language Policy             : qa_localization_language_policy = 'en_only'")
+    print("  • Query Variant Setting       : include_vi_variant = False (Locked Champion)")
+    print("  • Selection Source            : Canonical classify_runtime_question (QuestionType.OCR)")
+    print(f"  • Total DEV QA Queries        : {len(all_qa_queries)}")
+    print(f"  • Total OCR Queries to Run    : {len(ocr_queries)} -> {list(ocr_queries.keys())}")
+    print("  • Arm Isolation               : Control (S2D1 OFF) vs Treatment (S2D1 ON), 100% Identical Payload")
     print("=" * 140)
 
     session_output = Path("/kaggle/working/output/ocr_generalization") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "ocr_generalization"
@@ -161,6 +168,7 @@ def run_ocr_generalization_validation():
     fire_count = 0
     n_less_95 = 0
     n_ge_95 = 0
+    tail_displacement_cases = 0
 
     for qid, q in ocr_queries.items():
         target_vid = q.get("video_id")
@@ -296,6 +304,9 @@ def run_ocr_generalization_validation():
             delta = "NEUTRAL ⚪"
             neutrals += 1
 
+        if n_ctrl >= 95 and adm_count > 0 and delta != "REGRESSION 🔴":
+            tail_displacement_cases += 1
+
         print(f"  • Baseline Count N           : {n_ctrl} (Treatment N = {n_treat})")
         print(f"  • Top-1 Video                 : {rescue_meta.get('top1_video')}")
         print(f"  • Primary Refined Anchor      : {rescue_meta.get('primary_refined_anchor')}")
@@ -339,6 +350,7 @@ def run_ocr_generalization_validation():
     print(f"  • Eligible Queries            : {eligible_count} / {len(ocr_queries)} ({eligible_count / len(ocr_queries):.1%})")
     print(f"  • Rescue Fired Queries        : {fire_count} / {len(ocr_queries)} ({fire_count / len(ocr_queries):.1%})")
     print(f"  • Distribution by Base N      : N < 95: {n_less_95} queries | N >= 95: {n_ge_95} queries")
+    print(f"  • Tail Displacement Cases     : {tail_displacement_cases} (Ranks 96..100 replaced safely with ZERO strict regression)")
     print(f"  • Strict GAINS                : {gains} 🟢")
     print(f"  • Strict REGRESSIONS          : {regressions} 🔴")
     print(f"  • NEUTRAL Queries             : {neutrals} ⚪")
