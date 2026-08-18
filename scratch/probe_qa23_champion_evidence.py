@@ -1,5 +1,5 @@
 # ==============================================================================================================
-# QA-23 Champion Evidence Diagnostic Probe
+# Comprehensive QA-23 Evidence & OCR Audit Probe (Tracing Canonical In-GT Frame 29018)
 # ==============================================================================================================
 
 import json
@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+import numpy as np
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -23,9 +24,12 @@ from system_tai.qa.grounding import (
     QA_CANDIDATE_ORDER_ROUND_ROBIN,
     QAVideoConditionedEvidenceConfig,
 )
+from system_tai.qa.models import QAEvidenceCandidate
 from system_tai.qa.object_provider import ObjectAnswerProviderConfig
 from system_tai.qa.ocr_provider import OCRAnswerProviderConfig
+from system_tai.qa.question_types import QuestionType
 from system_tai.qa.visual_ontology import VisualOntologyConfig
+from system_tai.refinement.video import DecodeRequest
 
 
 def resolve_ocr_config() -> OCRAnswerProviderConfig:
@@ -53,7 +57,7 @@ def resolve_ocr_config() -> OCRAnswerProviderConfig:
     )
 
 
-def run_qa23_probe():
+def run_qa23_deep_audit():
     benchmark_path = REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "l21_150_diagnostic" / "benchmark.json"
     sidecar_path = REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "l21_150_diagnostic" / "qa_dev_translations_en.json"
     ontology_path = REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "l21_150_diagnostic" / "qa_dev_visual_ontology.json"
@@ -69,6 +73,8 @@ def run_qa23_probe():
     q = all_qa_queries["QA-23"]
     q_vi = q.get("question_vi", "")
     q_en = en_map.get("QA-23", "")
+    start_f, end_f = int(q["proposed_interval"][0]), int(q["proposed_interval"][1])
+    gt_answers = q.get("accepted_answers", [])
 
     evidence_config = QAVideoConditionedEvidenceConfig(
         enabled=True,
@@ -140,41 +146,85 @@ def run_qa23_probe():
     with open(diag_file, encoding="utf-8") as f:
         diags = json.load(f)
 
-    print("\n" + "=" * 100)
-    print("QA-23 CANONICAL CHAMPION AUDIT TELEMETRY")
-    print("=" * 100)
+    print("\n" + "=" * 120)
+    print(f"QA-23 CANONICAL EVIDENCE & OCR AUDIT (GT: [{start_f}..{end_f}], Accepted: {gt_answers})")
+    print("=" * 120)
 
+    # 1. Selected Videos
     sel_vids = diags.get("selected_video_ids", [])
-    print(f"\n1. Selected Videos (Count: {len(sel_vids)}):")
-    for rank, vid in enumerate(sel_vids, 1):
-        print(f"   Rank {rank:2d}: {vid}")
-
     top1_vid = sel_vids[0] if sel_vids else None
-    print(f"\n2. Top-1 Nominated Video: {top1_vid}")
+    print(f"\n1. Top-1 Nominated Video: {top1_vid}")
 
-    # Inspect temporal seed candidates
-    temporal_seeds = diags.get("temporal_seed_candidates", [])
-    print(f"\n3. Temporal Seed Candidates (Count: {len(temporal_seeds)}):")
-    for s in temporal_seeds:
-        if s.get("video_id") == top1_vid:
-            print(f"   • Top-1 Seed: video={s.get('video_id')}, frame={s.get('frame_id')}, nomination_rank={s.get('video_nomination_rank')}, local_anchor_rank={s.get('local_anchor_rank')}")
-
-    # Inspect refined candidates
+    # 2. Refined candidates on Top-1
     refined_cands = diags.get("refined_candidates", [])
-    print(f"\n4. Refined Candidates for Top-1 ({top1_vid}) (Count: {len(refined_cands)}):")
-    for c in refined_cands:
-        if c.get("video_id") == top1_vid:
-            print(f"   • Candidate: orig_rank={c.get('original_rank')}, cand_frame={c.get('candidate_frame_id')}, refined_frame={c.get('refined_frame_id')}, status={c.get('status')}")
+    top1_refined = [c for c in refined_cands if c.get("video_id") == top1_vid]
+    print(f"\n2. ALL Refined Candidates on Top-1 ({top1_vid}) (Count: {len(top1_refined)}):")
+    for idx, c in enumerate(top1_refined, 1):
+        in_gt = (start_f <= int(c.get("refined_frame_id") or -1) <= end_f)
+        print(f"   [{idx}] orig_rank={c.get('original_rank')}, cand_frame={c.get('candidate_frame_id')}, refined_frame={c.get('refined_frame_id')}, status={c.get('status')} | In GT [{start_f}..{end_f}]? {'YES ✅' if in_gt else 'NO ❌'}")
 
-    # Inspect evidence records
+    # 3. ALL evidence records
     ev_records = diags.get("evidence", [])
-    print(f"\n5. Evidence Records for Top-1 ({top1_vid}) (Count: {len(ev_records)}):")
-    for e in ev_records:
-        if e.get("video_id") == top1_vid:
-            print(f"   • Evidence Record: rank={e.get('rank')}, cand_frame={e.get('candidate_frame_id')}, output_frame={e.get('output_frame_id')}, status={e.get('refinement_status')}, answer={e.get('answer')}, skip={e.get('skip_reason')}")
+    print(f"\n3. ALL Evidence Records in diagnostics['evidence'] (Total: {len(ev_records)}):")
+    for idx, e in enumerate(ev_records, 1):
+        is_top1 = (e.get("video_id") == top1_vid)
+        in_gt = (start_f <= int(e.get("output_frame_id") or e.get("candidate_frame_id") or -1) <= end_f)
+        print(f"   [{idx:2d}] rank={e.get('rank')}, video={e.get('video_id')}, cand_frame={e.get('candidate_frame_id')}, out_frame={e.get('output_frame_id')}, status={e.get('refinement_status')}, ans='{e.get('answer')}', skip={e.get('skip_reason')} | Top1? {is_top1} | In GT? {in_gt}")
 
-    print("\n" + "=" * 100)
+    # 4. OCR Frames Requested & Processed
+    ocr_req_count = diags.get("ocr_frames_requested", 0)
+    print(f"\n4. OCR Stage Telemetry:")
+    print(f"   • OCR Frames Requested (Budget): {ocr_req_count}")
+    print(f"   • OCR Languages: {diags.get('ocr_languages')}")
+    print(f"   • OCR Predictions Count: {len(diags.get('ocr_predictions', []))}")
+    print(f"   • OCR Predictions: {diags.get('ocr_predictions')}")
+
+    # 5. Dedicated In-GT Frame 29018 Direct OCR Diagnostic
+    print("\n" + "=" * 120)
+    print(f"5. DIRECT OCR EVALUATION ON CANONICAL IN-GT FRAME 29018")
+    print("=" * 120)
+
+    try:
+        video_record = runtime.qa_pipeline.raw_video_registry.get(top1_vid)
+        probe = runtime.qa_pipeline.decoder.probe(video_record)
+        dec_req = DecodeRequest(probe=probe, frame_ids=(29018,), max_decoded_frames=100)
+        dec_res = runtime.qa_pipeline.decoder.decode(dec_req)
+
+        if dec_res.frames:
+            decoded_29018 = dec_res.frames[0]
+            print(f"   • Successfully decoded frame 29018 from raw video {top1_vid} (timestamp={decoded_29018.timestamp_seconds:.2f}s)")
+
+            # Call OCR Answer Provider directly on 29018
+            ev_cand = QAEvidenceCandidate(
+                query_id="QA-23",
+                rank=1,
+                video_id=top1_vid,
+                frame_id=29018,
+                retrieval_score=1.0,
+                source_status="CANONICAL_REFINED_IN_GT",
+            )
+            ocr_res, ocr_tel = runtime.qa_pipeline.ocr_answer_provider.answer(
+                query_id="QA-23",
+                question_type=QuestionType.OCR,
+                evidence=((ev_cand, decoded_29018.image),),
+                output_top_k=1,
+                warnings=[],
+            )
+
+            preds = ocr_res.predictions
+            ans_29018 = preds[0].answer if preds else None
+            is_match = (ans_29018 and any(gt in ans_29018.lower() for gt in ["dior"]))
+
+            print(f"   • Direct OCR Raw Prediction on Frame 29018: '{ans_29018}'")
+            print(f"   • OCR Telemetry on 29018: {ocr_tel.get('ocr_predictions')}")
+            print(f"   • Accepted GT Match? {'YES ✅ (STRICT HIT PROVEN)' if is_match else 'NO ❌ (TRUE OCR ANSWER MISS)'}")
+        else:
+            print("   • Failed to decode frame 29018 (empty frames returned)")
+    except Exception as exc:
+        print(f"   • Exception during direct 29018 evaluation: {exc}")
+
+    print("=" * 120)
 
 
 if __name__ == "__main__":
-    run_qa23_probe()
+    run_qa23_deep_audit()
