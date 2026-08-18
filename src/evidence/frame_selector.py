@@ -137,6 +137,7 @@ class FrameSelector:
         """
         selections: Dict[int, Optional[SearchResult]] = {}
         last_pts: float = -1.0
+        used_keyframe_ids = set()
 
         for event_id in sorted(event_results.keys()):
             candidates = event_results[event_id]
@@ -146,26 +147,38 @@ class FrameSelector:
                 continue
 
             if not enforce_temporal_order:
-                selections[event_id] = candidates[0]
+                # Pick top candidate not already used
+                chosen = next((c for c in candidates if c.keyframe_id not in used_keyframe_ids), candidates[0])
+                selections[event_id] = chosen
+                used_keyframe_ids.add(chosen.keyframe_id)
                 continue
 
-            # Pick the best candidate that is temporally after the previous event
+            # Pick the best candidate that is temporally after the previous event (+0.5s gap) and not already used
             chosen = None
             for c in candidates:
-                if c.pts_time > last_pts:
+                if c.pts_time > (last_pts + 0.5) and c.keyframe_id not in used_keyframe_ids:
                     chosen = c
                     break
 
             if chosen is None:
-                # Fallback: relax constraint and take the best regardless
-                logger.warning(
-                    f"[FrameSelector] Temporal constraint violated for event {event_id}. "
-                    f"Falling back to best candidate (pts={candidates[0].pts_time:.2f}s, "
-                    f"prev_pts={last_pts:.2f}s)"
-                )
+                # Fallback 1: Any candidate after last_pts not already used
+                for c in candidates:
+                    if c.pts_time > last_pts and c.keyframe_id not in used_keyframe_ids:
+                        chosen = c
+                        break
+
+            if chosen is None:
+                # Fallback 2: Any unused candidate
+                for c in candidates:
+                    if c.keyframe_id not in used_keyframe_ids:
+                        chosen = c
+                        break
+
+            if chosen is None:
                 chosen = candidates[0]
 
             selections[event_id] = chosen
-            last_pts = chosen.pts_time
+            used_keyframe_ids.add(chosen.keyframe_id)
+            last_pts = max(last_pts, chosen.pts_time)
 
         return selections

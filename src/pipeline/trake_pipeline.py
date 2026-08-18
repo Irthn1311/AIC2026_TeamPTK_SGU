@@ -121,9 +121,9 @@ class TRAKEPipeline:
         self._vlm        = vlm_client
         self._selector   = FrameSelector()
 
-        self.enable_vlm_verify       = enable_vlm_verify and (vlm_client is not None)
-        self.top_k_videos            = top_k_videos
-        self.top_k_frames_per_event  = top_k_frames_per_event
+        # Initialize QueryParser for Vi ➔ En event translation
+        from src.reasoning.query_parser import QueryParser
+        self._parser = QueryParser()
 
     # ----------------------------------------------------------
     # Main Entry
@@ -138,6 +138,7 @@ class TRAKEPipeline:
         Execute the full TRAKE pipeline.
 
         Returns TRAKESubmission or None if no candidates found.
+        Guarantees zero duplicate frames across events.
         """
         logger.info(
             f"[TRAKE] query_id='{query_id}' | activity='{trake_query.activity_name}' "
@@ -178,19 +179,27 @@ class TRAKEPipeline:
             f"(score={best.total_score:.3f}, {best.n_events_found} events found)"
         )
 
-        # Build submission
+        # Build submission with STRICT DEDUPLICATION and MONOTONIC TEMPORAL ORDERING
         events = []
+        used_frame_indices = set()
         last_valid_fidx = 0
+
         for event in trake_query.event_sequence:
             ev_id = event.event_id
             frame = best.event_frames.get(ev_id)
-            if frame is not None and frame.frame_idx > 0:
-                last_valid_fidx = frame.frame_idx
+            
+            if frame is not None and frame.frame_idx > 0 and frame.frame_idx not in used_frame_indices:
                 f_idx = frame.frame_idx
                 pts = frame.pts_time
             else:
-                f_idx = last_valid_fidx if last_valid_fidx > 0 else 1
+                # Fallback: Find next available distinct frame index in video
+                f_idx = last_valid_fidx + 25 if last_valid_fidx > 0 else 1
+                while f_idx in used_frame_indices:
+                    f_idx += 25
                 pts = 0.0
+
+            used_frame_indices.add(f_idx)
+            last_valid_fidx = f_idx
 
             events.append(TRAKEEventResult(
                 event_id=ev_id,
@@ -210,35 +219,33 @@ class TRAKEPipeline:
 
     def _phase1_video_retrieval(self, trake_query: TRAKEQuery) -> List[str]:
         """
-        Build a COMPACT composite query from activity + event names only.
-
-        Rationale: CLIP embedding quality degrades with very long text.
-        Using only activity name + short event names gives cleaner signal.
-        Full descriptions are used in Phase 2 for per-event alignment.
+        Build a COMPACT composite query from translated activity + event names.
+        Translates all Vietnamese event names to English prior to CLIP encoding.
         """
-        # Compact query: activity name + event names (NOT descriptions)
-        parts = [trake_query.activity_name]
+        en_activity = self._parser.translate_vi_sentence(trake_query.activity_name)
+        parts = [en_activity]
+        
         for ev in trake_query.event_sequence:
-            parts.append(ev.event_name)  # Short name, e.g. "Giậm nhảy"
+            en_ev_name = self._parser.translate_vi_sentence(ev.event_name)
+            parts.append(en_ev_name)
 
-        # Add sport category if available
         if trake_query.sport_category:
             parts.insert(0, trake_query.sport_category)
 
         compact_query = " ".join(parts)
 
-        # Also build a description-based query for second retrieval
-        desc_parts = [trake_query.activity_name]
-        for ev in trake_query.event_sequence[:2]:  # Only first 2 events to avoid dilution
-            desc_parts.append(ev.description)
+        # Description query translated to English
+        desc_parts = [en_activity]
+        for ev in trake_query.event_sequence[:2]:
+            en_desc = self._parser.translate_vi_sentence(ev.description)
+            desc_parts.append(en_desc)
         desc_query = ". ".join(desc_parts)
 
-        logger.debug(f"[TRAKE Phase1] compact='{compact_query}'")
-        logger.debug(f"[TRAKE Phase1] desc='{desc_query[:100]}'")
+        logger.debug(f"[TRAKE Phase1] compact_en='{compact_query}'")
+        logger.debug(f"[TRAKE Phase1] desc_en='{desc_query[:100]}'")
 
         global_top_k = min(self.top_k_videos * 100, 500)
 
-        # target_prefix disabled — always search full database
         vis_results_compact = self._vis_ret.retrieve(compact_query, top_k=global_top_k)
         vis_results_desc    = self._vis_ret.retrieve(desc_query,    top_k=global_top_k)
 
@@ -282,8 +289,10 @@ class TRAKEPipeline:
         sorted_events = sorted(trake_query.event_sequence, key=lambda e: e.event_id)
 
         for ev in sorted_events:
-            # Build event-specific CLIP query (description + hint for best specificity)
-            event_query = f"{ev.description}. {ev.semantic_keyframe_hint}"
+            # Build event-specific CLIP query translated to English
+            en_desc = self._parser.translate_vi_sentence(ev.description)
+            en_hint = self._parser.translate_vi_sentence(ev.semantic_keyframe_hint) if ev.semantic_keyframe_hint else ""
+            event_query = f"A photo of {en_desc}. {en_hint}".strip()
             query_vec = self._encoder.encode_text(event_query, normalize=True)
 
             # Search within this video only
