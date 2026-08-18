@@ -166,7 +166,7 @@ def parse_tesseract_tsv(payload: bytes) -> tuple[OCRDetection, ...]:
         text = payload.decode("utf-8", errors="strict")
     except UnicodeDecodeError as exc:
         raise OCRInferenceError("Tesseract TSV is not valid UTF-8") from exc
-    reader = csv.DictReader(io.StringIO(text), delimiter="\t")
+    reader = csv.DictReader(io.StringIO(text), delimiter="\t", quoting=csv.QUOTE_NONE)
     if tuple(reader.fieldnames or ()) != _TSV_FIELDS:
         raise OCRInferenceError("unexpected Tesseract TSV header")
     grouped: dict[

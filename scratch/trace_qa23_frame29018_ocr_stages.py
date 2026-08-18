@@ -218,7 +218,7 @@ def run_trace():
             refined_frame_id=29237,
             initial_score=0.9,
             refined_score=0.95,
-            status=RefinementStatus.SUCCESS,
+            status=RefinementStatus.REFINED,
         ),
         RefinedCandidate(
             video_id=target_vid,
@@ -226,7 +226,7 @@ def run_trace():
             refined_frame_id=29018,
             initial_score=0.85,
             refined_score=0.92,
-            status=RefinementStatus.SUCCESS,
+            status=RefinementStatus.REFINED,
         ),
     ]
 
@@ -289,14 +289,29 @@ def run_trace():
         print(f"  • First 500 chars repr        :\n{repr(str(rank60_pred['answer'])[:500])}")
 
     # =========================================================================
+    # OFFICIAL EVALUATION OF QA-23 RANK 60
+    # =========================================================================
+    from system_tai.quality.l21_150_answers import answer_matches, normalize_answer
+    accepted = ("dior",)
+    is_official_match = False
+    if rank60_pred and rank60_pred.get("video_id") == target_vid and (28975 <= int(rank60_pred.get("frame_id", -1)) <= 29025):
+        ans_str = str(rank60_pred.get("answer", ""))
+        is_official_match = answer_matches(ans_str, accepted)
+        print("\n" + "=" * 100)
+        print("OFFICIAL EVALUATION RESULT (QA-23 RANK 60):")
+        print("=" * 100)
+        print(f"  • Raw Prediction Answer       : {repr(ans_str)}")
+        print(f"  • Normalized Prediction       : {repr(normalize_answer(ans_str))}")
+        print(f"  • Accepted Answers            : {accepted}")
+        print(f"  • Official answer_matches()   : {'STRICT HIT ✅' if is_official_match else 'NO HIT ❌'}")
+
+    # =========================================================================
     # DIAGNOSTIC CONCLUSION
     # =========================================================================
     print("\n" + "=" * 100)
     print("DIAGNOSTIC CONCLUSION")
     print("=" * 100)
-    if has_meta_B:
-        conclusion = "RAW_TSV_LEAK_IN_PROVIDER"
-    elif has_meta_C:
+    if has_meta_B or has_meta_C:
         conclusion = "RAW_TSV_LEAK_IN_PROVIDER"
     elif has_meta_D:
         conclusion = "RAW_TSV_LEAK_IN_S2D1"
@@ -306,6 +321,7 @@ def run_trace():
         conclusion = "CLEAN_LINE_LEVEL_END_TO_END"
 
     print(f"  • Required Audit Conclusion  : {conclusion}")
+    print(f"  • Official Strict Hit Status : {'STRICT HIT @60' if is_official_match else 'NO HIT (Granularity investigation required)'}")
     print("=" * 100)
 
 

@@ -239,6 +239,37 @@ def test_tesseract_tsv_line_parsing_and_conservative_normalization() -> None:
     assert normalize_ocr_text("  Giá\u00a0 50.000 ") == "giá 50.000"
 
 
+def test_parse_tesseract_tsv_handles_quotes_and_multiple_lines_without_leak() -> None:
+    # Representative Tesseract TSV containing literal double quotes in text
+    payload = (
+        "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n"
+        "5\t1\t1\t1\t1\t1\t89\t36\t85\t47\t70.0\t&\n"
+        "5\t1\t1\t1\t1\t2\t189\t28\t87\t31\t92.0\tCHƯƠNG\n"
+        '5\t1\t1\t1\t1\t3\t1247\t55\t5\t3\t27.0\t"\n'
+        "5\t1\t1\t1\t2\t1\t140\t58\t25\t14\t48.0\tCD\n"
+        "5\t1\t1\t1\t14\t1\t144\t587\t47\t56\t85.0\tA\n"
+        "5\t1\t1\t1\t14\t2\t199\t585\t93\t35\t21.0\tTV\n"
+        "5\t1\t1\t1\t14\t3\t401\t593\t60\t19\t92.0\tDIOR\n"
+        "5\t1\t1\t1\t14\t4\t470\t593\t89\t19\t91.0\tTRƯNG\n"
+        "5\t1\t1\t1\t14\t5\t569\t587\t49\t24\t89.0\tBÀY\n"
+    ).encode()
+    detections = parse_tesseract_tsv(payload)
+
+    # Must produce separate detections per line, not swallow subsequent lines into quote
+    assert len(detections) == 3
+    # Line 1: '& CHƯƠNG "'
+    assert detections[0].text == '& CHƯƠNG "'
+    # Line 2: 'CD'
+    assert detections[1].text == "CD"
+    # Line 14: 'A TV DIOR TRƯNG BÀY'
+    assert detections[2].text == "A TV DIOR TRƯNG BÀY"
+    # Assert no TSV numeric metadata leaks into any detection text
+    for d in detections:
+        assert "\t" not in d.text
+        assert "5\t1\t1" not in d.text
+        assert "conf" not in d.text
+
+
 def test_tesseract_backend_fails_closed_without_executable() -> None:
     with pytest.raises(OCRBackendUnavailableError, match="executable not found"):
         TesseractCLIBackend(
