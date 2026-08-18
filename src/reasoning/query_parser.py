@@ -762,6 +762,13 @@ class QueryParser:
         text = raw_text.strip()
         lowered = text.lower()
 
+        # If query is already native English, return immediately without applying Vi-En translation or leak filters
+        vi_chars = set("àáảãạăắặằẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđ")
+        has_vi_diacritics = any(c in vi_chars for c in lowered)
+        lang_mix = _normalizer.detect_language_mix(text)
+        if not has_vi_diacritics and lang_mix.get("en", 0.0) >= 0.5:
+            return text
+
         # Step 1: Phrase substitution
         for vi_phrase, en_phrase in sorted_dict:
             if vi_phrase in lowered:

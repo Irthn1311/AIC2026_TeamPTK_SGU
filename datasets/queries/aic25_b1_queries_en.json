@@ -1,0 +1,433 @@
+[
+  {
+    "query_id": "q001_kis_01",
+    "type": "textual_kis",
+    "target_prefix": "L21",
+    "text": "A large forest fire at night, flames spreading along the hillside with thick smoke covering the sky."
+  },
+  {
+    "query_id": "q002_kis_02",
+    "type": "textual_kis",
+    "target_prefix": "L21",
+    "text": "A man squatting beside a white water jet spraying strongly straight up from the ground in a rural area."
+  },
+  {
+    "query_id": "q003_kis_03",
+    "type": "textual_kis",
+    "target_prefix": "L21",
+    "text": "A silver-haired man wearing glasses speaking at a podium with an American flag and central bank symbol in the background."
+  },
+  {
+    "query_id": "q004_kis_04",
+    "type": "textual_kis",
+    "target_prefix": "L21",
+    "text": "A crowded alley with motorbikes and people, lined with many hanging Vietnamese flags."
+  },
+  {
+    "query_id": "q005_kis_05",
+    "type": "textual_kis",
+    "target_prefix": "L21",
+    "text": "A dilapidated ancient brick tower with green plants growing on the building structure."
+  },
+  {
+    "query_id": "q006_kis_06",
+    "type": "textual_kis",
+    "target_prefix": "L21",
+    "text": "An outdoor BMX skatepark at night with multiple skate ramps and bicycle graffiti on the wall."
+  },
+  {
+    "query_id": "q007_kis_07",
+    "type": "textual_kis",
+    "target_prefix": "L21",
+    "text": "A blue background graphic listing the number of open spillway gates of Hoa Binh, Son La, and Tuyen Quang hydroelectric reservoirs."
+  },
+  {
+    "query_id": "q008_kis_08",
+    "type": "textual_kis",
+    "target_prefix": "L21",
+    "text": "A close-up of a round basin containing many small silver fish."
+  },
+  {
+    "query_id": "q009_kis_09",
+    "type": "textual_kis",
+    "target_prefix": "L21",
+    "text": "A vintage red convertible car carrying multiple people driving through a crowd."
+  },
+  {
+    "query_id": "q010_kis_10",
+    "type": "textual_kis",
+    "target_prefix": "L21",
+    "text": "A female wearing a patterned blue shirt being interviewed with packaged products and certificates in the background."
+  },
+  {
+    "query_id": "q011_kis_11",
+    "type": "textual_kis",
+    "target_prefix": "L21",
+    "text": "A man wearing a straw hat being interviewed near a rocky seashore."
+  },
+  {
+    "query_id": "q012_kis_12",
+    "type": "textual_kis",
+    "target_prefix": "L21",
+    "text": "An erupting volcano creating a massive plume of smoke against a blue sky background."
+  },
+  {
+    "query_id": "q013_kis_13",
+    "type": "textual_kis",
+    "target_prefix": "L21",
+    "text": "A female TV host wearing a beige or light pink shirt standing alone in a news studio."
+  },
+  {
+    "query_id": "q014_kis_14",
+    "type": "textual_kis",
+    "target_prefix": "L21",
+    "text": "A crowded food court market area with multiple cooking food stalls under a large canopy roof."
+  },
+  {
+    "query_id": "q015_qa_01",
+    "type": "qa",
+    "target_prefix": "L21",
+    "description": "Scene with a yellow and red warning sign",
+    "question": "What danger is the sign warning about?"
+  },
+  {
+    "query_id": "q016_qa_02",
+    "type": "qa",
+    "target_prefix": "L21",
+    "description": "Scene of a man wearing a striped shirt working with an official",
+    "question": "What is he sitting behind?"
+  },
+  {
+    "query_id": "q017_qa_03",
+    "type": "qa",
+    "target_prefix": "L21",
+    "description": "Scene of a person walking dogs on the street",
+    "question": "How many dogs are clearly visible?"
+  },
+  {
+    "query_id": "q018_qa_04",
+    "type": "qa",
+    "target_prefix": "L21",
+    "description": "Scene of a female TV host in studio standing next to a large screen",
+    "question": "What scene is displayed on the large screen next to the female MC?"
+  },
+  {
+    "query_id": "q019_qa_05",
+    "type": "qa",
+    "target_prefix": "L21",
+    "description": "Event scene on a stage",
+    "question": "What color jacket is the man standing near the center wearing?"
+  },
+  {
+    "query_id": "q020_qa_06",
+    "type": "qa",
+    "target_prefix": "L21",
+    "description": "Scene of a male MC in a news broadcast studio",
+    "question": "Is the male MC in the news studio wearing glasses?"
+  },
+  {
+    "query_id": "q021_qa_07",
+    "type": "qa",
+    "target_prefix": "L21",
+    "description": "Aerial top-down scene of operating agricultural equipment",
+    "question": "What type of terrain or area is the agricultural equipment operating on?"
+  },
+  {
+    "query_id": "q022_qa_08",
+    "type": "qa",
+    "target_prefix": "L21",
+    "description": "Scene of a birthday party featured in a news broadcast",
+    "question": "Which animal is the birthday party in the news broadcast held for?"
+  },
+  {
+    "query_id": "q023_qa_09",
+    "type": "qa",
+    "target_prefix": "L21",
+    "description": "Scene of a large heavy vehicle on the left side of the frame on a street",
+    "question": "What type of vehicle is the large heavy vehicle on the left side of the frame?"
+  },
+  {
+    "query_id": "q024_qa_10",
+    "type": "qa",
+    "target_prefix": "L21",
+    "description": "Scene of a person high above overlooking the city",
+    "question": "What is the person high above the city sitting on?"
+  },
+  {
+    "query_id": "q025_qa_11",
+    "type": "qa",
+    "target_prefix": "L21",
+    "description": "Scene of crops being harvested by machinery in a field",
+    "question": "What crop is being harvested by machinery in the scene?"
+  },
+  {
+    "query_id": "q026_trake_01",
+    "type": "trake",
+    "target_prefix": "L21",
+    "activity": "General news broadcast: wildfire, warning signs, and rescue",
+    "sport_category": "news",
+    "events": [
+      {
+        "id": 1,
+        "name": "Nighttime wildfire",
+        "description": "Large forest fire at night with flames spreading along the hillside and thick smoke covering the sky",
+        "hint": "Flames on hillside thick smoke at night"
+      },
+      {
+        "id": 2,
+        "name": "Landslide warning sign",
+        "description": "Yellow and red warning sign indicating landslide danger",
+        "hint": "Yellow red warning sign for landslide"
+      },
+      {
+        "id": 3,
+        "name": "Strong water jet spraying",
+        "description": "Man squatting beside a white water jet spraying strongly from the ground",
+        "hint": "White water jet spraying strongly straight up"
+      }
+    ]
+  },
+  {
+    "query_id": "q027_trake_02",
+    "type": "trake",
+    "target_prefix": "L21",
+    "activity": "General news broadcast: interviews, speeches, and current affairs",
+    "sport_category": "news",
+    "events": [
+      {
+        "id": 1,
+        "name": "Striped shirt man behind iron bars",
+        "description": "Man wearing a striped shirt working with an official sitting behind iron bars",
+        "hint": "Person wearing striped shirt behind iron bar frame"
+      },
+      {
+        "id": 2,
+        "name": "Speech in front of American flag",
+        "description": "Silver-haired man wearing glasses speaking at a podium with American flag in background",
+        "hint": "Silver-haired glasses podium American flag"
+      },
+      {
+        "id": 3,
+        "name": "Female MC with wildfire screen",
+        "description": "Large screen next to female MC displaying nighttime wildfire",
+        "hint": "Studio screen displaying wildfire"
+      }
+    ]
+  },
+  {
+    "query_id": "q028_trake_03",
+    "type": "trake",
+    "target_prefix": "L21",
+    "activity": "General news broadcast: from studio to nighttime city life",
+    "sport_category": "news",
+    "events": [
+      {
+        "id": 1,
+        "name": "Female MC standing beside wildfire screen",
+        "description": "Female MC in studio standing next to large screen displaying a wildfire",
+        "hint": "Female MC studio wildfire screen"
+      },
+      {
+        "id": 2,
+        "name": "Two dogs being walked",
+        "description": "Scene of a person walking two dogs clearly visible on the street",
+        "hint": "Walking two dogs on street"
+      },
+      {
+        "id": 3,
+        "name": "Red Cross rescue vehicle at night",
+        "description": "Rescue vehicle or Red Cross vehicle moving at night",
+        "hint": "Red Cross vehicle moving at night"
+      }
+    ]
+  },
+  {
+    "query_id": "q029_trake_04",
+    "type": "trake",
+    "target_prefix": "L21",
+    "activity": "Exploring urban life and historical monuments",
+    "sport_category": "culture",
+    "events": [
+      {
+        "id": 1,
+        "name": "Alley lined with Vietnamese flags",
+        "description": "Crowded alley with motorbikes lined on both sides with Vietnamese flags",
+        "hint": "Narrow alley with red flags"
+      },
+      {
+        "id": 2,
+        "name": "Stage event white jacket",
+        "description": "Stage event with a man wearing a white jacket",
+        "hint": "Stage man in white jacket"
+      },
+      {
+        "id": 3,
+        "name": "Ancient brick tower",
+        "description": "Dilapidated ancient brick tower with green plants growing on structure",
+        "hint": "Ancient brick tower with growing plants"
+      }
+    ]
+  },
+  {
+    "query_id": "q030_trake_05",
+    "type": "trake",
+    "target_prefix": "L21",
+    "activity": "Television journal: monuments, news studio, and agriculture",
+    "sport_category": "culture",
+    "events": [
+      {
+        "id": 1,
+        "name": "Ancient brick tower",
+        "description": "Dilapidated ancient brick tower with green plants growing on structure",
+        "hint": "Dilapidated ancient brick tower"
+      },
+      {
+        "id": 2,
+        "name": "Male MC wearing glasses",
+        "description": "Male MC in news broadcast studio wearing glasses",
+        "hint": "Male MC wearing glasses in studio"
+      },
+      {
+        "id": 3,
+        "name": "Agricultural machinery top-down",
+        "description": "Aerial view of agricultural machinery operating in the field",
+        "hint": "Agricultural machinery aerial top-down view"
+      }
+    ]
+  },
+  {
+    "query_id": "q031_trake_06",
+    "type": "trake",
+    "target_prefix": "L21",
+    "activity": "Youth lifestyle and action sports program",
+    "sport_category": "sports",
+    "events": [
+      {
+        "id": 1,
+        "name": "Male MC wearing glasses",
+        "description": "Male MC in studio wearing glasses giving a presentation",
+        "hint": "Male MC wearing glasses"
+      },
+      {
+        "id": 2,
+        "name": "Agricultural machine in crop field",
+        "description": "Agricultural machinery operating on row-planted crop fields",
+        "hint": "Agricultural machine on row crops"
+      },
+      {
+        "id": 3,
+        "name": "BMX skatepark at night",
+        "description": "Outdoor BMX skatepark at night with skate ramps and bicycle graffiti on wall",
+        "hint": "Skatepark at night bicycle graffiti"
+      }
+    ]
+  },
+  {
+    "query_id": "q032_trake_07",
+    "type": "trake",
+    "target_prefix": "L21",
+    "activity": "Environmental news summary and nature feature",
+    "sport_category": "nature",
+    "events": [
+      {
+        "id": 1,
+        "name": "Hippopotamus birthday party",
+        "description": "Birthday party in news broadcast held for a hippopotamus",
+        "hint": "Hippopotamus birthday party"
+      },
+      {
+        "id": 2,
+        "name": "Hydroelectric spillway graphic",
+        "description": "Blue background graphic chart listing open spillway gates of hydroelectric dams",
+        "hint": "Blue background graphic hydroelectric dam"
+      },
+      {
+        "id": 3,
+        "name": "Basin of small silver fish",
+        "description": "Close-up of a round basin filled with many small silver fish",
+        "hint": "Round basin with silver fish"
+      }
+    ]
+  },
+  {
+    "query_id": "q033_trake_08",
+    "type": "trake",
+    "target_prefix": "L21",
+    "activity": "City pulse travel journey",
+    "sport_category": "city",
+    "events": [
+      {
+        "id": 1,
+        "name": "Basin full of silver fish",
+        "description": "Round basin containing many small silver fish",
+        "hint": "Round basin containing silver fish"
+      },
+      {
+        "id": 2,
+        "name": "Large truck on street",
+        "description": "Large heavy truck vehicle on the left side of the frame",
+        "hint": "Truck vehicle on left side of street"
+      },
+      {
+        "id": 3,
+        "name": "Vintage red convertible",
+        "description": "Vintage red convertible car carrying multiple people driving through crowd",
+        "hint": "Vintage red convertible carrying people"
+      }
+    ]
+  },
+  {
+    "query_id": "q034_trake_09",
+    "type": "trake",
+    "target_prefix": "L21",
+    "activity": "Amusement zone and urban traffic",
+    "sport_category": "city",
+    "events": [
+      {
+        "id": 1,
+        "name": "Large truck on road",
+        "description": "Large heavy truck vehicle on the left side of the frame",
+        "hint": "Large truck street"
+      },
+      {
+        "id": 2,
+        "name": "Vintage red convertible",
+        "description": "Vintage red convertible car carrying people through crowd",
+        "hint": "Vintage red convertible car"
+      },
+      {
+        "id": 3,
+        "name": "Person on high swing",
+        "description": "Person high above overlooking the city sitting on a swing",
+        "hint": "Person sitting on swing high above city"
+      }
+    ]
+  },
+  {
+    "query_id": "q035_trake_10",
+    "type": "trake",
+    "target_prefix": "L21",
+    "activity": "Agricultural documentary and coastal lifestyle",
+    "sport_category": "agri",
+    "events": [
+      {
+        "id": 1,
+        "name": "Rice harvester machine",
+        "description": "Rice crop being harvested by combine harvester machine in field",
+        "hint": "Combine harvester machine in field"
+      },
+      {
+        "id": 2,
+        "name": "Woman in patterned blue shirt",
+        "description": "Woman wearing a patterned blue shirt being interviewed with packaged products behind",
+        "hint": "Woman in blue shirt interview with products"
+      },
+      {
+        "id": 3,
+        "name": "Man wearing straw hat",
+        "description": "Man wearing straw hat being interviewed near rocky seashore",
+        "hint": "Man in straw hat seashore"
+      }
+    ]
+  }
+]
