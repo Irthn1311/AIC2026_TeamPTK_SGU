@@ -1,0 +1,36 @@
+experiment: TRIAGE_BCF1_PROTECTED_LATE_FUSION
+version: "0.1"
+scope: DIAGNOSTIC_ONLY
+benchmarks:
+  - DEV_CROSS_60
+  - DEV_L21_150
+policy:
+  name: A0_TOP5_PROTECTED_EQUAL_RRF60_LATE_FUSION
+  candidate_space: FINAL_PREDICTION_LISTS_ONLY
+  a0_protected_prefix: 5
+  rrf_k: 60
+  max_predictions: 100
+  weights: false
+  parameter_sweep: false
+  raw_score_fusion: false
+index:
+  reuse_required: true
+  rebuild_forbidden: true
+  rows: 177321
+  shape: [177321, 768]
+  dtype: float16
+  index_zip_sha256: e62ab0e7a92a265794b98ed1a54b57fcbba7e513ef03e49f0e541c707eec01bd
+  index_fingerprint: 59302ddb5fb8c4aaacc9d6945dd5e1f7c32705286f06fb0fd56493e177eaaaa3
+  vector_sha256: 9b7b5d157070a105ae9210420e29dfdba889184ec22e4579cbb2fba437eb9384
+  norm_sha256: b1d3914de250273e6659a973e3be93ac5589f41b5a694e2f8804fec8c5520fd4
+isolation:
+  queries_only_before_prediction: true
+  all_hashes_before_gt: true
+  sealed_access: false
+  event_graph: false
+  vlm: false
+  m1: false
+promotion:
+  allowed_classifications: [KEEP_FOR_MOCK, DROP_OR_HOLD]
+  automatic_production_promotion: false
+production_policy_changed: false
