@@ -1,16 +1,16 @@
 # ==============================================================================================================
-# Phase R3-S2A: Targeted Conversion Diagnostic (Full Champion Contract with Answer Providers)
+# Phase R3-S2A: Targeted Conversion Diagnostic (Canonical Scored Evidence Contract)
 # ==============================================================================================================
 
 import argparse
 import hashlib
 import json
-import math
 import os
+import shutil
+import subprocess
 import sys
 import time
 import unicodedata
-import shutil
 from collections import Counter
 from enum import StrEnum
 from pathlib import Path
@@ -121,7 +121,7 @@ def run_targeted_diagnostic(
     target_qids = selected_queries or DEFAULT_TARGETED_QUERIES
 
     print("=" * 125)
-    print("ROUND-3 SPRINT 2A: TARGETED 7-QUERY CONVERSION FORENSIC (EXACT CHAMPION FULL CONTRACT)")
+    print("ROUND-3 SPRINT 2A: TARGETED 7-QUERY CONVERSION FORENSIC (CANONICAL SCORED EVIDENCE CONTRACT)")
     print("=" * 125)
 
     benchmark_bytes = benchmark_path.read_bytes()
@@ -143,8 +143,8 @@ def run_targeted_diagnostic(
     en_map = {e["query_id"]: e.get("question_en", "") for e in en_sidecar.get("entries", [])}
     all_qa_queries = {q["query_id"]: q for q in bm_data["queries"] if q.get("task_type") == "qa"}
 
-    # 1. Bootstrap Runtime with Full Exact Champion R2G1 Configuration (including Answer Providers)
-    print("\n--- BOOTSTRAPPING CHAMPION RUNTIME ---")
+    # 1. Bootstrap Runtime with Full Exact Champion Configuration
+    print("\n--- BOOTSTRAPPING CHAMPION RUNTIME (SINGLE INSTANCE) ---")
     session_output = Path("/kaggle/working/output/targeted_diagnostic") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "targeted_diagnostic"
     session_output.mkdir(parents=True, exist_ok=True)
 
@@ -188,10 +188,12 @@ def run_targeted_diagnostic(
         qa_ocr_answer_provider_config=ocr_config,
         qa_object_answer_provider_config=object_config,
     )
-    runtime = OperationalKISRuntime.bootstrap(config)
-    print("Runtime bootstrapped successfully.")
 
-    # 2. Execute Targeted Queries with Exact Stage Logging
+    t_boot0 = time.time()
+    runtime = OperationalKISRuntime.bootstrap(config)
+    print(f"Runtime bootstrap completed in {time.time() - t_boot0:.2f}s.")
+
+    # 2. Execute Targeted Queries Sequentially in Same Process
     print("\n" + "=" * 125)
     print("EXECUTING TARGETED DIAGNOSTIC QUERIES")
     print("=" * 125)
@@ -242,65 +244,35 @@ def run_targeted_diagnostic(
                 except Exception as e:
                     print(f"      Warning reading {ev_file}: {e}")
 
-        # Stage A: Champion Nomination Pool
+        # Stage A: Nomination Pool
         selected_video_ids = diagnostics.get("selected_video_ids", [])
         if not selected_video_ids and preds:
             selected_video_ids = list(dict.fromkeys([p.get("video_id") for p in preds if p.get("video_id")]))
-        vid_rank_in_pool = selected_video_ids.index(target_vid) + 1 if target_vid in selected_video_ids else None
+        target_in_pool = target_vid in selected_video_ids
+        vid_rank_in_pool = selected_video_ids.index(target_vid) + 1 if target_in_pool else None
 
-        # Stage B: Evidence Bank Records (Exhaustive check across all diagnostic candidate representations)
-        evidence_records = diagnostics.get("evidence", [])
-        usable_candidates = diagnostics.get("usable_candidates", [])
-        keyframe_records = diagnostics.get("keyframe_evidence_candidates", [])
-        grounding_candidates = diagnostics.get("grounding_candidates", [])
-        generic_records = diagnostics.get("generic_evidence_bank_candidates", [])
+        # Stage B: Canonical Scored Pre-Top100 Evidence Records
+        scored_evidence = diagnostics.get("evidence", [])
+        target_evidence = [r for r in scored_evidence if r.get("video_id") == target_vid]
 
-        target_frames: list[int] = []
-        target_answers: list[tuple[int, list[str]]] = []
+        target_ev_records = []
+        for ev in target_evidence:
+            # Use candidate_frame_id or evidence_frame_id for frame matching (do NOT use output_frame_id)
+            f_id = ev.get("candidate_frame_id") or ev.get("evidence_frame_id") or ev.get("frame_id")
+            if f_id is not None:
+                ans = normalize_text(str(ev.get("answer", "")))
+                score = float(ev.get("answer_score", 0.0))
+                target_ev_records.append({"frame_id": int(f_id), "answer": ans, "score": score})
 
-        # Collect from evidence records
-        for ev in evidence_records:
-            if ev.get("video_id") == target_vid:
-                f_id = ev.get("output_frame_id") or ev.get("refined_frame_id") or ev.get("candidate_frame_id") or ev.get("frame_id")
-                if f_id is not None:
-                    target_frames.append(int(f_id))
-                    ans_list = [normalize_text(str(ev.get("answer")))] if ev.get("answer") else []
-                    target_answers.append((int(f_id), ans_list))
+        target_ev_frames = [r["frame_id"] for r in target_ev_records]
 
-        # Collect from usable candidates
-        for uc in usable_candidates:
-            if uc.get("video_id") == target_vid and uc.get("frame_id") is not None:
-                f_id = int(uc.get("frame_id"))
-                target_frames.append(f_id)
-                ans_list = [normalize_text(str(a)) for a in uc.get("answers", []) if a]
-                target_answers.append((f_id, ans_list))
+        # Target frames in final predictions
+        target_preds = [p for p in preds if p.get("video_id") == target_vid]
+        target_pred_frames = [int(p.get("frame_id", -1)) for p in target_preds if p.get("frame_id") is not None]
 
-        # Collect from keyframe evidence candidates
-        for kf in keyframe_records:
-            if kf.get("video_id") == target_vid and kf.get("frame_id") is not None:
-                target_frames.append(int(kf.get("frame_id")))
+        all_target_frames = list(dict.fromkeys(target_ev_frames + target_pred_frames))
 
-        # Collect from grounding candidates
-        for gc in grounding_candidates:
-            if gc.get("video_id") == target_vid and gc.get("frame_id") is not None:
-                target_frames.append(int(gc.get("frame_id")))
-
-        # Collect from generic evidence candidates
-        for gr in generic_records:
-            if gr.get("video_id") == target_vid and gr.get("frame_id") is not None:
-                target_frames.append(int(gr.get("frame_id")))
-
-        # Also collect from final predictions on target video
-        for p in preds:
-            if p.get("video_id") == target_vid and p.get("frame_id") is not None:
-                f_id = int(p.get("frame_id"))
-                target_frames.append(f_id)
-                if p.get("answer"):
-                    target_answers.append((f_id, [normalize_text(str(p.get("answer")))]))
-
-        target_frames = list(dict.fromkeys(target_frames))
-
-        # Check Final Top 100 hit
+        # Check Final Top 100 Strict Hit
         hit_rank = None
         hit_frame = None
         hit_ans = None
@@ -314,42 +286,43 @@ def run_targeted_diagnostic(
                 hit_ans = p_ans
                 break
 
-        # Classify Causal Bottleneck with Refined Taxonomy
-        in_gt_frames = [f for f in target_frames if start_f <= f <= end_f]
-        nearest_dist = min([abs(f - start_f) for f in target_frames] + [abs(f - end_f) for f in target_frames]) if target_frames else 999999
-        nearest_f = min(target_frames, key=lambda f: min(abs(f - start_f), abs(f - end_f))) if target_frames else None
+        # Classify Causal Bottleneck with Strict Ground-Truth Taxonomy
+        in_gt_ev_frames = [f for f in target_ev_frames if start_f <= f <= end_f]
+        in_gt_all_frames = [f for f in all_target_frames if start_f <= f <= end_f]
+        nearest_dist = min([abs(f - start_f) for f in all_target_frames] + [abs(f - end_f) for f in all_target_frames]) if all_target_frames else 999999
+        nearest_f = min(all_target_frames, key=lambda f: min(abs(f - start_f), abs(f - end_f))) if all_target_frames else None
+
+        valid_pre_top100 = [
+            r for r in target_ev_records
+            if start_f <= r["frame_id"] <= end_f and r["answer"] in gt_answers
+        ]
 
         if hit_rank is not None:
             stage_failure = FailureClass.STRICT_HIT
             forensic = f"STRICT HIT at Rank {hit_rank} (f={hit_frame}, ans='{hit_ans}') ✅"
-        elif target_vid not in selected_video_ids:
+        elif not target_in_pool:
             stage_failure = FailureClass.VIDEO_ABSENT
             pool_str = ", ".join(selected_video_ids)
             forensic = f"Target {target_vid} ABSENT from pool (Nominated 16: [{pool_str}])"
-        elif len(target_frames) == 0:
+        elif len(target_evidence) == 0 and len(target_preds) == 0:
             stage_failure = FailureClass.TARGET_VIDEO_NO_EVIDENCE
-            forensic = f"Target @Nomination Rank {vid_rank_in_pool}, but 0 target-video candidate frames materialized"
-        elif not in_gt_frames:
+            forensic = f"Target @Nomination Rank {vid_rank_in_pool}, but 0 target-video candidate frames in evidence/predictions"
+        elif len(in_gt_all_frames) == 0:
             stage_failure = FailureClass.TEMPORAL_MISS
-            forensic = f"Target @Nomination Rank {vid_rank_in_pool}, 0/{len(target_frames)} frames in GT. Nearest f={nearest_f} (dist={nearest_dist})"
+            forensic = f"Target @Nomination Rank {vid_rank_in_pool}, 0/{len(all_target_frames)} frames in GT. Nearest f={nearest_f} (dist={nearest_dist})"
         else:
-            # In-GT frame exists! Check answers produced
-            all_answers_on_in_gt = []
-            for f_id, ans_list in target_answers:
-                if start_f <= f_id <= end_f:
-                    all_answers_on_in_gt.extend(ans_list)
-            for p in preds:
-                if p.get("video_id") == target_vid and start_f <= int(p.get("frame_id", -1)) <= end_f:
-                    all_answers_on_in_gt.append(normalize_text(str(p.get("answer", ""))))
-
-            correct_answers = [a for a in all_answers_on_in_gt if a in gt_answers]
-            if not correct_answers:
-                stage_failure = FailureClass.ANSWER_MISS
-                unique_ans = list(set(all_answers_on_in_gt))[:3]
-                forensic = f"{len(in_gt_frames)} in-GT frames, but wrong answers: {unique_ans} (GT: {gt_answers})"
-            else:
+            # In-GT frame exists! Check if valid tuple existed pre-Top100
+            if len(valid_pre_top100) > 0:
                 stage_failure = FailureClass.ALLOCATION_MISS
-                forensic = f"Valid tuple existed pre-Top100, but dropped/ranked > 100"
+                top_valid = valid_pre_top100[0]
+                forensic = f"Valid tuple existed pre-Top100 (f={top_valid['frame_id']}, ans='{top_valid['answer']}'), but dropped/ranked > 100"
+            else:
+                stage_failure = FailureClass.ANSWER_MISS
+                # Collect answers on in-GT frames
+                ans_on_in_gt = [r["answer"] for r in target_ev_records if start_f <= r["frame_id"] <= end_f]
+                ans_on_in_gt += [normalize_text(str(p.get("answer", ""))) for p in target_preds if start_f <= int(p.get("frame_id", -1)) <= end_f]
+                unique_ans = list(set(ans_on_in_gt))[:3]
+                forensic = f"{len(in_gt_all_frames)} in-GT frames evaluated, but wrong answers: {unique_ans} (GT: {gt_answers})"
 
         classification_counts[stage_failure.value] += 1
         forensic_results.append({
@@ -358,8 +331,8 @@ def run_targeted_diagnostic(
             "target": target_vid,
             "gt_interval": f"[{start_f}..{end_f}]",
             "vid_rank": vid_rank_in_pool if vid_rank_in_pool is not None else "ABSENT",
-            "candidate_frames": len(target_frames),
-            "in_gt_frames": len(in_gt_frames),
+            "candidate_frames": len(all_target_frames),
+            "in_gt_frames": len(in_gt_all_frames),
             "nearest_frame": f"{nearest_f} (d={nearest_dist})" if nearest_f is not None else "None",
             "stage_failure": stage_failure.value,
             "forensic": forensic,
@@ -377,7 +350,7 @@ def run_targeted_diagnostic(
         print(f"{r['qid']:<8} | {r['branch']:<12} | {r['target']:<10} | {r['gt_interval']:<16} | {str(r['vid_rank']):<8} | {r['candidate_frames']:<8} | {r['in_gt_frames']:<6} | {mark} {r['stage_failure']:<24} | {r['time_s']}")
     print("=" * 125)
 
-    # 4. Strategic Decision Analysis
+    # 4. Strategic Decision Analysis (Guarded by Positive Control QA-46)
     print("\n" + "=" * 125)
     print("TARGETED CONVERSION SUMMARY & STRATEGY SELECTION")
     print("=" * 125)
@@ -386,20 +359,29 @@ def run_targeted_diagnostic(
         if count > 0:
             print(f"  {fc.value:<26}: {count} / {len(target_qids)} ({count/len(target_qids)*100:.1f}%)")
 
+    qa46_res = next((r for r in forensic_results if r["qid"] == "QA-46"), None)
+    qa46_passed = qa46_res is not None and qa46_res["stage_failure"] == FailureClass.STRICT_HIT.value
+
+    if not qa46_passed and "QA-46" in target_qids:
+        print("\n⚠️ SANITY GATE FAILED: Positive control QA-46 did not strict hit. Strategic recommendation suppressed.")
+        print("=" * 125)
+        return
+
     temp_count = classification_counts[FailureClass.TEMPORAL_MISS.value]
     no_ev_count = classification_counts[FailureClass.TARGET_VIDEO_NO_EVIDENCE.value]
     ans_count = classification_counts[FailureClass.ANSWER_MISS.value]
+    alloc_count = classification_counts[FailureClass.ALLOCATION_MISS.value]
     absent_count = classification_counts[FailureClass.VIDEO_ABSENT.value]
 
-    print("\n--- ACTIONABLE ROADMAP ---")
-    if (temp_count + no_ev_count) > ans_count:
-        print(f"🎯 DOMINANT BOTTLENECK IS TEMPORAL / EVIDENCE LOCALIZATION ({temp_count + no_ev_count}/{len(target_qids)} queries).")
+    print(f"\n--- ACTIONABLE ROADMAP (Positive Control QA-46: {'PASS' if qa46_passed else 'N/A'}) ---")
+    if (temp_count + no_ev_count) > (ans_count + alloc_count):
+        print(f"🎯 DOMINANT BOTTLENECK IS TEMPORAL LOCALIZATION ({temp_count + no_ev_count}/{len(target_qids)} queries).")
         print("   -> SPRINT 2A: Prioritize Temporal Localization Rescue (Multi-Anchor + Bounded Window Expansion).")
-    elif ans_count > (temp_count + no_ev_count):
-        print(f"🎯 DOMINANT BOTTLENECK IS ANSWER / VISUAL REASONING ({ans_count}/{len(target_qids)} queries).")
+    elif (ans_count + alloc_count) > (temp_count + no_ev_count):
+        print(f"🎯 DOMINANT BOTTLENECK IS ANSWER REASONING / RANKING ({ans_count + alloc_count}/{len(target_qids)} queries).")
         print("   -> SPRINT 2A: Prioritize Multi-Crop / Contextual Visual Answer Scorer / OCR Rescue.")
     else:
-        print(f"🎯 BALANCED BOTTLENECK: TEMPORAL ({temp_count + no_ev_count}) vs ANSWER ({ans_count}).")
+        print(f"🎯 BALANCED BOTTLENECK: TEMPORAL ({temp_count + no_ev_count}) vs ANSWER/ALLOCATION ({ans_count + alloc_count}).")
     print("=" * 125)
 
 
