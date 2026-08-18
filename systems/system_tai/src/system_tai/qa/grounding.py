@@ -52,10 +52,19 @@ class QAVideoConditionedEvidenceConfig:
     tier3_primary_first: bool = False
     tier3_negative_offset_first: bool = False
     count_far_alt_micro: bool = False
+    consensus_novel_rescue_enabled: bool = False
+    consensus_novel_rescue_max_videos: int = 1
+    consensus_novel_rescue_tail_budget: int = 5
 
     def __post_init__(self) -> None:
         if type(self.enabled) is not bool:
             raise ValueError("enabled must be a boolean")
+        if type(self.consensus_novel_rescue_enabled) is not bool:
+            raise ValueError("consensus_novel_rescue_enabled must be a boolean")
+        if type(self.consensus_novel_rescue_max_videos) is not int or self.consensus_novel_rescue_max_videos < 1:
+            raise ValueError("consensus_novel_rescue_max_videos must be an integer >= 1")
+        if type(self.consensus_novel_rescue_tail_budget) is not int or self.consensus_novel_rescue_tail_budget < 1:
+            raise ValueError("consensus_novel_rescue_tail_budget must be an integer >= 1")
         if type(self.secondary_temporal_micro_budget) is not bool:
             raise ValueError("secondary_temporal_micro_budget must be a boolean")
         if type(self.primary_11_12_micro_coverage) is not bool:

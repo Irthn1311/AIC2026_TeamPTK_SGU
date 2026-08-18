@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 
 from system_tai.features.query_encoder import SharedOpenAIClipEncoder
+from system_tai.preliminary.schemas import QAPrediction
 from system_tai.preliminary.validation import validate_ranked_top100
 from system_tai.refinement.engine import ExactFrameRefiner, QueryRefinementOutcome
 from system_tai.refinement.models import (
@@ -1795,6 +1796,83 @@ class QARuntimePipeline:
 
         evidence_records.sort(key=lambda r: r["rank"])
         store_evidence_records()
+
+        # Step 6 (Optional Sprint 2B.1): Consensus Novel Video Rescue (Default OFF)
+        if self.video_conditioned_evidence_config.consensus_novel_rescue_enabled:
+            from system_tai.qa.consensus_rescue import execute_sidepath_consensus_rescue
+            raw_base_predictions = [
+                {
+                    "rank": p.rank,
+                    "video_id": p.video_id,
+                    "frame_id": p.frame_id,
+                    "answer": p.answer,
+                }
+                for p in qa_result.predictions
+            ]
+            merged_preds_dict, rescue_outcome, rescue_ev_records, admitted_tuples = (
+                execute_sidepath_consensus_rescue(
+                    request=request,
+                    q_type=q_type,
+                    champion_selected_video_ids=selected_video_ids,
+                    champion_predictions=raw_base_predictions,
+                    searcher=self.video_restricted_searcher,
+                    encoder=self.shared_encoder,
+                    decoder=self.decoder,
+                    raw_video_registry=self.raw_video_registry,
+                    candidate_provider=self.candidate_provider if not ocr_provider_supported else None,
+                    ocr_answer_provider=self.ocr_answer_provider if ocr_provider_supported else None,
+                    qa_engine=self.qa_engine,
+                    config=self.video_conditioned_evidence_config,
+                )
+            )
+            diagnostics["consensus_novel_rescue"] = {
+                "enabled": True,
+                "eligible": rescue_outcome.eligible,
+                "reason": rescue_outcome.reason,
+                "literal_top16": list(rescue_outcome.literal_top16),
+                "compact_top16": list(rescue_outcome.compact_top16),
+                "fused_top16": list(rescue_outcome.fused_top16),
+                "all_consensus_candidates": [
+                    {
+                        "video_id": c.video_id,
+                        "fused_rank": c.fused_rank,
+                        "literal_rank": c.literal_rank,
+                        "compact_rank": c.compact_rank,
+                    }
+                    for c in rescue_outcome.all_consensus_candidates
+                ],
+                "chosen_candidate": (
+                    {
+                        "video_id": rescue_outcome.chosen_candidate.video_id,
+                        "fused_rank": rescue_outcome.chosen_candidate.fused_rank,
+                        "literal_rank": rescue_outcome.chosen_candidate.literal_rank,
+                        "compact_rank": rescue_outcome.chosen_candidate.compact_rank,
+                    }
+                    if rescue_outcome.chosen_candidate
+                    else None
+                ),
+                "rescue_evidence_frames": [r.get("candidate_frame_id") for r in rescue_ev_records],
+                "rescue_answers": [r.get("answer") for r in rescue_ev_records],
+                "admitted_tail_tuples": admitted_tuples,
+                "tail_rows_changed": len(admitted_tuples),
+            }
+            if admitted_tuples:
+                qa_result = dataclasses.replace(
+                    qa_result,
+                    predictions=tuple(
+                        QAPrediction(
+                            query_id=request.query_id,
+                            rank=item["rank"],
+                            video_id=item["video_id"],
+                            frame_id=int(item["frame_id"]),
+                            answer=str(item["answer"]),
+                        )
+                        for item in merged_preds_dict
+                    ),
+                )
+                evidence_records.extend(rescue_ev_records)
+                store_evidence_records()
+
         diagnostics["final_predictions"] = [
             {
                 "rank": prediction.rank,

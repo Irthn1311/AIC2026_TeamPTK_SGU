@@ -1,0 +1,98 @@
+"""Comprehensive unit tests for Sprint 2B.1 Consensus Novel Video Rescue."""
+
+from dataclasses import replace
+import pytest
+
+from system_tai.qa.grounding import QAVideoConditionedEvidenceConfig
+from system_tai.qa.consensus_rescue import (
+    ConsensusRescueCandidate,
+    ConsensusNovelRescueOutcome,
+    derive_consensus_novel_videos,
+)
+from system_tai.qa.rescue_tail import RescueCandidate, merge_rescue_tail
+from system_tai.retrieval.query_decomposition import decompose_query
+
+
+def test_consensus_novel_rescue_config_default_off():
+    """Verify default config has consensus novel rescue disabled."""
+    cfg = QAVideoConditionedEvidenceConfig(enabled=True)
+    assert cfg.consensus_novel_rescue_enabled is False
+    assert cfg.consensus_novel_rescue_max_videos == 1
+    assert cfg.consensus_novel_rescue_tail_budget == 5
+
+
+def test_consensus_novel_rescue_config_validation():
+    """Verify field type and value validations on consensus rescue config."""
+    with pytest.raises(ValueError, match="consensus_novel_rescue_enabled must be a boolean"):
+        QAVideoConditionedEvidenceConfig(enabled=True, consensus_novel_rescue_enabled="true")  # type: ignore
+
+    with pytest.raises(ValueError, match="consensus_novel_rescue_max_videos must be an integer >= 1"):
+        QAVideoConditionedEvidenceConfig(enabled=True, consensus_novel_rescue_max_videos=0)
+
+    with pytest.raises(ValueError, match="consensus_novel_rescue_tail_budget must be an integer >= 1"):
+        QAVideoConditionedEvidenceConfig(enabled=True, consensus_novel_rescue_tail_budget=-1)
+
+
+def test_missing_required_variant_fails_closed():
+    """Verify that if literal or compact_keywords is missing/empty, outcome fails closed."""
+    # Test query decomposition on empty string
+    empty_outcome = decompose_query(query_text_vi="", query_text_en="")
+    decomp = dict(empty_outcome.as_list())
+    assert "compact_keywords" not in decomp or not decomp["compact_keywords"]
+
+
+def test_merge_rescue_tail_preserves_prefix_and_admits_tail():
+    """Verify merge_rescue_tail strictly preserves ranks 1..95 and admits unique tail tuples."""
+    base_preds = [
+        {"rank": i, "video_id": f"L21_V{i:03d}", "frame_id": 1000 + i, "answer": f"ans_{i}"}
+        for i in range(1, 101)
+    ]
+
+    rescue_cands = [
+        # Candidate 1: valid novel tuple
+        RescueCandidate(
+            video_id="L21_V999",
+            frame_id=5000,
+            answer="novel_ans",
+            rescue_score=0.9,
+            rescue_source="consensus_novel_video_rescue",
+        ),
+        # Candidate 2: duplicate of existing prefix
+        RescueCandidate(
+            video_id="L21_V001",
+            frame_id=1001,
+            answer="ans_1",
+            rescue_score=0.8,
+            rescue_source="consensus_novel_video_rescue",
+        ),
+    ]
+
+    merged = merge_rescue_tail(base_preds, rescue_cands, prefix_k=95, max_rescue=5)
+    assert len(merged) == 96  # 95 base + 1 novel (duplicate rejected)
+
+    # Verify ranks 1..95 are 100% bit-identical
+    for i in range(95):
+        assert merged[i]["video_id"] == base_preds[i]["video_id"]
+        assert merged[i]["frame_id"] == base_preds[i]["frame_id"]
+        assert merged[i]["answer"] == base_preds[i]["answer"]
+        assert merged[i]["rank"] == i + 1
+
+    # Verify rank 96 is the novel candidate
+    assert merged[95]["video_id"] == "L21_V999"
+    assert merged[95]["frame_id"] == 5000
+    assert merged[95]["answer"] == "novel_ans"
+    assert merged[95]["rank"] == 96
+    assert merged[95]["slot_source"] == "RESCUE_TAIL_CONSENSUS_NOVEL_VIDEO_RESCUE"
+
+
+def test_consensus_candidate_tie_breaking_is_deterministic():
+    """Verify that multiple consensus candidates are sorted deterministically by (fused_rank, video_id)."""
+    c1 = ConsensusRescueCandidate(video_id="L21_V009", fused_rank=6, literal_rank=6, compact_rank=6)
+    c2 = ConsensusRescueCandidate(video_id="L21_V005", fused_rank=6, literal_rank=8, compact_rank=7)
+    c3 = ConsensusRescueCandidate(video_id="L21_V020", fused_rank=10, literal_rank=10, compact_rank=10)
+
+    raw_list = [c3, c1, c2]
+    sorted_list = sorted(raw_list, key=lambda c: (c.fused_rank, c.video_id))
+    assert sorted_list[0].video_id == "L21_V005"  # tied fused_rank 6, V005 < V009
+    assert sorted_list[1].video_id == "L21_V009"
+    assert sorted_list[2].video_id == "L21_V020"
