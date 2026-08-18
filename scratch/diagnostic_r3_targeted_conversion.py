@@ -49,13 +49,13 @@ from system_tai.qa.ocr_provider import OCRAnswerProviderConfig
 from system_tai.qa.visual_ontology import VisualOntologyConfig
 
 DEFAULT_TARGETED_QUERIES = [
+    "QA-46",  # Positive control / Sanity gate (Action branch, thủ công thổ cẩm) - RUN FIRST
     "QA-01",  # S1A / OCR branch (biển cảnh báo)
     "QA-02",  # Object branch
     "QA-23",  # Color branch
     "QA-26",  # S1A / Visual branch
     "QA-30",  # Action branch
     "QA-31",  # Visual branch
-    "QA-46",  # Positive control / Action branch (thủ công thổ cẩm)
 ]
 
 
@@ -120,9 +120,9 @@ def run_targeted_diagnostic(
 ):
     target_qids = selected_queries or DEFAULT_TARGETED_QUERIES
 
-    print("=" * 125)
-    print("ROUND-3 SPRINT 2A: TARGETED 7-QUERY CONVERSION FORENSIC (CANONICAL SCORED EVIDENCE CONTRACT)")
-    print("=" * 125)
+    print("=" * 135)
+    print("ROUND-3 SPRINT 2A: TARGETED 7-QUERY CONVERSION FORENSIC (f39f63c CONTROL-COMPATIBLE RUNTIME)")
+    print("=" * 135)
 
     benchmark_bytes = benchmark_path.read_bytes()
     benchmark_sha = hashlib.sha256(benchmark_bytes).hexdigest()
@@ -194,9 +194,9 @@ def run_targeted_diagnostic(
     print(f"Runtime bootstrap completed in {time.time() - t_boot0:.2f}s.")
 
     # 2. Execute Targeted Queries Sequentially in Same Process
-    print("\n" + "=" * 125)
+    print("\n" + "=" * 135)
     print("EXECUTING TARGETED DIAGNOSTIC QUERIES")
-    print("=" * 125)
+    print("=" * 135)
 
     forensic_results = []
     classification_counts: Counter[str] = Counter()
@@ -302,14 +302,14 @@ def run_targeted_diagnostic(
             forensic = f"STRICT HIT at Rank {hit_rank} (f={hit_frame}, ans='{hit_ans}') ✅"
         elif not target_in_pool:
             stage_failure = FailureClass.VIDEO_ABSENT
-            pool_str = ", ".join(selected_video_ids)
+            pool_str = ", ".join(selected_video_ids[:16])
             forensic = f"Target {target_vid} ABSENT from pool (Nominated 16: [{pool_str}])"
         elif len(target_evidence) == 0 and len(target_preds) == 0:
             stage_failure = FailureClass.TARGET_VIDEO_NO_EVIDENCE
             forensic = f"Target @Nomination Rank {vid_rank_in_pool}, but 0 target-video candidate frames in evidence/predictions"
         elif len(in_gt_all_frames) == 0:
             stage_failure = FailureClass.TEMPORAL_MISS
-            forensic = f"Target @Nomination Rank {vid_rank_in_pool}, 0/{len(all_target_frames)} frames in GT. Nearest f={nearest_f} (dist={nearest_dist})"
+            forensic = f"Target @Nomination Rank {vid_rank_in_pool}, 0/{len(all_target_frames)} frames in GT. Frames: {all_target_frames[:6]}, Nearest f={nearest_f} (dist={nearest_dist})"
         else:
             # In-GT frame exists! Check if valid tuple existed pre-Top100
             if len(valid_pre_top100) > 0:
@@ -325,15 +325,20 @@ def run_targeted_diagnostic(
                 forensic = f"{len(in_gt_all_frames)} in-GT frames evaluated, but wrong answers: {unique_ans} (GT: {gt_answers})"
 
         classification_counts[stage_failure.value] += 1
+        has_pre_tuple = "YES" if len(valid_pre_top100) > 0 else "NO"
+        has_final_hit = f"Rank {hit_rank}" if hit_rank is not None else "NO"
+
         forensic_results.append({
             "qid": qid,
             "branch": branch,
             "target": target_vid,
             "gt_interval": f"[{start_f}..{end_f}]",
             "vid_rank": vid_rank_in_pool if vid_rank_in_pool is not None else "ABSENT",
-            "candidate_frames": len(all_target_frames),
+            "ev_records": len(target_evidence),
+            "cand_frames": str(all_target_frames[:5]),
             "in_gt_frames": len(in_gt_all_frames),
-            "nearest_frame": f"{nearest_f} (d={nearest_dist})" if nearest_f is not None else "None",
+            "pre_tuple": has_pre_tuple,
+            "final_hit": has_final_hit,
             "stage_failure": stage_failure.value,
             "forensic": forensic,
             "time_s": f"{t_elapsed:.2f}s",
@@ -342,18 +347,18 @@ def run_targeted_diagnostic(
         print(f"[END]   [{idx}/{len(target_qids)}] {qid} -> {stage_failure.value:<26} [{t_elapsed:.2f}s]: {forensic}")
 
     # 3. Print Forensic Summary Table
-    print("\n" + "=" * 125)
-    print(f"{'Query ID':<8} | {'Branch':<12} | {'Target':<10} | {'GT Interval':<16} | {'VidRank':<8} | {'CandFs':<8} | {'InGT':<6} | {'Failure Class':<26} | {'Time'}")
-    print("-" * 125)
+    print("\n" + "=" * 135)
+    print(f"{'Query ID':<8} | {'Branch':<12} | {'Target':<10} | {'GT Interval':<16} | {'VidRank':<8} | {'EvRecs':<6} | {'InGT':<5} | {'PreTuple':<8} | {'FinalHit':<10} | {'Failure Class':<24} | {'Time'}")
+    print("-" * 135)
     for r in forensic_results:
         mark = "✅" if r["stage_failure"] == FailureClass.STRICT_HIT.value else "❌"
-        print(f"{r['qid']:<8} | {r['branch']:<12} | {r['target']:<10} | {r['gt_interval']:<16} | {str(r['vid_rank']):<8} | {r['candidate_frames']:<8} | {r['in_gt_frames']:<6} | {mark} {r['stage_failure']:<24} | {r['time_s']}")
-    print("=" * 125)
+        print(f"{r['qid']:<8} | {r['branch']:<12} | {r['target']:<10} | {r['gt_interval']:<16} | {str(r['vid_rank']):<8} | {r['ev_records']:<6} | {r['in_gt_frames']:<5} | {r['pre_tuple']:<8} | {r['final_hit']:<10} | {mark} {r['stage_failure']:<22} | {r['time_s']}")
+    print("=" * 135)
 
     # 4. Strategic Decision Analysis (Guarded by Positive Control QA-46)
-    print("\n" + "=" * 125)
-    print("TARGETED CONVERSION SUMMARY & STRATEGY SELECTION")
-    print("=" * 125)
+    print("\n" + "=" * 135)
+    print("TARGETED 7-QUERY SAMPLE CONVERSION SUMMARY (f39f63c CONTROL-COMPATIBLE RUNTIME)")
+    print("=" * 135)
     for fc in FailureClass:
         count = classification_counts[fc.value]
         if count > 0:
@@ -364,7 +369,7 @@ def run_targeted_diagnostic(
 
     if not qa46_passed and "QA-46" in target_qids:
         print("\n⚠️ SANITY GATE FAILED: Positive control QA-46 did not strict hit. Strategic recommendation suppressed.")
-        print("=" * 125)
+        print("=" * 135)
         return
 
     temp_count = classification_counts[FailureClass.TEMPORAL_MISS.value]
@@ -373,16 +378,16 @@ def run_targeted_diagnostic(
     alloc_count = classification_counts[FailureClass.ALLOCATION_MISS.value]
     absent_count = classification_counts[FailureClass.VIDEO_ABSENT.value]
 
-    print(f"\n--- ACTIONABLE ROADMAP (Positive Control QA-46: {'PASS' if qa46_passed else 'N/A'}) ---")
+    print(f"\n--- ACTIONABLE SAMPLE ROADMAP (Positive Control QA-46: {'PASS' if qa46_passed else 'N/A'}) ---")
     if (temp_count + no_ev_count) > (ans_count + alloc_count):
-        print(f"🎯 DOMINANT BOTTLENECK IS TEMPORAL LOCALIZATION ({temp_count + no_ev_count}/{len(target_qids)} queries).")
-        print("   -> SPRINT 2A: Prioritize Temporal Localization Rescue (Multi-Anchor + Bounded Window Expansion).")
+        print(f"🎯 IN THIS TARGETED SAMPLE: TEMPORAL LOCALIZATION is the leading failure mode ({temp_count + no_ev_count}/{len(target_qids)} queries).")
+        print("   -> SPRINT 2A CANDIDATE: Bounded Temporal Localization Rescue (Multi-Anchor + Local Window Expansion).")
     elif (ans_count + alloc_count) > (temp_count + no_ev_count):
-        print(f"🎯 DOMINANT BOTTLENECK IS ANSWER REASONING / RANKING ({ans_count + alloc_count}/{len(target_qids)} queries).")
-        print("   -> SPRINT 2A: Prioritize Multi-Crop / Contextual Visual Answer Scorer / OCR Rescue.")
+        print(f"🎯 IN THIS TARGETED SAMPLE: ANSWER REASONING / ALLOCATION is the leading failure mode ({ans_count + alloc_count}/{len(target_qids)} queries).")
+        print("   -> SPRINT 2A CANDIDATE: Multi-Crop / Contextual Visual Answer Scorer / OCR Subset Rescue.")
     else:
-        print(f"🎯 BALANCED BOTTLENECK: TEMPORAL ({temp_count + no_ev_count}) vs ANSWER/ALLOCATION ({ans_count + alloc_count}).")
-    print("=" * 125)
+        print(f"🎯 BALANCED SAMPLE DISTRIBUTION: TEMPORAL ({temp_count + no_ev_count}) vs ANSWER/ALLOCATION ({ans_count + alloc_count}).")
+    print("=" * 135)
 
 
 if __name__ == "__main__":
