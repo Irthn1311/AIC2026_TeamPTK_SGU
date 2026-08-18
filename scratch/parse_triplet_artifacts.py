@@ -72,12 +72,17 @@ def parse_existing_artifacts():
 
         diags = {}
         if matching_ev:
-            with open(matching_ev[0], encoding="utf-8") as ef:
+            # Pick newest artifact by mtime
+            newest_ev = max(matching_ev, key=lambda f: f.stat().st_mtime)
+            print(f"  Selected Evidence Artifact: {newest_ev.relative_to(OUTPUT_DIR)} (mtime: {newest_ev.stat().st_mtime})")
+            with open(newest_ev, encoding="utf-8") as ef:
                 diags = json.load(ef)
 
         preds = []
         if matching_pred:
-            with open(matching_pred[0], encoding="utf-8") as pf:
+            newest_pred = max(matching_pred, key=lambda f: f.stat().st_mtime)
+            print(f"  Selected Prediction Artifact: {newest_pred.relative_to(OUTPUT_DIR)} (mtime: {newest_pred.stat().st_mtime})")
+            with open(newest_pred, encoding="utf-8") as pf:
                 data = json.load(pf)
                 preds = data.get("predictions", data) if isinstance(data, dict) else data
 
