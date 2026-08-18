@@ -171,12 +171,13 @@ def execute_top1_secondary_refined_rescue(
                 ),
                 input_bytes=payload,
             )
-            ranked_spans = extract_and_rank_canonical_ocr_spans(
+            all_ranked_spans = extract_and_rank_canonical_ocr_spans(
                 completed.stdout,
                 max_n=4,
-                max_candidates=tail_budget,
             )
-            stage_telemetry["total_spans_ranked"] = len(ranked_spans)
+            stage_telemetry["candidate_universe_size"] = len(all_ranked_spans)
+            ranked_spans = all_ranked_spans[:tail_budget]
+            stage_telemetry["selected_spans_count"] = len(ranked_spans)
             for span_cand in ranked_spans:
                 rescue_candidates.append(
                     RescueCandidate(
