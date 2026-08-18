@@ -1,5 +1,5 @@
 # ==============================================================================================================
-# Phase R3-S2A: Triplet Forensic Probe (QA-31 Telemetry + QA01/26 Novelty + QA02/23/30 Provenance)
+# Phase R3-S2A: Triplet Forensic Probe (Strict Runtime-Safe Contract, No Oracle Contamination)
 # ==============================================================================================================
 
 import argparse
@@ -45,6 +45,7 @@ from system_tai.qa.object_provider import ObjectAnswerProviderConfig
 from system_tai.qa.ocr_provider import OCRAnswerProviderConfig
 from system_tai.qa.visual_ontology import VisualOntologyConfig
 from system_tai.retrieval.multi_query import QueryLanguage, QueryVariant, QueryVariantType
+from system_tai.retrieval.query_decomposition import decompose_query
 
 
 def normalize_text(t: str) -> str:
@@ -52,6 +53,12 @@ def normalize_text(t: str) -> str:
         return ""
     t = unicodedata.normalize("NFKC", str(t)).casefold()
     return "".join(c for c in t if c.isalnum() or c.isspace()).strip()
+
+
+def interval_distance(f: int, start: int, end: int) -> int:
+    if start <= f <= end:
+        return 0
+    return start - f if f < start else f - end
 
 
 def resolve_ocr_config() -> OCRAnswerProviderConfig:
@@ -87,12 +94,12 @@ def run_triplet_probe(
     input_root: Path = Path("/kaggle/input"),
     device: str = "auto",
 ):
-    print("=" * 125)
-    print("ROUND-3 SPRINT 2A: TRIPLET FORENSIC PROBE")
-    print("  Task 1: QA-31 Telemetry & Classification Repair")
-    print("  Task 2: QA-01 & QA-26 Actual-Runtime Nomination Novelty Probe")
-    print("  Task 3: QA-02, QA-23, QA-30 Temporal Provenance & Cluster Dispersion Analysis")
-    print("=" * 125)
+    print("=" * 135)
+    print("ROUND-3 SPRINT 2A: TRIPLET FORENSIC PROBE (RUNTIME-SAFE CONTRACT)")
+    print("  Task 1: QA-31 Telemetry & Canonical Taxonomy Classification (including ALLOCATION_MISS)")
+    print("  Task 2: QA-01 & QA-26 Runtime-Safe Query Decomposition Nomination Novelty Probe (NO ORACLE STRINGS)")
+    print("  Task 3: QA-02, QA-23, QA-30 Temporal Provenance & True Interval Dispersion Analysis")
+    print("=" * 135)
 
     with open(benchmark_path, encoding="utf-8") as f:
         bm_data = json.load(f)
@@ -153,11 +160,11 @@ def run_triplet_probe(
     print(f"Runtime bootstrap completed in {time.time() - t0:.2f}s.")
 
     # =========================================================================
-    # TASK 1: QA-31 Telemetry & Classification
+    # TASK 1: QA-31 Telemetry & Canonical Taxonomy Classification
     # =========================================================================
-    print("\n" + "=" * 125)
-    print("TASK 1: QA-31 DIRECT EXECUTION & TELEMETRY")
-    print("=" * 125)
+    print("\n" + "=" * 135)
+    print("TASK 1: QA-31 DIRECT EXECUTION & CANONICAL TAXONOMY AUDIT")
+    print("=" * 135)
     q31 = all_qa_queries.get("QA-31")
     if q31:
         target_vid = q31.get("video_id")
@@ -195,24 +202,35 @@ def run_triplet_probe(
 
         scored_ev31 = diags31.get("evidence", [])
         target_ev31 = [r for r in scored_ev31 if r.get("video_id") == target_vid]
-        target_frames31 = []
+        
+        target_ev_records31 = []
         for ev in target_ev31:
             f_id = ev.get("candidate_frame_id") or ev.get("evidence_frame_id") or ev.get("frame_id")
             if f_id is not None:
-                target_frames31.append(int(f_id))
+                ans = normalize_text(str(ev.get("answer", "")))
+                score = float(ev.get("answer_score") or 0.0)
+                target_ev_records31.append({"frame_id": int(f_id), "answer": ans, "score": score})
 
+        target_ev_frames31 = [r["frame_id"] for r in target_ev_records31]
         target_preds31 = [int(p.get("frame_id", -1)) for p in preds31 if p.get("video_id") == target_vid]
-        all_frames31 = list(dict.fromkeys(target_frames31 + target_preds31))
+        all_frames31 = list(dict.fromkeys(target_ev_frames31 + target_preds31))
         in_gt31 = [f for f in all_frames31 if start_f <= f <= end_f]
 
+        valid_pre_top100_31 = [
+            r for r in target_ev_records31
+            if start_f <= r["frame_id"] <= end_f and r["answer"] in gt_answers
+        ]
+
         hit_rank31 = None
+        hit_row31 = None
         for p in preds31:
             if p.get("video_id") == target_vid and start_f <= int(p.get("frame_id", -1)) <= end_f and normalize_text(str(p.get("answer", ""))) in gt_answers:
                 hit_rank31 = p.get("rank")
+                hit_row31 = p
                 break
 
-        nearest_dist31 = min([abs(f - start_f) for f in all_frames31] + [abs(f - end_f) for f in all_frames31]) if all_frames31 else 999999
-        nearest_f31 = min(all_frames31, key=lambda f: min(abs(f - start_f), abs(f - end_f))) if all_frames31 else None
+        nearest_dist31 = min([interval_distance(f, start_f, end_f) for f in all_frames31]) if all_frames31 else 999999
+        nearest_f31 = min(all_frames31, key=lambda f: interval_distance(f, start_f, end_f)) if all_frames31 else None
 
         if hit_rank31 is not None:
             failure31 = "STRICT_HIT"
@@ -222,64 +240,53 @@ def run_triplet_probe(
             failure31 = "TARGET_VIDEO_NO_EVIDENCE"
         elif len(in_gt31) == 0:
             failure31 = "TEMPORAL_MISS"
+        elif len(valid_pre_top100_31) > 0:
+            failure31 = "ALLOCATION_MISS"
         else:
             failure31 = "ANSWER_MISS"
 
         print(f"\n[TASK 1 RESULT] QA-31 -> {failure31} in {t_elapsed31:.2f}s:")
-        print(f"  Target Video Present?        : {'YES (Rank ' + str(rank31) + ')' if target_in_pool31 else 'NO (ABSENT)'}")
-        print(f"  Target Evidence Records      : {len(target_ev31)}")
-        print(f"  Target Frames Evaluated      : {all_frames31}")
-        print(f"  In-GT Frames                 : {len(in_gt31)}")
-        print(f"  Nearest Frame                : {nearest_f31} (dist={nearest_dist31})")
-        print(f"  Final Top100 Hit             : {hit_rank31 if hit_rank31 else 'NO'}")
+        print(f"  VidRank (Nomination)         : {rank31 if rank31 else 'ABSENT'}")
+        print(f"  EvRecs (Evidence Records)    : {len(target_ev31)}")
+        print(f"  Evidence Frame/Answer Pairs  : {[(r['frame_id'], r['answer']) for r in target_ev_records31]}")
+        print(f"  InGT Frames Count            : {len(in_gt31)}")
+        print(f"  Nearest Frame to GT          : {nearest_f31} (Distance={nearest_dist31} frames)")
+        print(f"  PreTuple Exists in Evidence? : {'YES ✅' if valid_pre_top100_31 else 'NO ❌'}")
+        print(f"  FinalHit in Top 100?         : {'Rank ' + str(hit_rank31) + ' ✅' if hit_rank31 else 'NO ❌'}")
+        print(f"  Canonical Failure Class      : {failure31}")
 
     # =========================================================================
-    # TASK 2: QA-01 & QA-26 Actual-Runtime Nomination Novelty Probe
+    # TASK 2: QA-01 & QA-26 Deterministic Runtime-Safe Query Decomposition Novelty
     # =========================================================================
-    print("\n" + "=" * 125)
-    print("TASK 2: QA-01 & QA-26 ACTUAL-RUNTIME NOMINATION NOVELTY PROBE")
-    print("=" * 125)
+    print("\n" + "=" * 135)
+    print("TASK 2: QA-01 & QA-26 DETERMINISTIC RUNTIME-SAFE QUERY NOVELTY PROBE")
+    print("=" * 135)
 
-    expansion_probes = {
-        "QA-01": {
-            "target": "L21_V001",
-            "q_vi": all_qa_queries["QA-01"]["question_vi"],
-            "q_en": en_map.get("QA-01", ""),
-            "variants": [
-                ("v_literal_vi", all_qa_queries["QA-01"]["question_vi"], QueryLanguage.VIETNAMESE, QueryVariantType.VIETNAMESE_DIRECT),
-                ("v_literal_en", en_map.get("QA-01", ""), QueryLanguage.ENGLISH, QueryVariantType.ENGLISH_TRANSLATION),
-                ("v_compact", "warning sign yellow red danger road hazard", QueryLanguage.ENGLISH, QueryVariantType.ENGLISH_TRANSLATION),
-                ("v_entity", "yellow red triangle hazard warning plate sign", QueryLanguage.ENGLISH, QueryVariantType.ENGLISH_TRANSLATION),
-                ("v_action", "traffic road sign landslide warning cliff mountain", QueryLanguage.ENGLISH, QueryVariantType.ENGLISH_TRANSLATION),
-            ],
-        },
-        "QA-26": {
-            "target": "L21_V009",
-            "q_vi": all_qa_queries["QA-26"]["question_vi"],
-            "q_en": en_map.get("QA-26", ""),
-            "variants": [
-                ("v_literal_vi", all_qa_queries["QA-26"]["question_vi"], QueryLanguage.VIETNAMESE, QueryVariantType.VIETNAMESE_DIRECT),
-                ("v_literal_en", en_map.get("QA-26", ""), QueryLanguage.ENGLISH, QueryVariantType.ENGLISH_TRANSLATION),
-                ("v_compact", "taxi car vehicle street road driving", QueryLanguage.ENGLISH, QueryVariantType.ENGLISH_TRANSLATION),
-                ("v_entity", "green white taxi cab driving street intersection", QueryLanguage.ENGLISH, QueryVariantType.ENGLISH_TRANSLATION),
-                ("v_action", "passenger car vehicle street road driving daytime", QueryLanguage.ENGLISH, QueryVariantType.ENGLISH_TRANSLATION),
-            ],
-        },
-    }
+    searcher = runtime.qa_pipeline.video_restricted_searcher
+    encoder = runtime.shared_encoder
 
-    for qid, pdata in expansion_probes.items():
-        target_vid = pdata["target"]
-        print(f"\n--- Probing Nomination for {qid} (Target: {target_vid}) ---")
+    target_queries = ["QA-01", "QA-26"]
+    for qid in target_queries:
+        q = all_qa_queries[qid]
+        target_vid = q.get("video_id")
+        q_vi = q.get("question_vi", "")
+        q_en = en_map.get(qid, "")
 
-        # 1. Champion actual nomination pool
+        print(f"\n" + "-" * 110)
+        print(f"PROBING NOMINATION NOVELTY FOR {qid} [Target: {target_vid}]")
+        print(f"  Question VI: '{q_vi}'")
+        print(f"  Question EN: '{q_en}'")
+        print("-" * 110)
+
+        # 1. Champion actual baseline nomination pool
         req_champ = QAQueryRequest(
             request_id=f"probe-champ-{qid}",
             query_id=qid,
-            event_description=pdata["q_vi"],
-            question=pdata["q_vi"],
-            event_description_en=pdata["q_en"] if pdata["q_en"] else None,
+            event_description=q_vi,
+            question=q_vi,
+            event_description_en=q_en if q_en else None,
             question_en=None,
-            include_vi_variant=False if pdata["q_en"] else True,
+            include_vi_variant=False if q_en else True,
             output_top_k=100,
         )
         res_champ = runtime.handle_qa_query(req_champ)
@@ -290,31 +297,37 @@ def run_triplet_probe(
                 champ_pool = json.load(f).get("selected_video_ids", [])
         champ_rank = champ_pool.index(target_vid) + 1 if target_vid in champ_pool else "ABSENT"
 
-        print(f"  Champion Baseline Top 16 Pool: {champ_pool[:8]}...")
-        print(f"  Target {target_vid} in Champion Pool: {champ_rank}")
+        print(f"\n1. Champion Baseline Top 16 Pool (all 16 IDs):")
+        print(f"   {champ_pool}")
+        print(f"   -> Target {target_vid} Rank in Champion Baseline: {champ_rank}")
 
-        # 2. Individual Variant Nominations
-        searcher = runtime.qa_pipeline.video_restricted_searcher
-        encoder = runtime.shared_encoder
+        # 2. Derive deterministic runtime-safe query decomposition (NO ORACLE / NO GT STRINGS)
+        variants_obj = decompose_query(query_text_vi=q_vi, query_text_en=q_en)
+        decomp_list = variants_obj.as_list()
 
-        print(f"\n  Individual Expansion Variant Rankings for {target_vid}:")
+        print(f"\n2. Derived Runtime-Safe Query Variants (from query text only):")
+        for v_name, v_text in decomp_list:
+            print(f"   - {v_name:<18}: '{v_text}'")
+
+        # 3. Search Individual Variants
+        print(f"\n3. Individual Variant Top 16 Nomination Rankings:")
         variant_rankings = {}
-        for var_name, var_text, var_lang, var_type in pdata["variants"]:
-            v_obj = QueryVariant(variant_id=f"{qid}::{var_name}", text=var_text, language=var_lang, variant_type=var_type, weight=1.0)
-            v_vec = encoder.encode(var_text)
+        for v_name, v_text in decomp_list:
+            v_vec = encoder.encode(v_text)
+            v_id = f"{qid}::{v_name}"
             maxima = searcher.search_maxima(
-                query_ids=[v_obj.variant_id],
+                query_ids=[v_id],
                 query_vectors=[v_vec],
                 per_query_cap=16,
             )
-            v_pool = [item.video_id for item in maxima.rankings.get(v_obj.variant_id, [])]
+            v_pool = [item.video_id for item in maxima.rankings.get(v_id, [])]
             v_rank = v_pool.index(target_vid) + 1 if target_vid in v_pool else "ABSENT"
-            variant_rankings[var_name] = (v_rank, v_pool)
-            print(f"    - {var_name:<14} -> Target Rank: {str(v_rank):<7} | Top 4: {v_pool[:4]}")
+            variant_rankings[v_name] = (v_rank, v_pool)
+            print(f"   - {v_name:<18} -> Target Rank: {str(v_rank):<7} | Top 16: {v_pool}")
 
-        # 3. Fused Multi-Variant Top 16 Nomination
-        multi_qids = [f"{qid}::{v[0]}" for v in pdata["variants"]]
-        multi_vecs = [encoder.encode(v[1]) for v in pdata["variants"]]
+        # 4. Fused Multi-Variant Top 16 Nomination
+        multi_qids = [f"{qid}::{v[0]}" for v in decomp_list]
+        multi_vecs = [encoder.encode(v[1]) for v in decomp_list]
         multi_maxima = searcher.search_maxima(
             query_ids=multi_qids,
             query_vectors=multi_vecs,
@@ -327,19 +340,21 @@ def run_triplet_probe(
         fused_pool = [n.video_id for n in nominations]
         fused_rank = fused_pool.index(target_vid) + 1 if target_vid in fused_pool else "ABSENT"
 
-        print(f"\n  Fused Multi-Variant Top 16 Pool: {fused_pool[:8]}...")
-        print(f"  Target {target_vid} in Fused Multi-Variant Pool: {fused_rank}")
-        novel_recovery = "YES ✅" if fused_rank != "ABSENT" and champ_rank == "ABSENT" else "NO ❌"
-        print(f"  👉 NOVEL RECOVERY STATUS: {novel_recovery}")
+        print(f"\n4. Fused Runtime-Safe Multi-Variant Top 16 Pool (all 16 IDs):")
+        print(f"   {fused_pool}")
+        print(f"   -> Target {target_vid} Rank in Fused Multi-Variant: {fused_rank}")
+
+        novel_recovery = "YES (Target Recovered into Pool) ✅" if fused_rank != "ABSENT" and champ_rank == "ABSENT" else ("TARGET ALREADY PRESENT" if champ_rank != "ABSENT" else "NO (Target Still Absent) ❌")
+        print(f"   👉 NOVEL RECOVERY STATUS FOR {qid}: {novel_recovery}")
 
     # =========================================================================
-    # TASK 3: QA-02, QA-23, QA-30 Temporal Provenance & Cluster Analysis
+    # TASK 3: QA-02, QA-23, QA-30 Temporal Provenance & True Dispersion Analysis
     # =========================================================================
-    print("\n" + "=" * 125)
-    print("TASK 3: QA-02, QA-23, QA-30 TEMPORAL PROVENANCE & CLUSTER DISPERSION ANALYSIS")
-    print("=" * 125)
+    print("\n" + "=" * 135)
+    print("TASK 3: QA-02, QA-23, QA-30 TEMPORAL PROVENANCE & DISPERSION AUDIT")
+    print("=" * 135)
 
-    temporal_qids = ["QA-02", "QA-23", "QA-30"]
+    temporal_qids = ["QA-23", "QA-30", "QA-02"]
     for qid in temporal_qids:
         q = all_qa_queries[qid]
         target_vid = q.get("video_id")
@@ -348,7 +363,10 @@ def run_triplet_probe(
         q_vi = q.get("question_vi", "")
         q_en = en_map.get(qid, "")
 
-        print(f"\n--- Temporal Provenance for {qid} [Target: {target_vid}, GT: [{start_f}..{end_f}]] ---")
+        print(f"\n" + "-" * 110)
+        print(f"TEMPORAL PROVENANCE & CLUSTERING FOR {qid} [Target: {target_vid}, GT: [{start_f}..{end_f}]]")
+        print("-" * 110)
+
         req = QAQueryRequest(
             request_id=f"triplet-{qid}",
             query_id=qid,
@@ -372,7 +390,7 @@ def run_triplet_probe(
         scored_ev = diags.get("evidence", [])
         target_ev = [r for r in scored_ev if r.get("video_id") == target_vid]
 
-        print(f"  Target Canonical Evidence Records ({len(target_ev)} records):")
+        print(f"1. Target Canonical Evidence Records ({len(target_ev)} records):")
         frame_list = []
         for i, ev in enumerate(target_ev, 1):
             cand_f = ev.get("candidate_frame_id")
@@ -391,16 +409,17 @@ def run_triplet_probe(
                 frame_list.append(frame_val)
 
             in_gt_mark = "IN_GT ✅" if start_f <= frame_val <= end_f else "OUT ❌"
-            print(f"    [{i}] f={frame_val:<6} ({in_gt_mark}) | src={source:<16} | rank={local_rank} | loc_score={loc_score:.4f} | ref={ref_status:<12} | ans='{ans}' (score={ans_score:.3f}) | vars={var_ids}")
+            dist_to_gt = interval_distance(frame_val, start_f, end_f)
+            print(f"   [{i}] f={frame_val:<6} ({in_gt_mark}, dist={dist_to_gt:<5}) | src={source:<16} | rank={local_rank} | loc_score={loc_score:.4f} | ref={ref_status:<12} | ans='{ans}' (score={ans_score:.3f}) | vars={var_ids}")
 
         if frame_list:
             min_f = min(frame_list)
             max_f = max(frame_list)
             spread = max_f - min_f
-            nearest_dist = min([abs(f - start_f) for f in frame_list] + [abs(f - end_f) for f in frame_list])
-            nearest_f = min(frame_list, key=lambda f: min(abs(f - start_f), abs(f - end_f)))
+            nearest_dist = min([interval_distance(f, start_f, end_f) for f in frame_list])
+            nearest_f = min(frame_list, key=lambda f: interval_distance(f, start_f, end_f))
 
-            # Identify clusters (distance threshold = 500 frames)
+            # Identify clusters (cluster distance threshold = 500 frames)
             sorted_frames = sorted(set(frame_list))
             clusters = [[sorted_frames[0]]]
             for f in sorted_frames[1:]:
@@ -409,21 +428,24 @@ def run_triplet_probe(
                 else:
                     clusters.append([f])
 
-            print(f"\n  Cluster & Dispersion Metrics for {qid}:")
-            print(f"    - Unique Temporal Clusters : {len(clusters)} -> {[f'{min(c)}..{max(c)} (n={len(c)})' for c in clusters]}")
-            print(f"    - Min / Max Frame          : {min_f} .. {max_f}")
-            print(f"    - Temporal Spread          : {spread} frames")
-            print(f"    - Nearest to GT Interval   : Frame {nearest_f} (Distance = {nearest_dist} frames)")
-            if len(clusters) == 1 and spread < 500:
-                print(f"    - Diagnosis                : SEVERE TEMPORAL MODE COLLAPSE (All candidates tightly clustered at ~{min_f})")
-            elif nearest_dist <= 250:
-                print(f"    - Diagnosis                : BOUNDED NEAR MISS (Distance {nearest_dist} <= 250 frames -> Ideal candidate for Local Negative Expansion)")
+            # Correct Diagnosis Ordering (Near Miss checked first!)
+            if nearest_dist <= 250:
+                diagnosis = f"BOUNDED NEAR MISS (Distance {nearest_dist} <= 250 frames -> Ideal candidate for Local Window Expansion)"
+            elif len(clusters) == 1 and spread < 500:
+                diagnosis = f"WRONG SEGMENT MODE COLLAPSE (Distance {nearest_dist} frames, all candidates clustered at ~{min_f}..{max_f} -> Needs Diverse Temporal Anchors)"
             else:
-                print(f"    - Diagnosis                : CATASTROPHIC WRONG SEGMENT (Distance {nearest_dist} frames -> Needs Diverse Anchors across video)")
+                diagnosis = f"CATASTROPHIC WRONG SEGMENT / MULTI-CLUSTER (Distance {nearest_dist} frames, spread {spread} frames -> Semantic Localization Bias)"
 
-    print("\n" + "=" * 125)
+            print(f"\n2. Cluster & Dispersion Metrics for {qid}:")
+            print(f"   - Unique Temporal Clusters : {len(clusters)} -> {[f'{min(c)}..{max(c)} (n={len(c)})' for c in clusters]}")
+            print(f"   - Min / Max Frame          : {min_f} .. {max_f}")
+            print(f"   - Temporal Spread          : {spread} frames")
+            print(f"   - Nearest Frame to GT      : Frame {nearest_f} (Distance = {nearest_dist} frames)")
+            print(f"   👉 DIAGNOSIS               : {diagnosis}")
+
+    print("\n" + "=" * 135)
     print("TRIPLET FORENSIC PROBE COMPLETED")
-    print("=" * 125)
+    print("=" * 135)
 
 
 if __name__ == "__main__":
