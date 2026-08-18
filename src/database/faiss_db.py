@@ -152,13 +152,25 @@ class FaissDB:
         logger.info(f"FAISS index saved → {out} ({out.stat().st_size / 1024 / 1024:.1f} MB)")
 
     def load(self, index_path: str) -> "FaissDB":
-        """Load FAISS index from disk."""
+        """Load FAISS index from disk and restore efSearch parameter."""
         path = Path(index_path)
         if not path.exists():
             raise FileNotFoundError(f"FAISS index not found: {path}")
         self._index = faiss.read_index(str(path))
         self._total = self._index.ntotal
-        logger.info(f"FAISS index loaded: {self._total:,} vectors from {path}")
+        
+        # Restore HNSW efSearch parameter (faiss.read_index resets it to default 16)
+        try:
+            # If wrapped in IndexIDMap
+            if isinstance(self._index, faiss.IndexIDMap):
+                sub_idx = faiss.downcast_index(self._index.index)
+                if hasattr(sub_idx, "hnsw"):
+                    sub_idx.hnsw.efSearch = FAISS_HNSW_EF_SEARCH
+            elif hasattr(self._index, "hnsw"):
+                self._index.hnsw.efSearch = FAISS_HNSW_EF_SEARCH
+            logger.info(f"FAISS index loaded: {self._total:,} vectors from {path} (efSearch={FAISS_HNSW_EF_SEARCH})")
+        except Exception as e:
+            logger.warning(f"Could not set efSearch on loaded index: {e}")
         return self
 
     # ----------------------------------------------------------

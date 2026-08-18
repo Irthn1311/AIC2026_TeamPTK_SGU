@@ -319,34 +319,39 @@ class RetrievalPipeline:
         top1_score = vis_results[0].score if vis_results else 0.0
         logger.info(f"  • Truy xuất Thị giác (CLIP Primary) : {len(vis_results)} ứng viên (Top-1 Cosine: {top1_score:.4f})")
 
-        # Execute expansion queries
+        all_lists   = []
+        all_weights = []
+
+        if vis_results:
+            all_lists.append(vis_results)
+            all_weights.append(dyn_visual_w)
+
+        # Execute expansion queries as SEPARATE fusion streams (not concatenated into vis_results)
         for i, ep in enumerate(extra_prompts):
             try:
                 ep_results = self._vis_ret.retrieve_balanced(
                     ep, top_k=max(30, self._top_k_ret // 3), max_per_video=3
                 )
                 if ep_results:
-                    vis_results.extend(ep_results)
-                    logger.info(f"  • Truy xuất bổ sung #{i+1}           : +{len(ep_results)} ứng viên (Top-1 Cosine: {ep_results[0].score:.4f})")
+                    all_lists.append(ep_results)
+                    all_weights.append(dyn_visual_w * 0.75)  # Slightly lower weight for secondary perspective
+                    logger.info(f"  • Truy xuất bổ sung #{i+1}           : {len(ep_results)} ứng viên (Top-1 Cosine: {ep_results[0].score:.4f})")
             except Exception as e:
                 logger.debug(f"  • Query mở rộng #{i+1} không thành công: {e}")
 
-        all_lists   = []
-        all_weights = []
-        if vis_results:
-            all_lists.append(vis_results)
-            all_weights.append(dyn_visual_w)
-
-        for text_ret in self._text_rets:
-            if getattr(text_ret, "name", "") == "ocr_inmemory":
-                q_input = kis_query
-                txt = text_ret.retrieve(q_input, top_k=self._top_k_ret)
-            else:
-                txt = text_ret.retrieve(raw_text, top_k=self._top_k_ret)
-            if txt:
-                all_lists.append(txt)
-                all_weights.append(dyn_text_w)
-                logger.info(f"  • Truy xuất Văn bản ({getattr(text_ret, 'name', 'text')}): {len(txt)} ứng viên")
+        # Only invoke OCR text retrievers if OCR keywords are explicitly present
+        if kis_query.ocr_keywords:
+            for text_ret in self._text_rets:
+                if getattr(text_ret, "name", "") == "ocr_inmemory":
+                    txt = text_ret.retrieve(kis_query, top_k=self._top_k_ret)
+                else:
+                    txt = text_ret.retrieve(raw_text, top_k=self._top_k_ret)
+                if txt:
+                    all_lists.append(txt)
+                    all_weights.append(dyn_text_w)
+                    logger.info(f"  • Truy xuất Văn bản ({getattr(text_ret, 'name', 'text')}): {len(txt)} ứng viên")
+        else:
+            logger.info("  • Bỏ qua Truy xuất OCR (Không phát hiện từ khóa chữ viết trong query)")
 
         if not all_lists:
             logger.warning(f"[KIS] Không tìm thấy ứng viên nào cho query_id='{query_id}'")
