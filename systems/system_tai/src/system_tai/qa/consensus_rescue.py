@@ -338,13 +338,14 @@ def execute_sidepath_consensus_rescue(
 
         # Canonical Temporal Refinement
         refined_list = []
-        if config.temporal_refinement_enabled:
+        if config.temporal_refinement_enabled and phase3_list:
+            text_vecs = np.asarray(event_vectors, dtype=np.float32)
             ref_outcome = refiner.refine_selected_candidates(
                 query_id=request.query_id,
-                variants=variants,
+                variants=tuple(variants),
                 candidates=tuple(phase3_list),
                 config=refinement_config,
-                precomputed_text_embeddings=event_vectors,
+                precomputed_text_embeddings=text_vecs,
                 frame_embedding_cache={},
             )
             refined_list = list(ref_outcome.candidates)
@@ -482,8 +483,10 @@ def execute_sidepath_consensus_rescue(
                         },
                     )
                 )
-    except Exception:
-        pass
+    except Exception as exc:
+        import sys, traceback
+        print(f"[RESCUE ERROR for {chosen_vid}]: {exc}", file=sys.stderr)
+        traceback.print_exc()
 
     # Merge into predictions tail (ranks 96..100)
     merged_predictions = merge_rescue_tail(
