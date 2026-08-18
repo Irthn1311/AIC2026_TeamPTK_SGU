@@ -206,63 +206,7 @@ def run_trace():
         print(f"    Rank {p.rank}: video={p.video_id}, frame={p.frame_id}, answer={repr(p.answer)}")
 
     # =========================================================================
-    # STAGE D: S2D1 RescueCandidate.answer before merge
-    # =========================================================================
-    from system_tai.qa.secondary_refined_rescue import execute_top1_secondary_refined_rescue
-    from system_tai.refinement.models import RefinedCandidate, RefinementStatus
-
-    ref_cands = [
-        RefinedCandidate(
-            video_id=target_vid,
-            initial_frame_id=29237,
-            refined_frame_id=29237,
-            initial_score=0.9,
-            refined_score=0.95,
-            status=RefinementStatus.REFINED,
-        ),
-        RefinedCandidate(
-            video_id=target_vid,
-            initial_frame_id=29018,
-            refined_frame_id=29018,
-            initial_score=0.85,
-            refined_score=0.92,
-            status=RefinementStatus.REFINED,
-        ),
-    ]
-
-    _, rescue_candidates, admitted_tuples, telemetry = execute_top1_secondary_refined_rescue(
-        request=QAQueryRequest(
-            request_id="trace-qa23",
-            query_id="QA-23",
-            event_description="Thương hiệu thời trang nào được nhắc trong dòng tiêu đề bên dưới?",
-            question="Thương hiệu thời trang nào được nhắc trong dòng tiêu đề bên dưới?",
-            include_vi_variant=False,
-            output_top_k=100,
-        ),
-        q_type=QuestionType.OCR,
-        champion_selected_video_ids=[target_vid],
-        champion_refined_candidates=ref_cands,
-        champion_predictions=[],
-        canonical_evidence_cands=(),
-        raw_video_registry=runtime.raw_video_registry,
-        decoder=runtime.decoder,
-        ocr_answer_provider=ocr_provider,
-        ocr_provider_supported=True,
-        config=evidence_config,
-    )
-    has_meta_D = any(check_tsv_numeric_metadata(c.answer) for c in rescue_candidates)
-
-    print("\n" + "=" * 100)
-    print("STAGE D: S2D1 RescueCandidate.answer before merge")
-    print("=" * 100)
-    print(f"  • Type                        : list[{len(rescue_candidates)} RescueCandidate objects]")
-    print(f"  • TSV Numeric Metadata Present: {has_meta_D}")
-    print(f"  • Rescue Candidates:")
-    for idx, c in enumerate(rescue_candidates, start=1):
-        print(f"    [{idx}] score={c.rescue_score} | video={c.video_id} | frame={c.frame_id} | answer={repr(c.answer)}")
-
-    # =========================================================================
-    # STAGE E: final QAPrediction.answer at admitted rank (End-to-End Pipeline)
+    # STAGE D & E: End-to-End Pipeline Execution (Rescue Candidates & Admitted Ranks)
     # =========================================================================
     req_treat = QAQueryRequest(
         request_id="trace-full-qa23",
@@ -276,34 +220,61 @@ def run_trace():
     )
     res_treat = runtime.handle_qa_query(req_treat)
     preds_treat = res_treat.get("predictions", [])
-    rank60_pred = preds_treat[59] if len(preds_treat) >= 60 else None
-    has_meta_E = check_tsv_numeric_metadata(rank60_pred["answer"]) if rank60_pred else False
+
+    # Read treatment diagnostics
+    diag_file = runtime.output_root / res_treat.get("artifacts", {}).get("qa_evidence_json", "")
+    sec_meta = {}
+    if diag_file.is_file():
+        with open(diag_file, encoding="utf-8") as f:
+            diags_treat = json.load(f)
+            sec_meta = diags_treat.get("top1_secondary_refined_rescue", {})
+
+    produced_answers = sec_meta.get("produced_answers", [])
+    admitted_tuples = sec_meta.get("tail", {}).get("admitted_tuples", [])
+    has_meta_D = any(check_tsv_numeric_metadata(ans) for ans in produced_answers)
 
     print("\n" + "=" * 100)
-    print("STAGE E: final QAPrediction.answer at admitted rank (Rank 60)")
+    print("STAGE D: S2D1 Rescue Candidates Generated from Frame 29018")
     print("=" * 100)
-    print(f"  • Total Predictions Count     : {len(preds_treat)}")
-    print(f"  • Admitted Row at Rank 60     : {rank60_pred}")
-    print(f"  • TSV Numeric Metadata Present: {has_meta_E}")
-    if rank60_pred:
-        print(f"  • First 500 chars repr        :\n{repr(str(rank60_pred['answer'])[:500])}")
+    print(f"  • Provider Predictions Count  : {len(ocr_res.predictions)}")
+    print(f"  • Rescue Candidates Count     : {len(produced_answers)}")
+    print(f"  • TSV Numeric Metadata Present: {has_meta_D}")
+    print(f"  • Produced Answers            :")
+    for idx, ans in enumerate(produced_answers, start=1):
+        print(f"    [{idx}] {repr(ans)}")
+
+    print("\n" + "=" * 100)
+    print("STAGE E: Admitted Final Rescue Rows in Top-100 Predictions")
+    print("=" * 100)
+    print(f"  • Total Treatment Predictions : {len(preds_treat)}")
+    print(f"  • Admitted Tuples Count       : {len(admitted_tuples)}")
+    print(f"  • Admitted Rows Detail        :")
+    for t in admitted_tuples:
+        print(f"    Rank {t.get('rank')}: video={t.get('video_id')}, frame={t.get('frame_id')}, answer={repr(t.get('answer'))}")
 
     # =========================================================================
-    # OFFICIAL EVALUATION OF QA-23 RANK 60
+    # OFFICIAL EVALUATION OF ALL ADMITTED ROWS
     # =========================================================================
     from system_tai.quality.l21_150_answers import answer_matches, normalize_answer
     accepted = ("dior",)
-    is_official_match = False
-    if rank60_pred and rank60_pred.get("video_id") == target_vid and (28975 <= int(rank60_pred.get("frame_id", -1)) <= 29025):
-        ans_str = str(rank60_pred.get("answer", ""))
-        is_official_match = answer_matches(ans_str, accepted)
-        print("\n" + "=" * 100)
-        print("OFFICIAL EVALUATION RESULT (QA-23 RANK 60):")
-        print("=" * 100)
-        print(f"  • Raw Prediction Answer       : {repr(ans_str)}")
-        print(f"  • Normalized Prediction       : {repr(normalize_answer(ans_str))}")
-        print(f"  • Accepted Answers            : {accepted}")
-        print(f"  • Official answer_matches()   : {'STRICT HIT ✅' if is_official_match else 'NO HIT ❌'}")
+    any_strict_match = False
+    print("\n" + "=" * 100)
+    print("OFFICIAL EVALUATION RESULT (ALL ADMITTED ROWS VS ACCEPTED ANSWERS):")
+    print("=" * 100)
+    print(f"  • Accepted Answers in Benchmark: {accepted}")
+    for t in admitted_tuples:
+        r = t.get("rank")
+        vid = t.get("video_id")
+        fid = int(t.get("frame_id", -1))
+        ans = str(t.get("answer", ""))
+        in_gt = (vid == target_vid and 28975 <= fid <= 29025)
+        ans_match = answer_matches(ans, accepted)
+        is_strict = bool(in_gt and ans_match)
+        if is_strict:
+            any_strict_match = True
+        print(f"  • Row @{r}: in_gt={in_gt} | norm_ans={repr(normalize_answer(ans))} | strict_match={'PASS ✅' if is_strict else 'FAIL ❌'}")
+
+    has_meta_E = any(check_tsv_numeric_metadata(t.get("answer", "")) for t in admitted_tuples)
 
     # =========================================================================
     # DIAGNOSTIC CONCLUSION
@@ -321,7 +292,7 @@ def run_trace():
         conclusion = "CLEAN_LINE_LEVEL_END_TO_END"
 
     print(f"  • Required Audit Conclusion  : {conclusion}")
-    print(f"  • Official Strict Hit Status : {'STRICT HIT @60' if is_official_match else 'NO HIT (Granularity investigation required)'}")
+    print(f"  • Official Strict Hit Status : {'STRICT HIT @60' if any_strict_match else 'NO HIT (Granularity investigation required)'}")
     print("=" * 100)
 
 
