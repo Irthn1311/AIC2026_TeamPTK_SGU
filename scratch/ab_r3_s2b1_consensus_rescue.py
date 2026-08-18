@@ -100,6 +100,7 @@ def run_ab_validation(
     input_root: Path = Path("/kaggle/input"),
     device: str = "auto",
     target_queries: list[str] = ALL_TARGETED_QUERIES,
+    treatment_only: bool = False,
 ):
     print("=" * 135)
     print("ROUND-3 SPRINT 2B.1: CONSENSUS NOVEL VIDEO RESCUE TARGETED A/B EXPERIMENT")
@@ -186,41 +187,45 @@ def run_ab_validation(
         # ---------------------------------------------------------------------
         # ARM A: CONTROL (Consensus Rescue OFF)
         # ---------------------------------------------------------------------
-        runtime.qa_pipeline.video_conditioned_evidence_config = replace(
-            base_evidence_config,
-            consensus_novel_rescue_enabled=False,
-        )
-
-        req_ctrl = QAQueryRequest(
-            request_id=f"r3s2b1-control-{qid}",
-            query_id=qid,
-            event_description=q_vi,
-            question=q_vi,
-            event_description_en=q_en if q_en else None,
-            question_en=None,
-            include_vi_variant=False if q_en else True,
-            output_top_k=100,
-            refine_top_n=3,
-        )
-
-        t_ctrl0 = time.time()
-        res_ctrl = runtime.handle_qa_query(req_ctrl)
-        t_ctrl = time.time() - t_ctrl0
-        preds_ctrl = res_ctrl.get("predictions", [])
-
-        # Check hit in control
+        preds_ctrl = []
         ctrl_hit_rank = None
         ctrl_hit_frame = None
         ctrl_hit_ans = None
-        for p in preds_ctrl:
-            p_vid = p.get("video_id")
-            p_frame = int(p.get("frame_id", -1))
-            p_ans = normalize_text(str(p.get("answer", "")))
-            if p_vid == target_vid and start_f <= p_frame <= end_f and p_ans in gt_answers:
-                ctrl_hit_rank = p.get("rank")
-                ctrl_hit_frame = p_frame
-                ctrl_hit_ans = p_ans
-                break
+        t_ctrl = 0.0
+
+        if not treatment_only:
+            runtime.qa_pipeline.video_conditioned_evidence_config = replace(
+                base_evidence_config,
+                consensus_novel_rescue_enabled=False,
+            )
+
+            req_ctrl = QAQueryRequest(
+                request_id=f"r3s2b1-control-{qid}",
+                query_id=qid,
+                event_description=q_vi,
+                question=q_vi,
+                event_description_en=q_en if q_en else None,
+                question_en=None,
+                include_vi_variant=False if q_en else True,
+                output_top_k=100,
+                refine_top_n=3,
+            )
+
+            t_ctrl0 = time.time()
+            res_ctrl = runtime.handle_qa_query(req_ctrl)
+            t_ctrl = time.time() - t_ctrl0
+            preds_ctrl = res_ctrl.get("predictions", [])
+
+            # Check hit in control
+            for p in preds_ctrl:
+                p_vid = p.get("video_id")
+                p_frame = int(p.get("frame_id", -1))
+                p_ans = normalize_text(str(p.get("answer", "")))
+                if p_vid == target_vid and start_f <= p_frame <= end_f and p_ans in gt_answers:
+                    ctrl_hit_rank = p.get("rank")
+                    ctrl_hit_frame = p_frame
+                    ctrl_hit_ans = p_ans
+                    break
 
         # ---------------------------------------------------------------------
         # ARM B: TREATMENT (Consensus Rescue ON, max_rescue=1, tail_budget=5)
@@ -360,6 +365,7 @@ if __name__ == "__main__":
     parser.add_argument("--input-root", type=Path, default=default_input)
     parser.add_argument("--device", type=str, default="auto")
     parser.add_argument("--query", type=str, default="QA-26", help="Query ID to run (e.g. 'QA-26' or 'all')")
+    parser.add_argument("--treatment-only", action="store_true", help="Run only treatment arm to save execution time")
     args = parser.parse_args()
 
     q_list = ALL_TARGETED_QUERIES if args.query.lower() == "all" else [q.strip() for q in args.query.split(",") if q.strip()]
@@ -372,4 +378,5 @@ if __name__ == "__main__":
         input_root=args.input_root,
         device=args.device,
         target_queries=q_list,
+        treatment_only=args.treatment_only,
     )

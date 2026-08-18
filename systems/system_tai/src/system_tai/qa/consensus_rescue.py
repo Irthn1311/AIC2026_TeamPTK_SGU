@@ -24,6 +24,7 @@ from system_tai.qa.question_types import QuestionType
 from system_tai.qa.rescue_tail import RescueCandidate, merge_rescue_tail
 from system_tai.refinement.models import (
     Phase3Candidate,
+    RefinedCandidate,
     RefinementConfig,
     RefinementStatus,
 )
@@ -46,6 +47,14 @@ if TYPE_CHECKING:
     from system_tai.refinement.engine import ExactFrameRefiner
     from system_tai.refinement.video import VideoDecoder
     from system_tai.retrieval.video_evidence import VideoRestrictedFeatureSearcher
+
+
+@dataclass(frozen=True, slots=True)
+class SidepathRefinedFrame:
+    candidate_frame_id: int
+    refined_frame_id: int | None
+    status: RefinementStatus
+    refinement_fusion_score: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -394,14 +403,11 @@ def execute_sidepath_consensus_rescue(
             refined_list = list(ref_outcome.candidates)
         else:
             refined_list = [
-                RefinedCandidate(
-                    query_id=c.query_id,
-                    original_candidate_rank=c.rank,
-                    video_id=c.video_id,
+                SidepathRefinedFrame(
                     candidate_frame_id=c.frame_id,
                     refined_frame_id=c.frame_id,
                     status=RefinementStatus.NOT_REFINED,
-                    original_retrieval_provenance=c.retrieval_provenance,
+                    refinement_fusion_score=c.retrieval_score,
                 )
                 for c in phase3_list
             ]

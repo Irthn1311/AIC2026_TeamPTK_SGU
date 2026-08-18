@@ -169,3 +169,167 @@ def test_execute_sidepath_consensus_rescue_ineligible_returns_identical_predicti
     assert recs == []
     assert admitted == []
 
+
+def test_execute_sidepath_consensus_rescue_eligible_path_with_qa_engine():
+    """Verify that when a consensus candidate is eligible, the canonical QA engine produces RescueCandidates and merges into tail."""
+    from unittest.mock import MagicMock, patch
+    import numpy as np
+    from system_tai.kis.session_schema import QAQueryRequest
+    from system_tai.preliminary.schemas import QAPrediction
+    from system_tai.qa.consensus_rescue import (
+        ConsensusRescueCandidate,
+        ConsensusNovelRescueOutcome,
+        execute_sidepath_consensus_rescue,
+    )
+    from system_tai.qa.models import QAResult
+    from system_tai.qa.question_types import QuestionType
+    from system_tai.refinement.engine import SelectedRefinementOutcome
+    from system_tai.refinement.models import RefinedCandidate, RefinementStatus
+    from system_tai.refinement.video import DecodedFrame, DecodeResult
+    from system_tai.retrieval.multi_query import QueryLanguage, QueryVariant, QueryVariantType
+    from system_tai.retrieval.video_evidence import RestrictedFrameHit, VideoRestrictedSearchOutcome
+
+    req = QAQueryRequest(
+        request_id="test_req",
+        query_id="QA-26",
+        event_description="convoy of white vehicles",
+        question="Đoàn xe màu trắng là xe gì?",
+        question_en="What type of vehicles are in the white convoy?",
+    )
+    base_preds = [
+        {"rank": i, "video_id": f"L21_V{i:03d}", "frame_id": 1000 + i, "answer": f"ans_{i}"}
+        for i in range(1, 101)
+    ]
+    cfg = QAVideoConditionedEvidenceConfig(
+        enabled=True,
+        consensus_novel_rescue_enabled=True,
+        consensus_novel_rescue_max_videos=1,
+        consensus_novel_rescue_tail_budget=5,
+    )
+
+    chosen_vid = "L21_V009"
+    eligible_outcome = ConsensusNovelRescueOutcome(
+        eligible=True,
+        reason="CONSENSUS_CANDIDATE_SELECTED",
+        literal_top16=(chosen_vid,),
+        compact_top16=(chosen_vid,),
+        fused_top16=(chosen_vid,),
+        all_consensus_candidates=(ConsensusRescueCandidate(video_id=chosen_vid, fused_rank=1, literal_rank=1, compact_rank=1),),
+        chosen_candidate=ConsensusRescueCandidate(video_id=chosen_vid, fused_rank=1, literal_rank=1, compact_rank=1),
+    )
+
+    v = QueryVariant(variant_id="QA-26::en", text="white vehicles", language=QueryLanguage.ENGLISH, variant_type=QueryVariantType.ENGLISH_TRANSLATION, weight=1.0)
+    event_vec = np.ones((512,), dtype=np.float32)
+
+    searcher = MagicMock()
+    store_mock = MagicMock()
+    store_mock.descriptor.row_count = 10
+    searcher.registry.get.return_value = store_mock
+
+    # Restricted frame search returns a candidate hit
+    searcher.search_selected_videos.return_value = VideoRestrictedSearchOutcome(
+        rankings={
+            "QA-26::en": {
+                chosen_vid: (
+                    RestrictedFrameHit(video_id=chosen_vid, frame_id=21450, clip_row=0, keyframe_order=0, cosine_score=0.9, rank=1, pts_time=100.0),
+                )
+            }
+        },
+        video_store_scan_count=1,
+        physical_rows_scored=10,
+    )
+
+    # Refiner returns refined candidate mock
+    ref_cand_mock = MagicMock()
+    ref_cand_mock.candidate_frame_id = 21450
+    ref_cand_mock.refined_frame_id = 21450
+    ref_cand_mock.status = RefinementStatus.REFINED
+    ref_cand_mock.refinement_fusion_score = 0.95
+
+    refiner = MagicMock()
+    refiner.refine_selected_candidates.return_value = SelectedRefinementOutcome(
+        candidates=(ref_cand_mock,),
+        timings={},
+        warnings=(),
+    )
+
+    # Raw video record and video decoder
+    raw_video_registry = MagicMock()
+    raw_record_mock = MagicMock()
+    raw_record_mock.raw_video_path = MagicMock()
+    raw_record_mock.raw_video_path.is_file.return_value = True
+    raw_video_registry.get.return_value = raw_record_mock
+
+    decoder = MagicMock()
+    probe_mock = MagicMock()
+    probe_mock.total_frame_count = 50000
+    decoder.probe.return_value = probe_mock
+
+    frame_img_mock = np.zeros((224, 224, 3), dtype=np.uint8)
+    decode_res_mock = MagicMock()
+    decode_res_mock.frames = (
+        DecodedFrame(absolute_frame_id=21450, timestamp_seconds=100.0, image=frame_img_mock),
+    )
+    decoder.decode.return_value = decode_res_mock
+
+    encoder = MagicMock()
+    encoder.encode_images.return_value = np.ones((1, 512), dtype=np.float32)
+
+    qa_engine = MagicMock()
+    qa_engine.answer.return_value = QAResult(
+        query_id="QA-26",
+        question_type=QuestionType.OBJECT_ENTITY,
+        predictions=[
+            QAPrediction(query_id="QA-26", rank=1, video_id=chosen_vid, frame_id=21450, answer="taxi"),
+        ],
+    )
+
+    with patch("system_tai.qa.consensus_rescue.derive_consensus_novel_videos", return_value=eligible_outcome):
+        merged, outcome, recs, admitted, stage_telemetry = execute_sidepath_consensus_rescue(
+            request=req,
+            q_type=QuestionType.OBJECT_ENTITY,
+            variants=(v,),
+            event_vectors=[event_vec],
+            champion_selected_video_ids=("L21_V001", "L21_V002"),
+            champion_predictions=base_preds,
+            searcher=searcher,
+            encoder=encoder,
+            decoder=decoder,
+            refiner=refiner,
+            refinement_config=MagicMock(),
+            weighted_rrf=MagicMock(),
+            raw_video_registry=raw_video_registry,
+            candidate_provider=None,
+            ocr_answer_provider=None,
+            qa_engine=qa_engine,
+            config=cfg,
+        )
+
+    # 1. Verify outcome is eligible
+    assert outcome.eligible
+    assert outcome.chosen_candidate.video_id == chosen_vid
+
+    # 2. Verify QA engine was invoked with canonical QAQuery
+    assert qa_engine.answer.called
+
+    # 3. Verify exactly 1 rescue tuple was admitted into rank 96
+    assert len(admitted) == 1
+    assert admitted[0]["video_id"] == chosen_vid
+    assert admitted[0]["frame_id"] == 21450
+    assert admitted[0]["answer"] == "taxi"
+    assert admitted[0]["rank"] == 96
+    assert admitted[0]["slot_source"] == "RESCUE_TAIL_CONSENSUS_NOVEL_VIDEO_RESCUE"
+
+    # 4. Verify ranks 1..95 of champion baseline are strictly preserved
+    for i in range(95):
+        assert merged[i]["video_id"] == base_preds[i]["video_id"]
+        assert merged[i]["rank"] == i + 1
+
+    # 5. Verify stage telemetry captured all 6 stages
+    assert stage_telemetry["grounding"]["candidate_count"] >= 1
+    assert stage_telemetry["temporal_seeds"]["seed_count"] >= 1
+    assert stage_telemetry["refinement"]["output_count"] >= 1
+    assert stage_telemetry["answers"]["produced_count"] >= 1
+    assert stage_telemetry["tail"]["admitted_count"] == 1
+
+
