@@ -301,7 +301,7 @@ def run_triplet_probe(
         variant_rankings = {}
         for var_name, var_text, var_lang, var_type in pdata["variants"]:
             v_obj = QueryVariant(variant_id=f"{qid}::{var_name}", text=var_text, language=var_lang, variant_type=var_type, weight=1.0)
-            v_vec = encoder.encode_text(var_text, language=var_lang)
+            v_vec = encoder.encode(var_text)
             maxima = searcher.search_maxima(
                 query_ids=[v_obj.variant_id],
                 query_vectors=[v_vec],
@@ -314,7 +314,7 @@ def run_triplet_probe(
 
         # 3. Fused Multi-Variant Top 16 Nomination
         multi_qids = [f"{qid}::{v[0]}" for v in pdata["variants"]]
-        multi_vecs = [encoder.encode_text(v[1], language=v[2]) for v in pdata["variants"]]
+        multi_vecs = [encoder.encode(v[1]) for v in pdata["variants"]]
         multi_maxima = searcher.search_maxima(
             query_ids=multi_qids,
             query_vectors=multi_vecs,
