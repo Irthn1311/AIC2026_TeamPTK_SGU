@@ -35,9 +35,9 @@ from system_tai.kis.session_engine import OperationalKISRuntime
 from system_tai.kis.session_schema import QAQueryRequest, SessionConfig
 from system_tai.qa.grounding import (
     QA_CANDIDATE_ORDER_ROUND_ROBIN,
-    QAEvidenceCandidate,
     QAVideoConditionedEvidenceConfig,
 )
+from system_tai.qa.models import QAEvidenceCandidate
 from system_tai.qa.object_provider import ObjectAnswerProviderConfig
 from system_tai.qa.ocr_provider import (
     OCRAnswerProviderConfig,
