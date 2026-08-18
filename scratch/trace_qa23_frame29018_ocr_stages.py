@@ -45,7 +45,6 @@ from system_tai.qa.ocr_provider import (
     parse_tesseract_tsv,
 )
 from system_tai.qa.question_types import QuestionType
-from system_tai.qa.secondary_refined_rescue import top1_secondary_refined_rescue
 from system_tai.qa.visual_ontology import VisualOntologyConfig
 from system_tai.refinement.video import DecodeRequest
 
@@ -209,14 +208,29 @@ def run_trace():
     # =========================================================================
     # STAGE D: S2D1 RescueCandidate.answer before merge
     # =========================================================================
-    # Simulate secondary refinement anchor outputs
-    candidate_predictions = []
-    _, rescue_candidates, admitted_tuples, telemetry = top1_secondary_refined_rescue(
-        champion_predictions=candidate_predictions,
-        top1_nominated_video=target_vid,
-        primary_refined_anchor=29237,
-        secondary_refined_anchor=29018,
-        question_type=QuestionType.OCR,
+    from system_tai.qa.secondary_refined_rescue import execute_top1_secondary_refined_rescue
+    from system_tai.refinement.models import RefinedCandidate, RefinementStatus
+
+    ref_cands = [
+        RefinedCandidate(
+            video_id=target_vid,
+            initial_frame_id=29237,
+            refined_frame_id=29237,
+            initial_score=0.9,
+            refined_score=0.95,
+            status=RefinementStatus.SUCCESS,
+        ),
+        RefinedCandidate(
+            video_id=target_vid,
+            initial_frame_id=29018,
+            refined_frame_id=29018,
+            initial_score=0.85,
+            refined_score=0.92,
+            status=RefinementStatus.SUCCESS,
+        ),
+    ]
+
+    _, rescue_candidates, admitted_tuples, telemetry = execute_top1_secondary_refined_rescue(
         request=QAQueryRequest(
             request_id="trace-qa23",
             query_id="QA-23",
@@ -225,10 +239,16 @@ def run_trace():
             include_vi_variant=False,
             output_top_k=100,
         ),
+        q_type=QuestionType.OCR,
+        champion_selected_video_ids=[target_vid],
+        champion_refined_candidates=ref_cands,
+        champion_predictions=[],
+        canonical_evidence_cands=(),
         raw_video_registry=runtime.raw_video_registry,
         decoder=runtime.decoder,
         ocr_answer_provider=ocr_provider,
-        tail_budget=5,
+        ocr_provider_supported=True,
+        config=evidence_config,
     )
     has_meta_D = any(check_tsv_numeric_metadata(c.answer) for c in rescue_candidates)
 
