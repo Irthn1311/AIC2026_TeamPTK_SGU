@@ -145,46 +145,98 @@ def execute_top1_secondary_refined_rescue(
             return list(champion_predictions), rescue_candidates, admitted_tuples, stage_telemetry
 
         decoded_frame_obj = dec_res.frames[0]
-
-        # Exact Champion OCR Answer Routing
-        ev_cand = QAEvidenceCandidate(
-            query_id=request.query_id,
-            rank=1,
-            video_id=top1_vid,
-            frame_id=target_physical_frame,
-            retrieval_score=1.0,
-            source_status="TOP1_SECONDARY_REFINED_RESCUE",
-        )
-        ocr_res, _ = ocr_answer_provider.answer(
-            query_id=request.query_id,
-            question_type=q_type,
-            evidence=((ev_cand, decoded_frame_obj.image),),
-            output_top_k=5,
-            warnings=[],
+        tail_budget = int(config.top1_secondary_refined_rescue_tail_budget)
+        use_span_candidateizer = (
+            config.top1_secondary_refined_rescue_span_candidateizer
+            and q_type is QuestionType.OCR
         )
 
-        seen_keys: set[tuple[str, int, str]] = set()
-        for pred in ocr_res.predictions:
-            if pred.answer:
-                ans_norm = " ".join(unicodedata.normalize("NFKC", pred.answer).split()).casefold()
-                key = (top1_vid, target_physical_frame, ans_norm)
-                if key not in seen_keys:
-                    seen_keys.add(key)
-                    rescue_candidates.append(
-                        RescueCandidate(
-                            video_id=top1_vid,
-                            frame_id=target_physical_frame,
-                            answer=pred.answer,
-                            rescue_score=0.5,
-                            rescue_source="top1_secondary_refined_rescue",
-                            provenance={
-                                "top1_video": top1_vid,
-                                "primary_anchor": stage_telemetry["primary_refined_anchor"],
-                                "secondary_anchor": target_physical_frame,
-                                "raw_answer": pred.answer,
-                            },
-                        )
+        stage_telemetry["span_candidateizer_enabled"] = use_span_candidateizer
+
+        if use_span_candidateizer:
+            from system_tai.qa.ocr_span_candidateizer import extract_and_rank_canonical_ocr_spans
+            from system_tai.qa.ocr_provider import _portable_pixmap
+
+            payload = _portable_pixmap(decoded_frame_obj.image)
+            ocr_backend = ocr_answer_provider.backend
+            completed = ocr_backend._invoke(
+                (
+                    "stdin",
+                    "stdout",
+                    "-l",
+                    "+".join(ocr_answer_provider.config.languages),
+                    "--psm",
+                    str(ocr_answer_provider.config.page_segmentation_mode),
+                    "tsv",
+                ),
+                input_bytes=payload,
+            )
+            ranked_spans = extract_and_rank_canonical_ocr_spans(
+                completed.stdout,
+                max_n=4,
+                max_candidates=tail_budget,
+            )
+            stage_telemetry["total_spans_ranked"] = len(ranked_spans)
+            for span_cand in ranked_spans:
+                rescue_candidates.append(
+                    RescueCandidate(
+                        video_id=top1_vid,
+                        frame_id=target_physical_frame,
+                        answer=span_cand.raw_span,
+                        rescue_score=round(span_cand.score, 6),
+                        rescue_source="top1_secondary_refined_rescue_span",
+                        provenance={
+                            "top1_video": top1_vid,
+                            "primary_anchor": stage_telemetry["primary_refined_anchor"],
+                            "secondary_anchor": target_physical_frame,
+                            "raw_answer": span_cand.raw_span,
+                            "normalized_span": span_cand.normalized_span,
+                            "n_gram": span_cand.n_gram,
+                            "span_score": span_cand.score,
+                            "score_components": span_cand.score_components,
+                        },
                     )
+                )
+        else:
+            # Exact Champion OCR Answer Routing (Line-Level)
+            ev_cand = QAEvidenceCandidate(
+                query_id=request.query_id,
+                rank=1,
+                video_id=top1_vid,
+                frame_id=target_physical_frame,
+                retrieval_score=1.0,
+                source_status="TOP1_SECONDARY_REFINED_RESCUE",
+            )
+            ocr_res, _ = ocr_answer_provider.answer(
+                query_id=request.query_id,
+                question_type=q_type,
+                evidence=((ev_cand, decoded_frame_obj.image),),
+                output_top_k=tail_budget,
+                warnings=[],
+            )
+
+            seen_keys: set[tuple[str, int, str]] = set()
+            for pred in ocr_res.predictions:
+                if pred.answer:
+                    ans_norm = " ".join(unicodedata.normalize("NFKC", pred.answer).split()).casefold()
+                    key = (top1_vid, target_physical_frame, ans_norm)
+                    if key not in seen_keys:
+                        seen_keys.add(key)
+                        rescue_candidates.append(
+                            RescueCandidate(
+                                video_id=top1_vid,
+                                frame_id=target_physical_frame,
+                                answer=pred.answer,
+                                rescue_score=0.5,
+                                rescue_source="top1_secondary_refined_rescue",
+                                provenance={
+                                    "top1_video": top1_vid,
+                                    "primary_anchor": stage_telemetry["primary_refined_anchor"],
+                                    "secondary_anchor": target_physical_frame,
+                                    "raw_answer": pred.answer,
+                                },
+                            )
+                        )
 
         stage_telemetry["reason"] = "RESCUE_PROCESSED"
         stage_telemetry["produced_answers"] = [
