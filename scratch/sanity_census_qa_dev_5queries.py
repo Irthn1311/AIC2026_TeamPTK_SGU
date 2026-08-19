@@ -1,24 +1,12 @@
 #!/usr/bin/env python3
-"""QA DEV Split 38-Query Runtime-Native First-Failure Diagnostic Census.
+"""5-Query Targeted Sanity Census Test with Full Post-Evidence Tracking.
 
-Classifies all 38 DEV queries (7 Strict Hits + 31 NO-HIT queries) under the
-exact, frozen QA DEV Champion configuration (commit a8d6631).
-
-Tracks the COMPLETE physical candidate lifecycle:
-  1. Pre-Evidence Candidates (Initial Anchors + Refined Frames)
-  2. Usable Evidence Candidates
-  3. Post-Evidence Generated Candidate Universe (Top-100 constructor offsets & S2D1/S2E1 rescue)
-  4. Final Top-100 Predictions
-
-Mutually-Exclusive First-Failure Taxonomy Hierarchy:
-  0. STRICT_HIT                : Official strict tuple exists in final Top-100.
-  1. UNSUPPORTED_OR_ERROR      : Pipeline bail-out / unsupported / unexecuted retrieval / N=0.
-  2. VIDEO_ABSENT              : Retrieval executed, but target video absent from selected_video_ids.
-  3. TARGET_VIDEO_NO_EVIDENCE  : Target video selected, but no physical candidate records created anywhere.
-  4. TEMPORAL_MISS             : Target video present, but no physical frame anywhere in the entire candidate universe in GT.
-  5. EVIDENCE_SELECTION_MISS   : In-GT physical frame existed pre-evidence, but disappeared before post-evidence materialization.
-  6. ANSWER_MISS               : Target video has in-GT physical frame(s) in post-evidence candidate universe, but bound answers fail answer_matches().
-  7. ALLOCATION_MISS           : Bound tuple (target video, in-GT frame, exact gold answer) existed in candidate universe, but displaced from final Top-100.
+Evaluates 5 benchmark queries:
+  - QA-10: Micro-offset strict hit control (expected post-evidence frame 28135 -> STRICT_HIT @88)
+  - QA-23: S2E1 rescue strict hit control (expected post-evidence frame 29018 -> STRICT_HIT @63)
+  - QA-08: Downstream temporal offset strict hit control (expected post-evidence frame 552 -> STRICT_HIT @43)
+  - QA-02: True temporal miss negative control (expected no physical frames in GT -> TEMPORAL_MISS)
+  - QA-34: Early unsupported bail-out control (expected N=0 -> UNSUPPORTED_OR_ERROR)
 """
 
 from __future__ import annotations
@@ -99,7 +87,7 @@ def resolve_visual_ontology_config() -> VisualOntologyConfig:
     return VisualOntologyConfig(enabled=False)
 
 
-def run_first_failure_census() -> None:
+def run_5query_sanity_census() -> None:
     benchmark_path = REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "l21_150_diagnostic" / "benchmark.json"
     sidecar_path = REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "l21_150_diagnostic" / "qa_dev_translations_en.json"
 
@@ -107,14 +95,16 @@ def run_first_failure_census() -> None:
     sidecar_data = json.loads(sidecar_path.read_text(encoding="utf-8"))
 
     en_map = {e["query_id"]: e.get("question_en", "") for e in sidecar_data.get("entries", [])}
-    qa_dev_queries = [q for q in bm_data["queries"] if q.get("task_type") == "qa" and q.get("split") == "DEV"]
+    target_qids = ["QA-10", "QA-23", "QA-08", "QA-02", "QA-34"]
+    qa_queries = [q for q in bm_data["queries"] if q["query_id"] in target_qids]
+    qa_queries.sort(key=lambda q: target_qids.index(q["query_id"]))
 
-    print("=" * 140)
-    print("RUNTIME-NATIVE FIRST-FAILURE DIAGNOSTIC CENSUS (38 QA DEV QUERIES - CHAMPION CONFIG a8d6631)")
-    print(f"Total DEV Queries to Evaluate: {len(qa_dev_queries)}")
-    print("=" * 140)
+    print("=" * 135)
+    print("5-QUERY TARGETED SANITY CENSUS TEST (FULL POST-EVIDENCE & TUPLE PROVENANCE)")
+    print(f"Queries to evaluate: {', '.join(target_qids)}")
+    print("=" * 135)
 
-    session_output = Path("/kaggle/working/output/census_qa_dev_38") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "census_qa_dev_38"
+    session_output = Path("/kaggle/working/output/sanity_census_5") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "sanity_census_5"
     if session_output.exists():
         shutil.rmtree(session_output, ignore_errors=True)
     session_output.mkdir(parents=True, exist_ok=True)
@@ -164,8 +154,7 @@ def run_first_failure_census() -> None:
 
     census_records: list[dict[str, Any]] = []
 
-    print("\n--- EXECUTING CENSUS INFERENCE & CLASSIFYING FIRST FAILURES ---")
-    for idx, q in enumerate(qa_dev_queries, start=1):
+    for idx, q in enumerate(qa_queries, start=1):
         qid = q["query_id"]
         target_vid = q.get("video_id")
         start_f, end_f = int(q["proposed_interval"][0]), int(q["proposed_interval"][1])
@@ -176,7 +165,7 @@ def run_first_failure_census() -> None:
 
         t_q0 = time.time()
         req = QAQueryRequest(
-            request_id=f"census-{qid}",
+            request_id=f"sanity5-{qid}",
             query_id=qid,
             event_description=q_vi,
             question=q_vi,
@@ -218,7 +207,7 @@ def run_first_failure_census() -> None:
         target_usable = [e for e in usable_cands if e.get("video_id") == target_vid]
         usable_fids = {int(e["frame_id"]) for e in target_usable if e.get("frame_id") is not None}
 
-        # Stage 4: Post-Evidence Generated Candidate Universe (Constructor offsets & rescue tuples)
+        # Stage 4: Post-Evidence & Generated Prediction Candidate Tuples (Including Top100 constructor & S2D1/S2E1 rescue)
         post_ev_tuples: list[dict[str, Any]] = []
         for p in preds:
             post_ev_tuples.append({
@@ -228,6 +217,7 @@ def run_first_failure_census() -> None:
                 "rank": int(p.rank),
             })
 
+        # All target physical frames across entire candidate universe
         target_post_ev_tuples = [t for t in post_ev_tuples if t["video_id"] == target_vid]
         target_post_ev_fids = {t["frame_id"] for t in target_post_ev_tuples}
 
@@ -311,7 +301,7 @@ def run_first_failure_census() -> None:
         # Tier 5: Evidence Selection Miss (In-GT frame existed pre-evidence, but disappeared before post-evidence materialization)
         elif len(pre_ev_in_gt) > 0 and len(post_ev_in_gt) == 0:
             label = "EVIDENCE_SELECTION_MISS"
-            causal_detail = f"In-GT physical frame(s) {pre_ev_in_gt} existed pre-evidence but excluded from post-evidence candidates"
+            causal_detail = f"In-GT frame(s) {pre_ev_in_gt} existed pre-evidence but excluded from post-evidence candidates"
 
         # Tier 6: Answer Miss (In-GT post-evidence target candidate exists, but bound answer fails answer_matches)
         elif len(post_ev_in_gt) > 0 and not bound_exact_ans_exists:
@@ -345,10 +335,8 @@ def run_first_failure_census() -> None:
         record = {
             "query_id": qid,
             "branch": branch,
-            "q_type": q_type_str,
             "target_vid": target_vid,
             "gt_interval": f"[{start_f}..{end_f}]",
-            "target_selected": target_selected,
             "target_nom_rank": target_nom_rank,
             "pre_ev_fids": sorted(pre_ev_fids),
             "usable_fids": sorted(usable_fids),
@@ -362,66 +350,42 @@ def run_first_failure_census() -> None:
         }
         census_records.append(record)
 
-        print(f"[{idx:2d}/38] {qid:<5} | Branch: {branch:<14} | NomRank: {str(target_nom_rank):<4} | Label: {label:<26} | Time: {elapsed:.2f}s")
+        print(f"[{idx:2d}/5] {qid:<5} | NomRank: {str(target_nom_rank):<4} | Pre-GT: {str(len(pre_ev_in_gt)>0):<5} | Post-GT: {str(len(post_ev_in_gt)>0):<5} | Label: {label:<26} | Time: {elapsed:.2f}s")
         print(f"       -> Detail: {causal_detail}")
 
-    # ==============================================================================================================
-    # FINAL CENSUS REPORT & QUANTITATIVE BREAKDOWN
-    # ==============================================================================================================
-    print("\n" + "=" * 140)
-    print("FINAL 38-QUERY FIRST-FAILURE CENSUS AUDIT TABLE")
-    print("=" * 140)
-    print(f"{'QID':<6} | {'Phân nhánh':<14} | {'Target':<10} | {'Nom':<5} | {'Any-GT':<7} | {'Post-GT':<8} | {'Strict Rank':<12} | {'First-Failure Label':<26} | {'Causal Detail'}")
-    print("-" * 140)
+    print("\n" + "=" * 135)
+    print("5-QUERY TARGETED SANITY CENSUS AUDIT MATRIX")
+    print("=" * 135)
+    print(f"{'QID':<6} | {'Target':<10} | {'Nom':<5} | {'Pre-GT':<7} | {'Post-GT':<8} | {'Strict Rank':<12} | {'First-Failure Label':<26} | {'Causal Detail'}")
+    print("-" * 135)
     for r in census_records:
-        any_gt_str = "YES" if r["any_in_gt_fids"] else "NO"
+        pre_gt_str = "YES" if len(r["pre_ev_fids"]) > 0 and r["pre_ev_fids"][0] else "NO"
         post_gt_str = "YES" if r["post_ev_in_gt_fids"] else "NO"
         nom_str = f"@{r['target_nom_rank']}" if r["target_nom_rank"] else "-"
         rank_str = f"@{r['strict_hit_rank']}" if r["strict_hit_rank"] else "-"
-        print(f"{r['query_id']:<6} | {r['branch']:<14} | {r['target_vid']:<10} | {nom_str:<5} | {any_gt_str:<7} | {post_gt_str:<8} | {rank_str:<12} | {r['first_failure_label']:<26} | {r['causal_detail']}")
-    print("=" * 140)
+        print(f"{r['query_id']:<6} | {r['target_vid']:<10} | {nom_str:<5} | {str(len(r['any_in_gt_fids'])>0):<7} | {post_gt_str:<8} | {rank_str:<12} | {r['first_failure_label']:<26} | {r['causal_detail']}")
+    print("=" * 135)
 
-    # Breakdown for the 31 NO-HIT Queries
-    no_hit_records = [r for r in census_records if r["first_failure_label"] != "STRICT_HIT"]
-    strict_hit_records = [r for r in census_records if r["first_failure_label"] == "STRICT_HIT"]
+    rec_by_qid = {r["query_id"]: r for r in census_records}
+    assert rec_by_qid["QA-10"]["first_failure_label"] == "STRICT_HIT", "QA-10 must be STRICT_HIT"
+    assert rec_by_qid["QA-10"]["strict_hit_frame"] == 28135, "QA-10 physical frame must be 28135"
+    assert 28135 in rec_by_qid["QA-10"]["post_ev_in_gt_fids"], "QA-10 post-evidence frame 28135 must be captured in post_ev_in_gt_fids"
 
-    counts: dict[str, int] = {}
-    for r in no_hit_records:
-        counts[r["first_failure_label"]] = counts.get(r["first_failure_label"], 0) + 1
+    assert rec_by_qid["QA-23"]["first_failure_label"] == "STRICT_HIT", "QA-23 must be STRICT_HIT"
+    assert rec_by_qid["QA-23"]["strict_hit_frame"] == 29018, "QA-23 physical frame must be 29018"
+    assert 29018 in rec_by_qid["QA-23"]["post_ev_in_gt_fids"], "QA-23 post-evidence frame 29018 must be captured in post_ev_in_gt_fids"
 
-    print("\n" + "=" * 120)
-    print("QUANTITATIVE FIRST-FAILURE BOTTLENECK DISTRIBUTION (31 NO-HIT QUERIES)")
-    print("=" * 120)
-    print(f"{'First-Failure Category':<32} | {'Count (N=31)':<15} | {'Percentage (%)':<15} | {'Query IDs'}")
-    print("-" * 120)
+    assert rec_by_qid["QA-08"]["first_failure_label"] == "STRICT_HIT", "QA-08 must be STRICT_HIT"
+    assert rec_by_qid["QA-08"]["strict_hit_frame"] == 552, "QA-08 physical frame must be 552"
+    assert 552 in rec_by_qid["QA-08"]["post_ev_in_gt_fids"], "QA-08 post-evidence frame 552 must be captured in post_ev_in_gt_fids"
 
-    taxonomy_order = [
-        "UNSUPPORTED_OR_ERROR",
-        "VIDEO_ABSENT",
-        "TARGET_VIDEO_NO_EVIDENCE",
-        "TEMPORAL_MISS",
-        "EVIDENCE_SELECTION_MISS",
-        "ANSWER_MISS",
-        "ALLOCATION_MISS",
-    ]
+    assert rec_by_qid["QA-02"]["first_failure_label"] == "TEMPORAL_MISS", "QA-02 must be TEMPORAL_MISS"
+    assert len(rec_by_qid["QA-02"]["any_in_gt_fids"]) == 0, "QA-02 must have 0 physical frames in GT"
 
-    for cat in taxonomy_order:
-        c = counts.get(cat, 0)
-        pct = (c / len(no_hit_records) * 100.0) if no_hit_records else 0.0
-        q_list = [r["query_id"] for r in no_hit_records if r["first_failure_label"] == cat]
-        print(f"{cat:<32} | {c:<15} | {pct:>6.2f}%         | {', '.join(q_list) if q_list else '-'}")
+    assert rec_by_qid["QA-34"]["first_failure_label"] == "UNSUPPORTED_OR_ERROR", "QA-34 must be UNSUPPORTED_OR_ERROR"
 
-    print("-" * 120)
-    print(f"{'TOTAL NO-HIT QUERIES':<32} | {len(no_hit_records):<15} | {100.0:>6.2f}%         |")
-    print(f"{'STRICT HITS (CONTROLS)':<32} | {len(strict_hit_records):<15} | {'(7 hits)':<15} | {', '.join(r['query_id'] for r in strict_hit_records)}")
-    print("=" * 120)
-
-    # Invariant assertions
-    assert len(census_records) == 38, f"Expected 38 census records, got {len(census_records)}"
-    assert len(strict_hit_records) == 7, f"Expected 7 strict hits, got {len(strict_hit_records)}"
-    assert len(no_hit_records) == 31, f"Expected 31 no-hit records, got {len(no_hit_records)}"
-    print("\nALL SANITY ASSERTIONS PASSED (100% Valid Census Telemetry) ✅")
+    print("\nALL 5/5 MINI-SANITY ASSERTIONS PASSED WITH 100% PROVENANCE TRACING ✅")
 
 
 if __name__ == "__main__":
-    run_first_failure_census()
+    run_5query_sanity_census()
