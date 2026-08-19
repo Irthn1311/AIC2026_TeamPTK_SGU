@@ -31,7 +31,7 @@ class QwenEvidenceAdapter:
             Qwen2_5_VLForConditionalGeneration.from_pretrained(
                 self.asset_root,
                 local_files_only=True,
-            dtype=torch.float16,
+                dtype=torch.float16,
                 attn_implementation="sdpa",
                 low_cpu_mem_usage=True,
             )
@@ -56,13 +56,16 @@ class QwenEvidenceAdapter:
         *,
         description: str,
         question: str,
+        evidence_context: str = "",
     ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
         if self.model is None or self.processor is None:
             raise RuntimeError("QWEN_ADAPTER_NOT_LOADED")
         prompt = (
-            "Answer only from the supplied frame. Return JSON with keys answer "
+            "Answer only from the supplied frame and bounded evidence context. "
+            "Return JSON with keys answer "
             "(concise string) and evidence_sufficient (boolean). "
-            f"Event: {description}\nQuestion: {question}"
+            f"Event: {description}\nQuestion: {question}\n"
+            f"Evidence context: {evidence_context[:2000]}"
         )
         messages = [
             {
