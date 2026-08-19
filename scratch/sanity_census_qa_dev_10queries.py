@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
-"""QA DEV Split 38-Query Runtime-Native First-Failure Diagnostic Census.
+"""10-Query Sanity Census Test for QA DEV First-Failure Taxonomy.
 
-Classifies all 38 DEV queries (7 Strict Hits + 31 NO-HIT queries) under the
-exact, frozen QA DEV Champion configuration (commit a8d6631).
+Evaluates 10 benchmark queries:
+  - 7 Positives (Known Champion Controls): QA-46, QA-13, QA-08, QA-27, QA-23, QA-10, QA-45
+  - 3 Known Failure Controls:
+      * QA-01 -> Expected: VIDEO_ABSENT
+      * QA-02 -> Expected: TEMPORAL_MISS
+      * QA-34 -> Expected: UNSUPPORTED_OR_ERROR (Early Bail-out / N=0)
 
 Mutually-Exclusive First-Failure Taxonomy Hierarchy:
   0. STRICT_HIT                : Official strict tuple exists in final Top-100.
@@ -93,7 +97,7 @@ def resolve_visual_ontology_config() -> VisualOntologyConfig:
     return VisualOntologyConfig(enabled=False)
 
 
-def run_first_failure_census() -> None:
+def run_sanity_census() -> None:
     benchmark_path = REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "l21_150_diagnostic" / "benchmark.json"
     sidecar_path = REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "l21_150_diagnostic" / "qa_dev_translations_en.json"
 
@@ -101,14 +105,20 @@ def run_first_failure_census() -> None:
     sidecar_data = json.loads(sidecar_path.read_text(encoding="utf-8"))
 
     en_map = {e["query_id"]: e.get("question_en", "") for e in sidecar_data.get("entries", [])}
-    qa_dev_queries = [q for q in bm_data["queries"] if q.get("task_type") == "qa" and q.get("split") == "DEV"]
+    target_qids = [
+        "QA-46", "QA-13", "QA-08", "QA-27", "QA-23", "QA-10", "QA-45",  # 7 Positives
+        "QA-01", "QA-02", "QA-34",                                       # 3 Known Failure Controls
+    ]
+    qa_queries = [q for q in bm_data["queries"] if q["query_id"] in target_qids]
+    # Keep target_qids order
+    qa_queries.sort(key=lambda q: target_qids.index(q["query_id"]))
 
     print("=" * 135)
-    print("RUNTIME-NATIVE FIRST-FAILURE DIAGNOSTIC CENSUS (38 QA DEV QUERIES - CHAMPION CONFIG a8d6631)")
-    print(f"Total DEV Queries: {len(qa_dev_queries)}")
+    print("10-QUERY SANITY CENSUS TEST (7 POSITIVE CONTROLS + 3 FAILURE CONTROLS)")
+    print(f"Queries to evaluate: {', '.join(target_qids)}")
     print("=" * 135)
 
-    session_output = Path("/kaggle/working/output/census_qa_dev_38") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "census_qa_dev_38"
+    session_output = Path("/kaggle/working/output/sanity_census_10") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "sanity_census_10"
     if session_output.exists():
         shutil.rmtree(session_output, ignore_errors=True)
     session_output.mkdir(parents=True, exist_ok=True)
@@ -158,8 +168,8 @@ def run_first_failure_census() -> None:
 
     census_records: list[dict[str, Any]] = []
 
-    print("\n--- EXECUTING CENSUS INFERENCE & CLASSIFYING FIRST FAILURES ---")
-    for idx, q in enumerate(qa_dev_queries, start=1):
+    print("\n--- EXECUTING INFERENCE & CLASSIFYING 10 SANITY QUERIES ---")
+    for idx, q in enumerate(qa_queries, start=1):
         qid = q["query_id"]
         target_vid = q.get("video_id")
         start_f, end_f = int(q["proposed_interval"][0]), int(q["proposed_interval"][1])
@@ -170,7 +180,7 @@ def run_first_failure_census() -> None:
 
         t_q0 = time.time()
         req = QAQueryRequest(
-            request_id=f"census-{qid}",
+            request_id=f"sanity-{qid}",
             query_id=qid,
             event_description=q_vi,
             question=q_vi,
@@ -344,14 +354,14 @@ def run_first_failure_census() -> None:
         }
         census_records.append(record)
 
-        print(f"[{idx:2d}/38] {qid:<5} | Branch: {branch:<14} | NomRank: {str(target_nom_rank):<4} | Label: {label:<26} | Time: {elapsed:.2f}s")
-        print(f"       -> Detail: {causal_detail}")
+        print(f"[{idx:2d}/10] {qid:<5} | Branch: {branch:<14} | NomRank: {str(target_nom_rank):<4} | Label: {label:<26} | Time: {elapsed:.2f}s")
+        print(f"        -> Detail: {causal_detail}")
 
     # ==============================================================================================================
-    # FINAL CENSUS REPORT & QUANTITATIVE BREAKDOWN
+    # 10-QUERY AUDIT MATRIX TABLE
     # ==============================================================================================================
     print("\n" + "=" * 135)
-    print("FINAL 38-QUERY FIRST-FAILURE CENSUS AUDIT TABLE")
+    print("10-QUERY SANITY CENSUS AUDIT MATRIX")
     print("=" * 135)
     print(f"{'QID':<6} | {'Phân nhánh':<14} | {'Target':<10} | {'Nom':<5} | {'Pre-GT':<7} | {'Usable-GT':<10} | {'Strict Rank':<12} | {'First-Failure Label':<26} | {'Causal Detail'}")
     print("-" * 135)
@@ -363,47 +373,20 @@ def run_first_failure_census() -> None:
         print(f"{r['query_id']:<6} | {r['branch']:<14} | {r['target_vid']:<10} | {nom_str:<5} | {pre_gt_str:<7} | {use_gt_str:<10} | {rank_str:<12} | {r['first_failure_label']:<26} | {r['causal_detail']}")
     print("=" * 135)
 
-    # Breakdown for the 31 NO-HIT Queries
-    no_hit_records = [r for r in census_records if r["first_failure_label"] != "STRICT_HIT"]
-    strict_hit_records = [r for r in census_records if r["first_failure_label"] == "STRICT_HIT"]
+    # Sanity checks on known expectations
+    rec_by_qid = {r["query_id"]: r for r in census_records}
 
-    counts: dict[str, int] = {}
-    for r in no_hit_records:
-        counts[r["first_failure_label"]] = counts.get(r["first_failure_label"], 0) + 1
+    # 1. 7 Positives must be STRICT_HIT
+    for qid in ["QA-46", "QA-13", "QA-08", "QA-27", "QA-23", "QA-10", "QA-45"]:
+        assert rec_by_qid[qid]["first_failure_label"] == "STRICT_HIT", f"Sanity failed: {qid} expected STRICT_HIT, got {rec_by_qid[qid]['first_failure_label']}"
 
-    print("\n" + "=" * 115)
-    print("QUANTITATIVE FIRST-FAILURE BOTTLENECK DISTRIBUTION (31 NO-HIT QUERIES)")
-    print("=" * 115)
-    print(f"{'First-Failure Category':<32} | {'Count (N=31)':<15} | {'Percentage (%)':<15} | {'Query IDs'}")
-    print("-" * 115)
+    # 2. Known Failures
+    assert rec_by_qid["QA-01"]["first_failure_label"] == "VIDEO_ABSENT", f"Sanity failed: QA-01 expected VIDEO_ABSENT, got {rec_by_qid['QA-01']['first_failure_label']}"
+    assert rec_by_qid["QA-02"]["first_failure_label"] == "TEMPORAL_MISS", f"Sanity failed: QA-02 expected TEMPORAL_MISS, got {rec_by_qid['QA-02']['first_failure_label']}"
+    assert rec_by_qid["QA-34"]["first_failure_label"] == "UNSUPPORTED_OR_ERROR", f"Sanity failed: QA-34 expected UNSUPPORTED_OR_ERROR, got {rec_by_qid['QA-34']['first_failure_label']}"
 
-    taxonomy_order = [
-        "UNSUPPORTED_OR_ERROR",
-        "VIDEO_ABSENT",
-        "TARGET_VIDEO_NO_EVIDENCE",
-        "TEMPORAL_MISS",
-        "EVIDENCE_SELECTION_MISS",
-        "ANSWER_MISS",
-        "ALLOCATION_MISS",
-    ]
-
-    for cat in taxonomy_order:
-        c = counts.get(cat, 0)
-        pct = (c / len(no_hit_records) * 100.0) if no_hit_records else 0.0
-        q_list = [r["query_id"] for r in no_hit_records if r["first_failure_label"] == cat]
-        print(f"{cat:<32} | {c:<15} | {pct:>6.2f}%         | {', '.join(q_list) if q_list else '-'}")
-
-    print("-" * 115)
-    print(f"{'TOTAL NO-HIT QUERIES':<32} | {len(no_hit_records):<15} | {100.0:>6.2f}%         |")
-    print(f"{'STRICT HITS (CONTROLS)':<32} | {len(strict_hit_records):<15} | {'(7 hits)':<15} | {', '.join(r['query_id'] for r in strict_hit_records)}")
-    print("=" * 115)
-
-    # Invariant assertions
-    assert len(census_records) == 38, f"Expected 38 census records, got {len(census_records)}"
-    assert len(strict_hit_records) == 7, f"Expected 7 strict hits, got {len(strict_hit_records)}"
-    assert len(no_hit_records) == 31, f"Expected 31 no-hit records, got {len(no_hit_records)}"
-    print("\nALL SANITY ASSERTIONS PASSED (100% Valid Census Telemetry) ✅")
+    print("\nALL 10/10 SANITY CONTROLS MATCHED EXPECTATIONS EXACTLY (100% PASS) ✅")
 
 
 if __name__ == "__main__":
-    run_first_failure_census()
+    run_sanity_census()
