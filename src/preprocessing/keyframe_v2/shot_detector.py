@@ -39,10 +39,12 @@ def detect_shots(video_path: Path, meta: VideoMetadata, cfg: dict) -> tuple[list
     )
     if not use_fast_histdiff:
         try:
-            from transnetv2_pytorch import TransNetV2
+            model = cfg.get("model")
+            if model is None:
+                from transnetv2_pytorch import TransNetV2
 
-            model = TransNetV2(device=str(cfg.get("transnetv2_device", "auto")))
-            model.eval()
+                model = TransNetV2(device=str(cfg.get("transnetv2_device", "auto")))
+                model.eval()
             if str(cfg.get("transnetv2_frame_reader", "opencv")) == "opencv":
                 shots = _detect_transnetv2_opencv(video_path, meta, model, float(cfg.get("transnetv2_threshold", 0.5)))
             else:

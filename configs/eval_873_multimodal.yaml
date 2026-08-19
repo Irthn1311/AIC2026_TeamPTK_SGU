@@ -1,0 +1,29 @@
+# Configuration for 873-Video Multimodal Evaluation (eval_generated_v1_873)
+
+fusion_weights:
+  visual: 0.40
+  ocr: 0.25
+  asr: 0.25
+  object: 0.10
+
+ocr_pipeline:
+  mode: "keyframe_v3"
+
+ocr_v4:
+  enabled: false
+
+temporal_mapping:
+  ocr_mode: "interval"
+  margin_sec: 1.0
+  ocr_context_window_sec: 10.0
+
+index_paths:
+  global_id_map: "outputs/eval_generated_v1_873/audit/keyframe_btc_global_map.parquet"
+  visual_index: "outputs/eval_generated_v1_873/audit/temp_btc_visual.faiss"
+  ocr_corpus: "outputs/indexes/ocr_temporal_v3_full_tracking/l21_ocr_temporal_v3_corpus.parquet"
+  asr_corpus: "outputs/indexes/asr_v3/l21_asr_v3_corpus.parquet"
+  object_corpus: "outputs/keyframe_v2_full/indexes/object/l21_objects_v2.parquet"
+
+translation:
+  cache_path: "outputs/cache/query_translation_vi_en.json"
+  enable_google: true
