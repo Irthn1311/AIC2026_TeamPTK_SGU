@@ -387,11 +387,22 @@ class RetrievalPipeline:
         fused = self._temporal_reranker.rerank(kis_query, fused, top_k=self._top_k_fus)
         logger.info(f"  • Tầng 3 - Temporal Continuity Rerank: Hoàn tất (Đã tối ưu cụm thời gian)")
 
-        # Step 5: Final Selection & Health Checks
-        logger.info(f"\n[BƯỚC 5/5 - LỰA CHỌN KEYFRAME CỐT LÕI & KIỂM TRA ĐỘ TIN CÂY]")
+        # Step 5: Final Selection & Top-20 Output
+        logger.info(f"\n[BƯỚC 5/5 - LỰA CHỌN KEYFRAME & XUẤT 20 ĐÁP ÁN ĐIỂM CAO NHẤT]")
         best_evidence = self._selector.select_best(fused, query_id=query_id)
         if best_evidence:
             clip_conf = round(float(top1_score), 4)
+
+            # Log top 20 candidates table
+            top20 = fused[:20]
+            logger.info(f"\n  📋 DANH SÁCH TOP 20 ĐÁP ÁN ĐIỂM CAO NHẤT (QUERY '{query_id}'):")
+            logger.info(f"  {'Hạng':<5} | {'Video ID':<12} | {'Frame Index':<12} | {'Keyframe (n)':<14} | {'PTS Time':<10} | {'Score':<8}")
+            logger.info(f"  {'-'*75}")
+            for rank, r in enumerate(top20, 1):
+                logger.info(
+                    f"  #{rank:<4} | {r.video_id:<12} | {r.frame_idx:<12} | n={r.n:<12} | {r.pts_time:>6.2f}s    | {r.score:.4f}"
+                )
+            logger.info(f"  {'-'*75}\n")
 
             # Health warnings
             if clip_conf < 0.20:
@@ -405,7 +416,7 @@ class RetrievalPipeline:
                 logger.info(f"  ℹ GHI CHÚ: Top 3 ứng viên thuộc 3 video khác nhau ({top3_vids})")
 
             logger.info(
-                f"  🏆 KẾT QUẢ CUỐI CÙNG: Video='{best_evidence.video_id}' | "
+                f"  🏆 KẾT QUẢ TOP 1 ĐƯỢC CHỌN: Video='{best_evidence.video_id}' | "
                 f"Frame={best_evidence.frame_idx} (PTS={best_evidence.pts_time:.2f}s) | "
                 f"Độ tin cậy CLIP={clip_conf:.4f}"
             )
