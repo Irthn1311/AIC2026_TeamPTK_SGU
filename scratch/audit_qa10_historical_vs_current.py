@@ -6,13 +6,14 @@ Executes QA-10 on two ISOLATED worktrees:
   - Arm C: Exact source tree at current HEAD + current canonical config
 
 Extracts and prints physical-frame telemetry side-by-side:
-  1. Video Nomination Rank of L21_V003
-  2. Initial Keyframe Anchors for L21_V003 (local_anchor_rank 1..5)
-  3. Temporal Seed Selection (Which anchors selected as seeds?)
-  4. Refinement Execution (Refined physical frame for each seed)
-  5. Usable Evidence Bank assembly
-  6. Final Top-100 predictions for L21_V003
-  7. Exact First Divergence Taxonomy
+  1. Provenance & Module Isolation Check (__file__, rev-parse HEAD)
+  2. Video Nomination Rank of L21_V003
+  3. Initial Keyframe Anchors for L21_V003 (local_anchor_rank 1..5)
+  4. Temporal Seed Selection (Which anchors selected as seeds?)
+  5. Refinement Execution (Refined physical frame for each seed)
+  6. Usable Evidence Bank assembly
+  7. Final Top-100 predictions for L21_V003
+  8. Exact First Divergence Taxonomy
 """
 
 from __future__ import annotations
@@ -34,11 +35,19 @@ OUTPUT_H = Path("/kaggle/working/output_historical_qa10") if Path("/kaggle/worki
 OUTPUT_C = Path("/kaggle/working/output_current_qa10") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "output_current_qa10"
 
 HELPER_CODE = """
-import json, sys, time, os, shutil, unicodedata
+import json, sys, time, os, shutil, subprocess, unicodedata
 from pathlib import Path
 
 repo_dir = Path("{repo_dir}").resolve()
-sys.path.insert(0, str(repo_dir / "systems" / "system_tai" / "src"))
+src_dir = repo_dir / "systems" / "system_tai" / "src"
+
+# Strict sys.path sanitation
+sys.path = [str(src_dir)] + [p for p in sys.path if "system_tai" not in p and "AIC2026" not in p]
+
+import system_tai
+import system_tai.qa.runtime
+
+git_head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo_dir, text=True).strip()
 
 from system_tai.kis.session_engine import OperationalKISRuntime
 from system_tai.kis.session_schema import QAQueryRequest, SessionConfig
@@ -57,7 +66,6 @@ def resolve_ocr_config():
     available_langs = []
     if tess_path:
         try:
-            import subprocess
             res = subprocess.run([tess_path, "--list-langs"], capture_output=True, text=True, check=False)
             available_langs = [l.strip() for l in res.stdout.splitlines()[1:] if l.strip()]
         except Exception: pass
@@ -73,7 +81,7 @@ def resolve_visual_ontology_config():
         return VisualOntologyConfig(enabled=True, ontology_path=p, evidence_frame_budget=16, max_active_domains=2)
     return VisualOntologyConfig(enabled=False)
 
-def run_single_qa10(out_dir_path: str):
+def run_single_qa10(out_dir_path: str, arm_name: str):
     out_dir = Path(out_dir_path)
     if out_dir.exists(): shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -89,7 +97,7 @@ def run_single_qa10(out_dir_path: str):
     q_vi = q_info["question_vi"]
     q_en = en_map.get("QA-10", "")
 
-    evidence_config = QAVideoConditionedEvidenceConfig(
+    evidence_kwargs = dict(
         enabled=True,
         selected_video_cap=16,
         anchors_per_video=5,
@@ -107,6 +115,15 @@ def run_single_qa10(out_dir_path: str):
         tier3_negative_offset_first=True,
         count_far_alt_micro=False,
     )
+    # Add S2D1 / S2E1 flags if supported in current HEAD
+    if arm_name == "current":
+        evidence_kwargs.update(dict(
+            top1_secondary_refined_rescue_enabled=True,
+            top1_secondary_refined_rescue_span_candidateizer=True,
+            top1_secondary_refined_rescue_tail_budget=5,
+        ))
+
+    evidence_config = QAVideoConditionedEvidenceConfig(**evidence_kwargs)
 
     config = SessionConfig(
         input_root=Path("/kaggle/input/datasets") if Path("/kaggle/input/datasets").exists() else Path("/kaggle/input"),
@@ -125,7 +142,7 @@ def run_single_qa10(out_dir_path: str):
 
     runtime = OperationalKISRuntime.bootstrap(config)
     req = QAQueryRequest(
-        request_id="qa10-trace",
+        request_id=f"qa10-trace-{{arm_name}}",
         query_id="QA-10",
         event_description=q_vi,
         question=q_vi,
@@ -137,8 +154,16 @@ def run_single_qa10(out_dir_path: str):
     )
     res, timings, diag = runtime.qa_pipeline.process_qa_query(req)
 
-    # Save detailed diagnostic JSON
+    # Save detailed diagnostic JSON + Provenance
     dump_data = {{
+        "arm_name": arm_name,
+        "provenance": {{
+            "git_head": git_head,
+            "system_tai_file": system_tai.__file__,
+            "runtime_file": system_tai.qa.runtime.__file__,
+            "repo_dir": str(repo_dir),
+            "evidence_config": {{k: str(v) for k, v in evidence_kwargs.items()}},
+        }},
         "selected_video_ids": diag.get("selected_video_ids", []),
         "temporal_seed_candidates": diag.get("temporal_seed_candidates", []),
         "refined_candidates": diag.get("refined_candidates", []),
@@ -157,7 +182,7 @@ def run_single_qa10(out_dir_path: str):
     print(f"Trace dump written to {{out_dir / 'trace_dump.json'}}")
 
 if __name__ == "__main__":
-    run_single_qa10(sys.argv[1])
+    run_single_qa10(sys.argv[1], sys.argv[2])
 """
 
 
@@ -181,10 +206,14 @@ def run_arm(arm_name: str, repo_dir: Path, output_dir: Path) -> dict:
     helper_script.parent.mkdir(parents=True, exist_ok=True)
     helper_script.write_text(HELPER_CODE.format(repo_dir=str(repo_dir).replace("\\", "/")), encoding="utf-8")
 
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(repo_dir / "systems" / "system_tai" / "src")
+
     t0 = time.time()
     res = subprocess.run(
-        [sys.executable, str(helper_script), str(output_dir)],
+        [sys.executable, str(helper_script), str(output_dir), "historical" if "historical" in arm_name else "current"],
         cwd=repo_dir,
+        env=env,
         capture_output=True,
         text=True,
         check=False,
@@ -214,6 +243,21 @@ def compare_traces(trace_h: dict, trace_c: dict) -> None:
     print("\n" + "=" * 115)
     print("QA-10 PHYSICAL-FRAME TEMPORAL PARITY COMPARISON: HISTORICAL (f39f63c) vs CURRENT (HEAD)")
     print("=" * 115)
+
+    prov_h = trace_h.get("provenance", {})
+    prov_c = trace_c.get("provenance", {})
+
+    print("\n0. PROVENANCE & IMPORT ISOLATION CHECK:")
+    print(f"   • Historical Arm (H) :")
+    print(f"     - Git SHA HEAD     : {prov_h.get('git_head')}")
+    print(f"     - system_tai Path  : {prov_h.get('system_tai_file')}")
+    print(f"     - Runtime Module   : {prov_h.get('runtime_file')}")
+    print(f"   • Current Arm (C)    :")
+    print(f"     - Git SHA HEAD     : {prov_c.get('git_head')}")
+    print(f"     - system_tai Path  : {prov_c.get('system_tai_file')}")
+    print(f"     - Runtime Module   : {prov_c.get('runtime_file')}")
+    is_isolated = (prov_h.get('git_head') != prov_c.get('git_head')) and (prov_h.get('system_tai_file') != prov_c.get('system_tai_file'))
+    print(f"   • Isolation Status   : {'PROVEN ISOLATED 100% ✅' if is_isolated else 'WARNING: Shared Path ⚠️'}")
 
     target_vid = "L21_V003"
     s_gt, e_gt = 28100, 28150
