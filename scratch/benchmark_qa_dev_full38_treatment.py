@@ -139,7 +139,7 @@ def run_full38_benchmark():
         default_output_top_k=100,
         default_refine_top_n=3,
         qa_video_conditioned_evidence_config=evidence_config,
-        qa_visual_ontology_config=VisualOntologyConfig(enabled=ontology_path.exists(), ontology_path=ontology_path if ontology_path.exists() else None),
+        qa_visual_ontology_config=VisualOntologyConfig(enabled=False),
         qa_ocr_answer_provider_config=resolve_ocr_config(),
         qa_object_answer_provider_config=ObjectAnswerProviderConfig(enabled=False),
     )
