@@ -403,6 +403,9 @@ def main() -> int:
     processed_count = 0
     skipped_count = 0
 
+    print(f"[2/4] Dispatching alignment across {args.num_workers} CPU workers...")
+    step_freq = 1 if len(worker_tasks) <= 100 else 10
+
     if args.num_workers > 1:
         with concurrent.futures.ProcessPoolExecutor(max_workers=args.num_workers) as executor:
             futures = {executor.submit(process_single_video_worker, task): task[0] for task in worker_tasks}
@@ -413,8 +416,14 @@ def main() -> int:
                     skipped_count += 1
                 else:
                     processed_count += 1
-                if idx % 50 == 0 or idx == len(worker_tasks):
-                    print(f" [{idx:03d}/{len(worker_tasks):03d}] Aligned {vid} | Status: {stats.get('status')} | Aligned KF: {stats['aligned_keyframes']}/{stats['total_keyframes']}")
+
+                if idx % step_freq == 0 or idx == len(worker_tasks):
+                    pct = (idx / len(worker_tasks)) * 100
+                    elapsed_so_far = time.time() - started_time
+                    avg_per_item = elapsed_so_far / idx
+                    eta_sec = int(avg_per_item * (len(worker_tasks) - idx))
+                    eta_str = f"{eta_sec // 60:02d}:{eta_sec % 60:02d}"
+                    print(f" [{idx:03d}/{len(worker_tasks):03d} | {pct:5.1f}% | ETA {eta_str}] 🎯 Aligned {vid} | Status: {stats.get('status')} | KF: {stats['aligned_keyframes']}/{stats['total_keyframes']} | Agree: {stats['time_frame_agree']}")
     else:
         for idx, task in enumerate(worker_tasks, start=1):
             vid, stats, res_info = process_single_video_worker(task)
@@ -423,8 +432,14 @@ def main() -> int:
                 skipped_count += 1
             else:
                 processed_count += 1
-            if idx % 50 == 0 or idx == len(worker_tasks):
-                print(f" [{idx:03d}/{len(worker_tasks):03d}] Aligned {vid} | Status: {stats.get('status')} | Aligned KF: {stats['aligned_keyframes']}/{stats['total_keyframes']}")
+
+            if idx % step_freq == 0 or idx == len(worker_tasks):
+                pct = (idx / len(worker_tasks)) * 100
+                elapsed_so_far = time.time() - started_time
+                avg_per_item = elapsed_so_far / idx
+                eta_sec = int(avg_per_item * (len(worker_tasks) - idx))
+                eta_str = f"{eta_sec // 60:02d}:{eta_sec % 60:02d}"
+                print(f" [{idx:03d}/{len(worker_tasks):03d} | {pct:5.1f}% | ETA {eta_str}] 🎯 Aligned {vid} | Status: {stats.get('status')} | KF: {stats['aligned_keyframes']}/{stats['total_keyframes']} | Agree: {stats['time_frame_agree']}")
 
     print("[3/4] Aggregating alignment results into global parquets...")
     # Gather per-video aligned parquets

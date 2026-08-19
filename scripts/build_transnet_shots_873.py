@@ -401,6 +401,12 @@ def main() -> int:
             meta_record = res["meta"]
             video_meta_records.append(meta_record)
 
+            pct = (idx / len(tasks)) * 100
+            elapsed_so_far = time.time() - started_time
+            avg_per_item = elapsed_so_far / idx
+            eta_sec = int(avg_per_item * (len(tasks) - idx))
+            eta_str = f"{eta_sec // 60:02d}:{eta_sec % 60:02d}"
+
             if status == "SKIPPED":
                 skipped_count += 1
                 df_vid = res["df"]
@@ -412,7 +418,7 @@ def main() -> int:
                     transnet_backend_count += 1
                 else:
                     histdiff_backend_count += 1
-                print(f"[{idx:03d}/{len(tasks):03d}] {vid} | SKIPPED (Resume valid) | Shots: {len(df_vid)}")
+                print(f"[{idx:03d}/{len(tasks):03d} | {pct:5.1f}% | ETA {eta_str}] 🎬 {vid} | SKIPPED (Resume valid) | Shots: {len(df_vid)}")
             elif status in ("PASS", "FAIL_VAL"):
                 processed_count += 1
                 df_vid = res["df"]
@@ -428,14 +434,14 @@ def main() -> int:
                 if status == "FAIL_VAL":
                     val_errs = res.get("val_errors", [])
                     validation_failures.append({"video_id": vid, "errors": val_errs})
-                    print(f"[{idx:03d}/{len(tasks):03d}] {vid} | FPS: {source_fps:.3f} | {backend.upper()}: PASS | Shots: {len(df_vid)} | Time: {res['elapsed']}s | Validation: FAIL")
+                    print(f"[{idx:03d}/{len(tasks):03d} | {pct:5.1f}% | ETA {eta_str}] 🎬 {vid} | {source_fps:.1f} FPS | {backend.upper()} | Shots: {len(df_vid)} | Time: {res['elapsed']}s | Val: ❌ FAIL")
                 else:
-                    print(f"[{idx:03d}/{len(tasks):03d}] {vid} | FPS: {source_fps:.3f} | {backend.upper()}: PASS | Shots: {len(df_vid)} | Time: {res['elapsed']}s | Validation: PASS")
+                    print(f"[{idx:03d}/{len(tasks):03d} | {pct:5.1f}% | ETA {eta_str}] 🎬 {vid} | {source_fps:.1f} FPS | {backend.upper()} | Shots: {len(df_vid)} | Time: {res['elapsed']}s | Val: ✅ PASS")
             else:
                 failed_count += 1
                 err_msg = res.get("error", "Unknown error")
                 failed_videos.append({"video_id": vid, "video_path": res.get("video_path", ""), "error": err_msg})
-                print(f"[{idx:03d}/{len(tasks):03d}] {vid} | FAILED in {res['elapsed']}s: {err_msg}")
+                print(f"[{idx:03d}/{len(tasks):03d} | {pct:5.1f}% | ETA {eta_str}] 💥 {vid} | FAILED in {res['elapsed']}s: {err_msg}")
 
     # Concatenate all per-video dataframes
     if all_per_video_dfs:
