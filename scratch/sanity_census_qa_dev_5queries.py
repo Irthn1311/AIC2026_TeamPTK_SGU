@@ -207,7 +207,7 @@ def run_5query_sanity_census() -> None:
         target_usable = [e for e in usable_cands if e.get("video_id") == target_vid]
         usable_fids = {int(e["frame_id"]) for e in target_usable if e.get("frame_id") is not None}
 
-        # Stage 4: Post-Evidence & Generated Prediction Candidate Tuples (Including Top100 constructor & S2D1/S2E1 rescue)
+        # Stage 4: Post-Evidence Materialized Candidate Tuples
         post_ev_tuples: list[dict[str, Any]] = []
         for p in preds:
             post_ev_tuples.append({
@@ -217,13 +217,12 @@ def run_5query_sanity_census() -> None:
                 "rank": int(p.rank),
             })
 
-        # All target physical frames across entire candidate universe
         target_post_ev_tuples = [t for t in post_ev_tuples if t["video_id"] == target_vid]
         target_post_ev_fids = {t["frame_id"] for t in target_post_ev_tuples}
 
         all_target_physical_fids = pre_ev_fids | usable_fids | target_post_ev_fids
 
-        # Check Ground Truth Intersections
+        # Check Ground Truth Intersections across all 4 stages
         pre_ev_in_gt = [f for f in sorted(pre_ev_fids) if start_f <= f <= end_f]
         usable_in_gt = [f for f in sorted(usable_fids) if start_f <= f <= end_f]
         post_ev_in_gt = [f for f in sorted(target_post_ev_fids) if start_f <= f <= end_f]
@@ -249,7 +248,7 @@ def run_5query_sanity_census() -> None:
                 strict_hit_answer = p_ans
                 break
 
-        # Check BOUND Tuple (Target Video + in-GT physical frame + exact gold answer) in Post-Evidence Universe
+        # Check BOUND Tuple (Target Video + in-GT physical frame + exact gold answer) in Materialized Candidates
         bound_exact_ans_exists = False
         matching_bound_answer = None
         bound_in_gt_answers_sample = []
@@ -340,6 +339,7 @@ def run_5query_sanity_census() -> None:
             "target_nom_rank": target_nom_rank,
             "pre_ev_fids": sorted(pre_ev_fids),
             "usable_fids": sorted(usable_fids),
+            "post_ev_fids": sorted(target_post_ev_fids),
             "post_ev_in_gt_fids": post_ev_in_gt,
             "any_in_gt_fids": any_in_gt,
             "strict_hit_rank": strict_hit_rank,
@@ -350,8 +350,15 @@ def run_5query_sanity_census() -> None:
         }
         census_records.append(record)
 
-        print(f"[{idx:2d}/5] {qid:<5} | NomRank: {str(target_nom_rank):<4} | Pre-GT: {str(len(pre_ev_in_gt)>0):<5} | Post-GT: {str(len(post_ev_in_gt)>0):<5} | Label: {label:<26} | Time: {elapsed:.2f}s")
-        print(f"       -> Detail: {causal_detail}")
+        in_gt_rows = [f"f={t['frame_id']} | '{t['answer']}' | @{t['rank']}" for t in target_post_ev_tuples if start_f <= t['frame_id'] <= end_f]
+
+        print(f"\n[{idx:2d}/5] {qid:<5} | NomRank: {str(target_nom_rank):<4} | Label: {label:<26} | Time: {elapsed:.2f}s")
+        print(f"       • Target Video: {target_vid} | GT Interval: [{start_f}..{end_f}]")
+        print(f"       • Stage 1 (Pre-Evidence Anchors/Refined) : {sorted(pre_ev_fids)}")
+        print(f"       • Stage 2 (Usable Evidence Bank)        : {sorted(usable_fids)}")
+        print(f"       • Stage 3 (Post-Evidence Materialized)  : {sorted(target_post_ev_fids)[:10]} ... (Total: {len(target_post_ev_fids)})")
+        print(f"       • Stage 4 (In-GT Materialized Rows)     : {in_gt_rows if in_gt_rows else 'NONE'}")
+        print(f"       • Final Classification Verdict          : {label} -> {causal_detail}")
 
     print("\n" + "=" * 135)
     print("5-QUERY TARGETED SANITY CENSUS AUDIT MATRIX")
@@ -359,7 +366,7 @@ def run_5query_sanity_census() -> None:
     print(f"{'QID':<6} | {'Target':<10} | {'Nom':<5} | {'Pre-GT':<7} | {'Post-GT':<8} | {'Strict Rank':<12} | {'First-Failure Label':<26} | {'Causal Detail'}")
     print("-" * 135)
     for r in census_records:
-        pre_gt_str = "YES" if len(r["pre_ev_fids"]) > 0 and r["pre_ev_fids"][0] else "NO"
+        pre_gt_str = "YES" if r["pre_ev_fids"] and (start_f <= r["pre_ev_fids"][0] <= end_f) else "NO"
         post_gt_str = "YES" if r["post_ev_in_gt_fids"] else "NO"
         nom_str = f"@{r['target_nom_rank']}" if r["target_nom_rank"] else "-"
         rank_str = f"@{r['strict_hit_rank']}" if r["strict_hit_rank"] else "-"
@@ -384,7 +391,7 @@ def run_5query_sanity_census() -> None:
 
     assert rec_by_qid["QA-34"]["first_failure_label"] == "UNSUPPORTED_OR_ERROR", "QA-34 must be UNSUPPORTED_OR_ERROR"
 
-    print("\nALL 5/5 MINI-SANITY ASSERTIONS PASSED WITH 100% PROVENANCE TRACING ✅")
+    print("\nALL 5/5 MINI-SANITY ASSERTIONS PASSED WITH 100% MATERIALIZED PROVENANCE TRACING ✅")
 
 
 if __name__ == "__main__":
