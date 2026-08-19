@@ -2,7 +2,8 @@
 Build TransNetV2 Shot Detection Index for 873 Videos (AI Challenge 2026)
 ===========================================================================
 Extracts shot boundaries for all discovered videos using TransNetV2 without
-video resampling or hard-coded FPS assumptions.
+video resampling or hard-coded FPS assumptions. Supports multi-GPU and multi-CPU
+worker parallel processing to maximize resource utilization on Kaggle (2x T4 GPUs, 30GB RAM).
 
 Output Layout:
 artifacts/
@@ -18,20 +19,23 @@ artifacts/
         └── failed_videos.json
 
 Usage:
-    python scripts/build_transnet_shots_873.py \\
-        --video-root /path/to/videos \\
-        --output-root artifacts/event_graph/shots \\
-        --device cuda \\
-        --threshold 0.5 \\
+    python scripts/build_transnet_shots_873.py \
+        --video-root /path/to/videos \
+        --output-root artifacts/event_graph/shots \
+        --device cuda \
+        --num-workers 4 \
+        --threshold 0.5 \
         --resume
 """
 
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import glob
 import json
 import math
+import os
 import sys
 import time
 from collections import Counter
@@ -47,6 +51,9 @@ if str(SCRIPTS_DIR) not in sys.path:
 from _bootstrap import PROJECT_ROOT
 from src.preprocessing.keyframe_v2.shot_detector import Shot, detect_shots
 from src.preprocessing.keyframe_v2.video_metadata import VideoMetadata, probe_video
+
+
+_WORKER_MODELS: dict[str, any] = {}
 
 
 def natural_video_key(path: Path | str) -> tuple[str, int]:
@@ -141,7 +148,6 @@ def validate_video_shots(df: pd.DataFrame, meta: VideoMetadata | None = None) ->
         if ef < sf:
             errors.append(f"Shot {idx}: end_frame {ef} < start_frame {sf}")
         if frame_count > 0 and ef >= frame_count:
-            # Allow minor frame count tolerance if off by 1-2 frames from metadata estimate
             if ef >= frame_count + 5:
                 errors.append(f"Shot {idx}: end_frame {ef} >= frame_count {frame_count}")
 
@@ -189,18 +195,135 @@ def shots_to_dataframe(shots: list[Shot], meta: VideoMetadata, video_path: Path)
     return pd.DataFrame(rows)
 
 
-def load_transnetv2_model(device: str):
-    try:
-        from transnetv2_pytorch import TransNetV2
+def get_worker_model(device_name: str):
+    if device_name not in _WORKER_MODELS:
+        try:
+            from transnetv2_pytorch import TransNetV2
 
-        print(f"[TRANSNETV2] Loading model on device: {device}...")
-        model = TransNetV2(device=device)
-        model.eval()
-        print("[TRANSNETV2] Model loaded successfully.")
-        return model
+            model = TransNetV2(device=device_name)
+            model.eval()
+            _WORKER_MODELS[device_name] = model
+        except Exception as exc:
+            _WORKER_MODELS[device_name] = None
+    return _WORKER_MODELS[device_name]
+
+
+def process_video_task(task_args: tuple) -> dict:
+    (
+        video_path_str,
+        per_video_dir_str,
+        device_name,
+        threshold,
+        require_transnetv2,
+        resume,
+        force,
+    ) = task_args
+
+    video_path = Path(video_path_str)
+    video_id = video_path.stem
+    per_video_dir = Path(per_video_dir_str)
+    per_video_parquet = per_video_dir / f"{video_id}.parquet"
+    v_start = time.time()
+
+    if resume and not force and per_video_parquet.is_file():
+        try:
+            df_existing = pd.read_parquet(per_video_parquet)
+            is_valid, val_errs = validate_video_shots(df_existing)
+            if is_valid:
+                source_fps = float(df_existing["source_fps"].iloc[0])
+                frame_count = int(df_existing["frame_count"].iloc[0])
+                duration_sec = float(df_existing["end_sec"].iloc[-1]) if not df_existing.empty else 0.0
+                backend = str(df_existing["detector_backend"].iloc[0])
+                return {
+                    "video_id": video_id,
+                    "status": "SKIPPED",
+                    "df": df_existing,
+                    "meta": {
+                        "video_id": video_id,
+                        "video_path": str(video_path),
+                        "fps": source_fps,
+                        "frame_count": frame_count,
+                        "duration_sec": duration_sec,
+                        "num_shots": len(df_existing),
+                        "backend": backend,
+                        "status": "SKIPPED",
+                        "error_message": "",
+                    },
+                    "elapsed": 0.0,
+                }
+        except Exception:
+            pass
+
+    model = get_worker_model(device_name)
+    try:
+        meta = probe_video(video_path)
+        cfg = {
+            "require_transnetv2": require_transnetv2,
+            "use_histdiff_only": False if model is not None else True,
+            "backend": "transnetv2" if model is not None else "histdiff",
+            "transnetv2_device": device_name,
+            "transnetv2_threshold": threshold,
+            "transnetv2_frame_reader": "opencv",
+            "model": model,
+        }
+
+        shots, warnings = detect_shots(video_path, meta, cfg)
+        df_shots = shots_to_dataframe(shots, meta, video_path)
+
+        is_valid, val_errs = validate_video_shots(df_shots, meta)
+        df_shots.to_parquet(per_video_parquet, index=False)
+        backend = df_shots["detector_backend"].iloc[0] if not df_shots.empty else "unknown"
+        elapsed = round(time.time() - v_start, 2)
+        return {
+            "video_id": video_id,
+            "status": "PASS" if is_valid else "FAIL_VAL",
+            "df": df_shots,
+            "val_errors": val_errs if not is_valid else [],
+            "meta": {
+                "video_id": video_id,
+                "video_path": str(video_path),
+                "fps": meta.reported_fps,
+                "frame_count": meta.total_frames,
+                "duration_sec": meta.duration_sec,
+                "num_shots": len(df_shots),
+                "backend": backend,
+                "status": "PASS" if is_valid else "FAIL",
+                "error_message": "; ".join(val_errs) if val_errs else "",
+            },
+            "elapsed": elapsed,
+        }
     except Exception as exc:
-        print(f"[TRANSNETV2][WARN] Could not load TransNetV2 model: {exc}")
-        return None
+        elapsed = round(time.time() - v_start, 2)
+        return {
+            "video_id": video_id,
+            "status": "FAILED",
+            "error": str(exc),
+            "video_path": str(video_path),
+            "meta": {
+                "video_id": video_id,
+                "video_path": str(video_path),
+                "fps": 0.0,
+                "frame_count": 0,
+                "duration_sec": 0.0,
+                "num_shots": 0,
+                "backend": "none",
+                "status": "FAIL",
+                "error_message": str(exc),
+            },
+            "elapsed": elapsed,
+        }
+
+
+def get_available_cuda_devices() -> list[str]:
+    try:
+        import torch
+
+        count = torch.cuda.device_count()
+        if count > 0:
+            return [f"cuda:{i}" for i in range(count)]
+    except Exception:
+        pass
+    return ["cpu"]
 
 
 def main() -> int:
@@ -208,6 +331,7 @@ def main() -> int:
     parser.add_argument("--video-root", action="append", required=True, help="Path or glob to video directories (can specify multiple times).")
     parser.add_argument("--output-root", default="artifacts/event_graph/shots", help="Output directory for shot artifacts.")
     parser.add_argument("--device", default="cuda", help="Device for TransNetV2 model (cuda, cpu, auto).")
+    parser.add_argument("--num-workers", type=int, default=max(1, (os.cpu_count() or 4)), help="Number of parallel CPU/GPU workers.")
     parser.add_argument("--threshold", type=float, default=0.5, help="TransNetV2 scene cut threshold.")
     parser.add_argument("--resume", action="store_true", help="Skip videos with existing valid per_video parquets.")
     parser.add_argument("--force", action="store_true", help="Force re-processing even if per_video parquets exist.")
@@ -220,8 +344,12 @@ def main() -> int:
     per_video_dir = output_root / "per_video"
     per_video_dir.mkdir(parents=True, exist_ok=True)
 
+    cuda_devices = get_available_cuda_devices()
     print("=" * 80)
-    print(" 🎬 STARTING TRANSNETV2 SHOT DETECTION PIPELINE")
+    print(" 🎬 STARTING HIGH-PERFORMANCE TRANSNETV2 SHOT DETECTION PIPELINE")
+    print("=" * 80)
+    print(f" Detected CUDA Devices : {cuda_devices}")
+    print(f" CPU Worker Threads   : {args.num_workers}")
     print("=" * 80)
 
     video_paths = discover_video_paths(args.video_root, args.limit)
@@ -230,10 +358,23 @@ def main() -> int:
         print("[ERROR] No .mp4 videos found matching the provided --video-root.")
         return 1
 
-    # Load TransNetV2 model once if possible
-    model = load_transnetv2_model(args.device)
-    if model is None and args.require_transnetv2:
-        raise RuntimeError("TransNetV2 model is required but failed to load.")
+    # Prepare parallel task arguments with round-robin CUDA device assignment
+    tasks = []
+    for idx, vp in enumerate(video_paths):
+        if "cuda" in args.device.lower() and len(cuda_devices) > 0:
+            assigned_device = cuda_devices[idx % len(cuda_devices)]
+        else:
+            assigned_device = args.device
+
+        tasks.append((
+            str(vp),
+            str(per_video_dir),
+            assigned_device,
+            args.threshold,
+            args.require_transnetv2,
+            args.resume,
+            args.force,
+        ))
 
     processed_count = 0
     skipped_count = 0
@@ -247,118 +388,56 @@ def main() -> int:
     failed_videos: list[dict] = []
     validation_failures: list[dict] = []
 
-    for idx, video_path in enumerate(video_paths, start=1):
-        video_id = video_path.stem
-        per_video_parquet = per_video_dir / f"{video_id}.parquet"
-        v_start = time.time()
+    print(f"Dispatching video processing across {args.num_workers} parallel workers...")
 
-        # Check resume condition
-        if args.resume and not args.force and per_video_parquet.is_file():
-            try:
-                df_existing = pd.read_parquet(per_video_parquet)
-                is_valid, val_errs = validate_video_shots(df_existing)
-                if is_valid:
-                    source_fps = float(df_existing["source_fps"].iloc[0])
-                    frame_count = int(df_existing["frame_count"].iloc[0])
-                    duration_sec = float(df_existing["end_sec"].iloc[-1]) if not df_existing.empty else 0.0
-                    backend = str(df_existing["detector_backend"].iloc[0])
+    # Using ProcessPoolExecutor / ThreadPoolExecutor based on worker count
+    ExecutorCls = concurrent.futures.ThreadPoolExecutor if len(cuda_devices) > 0 else concurrent.futures.ProcessPoolExecutor
+    with ExecutorCls(max_workers=args.num_workers) as executor:
+        future_map = {executor.submit(process_video_task, task): task[0] for task in tasks}
+        for idx, future in enumerate(concurrent.futures.as_completed(future_map), start=1):
+            res = future.result()
+            vid = res["video_id"]
+            status = res["status"]
+            meta_record = res["meta"]
+            video_meta_records.append(meta_record)
 
-                    fps_str = f"{source_fps:.3f}"
-                    fps_counter[fps_str] += 1
-                    skipped_count += 1
-                    if "transnet" in backend.lower():
-                        transnet_backend_count += 1
-                    else:
-                        histdiff_backend_count += 1
+            if status == "SKIPPED":
+                skipped_count += 1
+                df_vid = res["df"]
+                all_per_video_dfs.append(df_vid)
+                source_fps = float(df_vid["source_fps"].iloc[0])
+                fps_counter[f"{source_fps:.3f}"] += 1
+                backend = str(df_vid["detector_backend"].iloc[0])
+                if "transnet" in backend.lower():
+                    transnet_backend_count += 1
+                else:
+                    histdiff_backend_count += 1
+                print(f"[{idx:03d}/{len(tasks):03d}] {vid} | SKIPPED (Resume valid) | Shots: {len(df_vid)}")
+            elif status in ("PASS", "FAIL_VAL"):
+                processed_count += 1
+                df_vid = res["df"]
+                all_per_video_dfs.append(df_vid)
+                source_fps = float(meta_record["fps"])
+                fps_counter[f"{source_fps:.3f}"] += 1
+                backend = str(meta_record["backend"])
+                if "transnet" in backend.lower():
+                    transnet_backend_count += 1
+                else:
+                    histdiff_backend_count += 1
 
-                    all_per_video_dfs.append(df_existing)
-                    video_meta_records.append({
-                        "video_id": video_id,
-                        "video_path": str(video_path),
-                        "fps": source_fps,
-                        "frame_count": frame_count,
-                        "duration_sec": duration_sec,
-                        "num_shots": len(df_existing),
-                        "backend": backend,
-                        "status": "SKIPPED",
-                        "error_message": "",
-                    })
-                    print(f"[{idx:03d}/{len(video_paths):03d}] {video_id} | FPS: {source_fps:.3f} | Frames: {frame_count} | SKIPPED (Resume valid) | Shots: {len(df_existing)}")
-                    continue
-            except Exception as exc:
-                print(f"[{idx:03d}/{len(video_paths):03d}] {video_id} | Resume read failed: {exc}, re-processing...")
-
-        # Process Video
-        try:
-            meta = probe_video(video_path)
-            fps_str = f"{meta.reported_fps:.3f}"
-            fps_counter[fps_str] += 1
-
-            cfg = {
-                "require_transnetv2": args.require_transnetv2,
-                "use_histdiff_only": False if model is not None else True,
-                "backend": "transnetv2" if model is not None else "histdiff",
-                "transnetv2_device": args.device,
-                "transnetv2_threshold": args.threshold,
-                "transnetv2_frame_reader": "opencv",
-                "model": model,
-            }
-
-            shots, warnings = detect_shots(video_path, meta, cfg)
-            df_shots = shots_to_dataframe(shots, meta, video_path)
-
-            # Validate generated shots
-            is_valid, val_errs = validate_video_shots(df_shots, meta)
-            elapsed_v = round(time.time() - v_start, 2)
-            backend = df_shots["detector_backend"].iloc[0] if not df_shots.empty else "unknown"
-
-            if "transnet" in backend.lower():
-                transnet_backend_count += 1
+                if status == "FAIL_VAL":
+                    val_errs = res.get("val_errors", [])
+                    validation_failures.append({"video_id": vid, "errors": val_errs})
+                    print(f"[{idx:03d}/{len(tasks):03d}] {vid} | FPS: {source_fps:.3f} | {backend.upper()}: PASS | Shots: {len(df_vid)} | Time: {res['elapsed']}s | Validation: FAIL")
+                else:
+                    print(f"[{idx:03d}/{len(tasks):03d}] {vid} | FPS: {source_fps:.3f} | {backend.upper()}: PASS | Shots: {len(df_vid)} | Time: {res['elapsed']}s | Validation: PASS")
             else:
-                histdiff_backend_count += 1
+                failed_count += 1
+                err_msg = res.get("error", "Unknown error")
+                failed_videos.append({"video_id": vid, "video_path": res.get("video_path", ""), "error": err_msg})
+                print(f"[{idx:03d}/{len(tasks):03d}] {vid} | FAILED in {res['elapsed']}s: {err_msg}")
 
-            if not is_valid:
-                print(f"[{idx:03d}/{len(video_paths):03d}] {video_id} | FPS: {meta.reported_fps:.3f} | Frames: {meta.total_frames} | {backend.upper()}: PASS | Shots: {len(shots)} | Time: {elapsed_v}s | Validation: FAIL ({val_errs})")
-                validation_failures.append({"video_id": video_id, "errors": val_errs})
-            else:
-                print(f"[{idx:03d}/{len(video_paths):03d}] {video_id} | FPS: {meta.reported_fps:.3f} | Frames: {meta.total_frames} | {backend.upper()}: PASS | Shots: {len(shots)} | Time: {elapsed_v}s | Validation: PASS")
-
-            # Save per-video parquet
-            df_shots.to_parquet(per_video_parquet, index=False)
-            all_per_video_dfs.append(df_shots)
-            processed_count += 1
-
-            video_meta_records.append({
-                "video_id": video_id,
-                "video_path": str(video_path),
-                "fps": meta.reported_fps,
-                "frame_count": meta.total_frames,
-                "duration_sec": meta.duration_sec,
-                "num_shots": len(df_shots),
-                "backend": backend,
-                "status": "PASS" if is_valid else "FAIL",
-                "error_message": "; ".join(val_errs) if val_errs else "",
-            })
-
-        except Exception as exc:
-            elapsed_v = round(time.time() - v_start, 2)
-            failed_count += 1
-            err_msg = str(exc)
-            print(f"[{idx:03d}/{len(video_paths):03d}] {video_id} | FAILED in {elapsed_v}s: {err_msg}")
-            failed_videos.append({"video_id": video_id, "video_path": str(video_path), "error": err_msg})
-            video_meta_records.append({
-                "video_id": video_id,
-                "video_path": str(video_path),
-                "fps": 0.0,
-                "frame_count": 0,
-                "duration_sec": 0.0,
-                "num_shots": 0,
-                "backend": "none",
-                "status": "FAIL",
-                "error_message": err_msg,
-            })
-
-    # Save Concatenated All Shots
+    # Concatenate all per-video dataframes
     if all_per_video_dfs:
         all_shots_df = pd.concat(all_per_video_dfs, ignore_index=True)
         all_shots_path = output_root / "all_shots.parquet"
