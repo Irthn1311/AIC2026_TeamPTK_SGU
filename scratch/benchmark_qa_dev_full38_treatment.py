@@ -142,6 +142,7 @@ def run_full38_benchmark():
         qa_visual_ontology_config=VisualOntologyConfig(enabled=False),
         qa_ocr_answer_provider_config=resolve_ocr_config(),
         qa_object_answer_provider_config=ObjectAnswerProviderConfig(enabled=False),
+        qa_unsupported_provider_fallback=True,
     )
 
     print("\n--- BOOTSTRAPPING RUNTIME ---")
@@ -269,7 +270,7 @@ def run_full38_benchmark():
         "QA-10": "Historical Protected Hit (~@88)",
         "QA-13": "Historical Protected Hit (~@18)",
         "QA-27": "Historical Protected Hit (~@49)",
-        "QA-45": "Historical Protected Hit (~@22)",
+        "QA-45": "Historical Protected Hit (~@92-96)",
         "QA-46": "Historical Protected Hit (~@13)",
         "QA-23": "S2E1 Target Gain Candidate (~@63)",
     }
