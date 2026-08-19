@@ -38,3 +38,5 @@ rapidfuzz
 python-Levenshtein
 deep-translator
 psutil
+transnetv2-pytorch
+
