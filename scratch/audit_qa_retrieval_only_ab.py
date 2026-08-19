@@ -1,17 +1,23 @@
 #!/usr/bin/env python3
-"""Retrieval-Only A/B Diagnostic on 13 Queries (6 Rescue Candidates + 7 Controls).
+"""Retrieval-Only A/B Diagnostic on 14 Queries (R3 Generic English Query Expansion).
 
 Compares Video Nomination (Top-16 selected_video_ids) under two configurations:
-  - Arm A (Baseline Canonical Champion) : include_vi_variant = False (en_only)
-  - Arm B (Bilingual Variant Expansion) : include_vi_variant = True  (en + vi variant RRF fusion)
+  - Arm A (Baseline Canonical Champion) : Single literal English query (weight=1.0)
+  - Arm B (Existing R3 Generic Expansion): Literal English (weight=1.0) + compact_keywords (weight=0.8) multi-variant RRF fusion
+
+Both arms preserve canonical language policy:
+  qa_localization_language_policy = 'en_only'
+  include_vi_variant = False
 
 Evaluates:
-  - 6 Rescue Candidates (VIDEO_ABSENT + Provider Ready) : QA-09, QA-22, QA-42, QA-12, QA-29, QA-44
-  - 7 Protected Champion Controls                       : QA-08, QA-10, QA-13, QA-23, QA-27, QA-45, QA-46
+  - 6 Provider-Ready Rescue Probes : QA-09, QA-22, QA-42, QA-12, QA-29, QA-44
+  - 1 Historical Retrieval Control : QA-26 (Positive control for R3 retrieval rescue)
+  - 7 Protected Champion Controls  : QA-08, QA-10, QA-13, QA-23, QA-27, QA-45, QA-46
 
 Promotion Gate:
   1. Protected Controls : 7/7 target video nominations RETAINED in Top-16
-  2. Rescue Candidates  : At least 3/6 target videos NEWLY ENTER Top-16
+  2. QA-26 Positive Control: Target video L21_V009 RESCUED into Top-16
+  3. Rescue Probes      : At least 3/6 target videos NEWLY ENTER Top-16
 """
 
 from __future__ import annotations
@@ -22,7 +28,6 @@ import shutil
 import subprocess
 import sys
 import time
-import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -32,66 +37,16 @@ if str(SYSTEM_TAI_SRC) not in sys.path:
     sys.path.insert(0, str(SYSTEM_TAI_SRC))
 
 from system_tai.kis.session_engine import OperationalKISRuntime
-from system_tai.kis.session_schema import QAQueryRequest, SessionConfig
+from system_tai.kis.session_schema import QueryLanguage, QueryVariant, QueryVariantType, SessionConfig
 from system_tai.qa.grounding import (
     QA_CANDIDATE_ORDER_ROUND_ROBIN,
     QAVideoConditionedEvidenceConfig,
+    nominate_qa_videos,
 )
-from system_tai.qa.object_provider import ObjectAnswerProviderConfig
-from system_tai.qa.ocr_provider import OCRAnswerProviderConfig
-from system_tai.qa.visual_ontology import VisualOntologyConfig
+from system_tai.retrieval.query_decomposition import decompose_query
 
 
-def normalize_text(text: str | None) -> str:
-    if text is None:
-        return ""
-    decomposed = unicodedata.normalize("NFKD", text.casefold())
-    without_marks = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
-    return " ".join(without_marks.split())
-
-
-def resolve_ocr_config() -> OCRAnswerProviderConfig:
-    tess_path = shutil.which("tesseract")
-    available_langs: list[str] = []
-    if tess_path:
-        try:
-            res = subprocess.run([tess_path, "--list-langs"], capture_output=True, text=True, check=False)
-            available_langs = [l.strip() for l in res.stdout.splitlines()[1:] if l.strip()]
-        except Exception:
-            pass
-
-    desired = ("eng", "vie")
-    supported = tuple(l for l in desired if l in available_langs)
-    if not supported:
-        supported = tuple(available_langs[:2]) if available_langs else ("eng",)
-
-    if not available_langs:
-        return OCRAnswerProviderConfig(enabled=False, languages=("eng",))
-
-    return OCRAnswerProviderConfig(
-        enabled=True,
-        languages=supported,
-        evidence_frame_budget=8,
-    )
-
-
-def resolve_visual_ontology_config() -> VisualOntologyConfig:
-    candidates = [
-        REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "l21_150_diagnostic" / "qa_dev_visual_ontology.json",
-        Path("/kaggle/working/AIC2026_TeamPTK_SGU/systems/system_tai/benchmarks/l21_150_diagnostic/qa_dev_visual_ontology.json"),
-    ]
-    for p in candidates:
-        if p.exists():
-            return VisualOntologyConfig(
-                enabled=True,
-                ontology_path=p,
-                evidence_frame_budget=100,
-                max_active_domains=2,
-            )
-    return VisualOntologyConfig(enabled=False)
-
-
-def run_retrieval_ab() -> None:
+def run_r3_retrieval_ab() -> None:
     benchmark_path = REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "l21_150_diagnostic" / "benchmark.json"
     sidecar_path = REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "l21_150_diagnostic" / "qa_dev_translations_en.json"
 
@@ -101,18 +56,22 @@ def run_retrieval_ab() -> None:
     en_map = {e["query_id"]: e.get("question_en", "") for e in sidecar_data.get("entries", [])}
 
     rescue_qids = ["QA-09", "QA-22", "QA-42", "QA-12", "QA-29", "QA-44"]
+    hist_qids = ["QA-26"]
     control_qids = ["QA-08", "QA-10", "QA-13", "QA-23", "QA-27", "QA-45", "QA-46"]
-    target_qids = rescue_qids + control_qids
+    target_qids = rescue_qids + hist_qids + control_qids
 
     qa_queries = [q for q in bm_data["queries"] if q["query_id"] in target_qids]
     qa_queries.sort(key=lambda q: target_qids.index(q["query_id"]))
 
-    print("=" * 145)
-    print("RETRIEVAL-ONLY A/B EXPERIMENT: CANONICAL (Arm A: en_only) vs BILINGUAL EXPANSION (Arm B: vi_variant)")
-    print(f"Target Cohort: 6 Rescue Candidates ({', '.join(rescue_qids)}) + 7 Controls ({', '.join(control_qids)})")
-    print("=" * 145)
+    print("=" * 150)
+    print("RETRIEVAL-ONLY A/B EXPERIMENT: CANONICAL (Arm A) vs EXISTING R3 GENERIC EXPANSION (Arm B)")
+    print(f"Target Cohort (N={len(qa_queries)}):")
+    print(f"  • 6 Rescue Probes        : {', '.join(rescue_qids)}")
+    print(f"  • 1 Historical Control   : {', '.join(hist_qids)}")
+    print(f"  • 7 Protected Controls   : {', '.join(control_qids)}")
+    print("=" * 150)
 
-    session_output = Path("/kaggle/working/output/retrieval_ab_13") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "retrieval_ab_13"
+    session_output = Path("/kaggle/working/output/retrieval_r3_ab") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "retrieval_r3_ab"
     if session_output.exists():
         shutil.rmtree(session_output, ignore_errors=True)
     session_output.mkdir(parents=True, exist_ok=True)
@@ -123,21 +82,6 @@ def run_retrieval_ab() -> None:
         anchors_per_video=5,
         video_rrf_constant=60.0,
         candidate_ordering_policy=QA_CANDIDATE_ORDER_ROUND_ROBIN,
-        preserve_keyframe_evidence=True,
-        keyframe_evidence_video_cap=16,
-        keyframe_evidence_anchors_per_video=1,
-        temporal_refinement_enabled=True,
-        temporal_seed_anchors_per_video=2,
-        temporal_refinement_video_cap=8,
-        temporal_refinement_total_seed_cap=16,
-        secondary_temporal_micro_budget=True,
-        primary_11_12_micro_coverage=True,
-        tier3_primary_first=True,
-        tier3_negative_offset_first=True,
-        count_far_alt_micro=False,
-        top1_secondary_refined_rescue_enabled=True,
-        top1_secondary_refined_rescue_span_candidateizer=True,
-        top1_secondary_refined_rescue_tail_budget=5,
     )
 
     config = SessionConfig(
@@ -149,64 +93,92 @@ def run_retrieval_ab() -> None:
         default_output_top_k=100,
         default_refine_top_n=3,
         qa_video_conditioned_evidence_config=evidence_config,
-        qa_visual_ontology_config=resolve_visual_ontology_config(),
-        qa_ocr_answer_provider_config=resolve_ocr_config(),
-        qa_object_answer_provider_config=ObjectAnswerProviderConfig(enabled=False),
-        qa_unsupported_provider_fallback=True,
     )
 
-    print("\n--- BOOTSTRAPPING RUNTIME ---")
+    print("\n--- BOOTSTRAPPING RUNTIME RETRIEVAL COMPONENTS ---")
     t0 = time.time()
     runtime = OperationalKISRuntime.bootstrap(config)
-    print(f"Runtime bootstrap completed in {time.time() - t0:.2f}s.")
+    searcher = runtime.qa_pipeline.grounding_stage.feature_searcher
+    encoder = runtime.text_encoder
+    print(f"Bootstrap completed in {time.time() - t0:.2f}s.")
 
     results: list[dict[str, Any]] = []
 
-    print("\n--- EXECUTING A/B VIDEO NOMINATION EVALUATION ---")
+    print("\n--- EXECUTING RETRIEVAL A/B VIDEO NOMINATION ---")
     for idx, q in enumerate(qa_queries, start=1):
         qid = q["query_id"]
         target_vid = q.get("video_id")
         q_vi = q.get("question_vi", "")
-        q_en = en_map.get(qid)
-        cohort = "RESCUE_CANDIDATE" if qid in rescue_qids else "PROTECTED_CONTROL"
+        q_en = en_map.get(qid, "")
+        base_en = q_en.strip() if q_en else q_vi.strip()
 
-        # Arm A: Baseline Canonical (include_vi_variant = False)
-        req_a = QAQueryRequest(
-            request_id=f"ret-a-{qid}",
-            query_id=qid,
-            event_description=q_vi,
-            question=q_vi,
-            event_description_en=q_en if q_en else None,
-            question_en=None,
-            include_vi_variant=False,
-            output_top_k=100,
-            refine_top_n=3,
+        if qid in control_qids:
+            cohort = "PROTECTED_CONTROL"
+        elif qid in hist_qids:
+            cohort = "HISTORICAL_CONTROL"
+        else:
+            cohort = "RESCUE_PROBE"
+
+        # Decompose English Query into Literal and Compact Keywords
+        variants_obj = decompose_query(query_text_vi=q_vi, query_text_en=base_en)
+        decomp_map = dict(variants_obj.as_list())
+        lit_text = decomp_map.get("literal", base_en).strip()
+        cmp_text = decomp_map.get("compact_keywords", "").strip()
+
+        # Build Arm A (Single Literal English Query)
+        v_lit = QueryVariant(
+            variant_id=f"{qid}::literal",
+            text=lit_text,
+            language=QueryLanguage.ENGLISH,
+            variant_type=QueryVariantType.ENGLISH_TRANSLATION,
+            weight=1.0,
         )
-        _, _, diag_a = runtime.qa_pipeline.process_qa_query(req_a)
-        vids_a = diag_a.get("selected_video_ids", [])
+        vec_lit = encoder.encode(lit_text)
+        maxima_lit = searcher.search_video_maxima(
+            query_ids=[v_lit.variant_id],
+            query_vectors=[vec_lit],
+        )
+        noms_lit = nominate_qa_videos(
+            variants=[v_lit],
+            maxima=maxima_lit,
+            config=evidence_config,
+        )
+        vids_a = [n.video_id for n in noms_lit[:16]]
         selected_a = (target_vid in vids_a)
         rank_a = vids_a.index(target_vid) + 1 if selected_a else None
 
-        # Arm B: Bilingual Expansion (include_vi_variant = True)
-        req_b = QAQueryRequest(
-            request_id=f"ret-b-{qid}",
-            query_id=qid,
-            event_description=q_vi,
-            question=q_vi,
-            event_description_en=q_en if q_en else None,
-            question_en=None,
-            include_vi_variant=True,
-            output_top_k=100,
-            refine_top_n=3,
-        )
-        _, _, diag_b = runtime.qa_pipeline.process_qa_query(req_b)
-        vids_b = diag_b.get("selected_video_ids", [])
+        # Build Arm B (Literal 1.0 + Compact Keywords 0.8 Multi-Variant Expansion)
+        if cmp_text and cmp_text != lit_text:
+            v_cmp = QueryVariant(
+                variant_id=f"{qid}::compact_keywords",
+                text=cmp_text,
+                language=QueryLanguage.ENGLISH,
+                variant_type=QueryVariantType.ENGLISH_TRANSLATION,
+                weight=0.8,
+            )
+            vec_cmp = encoder.encode(cmp_text)
+            maxima_fused = searcher.search_video_maxima(
+                query_ids=[v_lit.variant_id, v_cmp.variant_id],
+                query_vectors=[vec_lit, vec_cmp],
+            )
+            noms_fused = nominate_qa_videos(
+                variants=[v_lit, v_cmp],
+                maxima=maxima_fused,
+                config=evidence_config,
+            )
+            vids_b = [n.video_id for n in noms_fused[:16]]
+        else:
+            vids_b = list(vids_a)
+
         selected_b = (target_vid in vids_b)
         rank_b = vids_b.index(target_vid) + 1 if selected_b else None
 
         overlap = len(set(vids_a) & set(vids_b))
         rescued = (not selected_a and selected_b)
         regressed = (selected_a and not selected_b)
+
+        entering = [v for v in vids_b if v not in vids_a]
+        leaving = [v for v in vids_a if v not in vids_b]
 
         if rescued:
             delta_str = f"RESCUED 🎯 (@{rank_b})"
@@ -221,6 +193,8 @@ def run_retrieval_ab() -> None:
             "query_id": qid,
             "cohort": cohort,
             "target_vid": target_vid,
+            "lit_text": lit_text,
+            "cmp_text": cmp_text,
             "selected_a": selected_a,
             "rank_a": rank_a,
             "selected_b": selected_b,
@@ -228,52 +202,66 @@ def run_retrieval_ab() -> None:
             "vids_a": vids_a,
             "vids_b": vids_b,
             "overlap_top16": overlap,
+            "entering": entering,
+            "leaving": leaving,
             "rescued": rescued,
             "regressed": regressed,
             "delta_str": delta_str,
         }
         results.append(record)
 
-        print(f"[{idx:2d}/13] {qid:<5} ({cohort:<17}) | Target: {target_vid} | Arm A: {f'@{rank_a}' if rank_a else 'ABSENT':<7} -> Arm B: {f'@{rank_b}' if rank_b else 'ABSENT':<7} | Delta: {delta_str}")
+        print(f"[{idx:2d}/14] {qid:<5} ({cohort:<18}) | Target: {target_vid:<8} | Arm A: {f'@{rank_a}' if rank_a else 'ABSENT':<7} -> Arm B: {f'@{rank_b}' if rank_b else 'ABSENT':<7} | Delta: {delta_str}")
+        if cmp_text:
+            print(f"        • Literal Query : \"{lit_text}\"")
+            print(f"        • Compact Query : \"{cmp_text}\"")
+            print(f"        • Top-16 Overlap: {overlap}/16 | Entering: {entering} | Leaving: {leaving}")
 
     # ==============================================================================================================
     # A/B SUMMARY MATRIX & PROMOTION GATE EVALUATION
     # ==============================================================================================================
-    print("\n" + "=" * 145)
-    print("RETRIEVAL A/B EXPERIMENT: DETAILED MATRIX")
-    print("=" * 145)
-    print(f"{'QID':<6} | {'Cohort':<18} | {'Target':<10} | {'Arm A Rank':<12} | {'Arm B Rank':<12} | {'Top-16 Overlap':<15} | {'Retrieval Status'}")
-    print("-" * 145)
+    print("\n" + "=" * 150)
+    print("RETRIEVAL R3 A/B EXPERIMENT: DETAILED AUDIT MATRIX")
+    print("=" * 150)
+    print(f"{'QID':<6} | {'Cohort':<18} | {'Target':<9} | {'Arm A Rank':<11} | {'Arm B Rank':<11} | {'Top-16 Overlap':<15} | {'Entering Top-16':<18} | {'Retrieval Status'}")
+    print("-" * 150)
     for r in results:
         rank_a_str = f"@{r['rank_a']}" if r["rank_a"] else "ABSENT"
         rank_b_str = f"@{r['rank_b']}" if r["rank_b"] else "ABSENT"
         overlap_str = f"{r['overlap_top16']}/16 ({r['overlap_top16']/16*100:.0f}%)"
-        print(f"{r['query_id']:<6} | {r['cohort']:<18} | {r['target_vid']:<10} | {rank_a_str:<12} | {rank_b_str:<12} | {overlap_str:<15} | {r['delta_str']}")
-    print("=" * 145)
+        ent_str = ", ".join(r["entering"]) if r["entering"] else "-"
+        print(f"{r['query_id']:<6} | {r['cohort']:<18} | {r['target_vid']:<9} | {rank_a_str:<11} | {rank_b_str:<11} | {overlap_str:<15} | {ent_str:<18} | {r['delta_str']}")
+    print("=" * 150)
 
     control_recs = [r for r in results if r["cohort"] == "PROTECTED_CONTROL"]
-    rescue_recs = [r for r in results if r["cohort"] == "RESCUE_CANDIDATE"]
+    hist_recs = [r for r in results if r["cohort"] == "HISTORICAL_CONTROL"]
+    rescue_recs = [r for r in results if r["cohort"] == "RESCUE_PROBE"]
 
     controls_retained = sum(1 for r in control_recs if r["selected_b"])
+    qa26_rescued = any(r["selected_b"] for r in hist_recs)
+    qa26_rank = hist_recs[0]["rank_b"] if hist_recs and hist_recs[0]["selected_b"] else None
     rescued_count = sum(1 for r in rescue_recs if r["rescued"])
     regressed_count = sum(1 for r in control_recs if r["regressed"])
 
-    print("\n" + "=" * 115)
-    print("PROMOTION GATE EVALUATION:")
-    print("=" * 115)
-    print(f"1. Protected Controls Retained : {controls_retained}/7 ({'PASS ✅' if controls_retained == 7 else 'FAIL ❌ - Lost Control'})")
-    print(f"2. Rescue Candidates Rescued   : {rescued_count}/6 ({'PASS ✅ (>=3 rescued)' if rescued_count >= 3 else 'INSUFFICIENT ⚠️ (<3 rescued)'})")
-    print(f"3. Control Regressions Count   : {regressed_count} (Must be 0)")
-    print("-" * 115)
+    print("\n" + "=" * 125)
+    print("PROMOTION GATE EVALUATION (R3 GENERIC ENGLISH QUERY EXPANSION):")
+    print("=" * 125)
+    print(f"1. Protected Controls Retained (7/7) : {controls_retained}/7 ({'PASS ✅' if controls_retained == 7 else 'FAIL ❌ - Control Lost'})")
+    print(f"2. QA-26 Historical Rescue (Positive): {'PASS ✅ (Nominated @' + str(qa26_rank) + ')' if qa26_rescued else 'FAIL ❌ (L21_V009 Absent)'}")
+    print(f"3. Rescue Probes Rescued (>=3/6)     : {rescued_count}/6 ({'PASS ✅' if rescued_count >= 3 else 'INSUFFICIENT ⚠️ (<3 rescued)'})")
+    print(f"4. Control Regressions Count         : {regressed_count} (Must be 0)")
+    print("-" * 125)
 
-    if controls_retained == 7 and rescued_count >= 3:
+    gate_pass = (controls_retained == 7 and qa26_rescued and rescued_count >= 3)
+    if gate_pass:
         print(">> VERDICT: PROMOTION GATE PASSED 🏆 (Eligible for single frozen QA verification run) <<")
     elif controls_retained < 7:
         print(">> VERDICT: PROMOTION GATE FAILED ❌ (Control lost -> DROP expansion, FREEZE QA, MOVE KIS) <<")
+    elif not qa26_rescued:
+        print(">> VERDICT: PROMOTION GATE FAILED ❌ (QA-26 positive control not reproduced -> DROP expansion, FREEZE QA, MOVE KIS) <<")
     else:
         print(f">> VERDICT: PROMOTION GATE INSUFFICIENT ⚠️ ({rescued_count}/6 rescued < 3 -> FREEZE QA, MOVE KIS) <<")
-    print("=" * 115)
+    print("=" * 125)
 
 
 if __name__ == "__main__":
-    run_retrieval_ab()
+    run_r3_retrieval_ab()
