@@ -196,16 +196,19 @@ def shots_to_dataframe(shots: list[Shot], meta: VideoMetadata, video_path: Path)
 
 
 def get_worker_model(device_name: str):
-    if device_name not in _WORKER_MODELS:
+    if not hasattr(_THREAD_LOCAL, "model_dict"):
+        _THREAD_LOCAL.model_dict = {}
+
+    if device_name not in _THREAD_LOCAL.model_dict:
         try:
             from transnetv2_pytorch import TransNetV2
 
             model = TransNetV2(device=device_name)
             model.eval()
-            _WORKER_MODELS[device_name] = model
-        except Exception as exc:
-            _WORKER_MODELS[device_name] = None
-    return _WORKER_MODELS[device_name]
+            _THREAD_LOCAL.model_dict[device_name] = model
+        except Exception:
+            _THREAD_LOCAL.model_dict[device_name] = None
+    return _THREAD_LOCAL.model_dict[device_name]
 
 
 def process_video_task(task_args: tuple) -> dict:
