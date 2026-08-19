@@ -81,6 +81,22 @@ def resolve_ocr_config() -> OCRAnswerProviderConfig:
     )
 
 
+def resolve_visual_ontology_config() -> VisualOntologyConfig:
+    candidates = [
+        REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "l21_150_diagnostic" / "qa_dev_visual_ontology.json",
+        Path("/kaggle/working/AIC2026_TeamPTK_SGU/systems/system_tai/benchmarks/l21_150_diagnostic/qa_dev_visual_ontology.json"),
+    ]
+    for p in candidates:
+        if p.exists():
+            return VisualOntologyConfig(
+                enabled=True,
+                ontology_path=p,
+                evidence_frame_budget=16,
+                max_active_domains=2,
+            )
+    return VisualOntologyConfig(enabled=False)
+
+
 def run_full38_benchmark():
     benchmark_path = REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "l21_150_diagnostic" / "benchmark.json"
     sidecar_path = REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "l21_150_diagnostic" / "qa_dev_translations_en.json"
