@@ -25,12 +25,13 @@ class QwenEvidenceAdapter:
             local_files_only=True,
             min_pixels=200704,
             max_pixels=401408,
+            use_fast=False,
         )
         self.model = (
             Qwen2_5_VLForConditionalGeneration.from_pretrained(
                 self.asset_root,
                 local_files_only=True,
-                torch_dtype=torch.float16,
+            dtype=torch.float16,
                 attn_implementation="sdpa",
                 low_cpu_mem_usage=True,
             )
