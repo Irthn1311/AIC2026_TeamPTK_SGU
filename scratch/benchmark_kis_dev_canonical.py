@@ -4,7 +4,8 @@
 Strict Contract & Provenance:
   1. DEV-only Ground Truth Artifact:
      - systems/system_tai/benchmarks/l21_150_diagnostic/kis_dev_gt.json
-     - SHA256: 992557088158ec8a34c2cb517e5d1dc8a2eab4fe75db425dd8cb98c242d2aa10
+     - SHA256: 7d25708b7243ca2b9964bad9a2b65b63354acd74eddb100167f49e1166f8e5b2
+     - Provenance: USER_TEAM_PROVIDED_KIS_DEV_DIAGNOSTIC_GT
      - Zero access to full benchmark.json or HOLDOUT queries.
   2. KIS DEV English Sidecar:
      - systems/system_tai/benchmarks/l21_150_diagnostic/q2_kis_dev_en_translation.json
@@ -39,7 +40,7 @@ from system_tai.kis.session_engine import OperationalKISRuntime
 from system_tai.kis.session_schema import QueryRequest, SessionConfig
 from system_tai.quality.l21_150_evaluator import OFFICIAL_K, _prefix_max
 
-FROZEN_KIS_DEV_GT_SHA256 = "992557088158ec8a34c2cb517e5d1dc8a2eab4fe75db425dd8cb98c242d2aa10"
+FROZEN_KIS_DEV_GT_SHA256 = "7d25708b7243ca2b9964bad9a2b65b63354acd74eddb100167f49e1166f8e5b2"
 FROZEN_Q2_KIS_DEV_EN_SIDECAR_SHA256 = "fa48d7af2001d8d5eca178301736d1409916961f256b4ccb779490d78495ccea"
 
 
@@ -66,11 +67,12 @@ def run_kis_dev_smoke(run_full_38: bool = False) -> None:
     print("CANONICAL L21-150 KIS DEV BENCHMARK: 5-QUERY SMOKE RUNNER (PHASE K0.1)")
     print("=" * 145)
     print(f"• Git HEAD Commit                  : {get_git_head()}")
+    print(f"• DEV GT Source Provenance         : USER_TEAM_PROVIDED_KIS_DEV_DIAGNOSTIC_GT")
     print(f"• DEV-Only GT Path                 : {gt_path.relative_to(REPO_ROOT)}")
     print(f"• DEV-Only GT SHA256               : {gt_sha} ({'MATCH ✅' if gt_sha == FROZEN_KIS_DEV_GT_SHA256 else 'MISMATCH ❌'})")
     print(f"• KIS DEV English Sidecar Path     : {kis_sidecar_path.relative_to(REPO_ROOT)}")
     print(f"• KIS English Sidecar SHA256       : {kis_sidecar_sha} ({'MATCH FROZEN_Q2 ✅' if kis_sidecar_sha == FROZEN_Q2_KIS_DEV_EN_SIDECAR_SHA256 else 'MISMATCH ❌'})")
-    print(f"• HOLDOUT Isolation Status         : Zero HOLDOUT Access (kis_dev_gt.json contains only 38 DEV queries)")
+    print(f"• HOLDOUT Isolation Status         : Zero HOLDOUT Access (Never loads benchmark.json)")
 
     if gt_sha != FROZEN_KIS_DEV_GT_SHA256:
         raise ValueError(f"CRITICAL: DEV GT SHA256 mismatch! Got {gt_sha}")
@@ -83,18 +85,18 @@ def run_kis_dev_smoke(run_full_38: bool = False) -> None:
     gt_data = json.loads(gt_bytes.decode("utf-8"))
     sidecar_data = json.loads(kis_sidecar_bytes.decode("utf-8"))
 
-    dev_queries = gt_data["queries"]
-    sidecar_map = {e["query_id"]: e.get("translation_en", e.get("question_en", "")) for e in sidecar_data.get("records", sidecar_data.get("entries", []))}
+    dev_gt_queries = gt_data["queries"]
+    sidecar_records = {e["query_id"]: e for e in sidecar_data.get("records", sidecar_data.get("entries", []))}
 
     # Strict Assertions on DEV Queries
-    assert len(dev_queries) == 38, f"Expected 38 DEV queries, got {len(dev_queries)}"
-    assert len(set(q["query_id"] for q in dev_queries)) == 38, "Duplicate query_ids in DEV GT!"
-    for q in dev_queries:
-        assert q["split"] == "DEV", f"Non-DEV query found: {q}"
+    assert len(dev_gt_queries) == 38, f"Expected 38 DEV queries, got {len(dev_gt_queries)}"
+    assert len(set(q["query_id"] for q in dev_gt_queries)) == 38, "Duplicate query_ids in DEV GT!"
+    for q in dev_gt_queries:
         assert q["start_frame"] <= q["end_frame"], f"Invalid GT interval in {q}"
+        assert q["query_id"] in sidecar_records, f"Missing sidecar translation for {q['query_id']}"
 
-    print(f"\n• Total DEV Queries Ingested       : {len(dev_queries)} queries (All split=DEV, zero HOLDOUT records)")
-    print(f"• KIS Sidecar Translation Count    : {len(sidecar_map)} DEV queries mapped")
+    print(f"\n• Total DEV Queries Ingested       : {len(dev_gt_queries)} queries (All DEV, zero HOLDOUT records)")
+    print(f"• KIS Sidecar Translation Count    : {len(sidecar_records)} DEV queries mapped")
 
     # ==============================================================================================================
     # 3. EFFECTIVE KIS RUNTIME CONFIGURATION RESOLUTION
@@ -140,11 +142,12 @@ def run_kis_dev_smoke(run_full_38: bool = False) -> None:
     print("5-QUERY DEV SANITY SMOKE & FRAME SEMANTIC ROUND-TRIP AUDIT")
     print("=" * 145)
 
-    smoke_queries = dev_queries[:5]
+    smoke_queries = dev_gt_queries[:5]
     for idx, q in enumerate(smoke_queries, start=1):
         qid = q["query_id"]
-        q_vi = q["query_vi"]
-        q_en = sidecar_map.get(qid, "")
+        sidecar_entry = sidecar_records[qid]
+        q_vi = sidecar_entry.get("source_vi", "")
+        q_en = sidecar_entry.get("translation_en", "")
         target_vid = q["video_id"]
         start_f = q["start_frame"]
         end_f = q["end_frame"]
@@ -184,7 +187,7 @@ def run_kis_dev_smoke(run_full_38: bool = False) -> None:
         for rank_idx, p in enumerate(preds[:3], start=1):
             internal_phys_frame = p["frame_id"]
             export_official_frame_id = p["frame_id"]
-            evaluator_phys_frame = p["frame_id"]  # Evaluator reads actual_frame_id directly from record
+            evaluator_phys_frame = p["frame_id"]
             assert internal_phys_frame == export_official_frame_id == evaluator_phys_frame, (
                 f"Round-trip semantic mismatch: {internal_phys_frame} -> {export_official_frame_id} -> {evaluator_phys_frame}"
             )

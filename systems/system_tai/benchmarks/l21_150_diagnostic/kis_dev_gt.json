@@ -1,464 +1,236 @@
 {
   "schema_version": "kis_dev_gt_v1",
-  "benchmark_id": "system_tai-l21-150-diagnostic-v1",
+  "provenance": "USER_TEAM_PROVIDED_KIS_DEV_DIAGNOSTIC_GT",
   "split": "DEV",
   "query_count": 38,
   "queries": [
     {
       "query_id": "KIS-01",
-      "query_vi": "Tìm cảnh cháy rừng lớn vào ban đêm, lửa lan dọc sườn đồi và khói dày phủ bầu trời.",
       "video_id": "L21_V001",
-      "reference_timestamp": "00:25",
-      "proposed_frame_center": 750,
       "start_frame": 720,
-      "end_frame": 780,
-      "branch": "Visual scene",
-      "difficulty": "Dễ",
-      "split": "DEV"
+      "end_frame": 780
     },
     {
       "query_id": "KIS-02",
-      "query_vi": "Tìm cảnh một người đàn ông ngồi xổm bên một cột nước trắng phun mạnh thẳng lên từ mặt đất ở khu vực nông thôn.",
       "video_id": "L21_V001",
-      "reference_timestamp": "03:47",
-      "proposed_frame_center": 6810,
       "start_frame": 6780,
-      "end_frame": 6840,
-      "branch": "Visual + Object",
-      "difficulty": "Trung bình",
-      "split": "DEV"
+      "end_frame": 6840
     },
     {
       "query_id": "KIS-03",
-      "query_vi": "Tìm cảnh một người đàn ông tóc bạc, đeo kính, phát biểu tại bục với cờ Mỹ và biểu tượng ngân hàng trung ương ở phía sau.",
       "video_id": "L21_V001",
-      "reference_timestamp": "13:02",
-      "proposed_frame_center": 23460,
       "start_frame": 23430,
-      "end_frame": 23490,
-      "branch": "Visual + OCR",
-      "difficulty": "Trung bình",
-      "split": "DEV"
+      "end_frame": 23490
     },
     {
       "query_id": "KIS-07",
-      "query_vi": "Tìm đồ họa nền xanh liệt kê số cửa xả đang mở của các hồ thủy điện Hòa Bình, Sơn La và Tuyên Quang.",
       "video_id": "L21_V003",
-      "reference_timestamp": "01:11",
-      "proposed_frame_center": 1775,
       "start_frame": 1750,
-      "end_frame": 1800,
-      "branch": "OCR",
-      "difficulty": "Dễ",
-      "split": "DEV"
+      "end_frame": 1800
     },
     {
       "query_id": "KIS-08",
-      "query_vi": "Tìm cận cảnh một thau/chậu tròn chứa rất nhiều cá nhỏ màu bạc.",
       "video_id": "L21_V003",
-      "reference_timestamp": "05:59",
-      "proposed_frame_center": 8975,
       "start_frame": 8950,
-      "end_frame": 9000,
-      "branch": "Object",
-      "difficulty": "Dễ",
-      "split": "DEV"
+      "end_frame": 9000
     },
     {
       "query_id": "KIS-09",
-      "query_vi": "Tìm cảnh một chiếc xe mui trần cổ màu đỏ chở nhiều người đi qua đám đông.",
       "video_id": "L21_V003",
-      "reference_timestamp": "17:10",
-      "proposed_frame_center": 25750,
       "start_frame": 25725,
-      "end_frame": 25775,
-      "branch": "Visual + Object",
-      "difficulty": "Dễ",
-      "split": "DEV"
+      "end_frame": 25775
     },
     {
       "query_id": "KIS-10",
-      "query_vi": "Tìm cảnh một phụ nữ mặc áo xanh họa tiết được phỏng vấn, phía sau có các gói sản phẩm và giấy chứng nhận.",
       "video_id": "L21_V005",
-      "reference_timestamp": "01:34",
-      "proposed_frame_center": 2820,
       "start_frame": 2790,
-      "end_frame": 2850,
-      "branch": "Visual + OCR",
-      "difficulty": "Trung bình",
-      "split": "DEV"
+      "end_frame": 2850
     },
     {
       "query_id": "KIS-11",
-      "query_vi": "Tìm cảnh một người đàn ông đội mũ rơm được phỏng vấn cạnh bờ biển nhiều đá.",
       "video_id": "L21_V005",
-      "reference_timestamp": "04:05",
-      "proposed_frame_center": 7350,
       "start_frame": 7320,
-      "end_frame": 7380,
-      "branch": "Visual scene",
-      "difficulty": "Dễ",
-      "split": "DEV"
+      "end_frame": 7380
     },
     {
       "query_id": "KIS-12",
-      "query_vi": "Tìm cảnh núi lửa đang phun, tạo cột khói rất lớn trên nền trời xanh.",
       "video_id": "L21_V005",
-      "reference_timestamp": "11:00",
-      "proposed_frame_center": 19800,
       "start_frame": 19770,
-      "end_frame": 19830,
-      "branch": "Visual scene",
-      "difficulty": "Dễ",
-      "split": "DEV"
+      "end_frame": 19830
     },
     {
       "query_id": "KIS-16",
-      "query_vi": "Tìm cảnh đoàn cán bộ đứng kiểm tra khu vực bờ bị sạt lở, phía sau có các khối bê tông chắn sóng.",
       "video_id": "L21_V007",
-      "reference_timestamp": "00:16",
-      "proposed_frame_center": 480,
       "start_frame": 450,
-      "end_frame": 510,
-      "branch": "Visual scene",
-      "difficulty": "Trung bình",
-      "split": "DEV"
+      "end_frame": 510
     },
     {
       "query_id": "KIS-17",
-      "query_vi": "Tìm cảnh nhiều người đội mũ bảo hộ đang làm việc hoặc tham quan trong một nhà xưởng/công trình lớn.",
       "video_id": "L21_V007",
-      "reference_timestamp": "04:46",
-      "proposed_frame_center": 8580,
       "start_frame": 8550,
-      "end_frame": 8610,
-      "branch": "Visual + Object",
-      "difficulty": "Trung bình",
-      "split": "DEV"
+      "end_frame": 8610
     },
     {
       "query_id": "KIS-18",
-      "query_vi": "Tìm cảnh một người đàn ông đứng trong vườn chuối và cầm/kiểm tra một buồng hoặc hoa chuối.",
       "video_id": "L21_V007",
-      "reference_timestamp": "10:22",
-      "proposed_frame_center": 18660,
       "start_frame": 18630,
-      "end_frame": 18690,
-      "branch": "Visual + Object",
-      "difficulty": "Dễ",
-      "split": "DEV"
+      "end_frame": 18690
     },
     {
       "query_id": "KIS-19",
-      "query_vi": "Tìm cảnh nhiều con bò trong chuồng, một số con nằm trên nền đất.",
       "video_id": "L21_V008",
-      "reference_timestamp": "00:26",
-      "proposed_frame_center": 650,
       "start_frame": 625,
-      "end_frame": 675,
-      "branch": "Object",
-      "difficulty": "Dễ",
-      "split": "DEV"
+      "end_frame": 675
     },
     {
       "query_id": "KIS-20",
-      "query_vi": "Tìm cảnh hai người dẫn chương trình đứng cạnh nhau trong trường quay, nam mặc áo xanh và nữ mặc áo be.",
       "video_id": "L21_V008",
-      "reference_timestamp": "04:56",
-      "proposed_frame_center": 7400,
       "start_frame": 7375,
-      "end_frame": 7425,
-      "branch": "Visual",
-      "difficulty": "Dễ",
-      "split": "DEV"
+      "end_frame": 7425
     },
     {
       "query_id": "KIS-21",
-      "query_vi": "Tìm cận cảnh một thiết bị tròn màu đen trong bối cảnh tối, bên phải có nhiều tia lửa bắn ra.",
       "video_id": "L21_V008",
-      "reference_timestamp": "16:38",
-      "proposed_frame_center": 24950,
       "start_frame": 24925,
-      "end_frame": 24975,
-      "branch": "Visual + Object",
-      "difficulty": "Khó",
-      "split": "DEV"
+      "end_frame": 24975
     },
     {
       "query_id": "KIS-22",
-      "query_vi": "Tìm cận cảnh nhiều túi lưới chứa các quả trứng màu nhạt xếp chồng lên nhau.",
       "video_id": "L21_V009",
-      "reference_timestamp": "00:23",
-      "proposed_frame_center": 575,
       "start_frame": 550,
-      "end_frame": 600,
-      "branch": "Object",
-      "difficulty": "Dễ",
-      "split": "DEV"
+      "end_frame": 600
     },
     {
       "query_id": "KIS-23",
-      "query_vi": "Tìm cảnh một đàn vịt rất đông đang đứng và di chuyển trên cánh đồng ngập nước.",
       "video_id": "L21_V009",
-      "reference_timestamp": "05:47",
-      "proposed_frame_center": 8675,
       "start_frame": 8650,
-      "end_frame": 8700,
-      "branch": "Object",
-      "difficulty": "Dễ",
-      "split": "DEV"
+      "end_frame": 8700
     },
     {
       "query_id": "KIS-24",
-      "query_vi": "Tìm cảnh một người đeo mặt nạ có khuôn mặt giống Donald Trump đứng giữa đám đông.",
       "video_id": "L21_V009",
-      "reference_timestamp": "16:37",
-      "proposed_frame_center": 24925,
       "start_frame": 24900,
-      "end_frame": 24950,
-      "branch": "Visual",
-      "difficulty": "Khó",
-      "split": "DEV"
+      "end_frame": 24950
     },
     {
       "query_id": "KIS-25",
-      "query_vi": "Tìm cảnh một người lớn tuổi ngồi làm thủ tục tại quầy, giữa hai bên có tấm chắn trong suốt.",
       "video_id": "L21_V010",
-      "reference_timestamp": "00:22",
-      "proposed_frame_center": 550,
       "start_frame": 525,
-      "end_frame": 575,
-      "branch": "Visual scene",
-      "difficulty": "Trung bình",
-      "split": "DEV"
+      "end_frame": 575
     },
     {
       "query_id": "KIS-26",
-      "query_vi": "Tìm cảnh một công nhân mặc áo cam đang sơn/trát một bức tường trắng ngoài trời.",
       "video_id": "L21_V010",
-      "reference_timestamp": "04:54",
-      "proposed_frame_center": 7350,
       "start_frame": 7325,
-      "end_frame": 7375,
-      "branch": "Visual + Action",
-      "difficulty": "Dễ",
-      "split": "DEV"
+      "end_frame": 7375
     },
     {
       "query_id": "KIS-27",
-      "query_vi": "Tìm cảnh nữ MC mặc váy vàng đứng trong trường quay cạnh màn hình đang chiếu một đám đông ban đêm.",
       "video_id": "L21_V010",
-      "reference_timestamp": "13:58",
-      "proposed_frame_center": 20950,
       "start_frame": 20925,
-      "end_frame": 20975,
-      "branch": "Visual",
-      "difficulty": "Trung bình",
-      "split": "DEV"
+      "end_frame": 20975
     },
     {
       "query_id": "KIS-28",
-      "query_vi": "Tìm cảnh bác sĩ đeo khẩu trang, mặc áo blouse trắng khám cho một em bé được người đàn ông bế.",
       "video_id": "L21_V011",
-      "reference_timestamp": "00:20",
-      "proposed_frame_center": 500,
       "start_frame": 475,
-      "end_frame": 525,
-      "branch": "Visual + Object",
-      "difficulty": "Dễ",
-      "split": "DEV"
+      "end_frame": 525
     },
     {
       "query_id": "KIS-29",
-      "query_vi": "Tìm cảnh một người mặc áo đỏ thao tác trước dãy tủ gửi đồ tự động màu xám có chữ “Giảm CO2”.",
       "video_id": "L21_V011",
-      "reference_timestamp": "04:21",
-      "proposed_frame_center": 6525,
       "start_frame": 6500,
-      "end_frame": 6550,
-      "branch": "OCR + Object",
-      "difficulty": "Trung bình",
-      "split": "DEV"
+      "end_frame": 6550
     },
     {
       "query_id": "KIS-30",
-      "query_vi": "Tìm cảnh hai phụ nữ chạy thi trên bãi cỏ trong một cuộc đua vượt chướng ngại vật.",
       "video_id": "L21_V011",
-      "reference_timestamp": "15:44",
-      "proposed_frame_center": 23600,
       "start_frame": 23575,
-      "end_frame": 23625,
-      "branch": "Visual + Action",
-      "difficulty": "Dễ",
-      "split": "DEV"
+      "end_frame": 23625
     },
     {
       "query_id": "KIS-31",
-      "query_vi": "Tìm cảnh một sườn đồi bị sạt lở, đất đá trượt xuống tạo thành mảng nâu lớn.",
       "video_id": "L21_V012",
-      "reference_timestamp": "00:18",
-      "proposed_frame_center": 540,
       "start_frame": 510,
-      "end_frame": 570,
-      "branch": "Visual scene",
-      "difficulty": "Dễ",
-      "split": "DEV"
+      "end_frame": 570
     },
     {
       "query_id": "KIS-32",
-      "query_vi": "Tìm cảnh một phòng học trống với nhiều dãy bàn ghế ngay ngắn.",
       "video_id": "L21_V012",
-      "reference_timestamp": "03:25",
-      "proposed_frame_center": 6150,
       "start_frame": 6120,
-      "end_frame": 6180,
-      "branch": "Visual scene",
-      "difficulty": "Dễ",
-      "split": "DEV"
+      "end_frame": 6180
     },
     {
       "query_id": "KIS-33",
-      "query_vi": "Tìm cảnh dòng thác/ghềnh nước đục chảy rất mạnh, phía dưới có đông khách tham quan.",
       "video_id": "L21_V012",
-      "reference_timestamp": "13:59",
-      "proposed_frame_center": 25170,
       "start_frame": 25140,
-      "end_frame": 25200,
-      "branch": "Visual scene",
-      "difficulty": "Trung bình",
-      "split": "DEV"
+      "end_frame": 25200
     },
     {
       "query_id": "KIS-40",
-      "query_vi": "Tìm cảnh quay từ trên cao một khu du lịch xanh mướt với hồ nước màu xanh ngọc giữa địa hình khô cằn ở Oman.",
       "video_id": "L21_V015",
-      "reference_timestamp": "00:26",
-      "proposed_frame_center": 780,
       "start_frame": 750,
-      "end_frame": 810,
-      "branch": "Visual scene",
-      "difficulty": "Trung bình",
-      "split": "DEV"
+      "end_frame": 810
     },
     {
       "query_id": "KIS-41",
-      "query_vi": "Tìm cận cảnh một rổ nhựa đỏ chứa đầy cá nhỏ màu bạc.",
       "video_id": "L21_V015",
-      "reference_timestamp": "06:31",
-      "proposed_frame_center": 11730,
       "start_frame": 11700,
-      "end_frame": 11760,
-      "branch": "Object",
-      "difficulty": "Dễ",
-      "split": "DEV"
+      "end_frame": 11760
     },
     {
       "query_id": "KIS-42",
-      "query_vi": "Tìm cảnh một tay đua xe đạp đứng trên bục màu cam của Zwift và giơ cúp lên cao.",
       "video_id": "L21_V015",
-      "reference_timestamp": "20:25",
-      "proposed_frame_center": 36750,
       "start_frame": 36720,
-      "end_frame": 36780,
-      "branch": "OCR + Visual",
-      "difficulty": "Trung bình",
-      "split": "DEV"
+      "end_frame": 36780
     },
     {
       "query_id": "KIS-43",
-      "query_vi": "Tìm cảnh một tuyến đường trung tâm thành phố có nhiều cây xanh và xe máy đang lưu thông.",
       "video_id": "L21_V016",
-      "reference_timestamp": "00:21",
-      "proposed_frame_center": 630,
       "start_frame": 600,
-      "end_frame": 660,
-      "branch": "Visual scene",
-      "difficulty": "Dễ",
-      "split": "DEV"
+      "end_frame": 660
     },
     {
       "query_id": "KIS-44",
-      "query_vi": "Tìm cảnh trường quay có một nam MC ở bàn dẫn và một nữ MC đứng ở phía bên phải.",
       "video_id": "L21_V016",
-      "reference_timestamp": "05:16",
-      "proposed_frame_center": 9480,
       "start_frame": 9450,
-      "end_frame": 9510,
-      "branch": "Visual",
-      "difficulty": "Dễ",
-      "split": "DEV"
+      "end_frame": 9510
     },
     {
       "query_id": "KIS-45",
-      "query_vi": "Tìm cảnh một quảng trường châu Âu có thảm hoa khổng lồ nhiều màu trải trên mặt đất.",
       "video_id": "L21_V016",
-      "reference_timestamp": "15:48",
-      "proposed_frame_center": 28440,
       "start_frame": 28410,
-      "end_frame": 28470,
-      "branch": "Visual scene",
-      "difficulty": "Trung bình",
-      "split": "DEV"
+      "end_frame": 28470
     },
     {
       "query_id": "KIS-46",
-      "query_vi": "Tìm cảnh nhiều xe tải/xe thương mại đang ở bên trong một trung tâm đăng kiểm.",
       "video_id": "L21_V017",
-      "reference_timestamp": "00:19",
-      "proposed_frame_center": 475,
       "start_frame": 450,
-      "end_frame": 500,
-      "branch": "Object + Scene",
-      "difficulty": "Dễ",
-      "split": "DEV"
+      "end_frame": 500
     },
     {
       "query_id": "KIS-47",
-      "query_vi": "Tìm cảnh quay từ trên cao một nút giao thông lớn với rất nhiều ô tô và xe máy di chuyển theo nhiều hướng.",
       "video_id": "L21_V017",
-      "reference_timestamp": "02:13",
-      "proposed_frame_center": 3325,
       "start_frame": 3300,
-      "end_frame": 3350,
-      "branch": "Visual scene",
-      "difficulty": "Trung bình",
-      "split": "DEV"
+      "end_frame": 3350
     },
     {
       "query_id": "KIS-48",
-      "query_vi": "Tìm cảnh nhiều khán giả đứng dọc hai bên một tuyến đường có cọc tiêu màu cam để xem sự kiện/đua xe.",
       "video_id": "L21_V017",
-      "reference_timestamp": "14:15",
-      "proposed_frame_center": 21375,
       "start_frame": 21350,
-      "end_frame": 21400,
-      "branch": "Visual scene",
-      "difficulty": "Trung bình",
-      "split": "DEV"
+      "end_frame": 21400
     },
     {
       "query_id": "KIS-49",
-      "query_vi": "Tìm cảnh một xe tải/xe cứu trợ màu trắng có biểu tượng chữ thập đỏ chạy hoặc dừng trước dãy cửa hàng vào ban đêm.",
       "video_id": "L21_V001",
-      "reference_timestamp": "20:36",
-      "proposed_frame_center": 37080,
       "start_frame": 37050,
-      "end_frame": 37110,
-      "branch": "Visual + Object",
-      "difficulty": "Trung bình",
-      "split": "DEV"
+      "end_frame": 37110
     },
     {
       "query_id": "KIS-50",
-      "query_vi": "Tìm cảnh một vận động viên trượt ván đang đứng trên ván tại một skatepark ngoài trời lớn.",
       "video_id": "L21_V015",
-      "reference_timestamp": "21:17",
-      "proposed_frame_center": 38310,
       "start_frame": 38280,
-      "end_frame": 38340,
-      "branch": "Visual + Action",
-      "difficulty": "Dễ",
-      "split": "DEV"
+      "end_frame": 38340
     }
   ]
 }

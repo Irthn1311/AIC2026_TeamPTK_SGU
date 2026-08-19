@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build immutable kis_dev_gt.json from user-authorized DEV table input."""
+"""Build minimal immutable kis_dev_gt.json strictly from user/team-provided DEV table."""
 
 from __future__ import annotations
 
@@ -60,65 +60,63 @@ KIS-48\tTìm cảnh nhiều khán giả đứng dọc hai bên một tuyến đ�
 KIS-49\tTìm cảnh một xe tải/xe cứu trợ màu trắng có biểu tượng chữ thập đỏ chạy hoặc dừng trước dãy cửa hàng vào ban đêm.\tL21_V001\t20:36\tf=37,080 | [37,050-37,110]\tVisual + Object\tTrung bình
 KIS-50\tTìm cảnh một vận động viên trượt ván đang đứng trên ván tại một skatepark ngoài trời lớn.\tL21_V015\t21:17\tf=38,310 | [38,280-38,340]\tVisual + Action\tDễ"""
 
-HOLDOUT_VIDEOS = {"L21_V006", "L21_V013", "L21_V014", "L21_V002"}
+HOLDOUT_VIDEOS = {"L21_V002", "L21_V006", "L21_V013", "L21_V014"}
 DEV_VIDEOS = {
-    "L21_V005", "L21_V010", "L21_V012", "L21_V016",
-    "L21_V009", "L21_V007", "L21_V017", "L21_V003",
-    "L21_V011", "L21_V015", "L21_V008", "L21_V001"
+    "L21_V001", "L21_V003", "L21_V005", "L21_V007", "L21_V008", "L21_V009",
+    "L21_V010", "L21_V011", "L21_V012", "L21_V015", "L21_V016", "L21_V017"
+}
+HOLDOUT_IDS = {
+    "KIS-04", "KIS-05", "KIS-06",
+    "KIS-13", "KIS-14", "KIS-15",
+    "KIS-34", "KIS-35", "KIS-36",
+    "KIS-37", "KIS-38", "KIS-39"
 }
 
 
-def build_kis_dev_gt() -> None:
+def build_minimal_kis_dev_gt() -> None:
     lines = [l.strip() for l in RAW_TEXT.strip().splitlines() if l.strip()]
     records = []
-    holdout_records = []
+    excluded_records = []
 
     for line in lines[1:]:
         parts = line.split("\t")
-        qid, query_vi, vid, ref_time, raw_frame_str, branch, diff = parts
+        qid, _query_vi, vid, _ref_time, raw_frame_str, _branch, _diff = parts
 
-        center_match = re.search(r"f=([\d,]+)", raw_frame_str)
         interval_match = re.search(r"\[([\d,]+)-([\d,]+)\]", raw_frame_str)
-        assert center_match and interval_match, f"Malformed frame string: {raw_frame_str}"
+        assert interval_match, f"Malformed frame string: {raw_frame_str}"
 
-        center_f = int(center_match.group(1).replace(",", ""))
         start_f = int(interval_match.group(1).replace(",", ""))
         end_f = int(interval_match.group(2).replace(",", ""))
-        assert start_f <= center_f <= end_f, f"Center frame {center_f} not in [{start_f}..{end_f}]"
+        assert start_f <= end_f, f"Invalid interval: start {start_f} > end {end_f}"
 
-        if vid in HOLDOUT_VIDEOS:
-            holdout_records.append((qid, vid))
+        if vid in HOLDOUT_VIDEOS or qid in HOLDOUT_IDS:
+            assert vid in HOLDOUT_VIDEOS and qid in HOLDOUT_IDS, f"Mismatch in holdout definition: {qid}, {vid}"
+            excluded_records.append((qid, vid))
             continue
 
-        assert vid in DEV_VIDEOS, f"Unknown video {vid}"
+        assert vid in DEV_VIDEOS, f"Non-DEV video: {vid}"
         records.append({
             "query_id": qid,
-            "query_vi": query_vi,
             "video_id": vid,
-            "reference_timestamp": ref_time,
-            "proposed_frame_center": center_f,
             "start_frame": start_f,
             "end_frame": end_f,
-            "branch": branch,
-            "difficulty": diff,
-            "split": "DEV",
         })
 
-    print(f"Total raw lines parsed : {len(lines) - 1}")
-    print(f"Holdout excluded ({len(holdout_records)}): {[q for q, v in holdout_records]}")
-    print(f"DEV queries extracted  : {len(records)}")
+    print(f"Total raw lines parsed          : {len(lines) - 1}")
+    print(f"Excluded HOLDOUT queries ({len(excluded_records)}) : {[q for q, v in excluded_records]}")
+    print(f"DEV queries retained            : {len(records)}")
 
     # Strict Assertions
-    assert len(records) == 38, f"Expected exactly 38 DEV queries, got {len(records)}"
-    assert len(set(r["query_id"] for r in records)) == 38, "Duplicate DEV query IDs!"
-    for r in records:
-        assert r["split"] == "DEV", f"Invalid split {r['split']}"
-        assert r["start_frame"] <= r["end_frame"], f"Invalid interval in {r}"
-        assert r["video_id"] in DEV_VIDEOS, f"Non-DEV video {r['video_id']}"
+    assert len(records) == 38, f"Expected exactly 38 DEV records, got {len(records)}"
+    assert len(set(r["query_id"] for r in records)) == 38, "Duplicate query IDs!"
+    dev_videos_found = set(r["video_id"] for r in records)
+    assert dev_videos_found == DEV_VIDEOS, f"DEV videos mismatch: {dev_videos_found ^ DEV_VIDEOS}"
+    assert not any(r["video_id"] in HOLDOUT_VIDEOS for r in records), "HOLDOUT video found in records!"
+    assert not any(r["query_id"] in HOLDOUT_IDS for r in records), "HOLDOUT query ID found in records!"
 
     out_obj = {
         "schema_version": "kis_dev_gt_v1",
-        "benchmark_id": "system_tai-l21-150-diagnostic-v1",
+        "provenance": "USER_TEAM_PROVIDED_KIS_DEV_DIAGNOSTIC_GT",
         "split": "DEV",
         "query_count": 38,
         "queries": records,
@@ -129,10 +127,10 @@ def build_kis_dev_gt() -> None:
     out_path.write_bytes(out_bytes)
     out_sha = hashlib.sha256(out_bytes).hexdigest()
 
-    print(f"Successfully wrote immutable DEV-only GT artifact: {out_path}")
-    print(f"File size: {len(out_bytes)} bytes")
-    print(f"Artifact SHA256: {out_sha}")
+    print(f"\nSuccessfully created minimal immutable DEV GT artifact: {out_path}")
+    print(f"File size       : {len(out_bytes)} bytes")
+    print(f"Artifact SHA256 : {out_sha}")
 
 
 if __name__ == "__main__":
-    build_kis_dev_gt()
+    build_minimal_kis_dev_gt()
