@@ -15,9 +15,10 @@ Evaluates:
   - 7 Protected Champion Controls  : QA-08, QA-10, QA-13, QA-23, QA-27, QA-45, QA-46
 
 Promotion Gate:
-  1. Protected Controls : 7/7 target video nominations RETAINED in Top-16
-  2. QA-26 Positive Control: Target video L21_V009 RESCUED into Top-16
-  3. Rescue Probes      : At least 3/6 target videos NEWLY ENTER Top-16
+  Gate 0: Arm A reproduces baseline nomination of protected controls
+  Gate 1: Arm B retains 7/7 protected target videos in Top-16
+  Gate 2: QA-26 target video L21_V009 rescued into Top-16
+  Gate 3: At least 3/6 rescue probes newly enter Top-16
 """
 
 from __future__ import annotations
@@ -98,8 +99,8 @@ def run_r3_retrieval_ab() -> None:
     print("\n--- BOOTSTRAPPING RUNTIME RETRIEVAL COMPONENTS ---")
     t0 = time.time()
     runtime = OperationalKISRuntime.bootstrap(config)
-    searcher = runtime.qa_pipeline.grounding_stage.feature_searcher
-    encoder = runtime.text_encoder
+    searcher = runtime.qa_pipeline.video_restricted_searcher
+    encoder = runtime.qa_pipeline.shared_encoder
     print(f"Bootstrap completed in {time.time() - t0:.2f}s.")
 
     results: list[dict[str, Any]] = []
@@ -133,10 +134,10 @@ def run_r3_retrieval_ab() -> None:
             variant_type=QueryVariantType.ENGLISH_TRANSLATION,
             weight=1.0,
         )
-        vec_lit = encoder.encode(lit_text)
+        vec_lit = encoder.encode_texts([lit_text])
         maxima_lit = searcher.search_video_maxima(
             query_ids=[v_lit.variant_id],
-            query_vectors=[vec_lit],
+            query_vectors=vec_lit,
         )
         noms_lit = nominate_qa_videos(
             variants=[v_lit],
@@ -156,10 +157,10 @@ def run_r3_retrieval_ab() -> None:
                 variant_type=QueryVariantType.ENGLISH_TRANSLATION,
                 weight=0.8,
             )
-            vec_cmp = encoder.encode(cmp_text)
+            vec_cmp = encoder.encode_texts([cmp_text])
             maxima_fused = searcher.search_video_maxima(
                 query_ids=[v_lit.variant_id, v_cmp.variant_id],
-                query_vectors=[vec_lit, vec_cmp],
+                query_vectors=list(vec_lit) + list(vec_cmp),
             )
             noms_fused = nominate_qa_videos(
                 variants=[v_lit, v_cmp],
@@ -236,6 +237,12 @@ def run_r3_retrieval_ab() -> None:
     hist_recs = [r for r in results if r["cohort"] == "HISTORICAL_CONTROL"]
     rescue_recs = [r for r in results if r["cohort"] == "RESCUE_PROBE"]
 
+    # Baseline parity check for Gate 0
+    canonical_ranks = {
+        "QA-46": 10, "QA-13": 6, "QA-08": 6, "QA-27": 2, "QA-23": 1, "QA-10": 6, "QA-45": 9
+    }
+    parity_matches = sum(1 for r in control_recs if r["rank_a"] == canonical_ranks.get(r["query_id"]))
+
     controls_retained = sum(1 for r in control_recs if r["selected_b"])
     qa26_rescued = any(r["selected_b"] for r in hist_recs)
     qa26_rank = hist_recs[0]["rank_b"] if hist_recs and hist_recs[0]["selected_b"] else None
@@ -245,21 +252,24 @@ def run_r3_retrieval_ab() -> None:
     print("\n" + "=" * 125)
     print("PROMOTION GATE EVALUATION (R3 GENERIC ENGLISH QUERY EXPANSION):")
     print("=" * 125)
-    print(f"1. Protected Controls Retained (7/7) : {controls_retained}/7 ({'PASS ✅' if controls_retained == 7 else 'FAIL ❌ - Control Lost'})")
-    print(f"2. QA-26 Historical Rescue (Positive): {'PASS ✅ (Nominated @' + str(qa26_rank) + ')' if qa26_rescued else 'FAIL ❌ (L21_V009 Absent)'}")
-    print(f"3. Rescue Probes Rescued (>=3/6)     : {rescued_count}/6 ({'PASS ✅' if rescued_count >= 3 else 'INSUFFICIENT ⚠️ (<3 rescued)'})")
-    print(f"4. Control Regressions Count         : {regressed_count} (Must be 0)")
+    print(f"GATE 0. Baseline Parity Controls Match (7/7): {parity_matches}/7 ({'PASS ✅' if parity_matches == 7 else 'FAIL ❌ (Parity mismatch on Arm A)'})")
+    print(f"GATE 1. Protected Controls Retained (7/7)    : {controls_retained}/7 ({'PASS ✅' if controls_retained == 7 else 'FAIL ❌ - Control Lost'})")
+    print(f"GATE 2. QA-26 Historical Rescue (Positive)  : {'PASS ✅ (Nominated @' + str(qa26_rank) + ')' if qa26_rescued else 'FAIL ❌ (L21_V009 Absent)'}")
+    print(f"GATE 3. Rescue Probes Rescued (>=3/6)        : {rescued_count}/6 ({'PASS ✅' if rescued_count >= 3 else 'INSUFFICIENT ⚠️ (<3 rescued)'})")
+    print(f"Control Regressions Count                    : {regressed_count} (Must be 0)")
     print("-" * 125)
 
-    gate_pass = (controls_retained == 7 and qa26_rescued and rescued_count >= 3)
+    gate_pass = (parity_matches == 7 and controls_retained == 7 and qa26_rescued and rescued_count >= 3)
     if gate_pass:
-        print(">> VERDICT: PROMOTION GATE PASSED 🏆 (Eligible for single frozen QA verification run) <<")
+        print(">> VERDICT: ALL 4 GATES PASSED 🏆 (Eligible for single frozen QA verification run) <<")
+    elif parity_matches < 7:
+        print(">> VERDICT: GATE 0 FAILED ❌ (Baseline parity mismatch -> DO NOT interpret Arm B, FREEZE QA, MOVE KIS) <<")
     elif controls_retained < 7:
-        print(">> VERDICT: PROMOTION GATE FAILED ❌ (Control lost -> DROP expansion, FREEZE QA, MOVE KIS) <<")
+        print(">> VERDICT: GATE 1 FAILED ❌ (Control lost -> DROP expansion, FREEZE QA, MOVE KIS) <<")
     elif not qa26_rescued:
-        print(">> VERDICT: PROMOTION GATE FAILED ❌ (QA-26 positive control not reproduced -> DROP expansion, FREEZE QA, MOVE KIS) <<")
+        print(">> VERDICT: GATE 2 FAILED ❌ (QA-26 positive control not reproduced -> DROP expansion, FREEZE QA, MOVE KIS) <<")
     else:
-        print(f">> VERDICT: PROMOTION GATE INSUFFICIENT ⚠️ ({rescued_count}/6 rescued < 3 -> FREEZE QA, MOVE KIS) <<")
+        print(f">> VERDICT: GATE 3 INSUFFICIENT ⚠️ ({rescued_count}/6 rescued < 3 -> FREEZE QA, MOVE KIS) <<")
     print("=" * 125)
 
 
