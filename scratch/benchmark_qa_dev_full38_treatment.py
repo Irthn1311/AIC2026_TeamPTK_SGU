@@ -91,7 +91,7 @@ def resolve_visual_ontology_config() -> VisualOntologyConfig:
             return VisualOntologyConfig(
                 enabled=True,
                 ontology_path=p,
-                evidence_frame_budget=16,
+                evidence_frame_budget=100,
                 max_active_domains=2,
             )
     return VisualOntologyConfig(enabled=False)
