@@ -50,24 +50,27 @@ def normalize_text(text: str | None) -> str:
 
 
 def resolve_ocr_config() -> OCRAnswerProviderConfig:
-    tesseract_available = shutil.which("tesseract") is not None
-    if not tesseract_available:
+    tess_path = shutil.which("tesseract")
+    available_langs: list[str] = []
+    if tess_path:
         try:
-            print("Installing tesseract-ocr-vie packages...")
-            subprocess.run(["apt-get", "update", "-y"], check=True)
-            subprocess.run(["apt-get", "install", "-y", "tesseract-ocr", "tesseract-ocr-vie"], check=True)
-            tesseract_available = shutil.which("tesseract") is not None
-        except Exception as exc:
-            print(f"Warning: OCR install failed ({exc}). OCR provider disabled.")
-            tesseract_available = False
+            res = subprocess.run([tess_path, "--list-langs"], capture_output=True, text=True, check=False)
+            available_langs = [l.strip() for l in res.stdout.splitlines()[1:] if l.strip()]
+        except Exception:
+            pass
+
+    desired = ("eng", "vie")
+    supported = tuple(l for l in desired if l in available_langs)
+    if not supported:
+        supported = tuple(available_langs[:2]) if available_langs else ("eng",)
+
+    if not available_langs:
+        return OCRAnswerProviderConfig(enabled=False, languages=("eng",))
 
     return OCRAnswerProviderConfig(
-        enabled=tesseract_available,
-        evidence_frame_budget=16,
-        tesseract_binary="tesseract",
-        languages="vie+eng",
-        min_word_confidence=40.0,
-        page_segmentation_mode=11,
+        enabled=True,
+        languages=supported,
+        evidence_frame_budget=8,
     )
 
 
