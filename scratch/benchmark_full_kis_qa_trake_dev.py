@@ -178,7 +178,7 @@ def run_comprehensive_benchmark():
         req = QueryRequest(
             request_id=f"kis-{qid}",
             query_id=qid,
-            text=text_vi,
+            query_vi=text_vi,
             output_top_k=100,
             refine_top_n=3,
         )

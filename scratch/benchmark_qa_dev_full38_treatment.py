@@ -171,6 +171,7 @@ def run_full38_benchmark():
             event_description=q_vi,
             question=q_vi,
             event_description_en=q_en if q_en else None,
+            question_en=q_en if q_en else None,
             include_vi_variant=False,
             output_top_k=100,
             refine_top_n=3,
