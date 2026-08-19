@@ -32,7 +32,6 @@ if str(SYSTEM_TAI_SRC) not in sys.path:
 
 from system_tai.kis.session_engine import OperationalKISRuntime
 from system_tai.kis.session_schema import QAQueryRequest, SessionConfig
-from system_tai.preliminary.matching import answer_matches
 from system_tai.qa.grounding import (
     QA_CANDIDATE_ORDER_ROUND_ROBIN,
     QAVideoConditionedEvidenceConfig,
@@ -40,6 +39,7 @@ from system_tai.qa.grounding import (
 from system_tai.qa.object_provider import ObjectAnswerProviderConfig
 from system_tai.qa.ocr_provider import OCRAnswerProviderConfig
 from system_tai.qa.visual_ontology import VisualOntologyConfig
+from system_tai.quality.l21_150_answers import answer_matches
 
 
 def normalize_text(text: str | None) -> str:
