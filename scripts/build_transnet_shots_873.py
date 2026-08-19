@@ -48,9 +48,13 @@ SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+import threading
+
 from _bootstrap import PROJECT_ROOT
 from src.preprocessing.keyframe_v2.shot_detector import Shot, detect_shots
 from src.preprocessing.keyframe_v2.video_metadata import VideoMetadata, probe_video
+
+_THREAD_LOCAL = threading.local()
 
 
 _WORKER_MODELS: dict[str, any] = {}
