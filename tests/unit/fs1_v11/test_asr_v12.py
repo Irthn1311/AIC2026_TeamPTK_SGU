@@ -8,6 +8,7 @@ import pytest
 from triage_eg.fs1_v11.asr_v12 import (
     aggregate_worker_reports,
     atomic_write_jsonl,
+    initialize_cuda_worker,
     lpt_partition,
     material_consistency,
     merge_shards,
@@ -122,3 +123,27 @@ def test_merge_rejects_duplicate_video_ownership(tmp_path: Path) -> None:
     )
     with pytest.raises(RuntimeError, match="ASR_SHARD_MERGE_GATE_FAILED"):
         merge_shards(rows, [first, second])
+
+
+def test_cuda_worker_avoids_early_peak_reset_on_fresh_process() -> None:
+    calls = []
+
+    class FakeCuda:
+        @staticmethod
+        def is_available():
+            return True
+
+        @staticmethod
+        def device_count():
+            return 1
+
+        @staticmethod
+        def get_device_name(index):
+            calls.append(("get_device_name", index))
+            return "Tesla T4"
+
+    class FakeTorch:
+        cuda = FakeCuda()
+
+    assert initialize_cuda_worker(FakeTorch()) == "Tesla T4"
+    assert calls == [("get_device_name", 0)]

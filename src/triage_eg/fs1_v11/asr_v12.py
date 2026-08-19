@@ -267,6 +267,18 @@ def lexical_index(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]
     return output
 
 
+def initialize_cuda_worker(torch_module: Any) -> str:
+    if not torch_module.cuda.is_available() or torch_module.cuda.device_count() != 1:
+        raise RuntimeError(
+            "ASR_WORKER_REQUIRES_EXACTLY_ONE_VISIBLE_CUDA_DEVICE "
+            f"visible={torch_module.cuda.device_count()}"
+        )
+    # This is a fresh subprocess, so allocator peaks already start at zero.
+    # PyTorch 2.10 on Kaggle can reject reset_peak_memory_stats(0) before the
+    # first model allocation; defer CUDA context creation to model.to("cuda:0").
+    return str(torch_module.cuda.get_device_name(0))
+
+
 def worker_run(
     manifest_path: Path,
     checkpoint_path: Path,
@@ -282,7 +294,7 @@ def worker_run(
     manifest = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
     existing = {row["video_id"]: row for row in read_jsonl(checkpoint_path)}
     completed = {video_id for video_id, row in existing.items() if row.get("status") == "PASS"}
-    torch.cuda.reset_peak_memory_stats(0)
+    device_name = initialize_cuda_worker(torch)
     worker_started = time.monotonic()
     model_started = time.monotonic()
     processor = AutoProcessor.from_pretrained(asset_root, local_files_only=True)
@@ -416,9 +428,9 @@ def worker_run(
         "whisper_wall_seconds": whisper_seconds,
         "rtf": wall_seconds / max(processed_audio_seconds, 1e-9),
         "audio_hours_per_wall_hour": processed_audio_seconds / max(wall_seconds, 1e-9),
-        "peak_allocated_vram_bytes": torch.cuda.max_memory_allocated(0),
-        "peak_reserved_vram_bytes": torch.cuda.max_memory_reserved(0),
-        "device_name": torch.cuda.get_device_name(0),
+        "peak_allocated_vram_bytes": torch.cuda.max_memory_allocated(),
+        "peak_reserved_vram_bytes": torch.cuda.max_memory_reserved(),
+        "device_name": device_name,
         "model_id": WHISPER_ID,
         "model_revision": WHISPER_REVISION,
     }
