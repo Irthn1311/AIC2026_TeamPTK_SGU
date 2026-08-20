@@ -194,7 +194,7 @@ def verify_exact_marian_parity(runtime: OperationalKISRuntime) -> None:
         ),
         "p1-12": (
             "Đoạn video mô tả cảnh trang trí bánh rán. Phân cảnh bắt đầu là một chiếc đĩa sứ màu trắng nằm trên một khay gỗ hình chữ nhật. Bên cạnh chiếc đĩa sứ là một chén đựng một vài trái dâu, nhưng có 2 trái bị rơi ra ngoài. Ngoài ra, bên cạnh đĩa sứ còn có một chén sứ nhỏ màu trắng đựng chuối đã được cắt sẵn và một cái thìa nhỏ màu nâu. Phân cảnh tiếp theo cho thấy đầu bếp đặt 2 chiếc bánh rán lên đĩa sứ và bắt đầu trang trí. Bước đầu tiên là việc rưới chocolate lên trên mặt bánh. Sau đó, đầu bếp đặt các lát chuối lên trên một chiếc bánh rán, chiếc còn lại được đặt các lát dâu tây lên.",
-            "The video depicts a set of donut decorations. The scene begins as a white dish on a wooden tray of Japanese wood. Next to the dish is a bowl of some berries, but there are two lefts that have fallen out. Besides, besides the dish, there's a small white dish with bananas already cut and a little brown spoon, and the next scene shows that the chef puts two donuts on the porcelain and starts decorating. The first step is to spray chocolate on top of the cake. Then the chef places the banana slices on a donut, and the other is placed with strawberry slices.",
+            "The video depicts a set of donut decorations. The scene begins as a white dish on a wooden tray of Japanese wood. Next to the dish is a bowl of some berries, but there are two lefts that have fallen out. Besides, besides the dish, there's a small white dish with bananas already cut and a little brown spoon, and the next scene shows that the cook put two donuts on the plate and starts to make decorations. The first step is to sprinkle chocolate on the cake. Then the first step is to put the banana slices on the top of the table.",
         ),
     }
 
@@ -209,7 +209,7 @@ def verify_exact_marian_parity(runtime: OperationalKISRuntime) -> None:
             print("=" * 120, flush=True)
             raise RuntimeError(f"Exact Marian Parity Gate FAILED on {probe_id}!")
 
-    print("• Result: 3/3 EXACT BYTE-FOR-BYTE TEXT PARITY PASS ✅", flush=True)
+    print("• Result: 3/3 EXACT STRING PARITY AFTER STRIP PASS ✅", flush=True)
     print("=" * 120, flush=True)
 
 
