@@ -330,7 +330,12 @@ class NLLBOfflineTranslator:
                 local_files_only=self.local_files_only,
             ).to(self._device)
             self.model.eval()
-            self.target_lang_id = self.tokenizer.lang_code_to_id["eng_Latn"]
+            if hasattr(self.tokenizer, "lang_code_to_id") and self.tokenizer.lang_code_to_id:
+                self.target_lang_id = self.tokenizer.lang_code_to_id.get("eng_Latn")
+            else:
+                self.target_lang_id = self.tokenizer.convert_tokens_to_ids("eng_Latn")
+            if self.target_lang_id is None:
+                self.target_lang_id = self.tokenizer.get_vocab().get("eng_Latn")
         except Exception as exc:
             raise TranslationError(f"Failed to load NLLB model: {exc}") from exc
 
