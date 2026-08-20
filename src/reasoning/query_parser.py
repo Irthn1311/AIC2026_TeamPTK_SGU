@@ -49,36 +49,82 @@ _intent_scorer = IntentScorer()
 # ============================================================
 _SUBTYPE_RULES: List[tuple] = [
     # (subtype, answer_type, keywords_vi, keywords_en, expected_format)
-    ("count_people",    "count",  ["bao nhiêu người", "mấy người", "số người"],
-                                  ["how many people", "number of people"],        "integer"),
-    ("count_objects",   "count",  ["bao nhiêu cái", "bao nhiêu chiếc", "mấy cái"],
-                                  ["how many objects", "how many items"],          "integer"),
-    ("count_events",    "count",  ["bao nhiêu lần", "mấy lần", "bao nhiêu lượt"],
-                                  ["how many times", "how often"],                "integer"),
-    ("number_score",    "count",  ["tỷ số", "điểm số", "kết quả"],
-                                  ["score", "result", "final score"],             "score"),
-    ("number_time",     "count",  ["mấy giờ", "lúc mấy giờ", "thời điểm"],
-                                  ["what time", "when", "at what hour"],          "time"),
-    ("color_clothing",  "color",  ["màu áo", "màu quần", "màu váy", "mặc màu gì", "màu trang phục"],
-                                  ["color of shirt", "color of clothing", "wearing what color",
-                                   "shirt color", "jersey color", "color of the shirt",
-                                   "color of the jacket", "color of the uniform"], "color_name"),
-    ("color_object",    "color",  ["màu của", "màu bóng", "màu xe", "màu cờ"],
-                                  ["color of the", "what color is"],              "color_name"),
-    ("color_background","color",  ["màu nền", "màu phông", "màu background"],
-                                  ["background color", "color of the background"], "color_name"),
-    ("name_person",     "name",   ["ai ", "tên người", "tên của ai", "người nào"],
-                                  ["who ", "name of person", "whose"],            "person_name"),
-    ("name_place",      "name",   ["ở đâu", "địa điểm", "nơi nào", "tại đâu"],
-                                  ["where", "what place", "location", "venue"],   "place_name"),
-    ("name_thing",      "name",   ["tên chương trình", "tên đội", "tên sản phẩm", "là gì"],
-                                  ["name of team", "name of program", "what is it called"], "thing_name"),
-    ("yes_no_presence", "yes_no", ["có xuất hiện", "có mặt", "có không"],
-                                  ["is there", "does it have", "are there"],      "yes_no"),
+
+    # 1. COUNT & QUANTITY (Số lượng & Điểm số & Thời gian)
+    ("count_people",    "count",  ["bao nhiêu người", "mấy người", "số người", "tổng số người", "số lượng người"],
+                                  ["how many people", "number of people", "how many persons"], "integer"),
+    ("count_objects",   "count",  ["bao nhiêu cái", "bao nhiêu chiếc", "mấy cái", "mấy chiếc", "bao nhiêu quả", "bao nhiêu con"],
+                                  ["how many objects", "how many items", "how many cars", "how many animals"], "integer"),
+    ("count_events",    "count",  ["bao nhiêu lần", "mấy lần", "bao nhiêu lượt", "tần suất"],
+                                  ["how many times", "how often", "number of occurrences"], "integer"),
+    ("number_score",    "count",  ["tỷ số", "tỉ số", "điểm số", "kết quả trận"],
+                                  ["score", "result", "final score", "match score"], "score"),
+    ("number_time",     "count",  ["mấy giờ", "lúc mấy giờ", "thời điểm", "thời gian", "khung giờ"],
+                                  ["what time", "when", "at what hour", "timestamp"], "time"),
+
+    # 2. COLOR & APPEARANCE (Màu sắc & Diện mạo)
+    ("color_clothing",  "color",  ["màu áo", "màu quần", "màu váy", "mặc màu gì", "màu trang phục", "màu nón", "màu mũ", "màu giày"],
+                                  ["color of shirt", "color of clothing", "wearing what color", "shirt color", "jersey color", "uniform color"], "color_name"),
+    ("color_object",    "color",  ["màu của", "màu bóng", "màu xe", "màu cờ", "màu hoa", "màu sơn", "màu thuyền", "màu biển"],
+                                  ["color of the", "what color is the", "object color", "car color"], "color_name"),
+    ("color_background","color",  ["màu nền", "màu phông", "màu background", "màu tường", "màu thảm"],
+                                  ["background color", "color of the background", "wall color"], "color_name"),
+
+    # 3. TEXT, OCR & SIGNAGE (Văn bản, Bảng hiệu, Chữ viết)
+    ("text_ocr",        "name",   ["dòng chữ", "chữ gì", "bảng hiệu", "băng rôn", "biển hiệu", "chữ trên", "mã số", "biển số"],
+                                  ["text on", "what words", "signboard", "banner text", "license plate", "written text"], "text"),
+    ("poetry_quote",    "name",   ["câu thơ", "bài thơ", "lời thoại", "câu nói", "trích dẫn", "khẩu hiệu", "slogan"],
+                                  ["poem line", "verse", "quote", "spoken line", "slogan", "motto"], "text"),
+
+    # 4. CULINARY & FOOD (Ẩm thực & Nấu ăn)
+    ("food_ingredient", "name",   ["nguyên liệu", "thành phần", "gia vị", "dùng nguyên liệu"],
+                                  ["ingredient", "recipe ingredient", "seasoning", "food component"], "thing_name"),
+    ("food_dish",       "name",   ["tên món", "món ăn", "công thức", "món gì", "thực đơn", "món ăn gì"],
+                                  ["dish name", "name of the dish", "food name", "what food", "recipe name"], "thing_name"),
+
+    # 5. PERSON, IDENTITY & ROLE (Con người, Danh tính, Vai trò)
+    ("name_person",     "name",   ["ai ", "tên người", "tên của ai", "người nào", "cầu thủ nào", "ca sĩ nào", "chủ tịch", "thủ tướng", "đại biểu"],
+                                  ["who ", "name of person", "whose", "which player", "which singer", "who is"], "person_name"),
+    ("person_role",     "name",   ["chức danh", "vai trò", "nghề nghiệp", "vị trí thi đấu", "làm nghề gì"],
+                                  ["job title", "role", "profession", "occupation", "position"], "text"),
+
+    # 6. LOCATION & GEOGRAPHY (Địa điểm & Địa lý)
+    ("name_place",      "name",   ["ở đâu", "địa điểm", "nơi nào", "tại đâu", "xã nào", "huyện nào", "tỉnh nào", "thành phố nào", "quốc gia nào", "tại tỉnh", "tại xã"],
+                                  ["where", "what place", "location", "venue", "which province", "which city", "which country"], "place_name"),
+
+    # 7. ORGANIZATIONS, BRANDS & MEDIA (Tổ chức, Thương hiệu, Truyền hình)
+    ("name_organization","name",  ["câu lạc bộ", "clb", "tên đội", "công ty", "tổ chức", "hội", "trường nào", "doanh nghiệp"],
+                                  ["club name", "team name", "company", "organization", "school name"], "thing_name"),
+    ("name_program",    "name",   ["tên chương trình", "bản tin", "phóng sự", "kênh", "tiêu đề", "chuyên mục"],
+                                  ["program name", "show title", "news segment", "channel name"], "thing_name"),
+    ("brand_logo",      "name",   ["thương hiệu", "logo", "nhãn hiệu", "hãng nào"],
+                                  ["brand name", "logo name", "make of car", "company logo"], "thing_name"),
+
+    # 8. OBJECTS, VEHICLES & ANIMALS (Đồ vật, Phương tiện, Động thực vật)
+    ("animal_plant",    "name",   ["con gì", "con vật", "loài gì", "cây gì", "hoa gì", "động vật gì", "chim gì", "cá gì"],
+                                  ["what animal", "what bird", "what fish", "what flower", "what plant"], "thing_name"),
+    ("vehicle_type",    "name",   ["loại xe", "phương tiện", "xe gì", "tàu gì", "máy bay gì"],
+                                  ["vehicle type", "what car", "what boat", "what transport"], "thing_name"),
+    ("object_type",     "name",   ["loại gì", "đồ vật gì", "vật gì", "dụng cụ gì", "nhạc cụ gì", "thiết bị gì"],
+                                  ["what kind of object", "what item", "what instrument", "what device"], "thing_name"),
+
+    # 9. ACTION, EVENT & REASON (Hành động, Sự kiện, Lý do)
+    ("action_event",    "description", ["đang làm gì", "hành động gì", "sự kiện gì", "hoạt động gì", "lễ gì"],
+                                       ["doing what", "what action", "what event", "what ceremony"], "text"),
+    ("reason_context",  "description", ["tại sao", "vì sao", "mục đích", "lý do"],
+                                       ["why", "for what reason", "purpose"], "text"),
+
+    # 10. SPATIAL & POSITIONAL (Vị trí không gian)
+    ("location_spatial", "description", ["ở vị trí nào", "bên trái hay", "phía nào", "góc nào", "nằm ở đâu"],
+                                        ["spatial position", "left or right", "foreground or background"], "text"),
+
+    # 11. YES / NO QUESTIONS (Có / Không)
+    ("yes_no_presence", "yes_no", ["có xuất hiện", "có mặt", "có không", "có thấy"],
+                                  ["is there", "does it have", "are there", "can you see"], "yes_no"),
     ("yes_no_action",   "yes_no", ["có đang", "có phải đang", "đang làm gì"],
-                                  ["is doing", "was doing", "did"],               "yes_no"),
-    ("yes_no_attribute","yes_no", ["có mặc", "có mang", "có đội", "có đeo"],
-                                  ["is wearing", "does have", "is holding"],      "yes_no"),
+                                  ["is doing", "was doing", "did"], "yes_no"),
+    ("yes_no_attribute","yes_no", ["có mặc", "có mang", "có đội", "có đeo", "có cầm", "có đội mũ"],
+                                  ["is wearing", "does have", "is holding"], "yes_no"),
 ]
 
 # Fallback coarse type keywords (used when no subtype matches)
@@ -377,26 +423,52 @@ class QueryParser:
             parts.append(f"\nQuestion to answer: {question.strip()}")
 
         # 5. Answer format guidance
+        # 5. Answer format guidance per domain subtype
         format_guide = {
-            "count_people":     "Answer with a single integer (number of people).",
-            "count_objects":    "Answer with a single integer (number of objects).",
-            "count_events":     "Answer with a single integer (number of times/events).",
-            "number_score":     "Answer in score format like '2-1' or '3:0'.",
-            "number_time":      "Answer with the time shown, e.g. '19:00' or '7 giờ tối'.",
-            "color_clothing":   "Answer with the color name of the clothing item.",
-            "color_object":     "Answer with the color name of the described object.",
-            "color_background": "Answer with the color name of the background.",
-            "name_person":      "Answer with the person's name or role.",
-            "name_place":       "Answer with the place or location name.",
-            "name_thing":       "Answer with the name of the thing/program/team.",
-            "yes_no_presence":  "Answer 'Có' (Yes) or 'Không' (No).",
-            "yes_no_action":    "Answer 'Có' (Yes) or 'Không' (No).",
-            "yes_no_attribute": "Answer 'Có' (Yes) or 'Không' (No).",
-            "description_general": "Describe what you observe in the image.",
+            # 1. Count & Quantity
+            "count_people":       "Answer with a single integer (number of people).",
+            "count_objects":      "Answer with a single integer (number of objects).",
+            "count_events":       "Answer with a single integer (number of times/events).",
+            "number_score":       "Answer in score format like '2-1' or '3:0'.",
+            "number_time":        "Answer with the exact time shown, e.g. '19:00' or '7 giờ tối'.",
+            # 2. Color & Appearance
+            "color_clothing":     "Answer with the color name of the clothing item.",
+            "color_object":       "Answer with the color name of the specified object.",
+            "color_background":   "Answer with the color name of the background or setting.",
+            # 3. Text, OCR & Poetry
+            "text_ocr":           "Answer with the exact text, title, license plate, or words visible on screen/signboard.",
+            "poetry_quote":       "Answer with the exact poem line, quote, or phrase visible/spoken.",
+            # 4. Culinary & Food
+            "food_dish":          "Answer with the specific name of the dish, food recipe, or meal.",
+            "food_ingredient":    "Answer with the name of the main ingredient, spice, or food item.",
+            # 5. Person & Role
+            "name_person":        "Answer with the person's full name, role, or title.",
+            "person_role":        "Answer with the job title, profession, or role of the person.",
+            # 6. Location & Geography
+            "name_place":         "Answer with the specific location, commune/province/city, or venue name.",
+            # 7. Organizations & Brands & Media
+            "name_organization":  "Answer with the name of the club, team, company, or institution.",
+            "name_program":       "Answer with the title of the TV show, news segment, or program.",
+            "brand_logo":         "Answer with the brand name, logo text, or manufacturer.",
+            # 8. Objects, Vehicles & Animals
+            "object_type":        "Answer with the specific type of object, instrument, device, or item.",
+            "vehicle_type":       "Answer with the type, model, or category of vehicle/transport.",
+            "animal_plant":       "Answer with the specific species/name of the animal, flower, or plant.",
+            # 9. Action, Event & Reason
+            "action_event":       "Answer concisely describing the specific action, activity, or event.",
+            "reason_context":     "Answer concisely with the reason, purpose, or context of the action.",
+            # 10. Spatial & Positional
+            "location_spatial":   "Answer with the spatial position (e.g. left, right, foreground, background, top, bottom).",
+            # 11. Yes/No
+            "yes_no_presence":    "Answer 'Có' (Yes) or 'Không' (No).",
+            "yes_no_action":      "Answer 'Có' (Yes) or 'Không' (No).",
+            "yes_no_attribute":   "Answer 'Có' (Yes) or 'Không' (No).",
+            # 12. General fallback
+            "description_general":"Answer concisely based on visual observations in the frame.",
         }
         guide = format_guide.get(answer_subtype, "Answer concisely based on what you see.")
         parts.append(f"Answer format: {guide}")
-        parts.append("If the image does not contain relevant content, answer 'Không tìm thấy'.")
+        parts.append("Answer concisely in Vietnamese (or English if the question is in English).")
 
         return "\n".join(parts)
 

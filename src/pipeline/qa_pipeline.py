@@ -323,25 +323,23 @@ class QAPipeline:
         # ── Step 3: Generate type-appropriate answer ──
         
         if q_type in ("count", "count_people", "count_objects", "count_events"):
-            # Try extracting digits from OCR first
-            if ocr_text:
-                digits = re.findall(r"\b\d+\b", ocr_text)
-                valid_digits = [d for d in digits if 0 < int(d) < 100]
-                if valid_digits:
-                    return valid_digits[0]
+            # Try extracting digits from OCR first, then from description
+            for src in [ocr_text, qa_query.event_description]:
+                if src:
+                    digits = re.findall(r"\b\d+\b", src)
+                    valid_digits = [d for d in digits if 0 < int(d) < 100]
+                    if valid_digits:
+                        return valid_digits[0]
             return "1"
 
         elif q_type in ("color", "color_clothing", "color_object", "color_background"):
-            colors_map = {
-                "đỏ": "đỏ", "xanh": "xanh", "vàng": "vàng", "trắng": "trắng",
-                "đen": "đen", "tím": "tím", "hồng": "hồng", "cam": "cam",
-                "nâu": "nâu", "xám": "xám",
-            }
-            # Search OCR text for colors first
-            search_text = (ocr_text or "").lower()
-            for vi_color in colors_map:
-                if vi_color in search_text:
-                    return vi_color
+            colors_vi = ["đỏ", "xanh", "vàng", "trắng", "đen", "tím", "hồng", "cam", "nâu", "xám"]
+            # Search OCR then description for color hints
+            for src in [ocr_text, qa_query.event_description]:
+                src_lower = (src or "").lower()
+                for col in colors_vi:
+                    if col in src_lower:
+                        return col
             return "trắng"
 
         elif q_type in ("yes_no", "yes_no_presence", "yes_no_action", "yes_no_attribute"):
@@ -352,22 +350,93 @@ class QAPipeline:
                 nums = re.findall(r"\b\d+[:\-./]?\d*\b", ocr_text)
                 if nums:
                     return nums[0]
-            return "0"
+            nums_desc = re.findall(r"\b\d+[:\-.]\d+\b", qa_query.event_description)
+            if nums_desc:
+                return nums_desc[0]
+            return "0-0" if q_type == "number_score" else "00:00"
 
-        elif q_type in ("name", "name_person", "name_place", "name_thing"):
-            # Priority: OCR text (likely contains the name shown on screen)
+        elif q_type in ("location_spatial",):
+            spatial_words = ["bên trái", "bên phải", "ở giữa", "phía trên", "phía dưới", "phía sau", "phía trước"]
+            for src in [ocr_text, qa_query.event_description]:
+                src_l = (src or "").lower()
+                for sp in spatial_words:
+                    if sp in src_l:
+                        return sp
+            return "ở giữa"
+
+        elif q_type in ("text_ocr", "poetry_quote", "food_dish", "food_ingredient", "name", "name_person", "person_role", "name_place", "name_organization", "name_program", "brand_logo", "object_type", "vehicle_type", "animal_plant"):
             if ocr_text:
                 return self._extract_best_ocr_answer(ocr_text, qa_query.question)
-            # Try to extract proper nouns from question as clues
-            # (e.g. "xã này có tên là gì" → cannot answer without OCR/VLM)
-            return "Không xác định"
+            named = self._extract_named_entities(qa_query.event_description)
+            return named if named else "Không xác định"
 
         else:
-            # description_general and any other type
+            # action_event, reason_context, description_general and any other domain
             if ocr_text:
                 return self._extract_best_ocr_answer(ocr_text, qa_query.question)
-            # NEVER return event_description words — that's the question, not the answer
-            return "Không xác định"
+            named = self._extract_named_entities(qa_query.event_description)
+            return named if named else "Không xác định"
+
+    def _extract_named_entities(self, description: str) -> str:
+        """
+        Mine domain-specific named entities (food dishes, sports teams, orgs, places, 
+        persons, quotes, acronyms, titles) from event_description as a best-effort 
+        answer when OCR/VLM is unavailable.
+        """
+        if not description:
+            return ""
+
+        # Pattern 1: Text inside quotes (poetry lines, titles, exact quotes)
+        quoted = re.findall(r'[\'"\u201c\u201d\u2018\u2019]([^\'"\u201c\u201d\u2018\u2019]{2,80})[\'"\u201c\u201d\u2018\u2019]', description)
+        if quoted:
+            return quoted[0].strip()
+
+        # Pattern 2: Domain-specific explicit naming constructs
+        name_re = [
+            # Culinary: "tiêu đề: Gà kho sả", "món Bò lúc lắc"
+            r'(?:tiêu đề|tên món|món ăn|công thức|món)\s*(?:là|:|\s)\s*([A-Z\u00C0-\u1EFF][^\.,;:?!\n]{2,40})',
+            # Sports: "câu lạc bộ FANA", "đội tuyển Việt Nam"
+            r'(?:câu lạc bộ|clb|đội tuyển|đội bóng|đội)\s+([A-Z\u00C0-\u1EFF][^\.,;:?!\n]{1,30})',
+            # Media: "bản tin Thời sự", "chương trình Vượt khó"
+            r'(?:chương trình|bản tin|phóng sự|chuyên mục)\s+([A-Z\u00C0-\u1EFF][^\.,;:?!\n]{1,35})',
+            # Naming triggers: "tên là Vĩnh Hòa Hiệp", "gọi là X"
+            r'(?:tên là|gọi là|có tên là|có tên gọi là)\s+([A-Z\u00C0-\u1EFF][^\.,;:?!\n]{2,40})',
+            # Places: "xã Vĩnh Hòa Hiệp", "tỉnh Khánh Hòa", "huyện Bình Chánh"
+            r'(?:xã|huyện|tỉnh|thành phố|phường|thị trấn|quốc gia)\s+([A-Z\u00C0-\u1EFF][^\.,;:?!\n]{1,30})',
+            # Persons: "anh hùng Nguyễn Trung Trực", "ca sĩ Mỹ Tâm", "chủ tịch Hồ Chí Minh"
+            r'(?:anh hùng|ca sĩ|nhà thơ|tác giả|ông|bà|chủ tịch|thủ tướng)\s+([A-Z\u00C0-\u1EFF][a-z\u00C0-\u1EFF]+(?:\s+[A-Z\u00C0-\u1EFF][a-z\u00C0-\u1EFF]+){1,4})',
+        ]
+        for pat in name_re:
+            m = re.search(pat, description, re.IGNORECASE)
+            if m:
+                val = m.group(1).strip()
+                val = re.sub(r'^(?:tên là|là|gọi là|là món)\s+', '', val, flags=re.IGNORECASE)
+                if val and len(val) > 1:
+                    return val
+
+        # Pattern 3: ALL_CAPS acronyms & Brand names (FANA, VTV1, UNESCO, Toyota, etc.)
+        acronyms = re.findall(r'\b[A-Z]{2,10}\d?\b', description)
+        noise_acronyms = {'VTV', 'HTV', 'VOV', 'ANTV', 'CLB', 'TV', 'HD', 'SD', 'OK', 'MC'}
+        clean_acronyms = [a for a in acronyms if a not in noise_acronyms]
+        if clean_acronyms:
+            return clean_acronyms[0]
+
+        # Pattern 4: Multi-word capitalized sequences (Vietnamese proper nouns across domains)
+        cap_seqs = re.findall(
+            r'\b[A-Z\u00C0-\u1EFF][a-z\u00C0-\u1EFF]+(?:\s+[A-Z\u00C0-\u1EFF][a-z\u00C0-\u1EFF]+){1,5}\b',
+            description
+        )
+        stopwords_vi = {
+            "Trong", "Đoạn", "Video", "Đây", "Khi", "Vào", "Lúc", "Tại",
+            "Sau", "Trước", "Người", "Một", "Có", "Những", "Các", "Được",
+            "Hỏi", "Cho", "Hãy", "Thể", "Này", "Đó", "Theo", "Hai", "Ba",
+            "Hình", "Ảnh", "Nó", "Chúng", "Tất", "Cả", "Mỗi",
+        }
+        proper = [s for s in cap_seqs if s.split()[0] not in stopwords_vi and len(s) > 3]
+        if proper:
+            return max(proper, key=len)
+
+        return ""
 
     def _extract_best_ocr_answer(self, ocr_text: str, question: str) -> str:
         """
