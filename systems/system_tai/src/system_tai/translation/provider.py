@@ -287,6 +287,11 @@ class TokenBudgetGuard:
                 import clip
                 self._clip_tokenizer = clip.simple_tokenizer.SimpleTokenizer()
             except ImportError:
+                import subprocess
+                subprocess.run(
+                    [sys.executable, "-m", "pip", "install", "-q", "openai-clip", "ftfy", "regex"],
+                    check=False,
+                )
                 import clip
                 self._clip_tokenizer = clip.simple_tokenizer.SimpleTokenizer()
         return self._clip_tokenizer

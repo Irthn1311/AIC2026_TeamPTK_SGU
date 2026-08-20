@@ -39,6 +39,13 @@ SYSTEM_TAI_SRC = REPO_ROOT / "systems" / "system_tai" / "src"
 if str(SYSTEM_TAI_SRC) not in sys.path:
     sys.path.insert(0, str(SYSTEM_TAI_SRC))
 
+try:
+    import clip
+except ImportError:
+    import subprocess
+    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "openai-clip", "ftfy", "regex", "opencv-python-headless"], check=False)
+    import clip
+
 import cv2
 from system_tai.kis.session_engine import OperationalKISRuntime
 from system_tai.kis.session_schema import QueryRequest, SessionConfig
