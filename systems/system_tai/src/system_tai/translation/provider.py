@@ -95,9 +95,28 @@ class MarianOfflineTranslator:
             ).to(self._device)
             self.model.eval()
         except Exception as exc:
-            raise TranslationError(
-                f"Failed to load Marian MT model from '{self.model_name}' (revision={self.revision}): {exc}"
-            ) from exc
+            if local_files_only:
+                try:
+                    logger.info("Retrying offline load from local cache without revision pin...")
+                    self.tokenizer = AutoTokenizer.from_pretrained(
+                        self.model_name,
+                        cache_dir=resolved_cache,
+                        local_files_only=True,
+                    )
+                    self.model = AutoModelForSeq2SeqLM.from_pretrained(
+                        self.model_name,
+                        cache_dir=resolved_cache,
+                        local_files_only=True,
+                    ).to(self._device)
+                    self.model.eval()
+                except Exception as inner_exc:
+                    raise TranslationError(
+                        f"Failed to load Marian MT model from '{self.model_name}' (revision={self.revision}, offline): {inner_exc}"
+                    ) from inner_exc
+            else:
+                raise TranslationError(
+                    f"Failed to load Marian MT model from '{self.model_name}' (revision={self.revision}): {exc}"
+                ) from exc
 
         self._torch = torch
 
