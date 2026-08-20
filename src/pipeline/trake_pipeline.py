@@ -162,10 +162,28 @@ class TRAKEPipeline:
 
         logger.info(f"[TRAKE] Phase 1 candidates: {candidate_video_ids}")
 
+        # --- Pre-translate event descriptions ONCE (avoid 100s of redundant calls) ---
+        sorted_events = sorted(trake_query.event_sequence, key=lambda e: e.event_id)
+        pretranslated_queries: Dict[int, str] = {}
+        for ev in sorted_events:
+            en_desc = self._parser.translate_vi_sentence(ev.description)
+            en_hint = self._parser.translate_vi_sentence(ev.semantic_keyframe_hint) if ev.semantic_keyframe_hint else ""
+            pretranslated_queries[ev.event_id] = f"A photo of {en_desc}. {en_hint}".strip()
+            logger.debug(f"[TRAKE] Event {ev.event_id} translated: '{pretranslated_queries[ev.event_id][:80]}'")
+
         # --- Phase 2: Align events in each candidate video ---
+        # Cap Phase 2 to top N candidates (Phase 1 already sorted by relevance)
+        _MAX_PHASE2_VIDEOS = 15
+        phase2_video_ids = candidate_video_ids[:_MAX_PHASE2_VIDEOS]
+        if len(candidate_video_ids) > _MAX_PHASE2_VIDEOS:
+            logger.info(
+                f"[TRAKE] Phase 2: processing top {_MAX_PHASE2_VIDEOS} of "
+                f"{len(candidate_video_ids)} candidates"
+            )
+
         video_alignments: List[_VideoAlignment] = []
-        for video_id in candidate_video_ids:
-            alignment = self._phase2_event_alignment(trake_query, video_id, query_id)
+        for video_id in phase2_video_ids:
+            alignment = self._phase2_event_alignment(trake_query, video_id, query_id, pretranslated_queries)
             video_alignments.append(alignment)
             logger.info(
                 f"[TRAKE] {video_id}: score={alignment.total_score:.3f} "
@@ -282,10 +300,15 @@ class TRAKEPipeline:
         trake_query: TRAKEQuery,
         video_id: str,
         query_id: str,
+        pretranslated_queries: Optional[Dict[int, str]] = None,
     ) -> _VideoAlignment:
         """
         For each event step, find the best matching keyframe within video_id.
         Enforces temporal ordering with min/max gap between adjacent events.
+
+        Args:
+            pretranslated_queries: {event_id: "A photo of ..."} pre-translated strings.
+                                  If provided, skip per-video translation (massive speedup).
         """
         alignment = _VideoAlignment(video_id=video_id)
         event_results: Dict[int, List[SearchResult]] = {}
@@ -294,10 +317,14 @@ class TRAKEPipeline:
         sorted_events = sorted(trake_query.event_sequence, key=lambda e: e.event_id)
 
         for ev in sorted_events:
-            # Build event-specific CLIP query translated to English
-            en_desc = self._parser.translate_vi_sentence(ev.description)
-            en_hint = self._parser.translate_vi_sentence(ev.semantic_keyframe_hint) if ev.semantic_keyframe_hint else ""
-            event_query = f"A photo of {en_desc}. {en_hint}".strip()
+            # Use pre-translated query if available, otherwise translate on the fly
+            if pretranslated_queries and ev.event_id in pretranslated_queries:
+                event_query = pretranslated_queries[ev.event_id]
+            else:
+                en_desc = self._parser.translate_vi_sentence(ev.description)
+                en_hint = self._parser.translate_vi_sentence(ev.semantic_keyframe_hint) if ev.semantic_keyframe_hint else ""
+                event_query = f"A photo of {en_desc}. {en_hint}".strip()
+
             query_vec = self._encoder.encode_text(event_query, normalize=True)
 
             # Search within this video only
@@ -326,6 +353,7 @@ class TRAKEPipeline:
         # VLM verification + scoring
         total_score = 0.0
         n_found = 0
+        n_total = len(trake_query.event_sequence)
 
         for ev in sorted_events:
             ev_id      = ev.event_id
@@ -348,13 +376,18 @@ class TRAKEPipeline:
             last_pts = best_frame.pts_time
 
         alignment.n_events_found = n_found
-        # Normalize by number of found events (not total) to avoid penalizing videos
-        # where some events genuinely don't appear
-        alignment.total_score = total_score / max(n_found, 1) if n_found > 0 else 0.0
+
+        # COVERAGE-WEIGHTED SCORING:
+        # avg_per_event * coverage_ratio  →  videos finding ALL events are strongly preferred.
+        # Example: 4/4 events at 0.28 avg → 0.28 * 1.0 = 0.280
+        #          2/4 events at 0.31 avg → 0.31 * 0.5 = 0.155  ← correctly loses
+        coverage_ratio = n_found / max(n_total, 1)
+        avg_score = total_score / max(n_found, 1) if n_found > 0 else 0.0
+        alignment.total_score = avg_score * coverage_ratio
 
         logger.debug(
-            f"[TRAKE] {video_id}: avg_score={alignment.total_score:.3f} "
-            f"({n_found}/{len(trake_query.event_sequence)} events found)"
+            f"[TRAKE] {video_id}: avg_score={avg_score:.3f} × coverage={coverage_ratio:.2f} "
+            f"= final={alignment.total_score:.3f} ({n_found}/{n_total} events found)"
         )
         return alignment
 
