@@ -24,6 +24,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SYSTEM_TAI_SRC = REPO_ROOT / "systems" / "system_tai" / "src"
@@ -39,8 +40,6 @@ except ImportError:
 from system_tai.features.query_encoder import SharedOpenAIClipEncoder
 from system_tai.kis.session_engine import OperationalKISRuntime
 from system_tai.kis.session_schema import QueryRequest, SessionConfig
-from system_tai.retrieval.multi_query import QueryLanguage, QueryVariant, QueryVariantType, WeightedRRFRetriever
-from system_tai.retrieval.vector_search import ExactNumpyRetriever
 
 BENCHMARK_QUERIES = [
     {
@@ -120,7 +119,6 @@ def inspect_production_tokenization() -> None:
 
 
 def fuse_two_rankings(rank_a: list[Any], rank_b: list[Any], weight_a: float = 1.0, weight_b: float = 1.0, rrf_k: float = 60.0, top_k: int = 50) -> list[Any]:
-    """Reciprocal Rank Fusion for vector search rankings."""
     scores: dict[tuple[str, int], float] = {}
     record_map: dict[tuple[str, int], Any] = {}
 
@@ -139,7 +137,6 @@ def fuse_two_rankings(rank_a: list[Any], rank_b: list[Any], weight_a: float = 1.
     fused = []
     for k in sorted_keys:
         rec = record_map[k]
-        # create candidate-like object
         fused.append(type("FusedCandidate", (), {
             "video_id": rec.video_id,
             "frame_id": rec.frame_id,
@@ -190,9 +187,13 @@ def run_retrieval_ablation() -> None:
         emb_lit = runtime.shared_encoder.encode_texts([item["en_literal"]])[0]
         emb_con = runtime.shared_encoder.encode_texts([item["en_concise"]])[0]
 
-        rank_vi = runtime.exact_retriever.search_vector(emb_vi, top_k=50, score_name="clip_cosine")
-        rank_lit = runtime.exact_retriever.search_vector(emb_lit, top_k=50, score_name="clip_cosine")
-        rank_con = runtime.exact_retriever.search_vector(emb_con, top_k=50, score_name="clip_cosine")
+        res_vi = runtime.exact_retriever.search_vector(query_id=f"{qid}-vi", query_vector=emb_vi, top_k=50)
+        res_lit = runtime.exact_retriever.search_vector(query_id=f"{qid}-lit", query_vector=emb_lit, top_k=50)
+        res_con = runtime.exact_retriever.search_vector(query_id=f"{qid}-con", query_vector=emb_con, top_k=50)
+
+        rank_vi = list(res_vi.ranked_candidates)
+        rank_lit = list(res_lit.ranked_candidates)
+        rank_con = list(res_con.ranked_candidates)
 
         # 2. Arm D: Equal-weight VI + EN RRF Fusion (Simulating DEV Arm-B)
         fused_d = fuse_two_rankings(
