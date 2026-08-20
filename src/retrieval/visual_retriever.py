@@ -306,7 +306,7 @@ class VisualRetriever(BaseRetriever):
         self,
         query_vec: np.ndarray,
         video_id: str,
-        top_k: int = 20,
+        top_k: int = 100,
     ) -> List[SearchResult]:
         """
         Restrict search to keyframes belonging to a specific video.

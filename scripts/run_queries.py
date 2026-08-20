@@ -101,8 +101,8 @@ def main():
         vlm_model=args.vlm_model,
         vlm_load_in_4bit=True,
         qdrant_url=args.qdrant_url or None,
-        ocr_dir=args.ocr_dir or None,
         top_k_retrieval=args.top_k,
+        top_k_fusion=args.top_k,
     )
     logger.info(f"Pipeline ready in {time.time() - t0:.1f}s")
 

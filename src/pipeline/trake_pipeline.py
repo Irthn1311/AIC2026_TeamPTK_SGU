@@ -111,8 +111,8 @@ class TRAKEPipeline:
         rrf: Optional[ReciprocalRankFusion] = None,
         vlm_client=None,
         enable_vlm_verify: bool = True,
-        top_k_videos: int = 10,
-        top_k_frames_per_event: int = 20,
+        top_k_videos: int = 100,
+        top_k_frames_per_event: int = 100,
     ):
         self._vis_ret    = visual_retriever
         self._encoder    = clip_encoder
@@ -123,6 +123,7 @@ class TRAKEPipeline:
         self.enable_vlm_verify = enable_vlm_verify
         self.top_k_videos = top_k_videos
         self.top_k_frames_per_event = top_k_frames_per_event
+        self.last_phase1_results: List[SearchResult] = []
 
         # Initialize QueryParser for Vi ➔ En event translation
         from src.reasoning.query_parser import QueryParser
@@ -269,6 +270,7 @@ class TRAKEPipeline:
             weights=all_weights,
             top_k=self.top_k_videos,
         )
+        self.last_phase1_results = video_ranked
         return [r.video_id for r in video_ranked]
 
     # ----------------------------------------------------------

@@ -66,7 +66,7 @@ class RetrievalPipeline:
         visual_weight: float = 1.0,
         text_weight: float = 0.8,
         top_k_retrieval: int = 100,
-        top_k_fusion: int = 50,
+        top_k_fusion: int = 100,
         media_info_dir: Optional[str] = None,
         **kwargs,
     ):
@@ -619,8 +619,8 @@ class RetrievalPipeline:
                 rrf=self._rrf,
                 vlm_client=self._vlm,
                 enable_vlm_verify=(self._vlm is not None),
-                top_k_videos=10,           # Increased from 5 for better sport coverage
-                top_k_frames_per_event=self._top_k_fus,
+                top_k_videos=self._top_k_ret,
+                top_k_frames_per_event=self._top_k_ret,
             )
 
         # Parse TRAKE query from dict
@@ -643,7 +643,7 @@ class RetrievalPipeline:
             activity_name=query_dict.get("activity", query_dict.get("activity_name", "")),
             event_sequence=event_seq,
             sport_category=query_dict.get("sport_category", ""),
-            top_k_videos=query_dict.get("top_k_videos", 5),
+            top_k_videos=query_dict.get("top_k_videos", self._top_k_ret),
             video_id=query_dict.get("video_id", ""),
             target_prefix="",  # disabled — full database search
         )
@@ -661,6 +661,7 @@ class RetrievalPipeline:
         n_events = len(trake_result.events)
         trake_conf = round(min(0.65 + n_events * 0.10, 0.95), 2)  # 0.75 (1ev), 0.85 (2ev), 0.95 (3+ev)
 
+        top_cands = getattr(self._trake_pipeline, "last_phase1_results", [])
         return EvidenceResult(
             video_id=trake_result.video_id,
             frame_idx=first_event.frame_idx if first_event else 0,
@@ -668,6 +669,7 @@ class RetrievalPipeline:
             pts_time=first_event.pts_time if first_event else 0.0,
             confidence=trake_conf,
             explanation=f"TRAKE: {n_events} events aligned (conf={trake_conf:.2f})",
+            top_results=top_cands[:self._top_k_ret],
             metadata={
                 "query_type": "trake",
                 "trake_submission": trake_result,
