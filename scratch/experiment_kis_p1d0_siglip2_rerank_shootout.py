@@ -40,6 +40,12 @@ if str(SYSTEM_TAI_SRC) not in sys.path:
 
 # Ensure required libraries
 try:
+    import clip
+except ImportError:
+    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "git+https://github.com/openai/CLIP.git", "ftfy", "regex"], check=False)
+    import clip
+
+try:
     import cv2
     from PIL import Image
 except ImportError:
