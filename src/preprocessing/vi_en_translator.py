@@ -145,23 +145,55 @@ class ViEnTranslator:
 
         return None
 
-    # ── Tier 2: Google Translate (free, via deep-translator) ──────────────────
+    # ── Tier 2: Google Translate (free, via deep-translator or urllib) ────────
 
     def _translate_google(self, text: str) -> Optional[str]:
-        """Translate using Google Translate free endpoint via deep-translator."""
+        """Translate using Google Translate free endpoint via deep-translator or built-in urllib."""
+        clean_input = text.strip()
+        if not clean_input:
+            return None
+
+        # Method A: Try deep_translator library if installed
         try:
             from deep_translator import GoogleTranslator
 
-            # deep-translator is stateless, no init needed
-            translated = GoogleTranslator(source="vi", target="en").translate(text.strip())
+            translated = GoogleTranslator(source="vi", target="en").translate(clean_input)
             translated = self._clean_translation(translated or "")
 
             if translated and len(translated) > 3:
-                logger.debug(f"[GoogleFree] '{text[:60]}' → '{translated[:80]}'")
+                logger.debug(f"[GoogleFree deep-translator] '{text[:60]}' → '{translated[:80]}'")
                 return translated
-
+        except ImportError:
+            pass  # deep-translator not installed, silently proceed to Method B
         except Exception as e:
-            logger.warning(f"[ViEnTranslator] Google free tier failed: {e}")
+            logger.debug(f"[ViEnTranslator] deep-translator failed: {e}")
+
+        # Method B: Direct HTTP request to Google Translate free endpoint (zero third-party dependencies)
+        try:
+            import urllib.request
+            import urllib.parse
+            import json
+
+            url = (
+                "https://translate.googleapis.com/translate_a/single?client=gtx&sl=vi&tl=en&dt=t&q="
+                + urllib.parse.quote(clean_input)
+            )
+            req = urllib.request.Request(
+                url,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+            )
+            with urllib.request.urlopen(req, timeout=5) as response:
+                raw_bytes = response.read()
+                data = json.loads(raw_bytes.decode("utf-8"))
+                if data and isinstance(data, list) and len(data) > 0 and isinstance(data[0], list):
+                    sentences = [part[0] for part in data[0] if part and len(part) > 0 and part[0]]
+                    translated = " ".join(sentences)
+                    translated = self._clean_translation(translated)
+                    if translated and len(translated) > 3:
+                        logger.debug(f"[GoogleFree urllib] '{text[:60]}' → '{translated[:80]}'")
+                        return translated
+        except Exception as e:
+            logger.debug(f"[ViEnTranslator] Direct Google Translate API call failed: {e}")
 
         return None
 
