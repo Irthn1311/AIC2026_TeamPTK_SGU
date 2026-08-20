@@ -219,7 +219,7 @@ def run_gate3_btc18_canonical_replay() -> list[dict[str, Any]]:
         marian_en = ""
         if runtime.translation_provider:
             marian_en = runtime.translation_provider.translate(q_vi)
-        tok_count = guard.count_clip_tokens(marian_en) if marian_en else 0
+        tok_count = guard.count_tokens(marian_en) if marian_en else 0
 
         # Extract Top 3 candidates
         top3_candidates = []

@@ -187,6 +187,10 @@ class TokenBudgetGuard:
         bpe_tokens = tokenizer.encode(text)
         return len(bpe_tokens) + 2
 
+    def count_clip_tokens(self, text: str) -> int:
+        """Alias for count_tokens."""
+        return self.count_tokens(text)
+
     def guard_and_compact(self, text: str) -> tuple[str, int, bool]:
         """Guard text against CLIP token budget.
 
