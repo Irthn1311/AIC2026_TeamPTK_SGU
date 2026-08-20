@@ -266,6 +266,111 @@ class MarianOfflineTranslator:
             raise TranslationError(f"Marian translation generation failed: {exc}") from exc
 
 
+class NLLBOfflineTranslator:
+    """Experimental Multilingual VI->EN Translator using NLLB-200 distilled 600M (P1B candidate).
+
+    Default model: 'facebook/nllb-200-distilled-600M'
+    Source language: 'vie_Latn'
+    Target language: 'eng_Latn'
+    """
+
+    DEFAULT_MODEL = "facebook/nllb-200-distilled-600M"
+
+    def __init__(
+        self,
+        model_name_or_path: str = DEFAULT_MODEL,
+        device: str = "auto",
+        cache_dir: Path | None = None,
+        local_files_only: bool = False,
+        max_length: int = 256,
+        num_beams: int = 4,
+    ) -> None:
+        import torch
+        from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+
+        self._torch = torch
+        self.model_name = model_name_or_path
+        self.cache_dir = cache_dir or Path(
+            os.environ.get(
+                "HF_HOME",
+                Path("/kaggle/working/hf_cache")
+                if Path("/kaggle/working").exists()
+                else Path.home() / ".cache" / "huggingface",
+            )
+        )
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.local_files_only = local_files_only
+        self.max_length = max_length
+        self.num_beams = num_beams
+
+        if device == "auto":
+            self._device = "cuda" if torch.cuda.is_available() else "cpu"
+        else:
+            self._device = device
+
+        logger.info(
+            "Initializing NLLBOfflineTranslator with %s on device %s",
+            self.model_name,
+            self._device,
+        )
+
+        try:
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                self.model_name,
+                src_lang="vie_Latn",
+                cache_dir=str(self.cache_dir),
+                local_files_only=self.local_files_only,
+            )
+            self.model = AutoModelForSeq2SeqLM.from_pretrained(
+                self.model_name,
+                cache_dir=str(self.cache_dir),
+                local_files_only=self.local_files_only,
+            ).to(self._device)
+            self.model.eval()
+            self.target_lang_id = self.tokenizer.lang_code_to_id["eng_Latn"]
+        except Exception as exc:
+            raise TranslationError(f"Failed to load NLLB model: {exc}") from exc
+
+    def translate(self, text: str) -> str:
+        cleaned = text.strip()
+        if not cleaned:
+            raise TranslationError("Cannot translate empty or whitespace-only text")
+
+        try:
+            inputs = self.tokenizer(
+                cleaned,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=self.max_length,
+            ).to(self._device)
+
+            with self._torch.no_grad():
+                generated_tokens = self.model.generate(
+                    **inputs,
+                    forced_bos_token_id=self.target_lang_id,
+                    max_length=self.max_length,
+                    num_beams=self.num_beams,
+                    early_stopping=True,
+                )
+
+            translated = self.tokenizer.batch_decode(
+                generated_tokens,
+                skip_special_tokens=True,
+            )[0].strip()
+
+            if not translated:
+                raise TranslationError(
+                    f"NLLB translation produced empty output for input: {cleaned!r}"
+                )
+            return translated
+        except Exception as exc:
+            if isinstance(exc, TranslationError):
+                raise
+            raise TranslationError(f"NLLB translation generation failed: {exc}") from exc
+
+
+
 class TokenBudgetGuard:
     """Validates and enforces that translated English queries fit within CLIP's context budget.
 
