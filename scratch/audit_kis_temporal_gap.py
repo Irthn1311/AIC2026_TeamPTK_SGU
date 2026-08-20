@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Offline Temporal-Distance Diagnostic for 29 KIS Video-Only Queries.
 
-Evaluates the exact distance from Top100 candidate frames to GT interval:
-  Bucket A: <= 30 frames   (<= 1.2s - Near Miss, High ROI)
-  Bucket B: 31..90 frames  (1.2s..3.6s - Refinement Radius Extension)
-  Bucket C: 91..300 frames (3.6s..12.0s - Anchor Sparsity)
-  Bucket D: > 300 frames   (> 12.0s - Distant Scene Keyframe)
+Evaluates the exact distance from Top100 candidate frames to GT interval (assuming ~30 fps):
+  Bucket A: <= 30 frames   (<= 1.0s - Near Miss, High ROI)
+  Bucket B: 31..90 frames  (1.0s..3.0s - Refinement Radius Extension)
+  Bucket C: 91..300 frames (3.0s..10.0s - Anchor Sparsity)
+  Bucket D: > 300 frames   (> 10.0s - Distant Scene Keyframe)
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ def distance_to_interval(frame: int, start: int, end: int) -> int:
 
 def audit_temporal_gaps() -> None:
     print("=" * 145, flush=True)
-    print("OFFLINE TEMPORAL-DISTANCE DIAGNOSTIC: 29 KIS VIDEO-ONLY QUERIES", flush=True)
+    print("OFFLINE TEMPORAL-DISTANCE DIAGNOSTIC: 29 KIS VIDEO-ONLY QUERIES (~30 fps)", flush=True)
     print("=" * 145, flush=True)
 
     gt_data = json.loads(GT_PATH.read_text(encoding="utf-8"))
@@ -78,16 +78,16 @@ def audit_temporal_gaps() -> None:
 
         # Assign bucket
         if min_dist <= 30:
-            bucket_str = "Bucket A (<=30f)"
+            bucket_str = "Bucket A (<=30f, <=1.0s)"
             bucket_a.append(qid)
         elif min_dist <= 90:
-            bucket_str = "Bucket B (31-90f)"
+            bucket_str = "Bucket B (31-90f, 1-3.0s)"
             bucket_b.append(qid)
         elif min_dist <= 300:
-            bucket_str = "Bucket C (91-300f)"
+            bucket_str = "Bucket C (91-300f, 3-10s)"
             bucket_c.append(qid)
         else:
-            bucket_str = "Bucket D (>300f)"
+            bucket_str = "Bucket D (>300f, >10.0s)"
             bucket_d.append(qid)
 
         results.append({
@@ -112,14 +112,14 @@ def audit_temporal_gaps() -> None:
         )
 
     print("\n" + "=" * 145, flush=True)
-    print("DISTRIBUTION SUMMARY OF 29 VIDEO-ONLY QUERIES", flush=True)
+    print("DISTRIBUTION SUMMARY OF 29 VIDEO-ONLY QUERIES (~30 fps)", flush=True)
     print("=" * 145, flush=True)
     total_analyzed = len(results)
     print(f"• Total Video-Only Queries Analyzed : {total_analyzed} / 29", flush=True)
-    print(f"• Bucket A (<= 30 frames / <= 1.2s) : {len(bucket_a):2d} ({len(bucket_a)/total_analyzed*100:5.1f}%) -> {bucket_a}", flush=True)
-    print(f"• Bucket B (31..90 frames / 1.2-3.6s): {len(bucket_b):2d} ({len(bucket_b)/total_analyzed*100:5.1f}%) -> {bucket_b}", flush=True)
-    print(f"• Bucket C (91..300 frames / 3.6-12s): {len(bucket_c):2d} ({len(bucket_c)/total_analyzed*100:5.1f}%) -> {bucket_c}", flush=True)
-    print(f"• Bucket D (> 300 frames / > 12.0s) : {len(bucket_d):2d} ({len(bucket_d)/total_analyzed*100:5.1f}%) -> {bucket_d}", flush=True)
+    print(f"• Bucket A (<= 30 frames / <= 1.0s) : {len(bucket_a):2d} ({len(bucket_a)/total_analyzed*100:5.1f}%) -> {bucket_a}", flush=True)
+    print(f"• Bucket B (31..90 frames / 1.0-3.0s): {len(bucket_b):2d} ({len(bucket_b)/total_analyzed*100:5.1f}%) -> {bucket_b}", flush=True)
+    print(f"• Bucket C (91..300 frames / 3-10.0s): {len(bucket_c):2d} ({len(bucket_c)/total_analyzed*100:5.1f}%) -> {bucket_c}", flush=True)
+    print(f"• Bucket D (> 300 frames / > 10.0s) : {len(bucket_d):2d} ({len(bucket_d)/total_analyzed*100:5.1f}%) -> {bucket_d}", flush=True)
     print("=" * 145, flush=True)
 
 
