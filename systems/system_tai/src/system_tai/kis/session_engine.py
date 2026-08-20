@@ -249,6 +249,21 @@ class OperationalKISRuntime:
             clock=self.clock,
         )
 
+        self.translation_provider: Any | None = None
+        self.token_budget_guard: Any | None = None
+        if config.enable_dynamic_translation:
+            from system_tai.translation.provider import (
+                MarianOfflineTranslator,
+                TokenBudgetGuard,
+            )
+
+            self.translation_provider = MarianOfflineTranslator(
+                model_name_or_path=config.translation_model_name,
+                device=config.translation_device,
+                cache_dir=config.translation_cache_dir,
+            )
+            self.token_budget_guard = TokenBudgetGuard()
+
         self.session_id = config.session_id or f"session-{uuid.uuid4().hex[:8]}"
         self.start_time_utc = datetime.now(UTC).isoformat()
         self.output_root = Path(config.output_root)
@@ -423,7 +438,35 @@ class OperationalKISRuntime:
         query_dir.mkdir(parents=True, exist_ok=True)
 
         validation_start = self.clock()
-        variants = request.variants()
+        translation_seconds = 0.0
+        translation_metadata: dict[str, Any] = {"dynamic_translation_enabled": False}
+
+        if self.config.enable_dynamic_translation and self.translation_provider is not None:
+            t_trans = self.clock()
+            raw_en = self.translation_provider.translate(request.query_vi)
+            final_en, tok_count, was_compacted = self.token_budget_guard.guard_and_compact(raw_en)
+            translation_seconds = self.clock() - t_trans
+            translation_metadata = {
+                "dynamic_translation_enabled": True,
+                "provider": self.translation_provider.provider_name,
+                "raw_english": raw_en,
+                "final_english": final_en,
+                "clip_token_count": tok_count,
+                "was_compacted": was_compacted,
+                "translation_seconds": translation_seconds,
+            }
+            # EN_ONLY variant (Never fuse Vietnamese)
+            variants = (
+                QueryVariant(
+                    variant_id=f"{request.query_id}::marian_en",
+                    text=final_en,
+                    language=QueryLanguage.ENGLISH,
+                    variant_type=QueryVariantType.ENGLISH_TRANSLATION,
+                    weight=1.0,
+                ),
+            )
+        else:
+            variants = request.variants()
         validation_seconds = self.clock() - validation_start
 
         text_encode_start = self.clock()

@@ -96,6 +96,10 @@ class SessionConfig:
         default_factory=VisualOntologyConfig
     )
     qa_unsupported_provider_fallback: bool = False
+    enable_dynamic_translation: bool = False
+    translation_model_name: str = "Helsinki-NLP/opus-mt-vi-en"
+    translation_cache_dir: Path | None = None
+    translation_device: str = "auto"
 
     def __post_init__(self) -> None:
         if self.reuse_manifest is not None and self.manifest_cache is not None:
