@@ -105,25 +105,77 @@ def preindex_keyframe_images(keyframe_dirs: List[Path]) -> None:
     logger.info("Pre-indexed %d keyframe image files in %.2f seconds.", count, elapsed)
 
 
+def extract_shot_number_from_string(text: str) -> Optional[int]:
+    """Extract numeric shot index from strings like L25_V075_S0076_center or Shot_76."""
+    if not text:
+        return None
+    # Pattern matching _S0076_ or _S76 or Shot_76
+    m = re.search(r"[sS](\d+)", str(text))
+    if m:
+        try:
+            return int(m.group(1))
+        except ValueError:
+            pass
+    m2 = re.search(r"(\d+)", str(text))
+    if m2:
+        try:
+            return int(m2.group(1))
+        except ValueError:
+            pass
+    return None
+
+
 def resolve_keyframe_src(video_id: str, shot_id: Any, kf_id: str, keyframe_dirs: List[Path]) -> str:
     """Find keyframe image across search paths, convert to Data URI or return SVG fallback."""
-    if not kf_id or str(kf_id).strip() == "" or kf_id == "None":
+    if not video_id or str(video_id).strip() == "":
         return create_svg_keyframe_placeholder(video_id, shot_id, f"Shot_{shot_id}")
 
-    clean_kf = str(kf_id).strip()
+    clean_kf = str(kf_id).strip() if kf_id else ""
     level = video_id.split("_", 1)[0] if "_" in video_id else ""
 
-    # 1. Fast O(1) RAM Index Lookup
-    ram_hit = KEYFRAME_RAM_INDEX.get((video_id, clean_kf))
-    if not ram_hit and clean_kf.isdigit():
-        ram_hit = KEYFRAME_RAM_INDEX.get((video_id, str(int(clean_kf))))
+    # Build exhaustive list of key candidates to lookup in KEYFRAME_RAM_INDEX
+    lookup_keys = []
 
-    if ram_hit:
-        data_uri = resolve_image_to_data_uri(ram_hit)
-        if data_uri:
-            return data_uri
+    # 1. Exact kf_id
+    if clean_kf and clean_kf != "None":
+        lookup_keys.append(clean_kf)
+        if clean_kf.isdigit():
+            lookup_keys.append(str(int(clean_kf)))
 
-    # 2. Fast O(1) Direct Path Candidate Checks
+        # 2. Parsed shot number from kf_id string (e.g. L25_V075_S0076_center -> 76)
+        parsed_n = extract_shot_number_from_string(clean_kf)
+        if parsed_n is not None:
+            lookup_keys.extend([
+                str(parsed_n),
+                f"{parsed_n:03d}",
+                f"{parsed_n:04d}",
+                f"{parsed_n:05d}",
+            ])
+
+    # 3. shot_id based candidates (0-indexed and 1-indexed)
+    if shot_id is not None and str(shot_id).isdigit():
+        s_idx = int(shot_id)
+        lookup_keys.extend([
+            str(s_idx),
+            f"{s_idx:03d}",
+            f"{s_idx:04d}",
+            f"{s_idx:05d}",
+            # 1-indexed (BTC keyframe n)
+            str(s_idx + 1),
+            f"{s_idx + 1:03d}",
+            f"{s_idx + 1:04d}",
+            f"{s_idx + 1:05d}",
+        ])
+
+    # Try lookup_keys in RAM index
+    for k_key in lookup_keys:
+        ram_hit = KEYFRAME_RAM_INDEX.get((video_id, k_key))
+        if ram_hit and ram_hit.is_file():
+            data_uri = resolve_image_to_data_uri(ram_hit)
+            if data_uri:
+                return data_uri
+
+    # 4. Fast O(1) Direct Path Candidate Checks on disk
     candidates = []
     for kdir in keyframe_dirs:
         sub_dirs = [
@@ -135,18 +187,11 @@ def resolve_keyframe_src(video_id: str, shot_id: Any, kf_id: str, keyframe_dirs:
             kdir,
         ]
         for sdir in sub_dirs:
-            candidates.extend([
-                sdir / f"{clean_kf}.jpg",
-                sdir / f"{clean_kf}.png",
-                sdir / f"{video_id}_{clean_kf}.jpg",
-            ])
-            if clean_kf.isdigit():
-                n_val = int(clean_kf)
+            for k_key in lookup_keys:
                 candidates.extend([
-                    sdir / f"{n_val:03d}.jpg",
-                    sdir / f"{n_val:04d}.jpg",
-                    sdir / f"{n_val:05d}.jpg",
-                    sdir / f"{n_val:06d}.jpg",
+                    sdir / f"{k_key}.jpg",
+                    sdir / f"{k_key}.png",
+                    sdir / f"{video_id}_{k_key}.jpg",
                 ])
 
     for cand in candidates:
@@ -156,7 +201,7 @@ def resolve_keyframe_src(video_id: str, shot_id: Any, kf_id: str, keyframe_dirs:
                 return data_uri
 
     # Fallback to SVG placeholder if image file not found on disk
-    return create_svg_keyframe_placeholder(video_id, shot_id, clean_kf)
+    return create_svg_keyframe_placeholder(video_id, shot_id, clean_kf or f"Shot_{shot_id}")
 
 
 def get_context_shots_for_boundary(
