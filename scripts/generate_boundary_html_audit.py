@@ -81,14 +81,28 @@ def resolve_keyframe_src(video_id: str, shot_id: Any, kf_id: str, keyframe_dirs:
     candidates = []
 
     for kdir in keyframe_dirs:
-        # Standard layout: keyframe_dir/video_id/kf_id.jpg
-        candidates.append(kdir / video_id / f"{clean_kf}.jpg")
-        candidates.append(kdir / video_id / f"{clean_kf}.png")
-        candidates.append(kdir / f"{clean_kf}.jpg")
-        candidates.append(kdir / f"{clean_kf}.png")
+        candidates.extend([
+            kdir / video_id / f"{clean_kf}.jpg",
+            kdir / video_id / f"{clean_kf}.png",
+            kdir / video_id / f"{clean_kf}.jpeg",
+            kdir / f"{video_id}_{clean_kf}.jpg",
+            kdir / f"{video_id}_{clean_kf}.png",
+            kdir / f"{clean_kf}.jpg",
+            kdir / f"{clean_kf}.png",
+            kdir / "keyframes" / video_id / f"{clean_kf}.jpg",
+            kdir / "keyframes" / video_id / f"{clean_kf}.png",
+            kdir / "media" / video_id / f"{clean_kf}.jpg",
+        ])
         if clean_kf.isdigit():
-            candidates.append(kdir / video_id / f"{int(clean_kf):05d}.jpg")
-            candidates.append(kdir / video_id / f"{int(clean_kf):06d}.jpg")
+            candidates.extend([
+                kdir / video_id / f"{int(clean_kf):05d}.jpg",
+                kdir / video_id / f"{int(clean_kf):06d}.jpg",
+                kdir / video_id / f"{int(clean_kf):04d}.jpg",
+                kdir / f"{video_id}_{int(clean_kf):05d}.jpg",
+                kdir / f"{video_id}_{int(clean_kf):06d}.jpg",
+                kdir / f"{int(clean_kf):05d}.jpg",
+                kdir / f"{int(clean_kf):06d}.jpg",
+            ])
 
     for cand in candidates:
         data_uri = resolve_image_to_data_uri(cand)
@@ -710,7 +724,21 @@ def main():
         PROJECT_ROOT / "artifacts" / "keyframe_btc_full",
         PROJECT_ROOT / "keyframes",
         PROJECT_ROOT / "media",
+        Path("/kaggle/working/keyframes"),
+        Path("/kaggle/working/artifacts/keyframe_btc_full"),
     ])
+
+    # Auto-discover any keyframe/media dataset folders in /kaggle/input
+    kaggle_input = Path("/kaggle/input")
+    if kaggle_input.exists():
+        try:
+            for item in kaggle_input.glob("**/*"):
+                if item.is_dir() and any(x in item.name.lower() for x in ["keyframe", "frames", "media", "btc", "images"]):
+                    keyframe_dirs.append(item)
+        except Exception as e:
+            logger.debug("Failed to scan /kaggle/input: %s", e)
+
+    logger.info("Keyframe search directories (%d total): %s", len(keyframe_dirs), [str(d) for d in keyframe_dirs[:5]])
 
     output_html_path = Path(args.output)
     output_html_path.parent.mkdir(parents=True, exist_ok=True)
