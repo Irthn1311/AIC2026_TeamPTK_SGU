@@ -9,6 +9,7 @@ Strict constraints:
   - Production P0 remains 100% immutable (default OFF).
   - ZERO retrieval, ZERO CLIP image encoding, ZERO Phase-4, ZERO benchmark runs.
   - ZERO hardcoded lexical corrections or regex dictionaries.
+  - ZERO silent git pip installs at startup (uses Transformers native tokenization).
   - Raw uncompacted translation fidelity comparison across visual atoms.
   - Evaluates all 18 BTC KIS queries.
   - Mandatory target probes:
@@ -23,9 +24,7 @@ Strict constraints:
 
 from __future__ import annotations
 
-import gc
 import os
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -34,27 +33,25 @@ from typing import Any
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 
+# Print startup banner immediately
+print("=" * 150, flush=True)
+print("KIS P1G0: VI->EN TRANSLATION FIDELITY SHOOTOUT (QUERY-ONLY PROTOTYPE)", flush=True)
+print("=" * 150, flush=True)
+print("Scope:", flush=True)
+print("  • Model A (Frozen Production Marian): Helsinki-NLP/opus-mt-vi-en (rev 5611f34634b72de0608b1238a4e02845ca285f3e)")
+print("  • Model B (Candidate VinAI Translation): vinai/vinai-translate-vi2en-v2 (mBART, AGPL-3.0)")
+print("  • ZERO retrieval, ZERO Phase-4, ZERO SigLIP2, ZERO production changes.", flush=True)
+print("=" * 150, flush=True)
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SYSTEM_TAI_SRC = REPO_ROOT / "systems" / "system_tai" / "src"
 if str(SYSTEM_TAI_SRC) not in sys.path:
     sys.path.insert(0, str(SYSTEM_TAI_SRC))
 
-# Ensure required libraries
-try:
-    import clip
-except ImportError:
-    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "git+https://github.com/openai/CLIP.git", "ftfy", "regex"], check=False)
-    import clip
-
-try:
-    import sentencepiece
-except ImportError:
-    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "sentencepiece", "sacremoses"], check=False)
-
 import numpy as np
 import torch
 import transformers
-from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, CLIPTokenizerFast
 
 from system_tai.translation.provider import MarianOfflineTranslator
 
@@ -82,22 +79,24 @@ BTC_KIS_QUERIES = [
     {"qid": "query-p1-25-kis", "category": "REGRESSION_GUARD", "name": "Đua xe đạp flycam trên cao áo xanh vượt 3"},
 ]
 
+# Fast standalone CLIP Tokenizer
+try:
+    _CLIP_TOKENIZER = CLIPTokenizerFast.from_pretrained("openai/clip-vit-base-patch32")
+except Exception:
+    _CLIP_TOKENIZER = None
+
 
 def count_clip_tokens(text: str) -> tuple[int, bool]:
     """Count tokens according to OpenAI CLIP's BPE tokenizer (max context 77)."""
-    try:
-        tokens = clip.tokenize([text], truncate=False)
-        count = int((tokens != 0).sum().item())
-        return count, count > 77
-    except Exception:
-        # If text exceeds CLIP's internal 77 limit without truncate, it raises RuntimeError
+    if _CLIP_TOKENIZER is not None:
         try:
-            tokens_trunc = clip.tokenize([text], truncate=True)
-            # Rough estimate using standard words
-            approx_count = len(text.split()) + 10
-            return max(78, approx_count), True
+            tokens = _CLIP_TOKENIZER.encode(text, add_special_tokens=True)
+            count = len(tokens)
+            return count, count > 77
         except Exception:
-            return 78, True
+            pass
+    approx_count = len(text.split()) + 5
+    return approx_count, approx_count > 77
 
 
 class VinAIOfflineTranslator:
@@ -106,7 +105,7 @@ class VinAIOfflineTranslator:
     def __init__(self, device: str = "cpu") -> None:
         self.device = device
         self.model_id = VINAI_MODEL_ID
-        print(f"\n[Loading Candidate VinAI Translator: '{self.model_id}' on device '{device}'...]", flush=True)
+        print(f"\n[2/2] Loading Candidate VinAI Translator: '{self.model_id}' on device '{device}' ...", flush=True)
         t0 = time.time()
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_id, src_lang="vi_VN", use_fast=False)
         self.model = AutoModelForSeq2SeqLM.from_pretrained(
@@ -116,8 +115,7 @@ class VinAIOfflineTranslator:
         ).to(device)
         self.model.eval()
         self.load_time = time.time() - t0
-        
-        # Extract model revision / architecture telemetry
+
         self.config = getattr(self.model, "config", None)
         self.model_type = getattr(self.config, "model_type", "mBART")
         self.num_params = sum(p.numel() for p in self.model.parameters()) / 1e6
@@ -126,32 +124,23 @@ class VinAIOfflineTranslator:
     def translate(self, text_vi: str) -> tuple[str, float]:
         t0 = time.time()
         inputs = self.tokenizer(text_vi, return_tensors="pt", padding=True).to(self.device)
-        
+
         gen_kwargs: dict[str, Any] = {
             "num_beams": 5,
             "max_length": 1024,
         }
         if hasattr(self.tokenizer, "lang_code_to_id") and "en_XX" in self.tokenizer.lang_code_to_id:
             gen_kwargs["forced_bos_token_id"] = self.tokenizer.lang_code_to_id["en_XX"]
-        
+
         with torch.no_grad():
             output_ids = self.model.generate(**inputs, **gen_kwargs)
-        
+
         trans_en = self.tokenizer.decode(output_ids[0], skip_special_tokens=True).strip()
         lat = time.time() - t0
         return trans_en, lat
 
 
 def run_p1g0_shootout() -> None:
-    print("=" * 150, flush=True)
-    print("KIS P1G0: VI->EN TRANSLATION FIDELITY SHOOTOUT (QUERY-ONLY PROTOTYPE)", flush=True)
-    print("=" * 150, flush=True)
-    print("Scope:", flush=True)
-    print("  • Model A (Frozen Production Marian): Helsinki-NLP/opus-mt-vi-en (rev 5611f34634b72de0608b1238a4e02845ca285f3e)")
-    print("  • Model B (Candidate VinAI Translation): vinai/vinai-translate-vi2en-v2 (mBART, AGPL-3.0)")
-    print("  • ZERO retrieval, ZERO Phase-4, ZERO SigLIP2, ZERO production changes.")
-    print("=" * 150, flush=True)
-
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Operational Environment: Python {sys.version.split()[0]} | PyTorch {torch.__version__} | Transformers {transformers.__version__} | Device: {device}", flush=True)
 
@@ -163,7 +152,6 @@ def run_p1g0_shootout() -> None:
     print(f"      • Loaded in {load_time_a:.2f}s (Revision: 5611f34634b72de0608b1238a4e02845ca285f3e) ✅", flush=True)
 
     # 2. Load Model B (VinAI Translate vi2en v2)
-    print("\n[2/2] Initializing Model B (VinAI Translate vi2en v2)...", flush=True)
     translator_b = VinAIOfflineTranslator(device=device)
 
     thunghiem_dir = REPO_ROOT / "systems" / "system_tai" / "THUNGHIEM_20-8"
