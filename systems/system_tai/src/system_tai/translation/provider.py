@@ -33,7 +33,7 @@ class MarianOfflineTranslator:
     """
 
     DEFAULT_MODEL_NAME = "Helsinki-NLP/opus-mt-vi-en"
-    DEFAULT_PINNED_REVISION = "a0586e3fcf81ec01c7785c40467c699fa8403d6d"
+    DEFAULT_PINNED_REVISION = "5611f34634b72de0608b1238a4e02845ca285f3e"
 
     def __init__(
         self,
@@ -172,18 +172,10 @@ class MarianOfflineTranslator:
             primary_weights = "model.safetensors" if (snapshot_dir / "model.safetensors").exists() else "pytorch_model.bin"
             info["primary_weight_artifact"] = primary_weights
 
-            # Scan and compute full SHA256 for all key artifacts
-            for fname in [
-                "model.safetensors",
-                "pytorch_model.bin",
-                "source.spm",
-                "target.spm",
-                "vocab.json",
-                "config.json",
-                "tokenizer_config.json",
-            ]:
-                fpath = snapshot_dir / fname
-                if fpath.exists():
+            # Scan and compute full SHA256 for all artifacts present in snapshot
+            for fpath in snapshot_dir.iterdir():
+                if fpath.is_file():
+                    fname = fpath.name
                     info[f"{fname}_size_bytes"] = fpath.stat().st_size
                     h = hashlib.sha256()
                     with open(fpath, "rb") as f:

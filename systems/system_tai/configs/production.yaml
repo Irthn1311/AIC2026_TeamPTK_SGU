@@ -34,7 +34,7 @@ kis:
   status: "PROVEN_WINNER"
   enable_dynamic_translation: true
   translation_model_name: "Helsinki-NLP/opus-mt-vi-en"
-  translation_revision: "a0586e3fcf81ec01c7785c40467c699fa8403d6d"
+  translation_revision: "5611f34634b72de0608b1238a4e02845ca285f3e"
   translation_local_files_only: true
   language_policy: "en_only"
   top_k_candidates: 100

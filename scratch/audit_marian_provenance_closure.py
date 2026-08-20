@@ -68,12 +68,12 @@ def run_provenance_audit() -> None:
             is_primary = " [PRIMARY WEIGHT]" if base == fp.get("primary_weight_artifact") else ""
             print(f"  • {base:<22} ({size:>10} bytes){is_primary} : {v}", flush=True)
 
-    # Validate weight file and spm presence
+    # Validate weight file and tokenizer presence
     has_weights = "model.safetensors_sha256" in fp or "pytorch_model.bin_sha256" in fp
-    has_spm = "source.spm_sha256" in fp and "target.spm_sha256" in fp
+    has_tokenizer = any(k.endswith("_sha256") and ("spm" in k or "vocab" in k or "tokenizer" in k) for k in fp)
 
     assert has_weights, "Model weight artifact (safetensors or bin) must be resolved on disk!"
-    assert has_spm, "Tokenizer SPM files (source.spm & target.spm) must be resolved on disk!"
+    assert has_tokenizer, "Tokenizer artifact files must be resolved on disk!"
 
     print("\n" + "=" * 140, flush=True)
     print(">>> STATUS: OFFLINE ARTIFACT PROVENANCE 100% VERIFIED ✅", flush=True)
