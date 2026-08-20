@@ -54,10 +54,8 @@ except ImportError:
 import cv2
 import numpy as np
 import torch
-from system_tai.features.feature_manifest import FeatureManifest
-from system_tai.kis.exact_retriever import ExactMatrixRetriever
+from system_tai.kis.session_engine import OperationalKISRuntime
 from system_tai.kis.session_schema import SessionConfig
-from system_tai.translation.provider import MarianOfflineTranslator, TokenBudgetGuard
 
 MULTILINGUAL_CLIP_MODEL_NAME = "sentence-transformers/clip-ViT-B-32-multilingual-v1"
 EXPECTED_EMBEDDING_DIM = 512
@@ -100,15 +98,22 @@ def populate_video_index_once() -> None:
                         VIDEO_PATH_CACHE[vid] = Path(root_dir) / fname
 
 
-def resolve_video_path(video_id: str) -> Path | None:
+def resolve_video_path(video_id: str, raw_video_registry: Any = None) -> Path | None:
+    if raw_video_registry:
+        try:
+            rec = raw_video_registry.get(video_id)
+            if rec and rec.raw_video_path and rec.raw_video_path.exists():
+                return rec.raw_video_path
+        except Exception:
+            pass
     if video_id in VIDEO_PATH_CACHE:
         return VIDEO_PATH_CACHE[video_id]
     populate_video_index_once()
     return VIDEO_PATH_CACHE.get(video_id)
 
 
-def extract_thumbnail_base64(video_id: str, frame_id: int) -> str:
-    vpath = resolve_video_path(video_id)
+def extract_thumbnail_base64(video_id: str, frame_id: int, raw_video_registry: Any = None) -> str:
+    vpath = resolve_video_path(video_id, raw_video_registry)
     if not vpath or not vpath.exists():
         return ""
     try:
@@ -130,7 +135,7 @@ def extract_thumbnail_base64(video_id: str, frame_id: int) -> str:
         return ""
 
 
-def get_manifest_path() -> Path:
+def get_reuse_manifest() -> Path | None:
     for p in [
         Path("/kaggle/working/manifest_cache.json"),
         Path("/kaggle/input/system-tai-manifest/feature_manifest.json"),
@@ -140,7 +145,7 @@ def get_manifest_path() -> Path:
     ]:
         if p.exists() and p.stat().st_size > 1000:
             return p
-    raise FileNotFoundError("Cannot locate feature manifest json file")
+    return None
 
 
 def check_embedding_compatibility(st_model: SentenceTransformer) -> tuple[int, str]:
@@ -172,56 +177,40 @@ def check_embedding_compatibility(st_model: SentenceTransformer) -> tuple[int, s
     return shape[1], "EXACT_MATCH"
 
 
-def encode_openai_clip_en(clip_model: Any, device: str, text_en: str) -> np.ndarray:
-    tokens = clip.tokenize([text_en], truncate=True).to(device)
-    with torch.no_grad():
-        output = clip_model.encode_text(tokens)
-        vec = output.float().cpu().numpy()[0]
-    norm = float(np.linalg.norm(vec))
-    return (vec / norm).astype(np.float32)
-
-
-def encode_multilingual_clip_vi(st_model: SentenceTransformer, text_vi: str) -> np.ndarray:
-    emb = st_model.encode([text_vi], convert_to_numpy=True, normalize_embeddings=True)[0]
-    return emb.astype(np.float32)
-
-
 def run_p1c0_experiment() -> None:
     print("=" * 150, flush=True)
     print("KIS P1C0: MULTILINGUAL CLIP TEXT-PROJECTION RETRIEVAL SHOOTOUT", flush=True)
     print("=" * 150, flush=True)
 
     yaml_path = REPO_ROOT / "systems" / "system_tai" / "configs" / "production.yaml"
-    cfg = SessionConfig.from_yaml(yaml_path)
+    input_root = Path("/kaggle/input/datasets") if Path("/kaggle/input/datasets").exists() else Path("/kaggle/input")
+    reuse_manifest = get_reuse_manifest()
+    out_dir = Path("/kaggle/working/output/kis_p1c0_session") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "kis_p1c0_session"
 
-    # 1. Load Manifest & ExactMatrixRetriever
-    m_path = get_manifest_path()
-    print(f"\n[1/4] Loading Feature Manifest from {m_path} ...", flush=True)
-    t0_m = time.time()
-    manifest = FeatureManifest.load(m_path)
-    retriever = ExactMatrixRetriever(manifest)
-    print(f"      Loaded {manifest.frame_count:,} keyframes in {time.time() - t0_m:.2f}s", flush=True)
+    cfg = SessionConfig.from_yaml(
+        yaml_path,
+        input_root=input_root,
+        output_root=out_dir,
+        reuse_manifest=reuse_manifest,
+    )
 
-    # 2. Load Production Marian & OpenAI CLIP (Arm A)
-    print(f"\n[2/4] Loading Arm A: Production Marian (opus-mt-vi-en) + OpenAI CLIP ViT-B/32 ...", flush=True)
-    t0_a = time.time()
-    marian = MarianOfflineTranslator(revision=cfg.translation_revision, local_files_only=True)
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    clip_model, _ = clip.load("ViT-B/32", device=device, jit=False)
-    clip_model.eval()
-    guard = TokenBudgetGuard()
-    print(f"      Arm A loaded in {time.time() - t0_a:.2f}s (device={device})", flush=True)
+    # 1. Bootstrap Production Runtime (provides exact manifest, exact_retriever, Marian, OpenAI CLIP)
+    print("\n[1/3] Bootstrapping OperationalKISRuntime...", flush=True)
+    t0_rt = time.time()
+    runtime = OperationalKISRuntime.bootstrap(cfg)
+    device = runtime.shared_encoder.identifiers.get("device", "cpu")
+    print(f"      Runtime Bootstrapped in {time.time() - t0_rt:.2f}s (device={device})", flush=True)
 
-    # 3. Load Multilingual CLIP Text Encoder (Arm B)
-    print(f"\n[3/4] Loading Arm B: Multilingual CLIP Text Encoder ({MULTILINGUAL_CLIP_MODEL_NAME}) ...", flush=True)
+    # 2. Load Multilingual CLIP Text Encoder (Arm B)
+    print(f"\n[2/3] Loading Multilingual CLIP Text Encoder ({MULTILINGUAL_CLIP_MODEL_NAME})...", flush=True)
     t0_b = time.time()
     st_model = SentenceTransformer(MULTILINGUAL_CLIP_MODEL_NAME, device=device)
-    print(f"      Arm B loaded in {time.time() - t0_b:.2f}s", flush=True)
+    print(f"      Multilingual CLIP loaded in {time.time() - t0_b:.2f}s", flush=True)
 
-    # 4. Compatibility Gate Check
+    # 3. Compatibility Gate Check
     check_embedding_compatibility(st_model)
 
-    # 5. Run A/B 1st-Pass Retrieval across 18 BTC KIS Queries
+    # 4. Run A/B 1st-Pass Retrieval across 18 BTC KIS Queries
     thunghiem_dir = REPO_ROOT / "systems" / "system_tai" / "THUNGHIEM_20-8"
     results: list[dict[str, Any]] = []
 
@@ -245,22 +234,22 @@ def run_p1c0_experiment() -> None:
 
         # --- ARM A: Production Marian -> OpenAI CLIP ---
         t_a0 = time.time()
-        raw_en = marian.translate(q_vi)
-        eff_en, tok_count, was_compacted = guard.guard_and_compact(raw_en)
-        vec_a = encode_openai_clip_en(clip_model, device, eff_en)
-        res_a = retriever.search_vector(query_id=f"a-{qid}", query_vector=vec_a, top_k=10)
+        raw_en = runtime.translation_provider.translate(q_vi)
+        eff_en, tok_count, was_compacted = runtime.token_budget_guard.guard_and_compact(raw_en)
+        vec_a = runtime.shared_encoder.encode(eff_en)
+        res_a = runtime.exact_retriever.search_vector(query_id=f"a-{qid}", query_vector=vec_a, top_k=10)
         lat_a = time.time() - t_a0
         arm_a_latencies.append(lat_a)
 
         # --- ARM B: Raw Vietnamese -> Multilingual CLIP ---
         t_b0 = time.time()
-        vec_b = encode_multilingual_clip_vi(st_model, q_vi)
-        res_b = retriever.search_vector(query_id=f"b-{qid}", query_vector=vec_b, top_k=10)
+        vec_b = st_model.encode([q_vi], convert_to_numpy=True, normalize_embeddings=True)[0].astype(np.float32)
+        res_b = runtime.exact_retriever.search_vector(query_id=f"b-{qid}", query_vector=vec_b, top_k=10)
         lat_b = time.time() - t_b0
         arm_b_latencies.append(lat_b)
 
-        top10_desc_a = [f"@{idx}: {c.video_id} (f={c.frame_id}, s={c.similarity_score:.3f})" for idx, c in enumerate(res_a.candidates[:10], start=1)]
-        top10_desc_b = [f"@{idx}: {c.video_id} (f={c.frame_id}, s={c.similarity_score:.3f})" for idx, c in enumerate(res_b.candidates[:10], start=1)]
+        top10_desc_a = [f"@{i}: {c.video_id} (f={c.frame_id}, s={c.similarity_score:.3f})" for i, c in enumerate(res_a.candidates[:10], start=1)]
+        top10_desc_b = [f"@{i}: {c.video_id} (f={c.frame_id}, s={c.similarity_score:.3f})" for i, c in enumerate(res_b.candidates[:10], start=1)]
 
         vids_a = set(c.video_id for c in res_a.candidates[:10])
         vids_b = set(c.video_id for c in res_b.candidates[:10])
@@ -286,38 +275,38 @@ def run_p1c0_experiment() -> None:
         print(f"• VI Query      : \"{q_vi}\"", flush=True)
         print(f"• Arm A EN Text : \"{eff_en}\" ({tok_count} tok | Latency: {lat_a*1000:5.1f}ms)", flush=True)
         print(f"• Arm B Raw VI  : Multilingual Projected Direct (Latency: {lat_b*1000:5.1f}ms)", flush=True)
-        print(f"• Arm A Top 10  : {top10_desc_a[:5]} ...", flush=True)
-        print(f"• Arm B Top 10  : {top10_desc_b[:5]} ...", flush=True)
+        print(f"• Arm A Top 5   : {top10_desc_a[:5]}", flush=True)
+        print(f"• Arm B Top 5   : {top10_desc_b[:5]}", flush=True)
         print(f"• Top 10 Overlap: {overlap_10}/10 shared video entities", flush=True)
 
         if qid == "query-p1-13-kis":
-            print(f"  🔍 TARGET PROBE (p1-13): Does Arm B pull L30_V095 into Top 3? -> Arm A Top 1: {res_a.candidates[0].video_id} | Arm B Top 1: {res_b.candidates[0].video_id}", flush=True)
+            print(f"  🔍 TARGET PROBE (p1-13): Does Arm B pull camera cleaning (L30_V095) into Top 3? -> Arm A Top 1: {res_a.candidates[0].video_id} | Arm B Top 1: {res_b.candidates[0].video_id}", flush=True)
         elif qid == "query-p1-21-kis":
-            print(f"  🔍 TARGET PROBE (p1-21): Does Arm B pull beetle video into Top 3? -> Arm A Top 1: {res_a.candidates[0].video_id} | Arm B Top 1: {res_b.candidates[0].video_id}", flush=True)
+            print(f"  🔍 TARGET PROBE (p1-21): Does Arm B pull beetle/robot into Top 3? -> Arm A Top 1: {res_a.candidates[0].video_id} | Arm B Top 1: {res_b.candidates[0].video_id}", flush=True)
         elif qid == "query-p1-24-kis":
             print(f"  🔍 TARGET PROBE (p1-24): Does Arm B pull cycling race into Top 3? -> Arm A Top 1: {res_a.candidates[0].video_id} | Arm B Top 1: {res_b.candidates[0].video_id}", flush=True)
 
     # Generate HTML gallery
     gallery_out = Path("/kaggle/working/kis_p1c0_multilingual_gallery.html")
-    generate_ab_gallery_html(results, gallery_out)
+    generate_ab_gallery_html(results, gallery_out, runtime.raw_video_registry)
     print(f"\nSaved Comparative Side-by-Side Gallery to: {gallery_out}", flush=True)
 
     # Summary table
     print("\n" + "=" * 150, flush=True)
     print("KIS P1C0 LATENCY & TOP 1 OVERVIEW TABLE", flush=True)
     print("=" * 150, flush=True)
-    print(f"{'Query ID':<18} | {'Category':<22} | {'Arm A Top 1':<22} | {'Arm B Top 1':<22} | {'Arm A Lat':<10} | {'Arm B Lat':<10}")
-    print("-" * 115)
+    print(f"{'Query ID':<18} | {'Category':<22} | {'Arm A Top 1':<24} | {'Arm B Top 1':<24} | {'Arm A Lat':<10} | {'Arm B Lat':<10}")
+    print("-" * 120)
     for r in results:
         top1_a = f"{r['candidates_a'][0].video_id} (f={r['candidates_a'][0].frame_id})"
         top1_b = f"{r['candidates_b'][0].video_id} (f={r['candidates_b'][0].frame_id})"
-        print(f"{r['qid']:<18} | {r['category']:<22} | {top1_a:<22} | {top1_b:<22} | {r['lat_a']*1000:6.1f} ms | {r['lat_b']*1000:6.1f} ms")
+        print(f"{r['qid']:<18} | {r['category']:<22} | {top1_a:<24} | {top1_b:<24} | {r['lat_a']*1000:6.1f} ms | {r['lat_b']*1000:6.1f} ms")
     print("=" * 150, flush=True)
     print(f"Mean Query Latency: Arm A (Marian MT + CLIP) = {np.mean(arm_a_latencies)*1000:.1f}ms | Arm B (Direct Multilingual CLIP) = {np.mean(arm_b_latencies)*1000:.1f}ms", flush=True)
     print("=" * 150, flush=True)
 
 
-def generate_ab_gallery_html(results: list[dict[str, Any]], out_path: Path) -> None:
+def generate_ab_gallery_html(results: list[dict[str, Any]], out_path: Path, raw_video_registry: Any = None) -> None:
     html_cards = []
     for r in results:
         qid = r["qid"]
@@ -334,7 +323,7 @@ def generate_ab_gallery_html(results: list[dict[str, Any]], out_path: Path) -> N
                 vid = p.video_id
                 fid = p.frame_id
                 score = p.similarity_score
-                img_b64 = extract_thumbnail_base64(vid, fid)
+                img_b64 = extract_thumbnail_base64(vid, fid, raw_video_registry)
                 img_tag = f'<img src="data:image/jpeg;base64,{img_b64}" style="width:100%; border-radius:4px;" />' if img_b64 else '<div style="background:#333;color:#888;height:80px;display:flex;align-items:center;justify-content:center;">No Frame</div>'
                 items.append(f"""
                 <div style="flex:1; margin:4px; padding:6px; background:#181818; border:1px solid #333; border-radius:6px; text-align:center; font-size:11px;">
