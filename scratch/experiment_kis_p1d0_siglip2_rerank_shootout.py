@@ -290,9 +290,18 @@ def score_candidates_with_siglip2(
         truncation=True,
         max_length=max_len,
         return_tensors="pt",
+        return_attention_mask=True,
     ).to(device)
 
-    effective_model_tokens = int(text_inputs["attention_mask"].sum())
+    if "attention_mask" in text_inputs and text_inputs["attention_mask"] is not None:
+        effective_model_tokens = int(text_inputs["attention_mask"].sum().item())
+    else:
+        pad_id = getattr(tokenizer, "pad_token_id", None)
+        if pad_id is not None:
+            effective_model_tokens = int((text_inputs["input_ids"] != pad_id).sum().item())
+        else:
+            effective_model_tokens = min(raw_model_tokens, max_len)
+
     truncated = raw_model_tokens > effective_model_tokens
 
     token_telemetry = {
