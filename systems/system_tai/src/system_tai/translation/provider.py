@@ -275,10 +275,13 @@ class TokenBudgetGuard:
 
     SAFE_CLIP_TOKEN_LIMIT = 75
 
-    def __init__(self, max_tokens: int = SAFE_CLIP_TOKEN_LIMIT) -> None:
+    def __init__(self, max_tokens: int = SAFE_CLIP_TOKEN_LIMIT, packing_policy: str = "prefix_77") -> None:
         if max_tokens <= 0 or max_tokens > 75:
             raise ValueError(f"max_tokens must be in range 1..75, got {max_tokens}")
+        if packing_policy not in {"prefix_77", "head_tail_77"}:
+            raise ValueError(f"packing_policy must be 'prefix_77' or 'head_tail_77', got {packing_policy}")
         self.max_tokens = max_tokens
+        self.packing_policy = packing_policy
         self._clip_tokenizer: Any = None
 
     def _get_tokenizer(self) -> Any:
@@ -306,13 +309,14 @@ class TokenBudgetGuard:
         """Alias for count_tokens."""
         return self.count_tokens(text)
 
-    def guard_and_compact(self, text: str) -> tuple[str, int, bool]:
+    def guard_and_compact(self, text: str, packing_policy: str | None = None) -> tuple[str, int, bool]:
         """Guard text against CLIP token budget.
 
         If text fits within safe budget (<= 75 tokens), returns (text, token_count, False).
         If text exceeds safe budget (> 75 tokens), compacts to boundary without exceeding budget
         and returns (compacted_text, new_token_count, True).
         """
+        policy = packing_policy or self.packing_policy
         tokenizer = self._get_tokenizer()
         bpe_tokens = tokenizer.encode(text)
         raw_count = len(bpe_tokens) + 2
@@ -320,14 +324,34 @@ class TokenBudgetGuard:
         if raw_count <= (self.max_tokens + 2):
             return text, raw_count, False
 
-        # Compaction / safe boundary truncation
-        kept_tokens = bpe_tokens[: self.max_tokens]
-        compacted = tokenizer.decode(kept_tokens).strip()
-        new_count = len(kept_tokens) + 2
+        if policy == "head_tail_77":
+            # Head + Tail bifurcated packing
+            head_budget = int(self.max_tokens * 0.48)  # 36 tokens
+            tail_budget = self.max_tokens - head_budget  # 39 tokens
+            head_tokens = bpe_tokens[:head_budget]
+            tail_tokens = bpe_tokens[-tail_budget:]
+            head_text = tokenizer.decode(head_tokens).strip().rstrip(".,; ")
+            tail_text = tokenizer.decode(tail_tokens).strip().lstrip(".,; ")
+            combined = f"{head_text}, {tail_text}"
+            comb_tokens = tokenizer.encode(combined)
+            if len(comb_tokens) > self.max_tokens:
+                trimmed = comb_tokens[: self.max_tokens]
+                compacted = tokenizer.decode(trimmed).strip()
+                new_count = len(trimmed) + 2
+            else:
+                compacted = combined
+                new_count = len(comb_tokens) + 2
+        else:
+            # Default prefix_77: strict BPE prefix truncation
+            kept_tokens = bpe_tokens[: self.max_tokens]
+            compacted = tokenizer.decode(kept_tokens).strip()
+            new_count = len(kept_tokens) + 2
+
         logger.warning(
-            "Query exceeded token budget (%d > %d). Compacted text: %r",
+            "Query exceeded token budget (%d > %d, policy=%s). Compacted text: %r",
             raw_count,
             self.max_tokens + 2,
+            policy,
             compacted,
         )
         return compacted, new_count, True

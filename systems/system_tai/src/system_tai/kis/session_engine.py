@@ -267,7 +267,7 @@ class OperationalKISRuntime:
                 local_files_only=config.translation_local_files_only,
                 revision=config.translation_revision,
             )
-            self.token_budget_guard = TokenBudgetGuard()
+            self.token_budget_guard = TokenBudgetGuard(packing_policy=config.translation_packing_policy)
 
         self.session_id = config.session_id or f"session-{uuid.uuid4().hex[:8]}"
         self.start_time_utc = datetime.now(UTC).isoformat()

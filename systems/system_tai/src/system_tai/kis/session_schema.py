@@ -102,8 +102,11 @@ class SessionConfig:
     translation_device: str = "auto"
     translation_local_files_only: bool = False
     translation_revision: str | None = None
+    translation_packing_policy: str = "prefix_77"
 
     def __post_init__(self) -> None:
+        if self.translation_packing_policy not in {"prefix_77", "head_tail_77"}:
+            raise ValueError(f"translation_packing_policy must be 'prefix_77' or 'head_tail_77', got {self.translation_packing_policy}")
         if self.reuse_manifest is not None and self.manifest_cache is not None:
             raise ValueError("reuse_manifest and manifest_cache are mutually exclusive")
         if self.device not in {"auto", "cpu", "cuda"}:
