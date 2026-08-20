@@ -1,10 +1,11 @@
 """
-Unit tests for Stage 3C Threshold Sweep Diagnostic Tool
-=========================================================
+Unit tests for Stage 3C Robust Calibrated Sweep Diagnostic Tool
+=================================================================
 """
 
 import sys
 from pathlib import Path
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -14,48 +15,56 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 try:
-    from scripts.sweep_event_thresholds import (
-        analyze_similarity_modalities,
-        evaluate_single_threshold,
-    )
+    from scripts.build_event_boundaries import apply_robust_calibrated_fusion
+    from scripts.sweep_event_thresholds import evaluate_calibrated_configuration
 except BaseException:
     import importlib
-    mod = importlib.import_module("scripts.sweep_event_thresholds")
-    analyze_similarity_modalities = mod.analyze_similarity_modalities
-    evaluate_single_threshold = mod.evaluate_single_threshold
+    mod_b = importlib.import_module("scripts.build_event_boundaries")
+    mod_s = importlib.import_module("scripts.sweep_event_thresholds")
+    apply_robust_calibrated_fusion = mod_b.apply_robust_calibrated_fusion
+    evaluate_calibrated_configuration = mod_s.evaluate_calibrated_configuration
 
 
-def test_analyze_similarity_modalities():
-    """Test distribution calculation for visual, semantic, and combined similarities."""
+def test_apply_robust_calibrated_fusion():
+    """Test Robust Z-score normalization & Sigmoidal Boundary Evidence calculation."""
     df_sim = pd.DataFrame({
-        "visual_similarity": [0.3, 0.5, 0.7],
-        "semantic_similarity": [0.4, 0.6, 0.8],
-        "fused_similarity": [0.35, 0.55, 0.75],
+        "video_id": ["V1", "V1", "V1"],
+        "shot_i": [0, 1, 2],
+        "shot_next": [1, 2, 3],
+        "visual_similarity": [0.0, 0.5, 1.0],
+        "semantic_similarity": [0.90, 0.95, 1.0],
     })
 
-    stats = analyze_similarity_modalities(df_sim)
-    assert "visual_similarity" in stats
-    assert "semantic_similarity" in stats
-    assert "combined_similarity" in stats
-    assert pytest.approx(stats["visual_similarity"]["mean"], 1e-4) == 0.5
-    assert pytest.approx(stats["combined_similarity"]["q50_median"], 1e-4) == 0.55
+    df_cal = apply_robust_calibrated_fusion(df_sim, vis_weight=0.5, sem_weight=0.5)
+
+    assert "visual_z" in df_cal.columns
+    assert "semantic_z" in df_cal.columns
+    assert "visual_boundary_evidence" in df_cal.columns
+    assert "semantic_boundary_evidence" in df_cal.columns
+    assert "boundary_score" in df_cal.columns
+
+    # Boundary score should be strictly bounded between 0.0 and 1.0
+    scores = df_cal["boundary_score"].to_numpy()
+    assert np.all((scores >= 0.0) & (scores <= 1.0))
 
 
-def test_evaluate_single_threshold():
-    """Test evaluation of a single threshold over sample shots."""
+def test_evaluate_calibrated_configuration():
+    """Test evaluation of a single calibrated configuration over sample shots."""
     df_shots = pd.DataFrame([
         {"video_id": "V1", "shot_id": 0, "start_sec": 0.0},
         {"video_id": "V1", "shot_id": 1, "start_sec": 5.0},
         {"video_id": "V1", "shot_id": 2, "start_sec": 10.0},
     ])
     df_sim = pd.DataFrame([
-        {"video_id": "V1", "shot_id": 0, "fused_similarity": 0.60},
-        {"video_id": "V1", "shot_id": 1, "fused_similarity": 0.40},
+        {"video_id": "V1", "shot_i": 0, "shot_next": 1, "boundary_score": 0.80},
+        {"video_id": "V1", "shot_i": 1, "shot_next": 2, "boundary_score": 0.30},
     ])
 
-    res = evaluate_single_threshold(df_sim, df_shots, threshold=0.50)
+    res = evaluate_calibrated_configuration(
+        df_sim, df_shots, threshold=0.60, vis_weight=0.5, sem_weight=0.5
+    )
 
-    assert res["threshold"] == 0.50
+    assert res["threshold"] == 0.60
     assert res["total_boundaries"] == 1
     assert res["total_events"] == 2
     assert res["events_per_video_mean"] == 2.0
