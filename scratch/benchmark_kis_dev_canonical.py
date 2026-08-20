@@ -212,10 +212,10 @@ def run_kis_dev_smoke(run_full_38: bool = False) -> None:
             if line.strip()
         ]
 
-        # Assertions on Predictions
-        assert len(preds) == 100, f"Smoke failure on {qid}: Expected exactly 100 predictions, got {len(preds)}"
+        # Assertions on Predictions (Official contract: N <= 100 contiguous ranks 1..N)
+        assert 1 <= len(preds) <= 100, f"Smoke failure on {qid}: Expected 1 <= len(preds) <= 100, got {len(preds)}"
         ranks = [p["rank"] for p in preds]
-        assert ranks == list(range(1, 101)), f"Smoke failure on {qid}: Ranks are not strictly contiguous 1..100!"
+        assert ranks == list(range(1, len(preds) + 1)), f"Smoke failure on {qid}: Ranks are not strictly contiguous 1..{len(preds)}!"
 
         for p in preds:
             assert isinstance(p["video_id"], str) and p["video_id"].startswith("L"), f"Invalid video_id in {p}"
@@ -235,7 +235,7 @@ def run_kis_dev_smoke(run_full_38: bool = False) -> None:
                 f"Rank @{rank_idx} ({p['video_id']}): internal_phys={internal_phys_frame} -> export_id={export_official_frame_id} -> eval_phys={evaluator_phys_frame} [PASS ✅]"
             )
 
-        print(f"\n[{idx}/5] SMOKE {qid:<8} | Target: {target_vid:<9} | GT Interval: [{start_f}..{end_f}] | Time: {elapsed:.2f}s", flush=True)
+        print(f"\n[{idx}/5] SMOKE {qid:<8} | Target: {target_vid:<9} | GT Interval: [{start_f}..{end_f}] | Emitted: {len(preds)} | Time: {elapsed:.2f}s", flush=True)
         print(f"      • Encoded Query Variants ({len(variants)}) : {v_summary}", flush=True)
         print(f"      • Frame Semantic Round-Trip Trace  :", flush=True)
         for r_trace in roundtrip_traces:
