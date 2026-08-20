@@ -222,9 +222,14 @@ def run_full38_dev_benchmark(runtime: OperationalKISRuntime, translator: MarianO
     print("SECTION 2: FULL-38 KIS DEV BENCHMARK WITH DYNAMIC MARIAN TRANSLATION (EN_ONLY)", flush=True)
     print("=" * 150, flush=True)
 
-    kis_gt_path = REPO_ROOT / "systems" / "system_tai" / "groundtruth" / "kis_groundtruth.json"
+    kis_gt_path = REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "l21_150_diagnostic" / "kis_dev_gt.json"
+    sidecar_path = REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "l21_150_diagnostic" / "q2_kis_dev_en_translation.json"
+
     if not kis_gt_path.exists():
         print(f"ERROR: Groundtruth not found at {kis_gt_path}", flush=True)
+        return
+    if not sidecar_path.exists():
+        print(f"ERROR: Sidecar not found at {sidecar_path}", flush=True)
         return
 
     from system_tai.evaluation.groundtruth_loader import load_kis_groundtruth
@@ -232,7 +237,10 @@ def run_full38_dev_benchmark(runtime: OperationalKISRuntime, translator: MarianO
     from system_tai.preliminary.schemas import KISPrediction
 
     gt_records = load_kis_groundtruth(kis_gt_path)
-    print(f"Loaded {len(gt_records)} Groundtruth queries for Full-38 evaluation.\n", flush=True)
+    sidecar_data = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    vi_queries = {rec["query_id"]: rec["source_vi"] for rec in sidecar_data.get("records", [])}
+
+    print(f"Loaded {len(gt_records)} Groundtruth queries and {len(vi_queries)} Vietnamese source queries for Full-38 evaluation.\n", flush=True)
 
     all_predictions: list[KISPrediction] = []
     trans_latencies: list[float] = []
@@ -241,12 +249,10 @@ def run_full38_dev_benchmark(runtime: OperationalKISRuntime, translator: MarianO
     query_details = []
 
     for idx, (qid, gt) in enumerate(gt_records.items(), start=1):
-        vi_query_path = REPO_ROOT / "systems" / "system_tai" / "queries" / f"{qid}.txt"
-        if not vi_query_path.exists():
-            print(f"WARNING: Query file {vi_query_path} not found, skipping {qid}", flush=True)
+        vi_text = vi_queries.get(qid, "").strip()
+        if not vi_text:
+            print(f"WARNING: Vietnamese query not found for {qid}, skipping", flush=True)
             continue
-
-        vi_text = vi_query_path.read_text(encoding="utf-8").strip()
 
         # 1. Translate
         t0 = time.perf_counter()
