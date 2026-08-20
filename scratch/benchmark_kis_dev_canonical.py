@@ -34,6 +34,13 @@ from typing import Any
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 
+# Ensure openai-clip is available in Kaggle environment
+try:
+    import clip
+except ImportError:
+    print("Installing openai-clip dependency in Python environment...", flush=True)
+    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "openai-clip", "ftfy", "regex", "tqdm"], check=False)
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SYSTEM_TAI_SRC = REPO_ROOT / "systems" / "system_tai" / "src"
 if str(SYSTEM_TAI_SRC) not in sys.path:
