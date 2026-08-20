@@ -728,13 +728,16 @@ def main():
         Path("/kaggle/working/artifacts/keyframe_btc_full"),
     ])
 
-    # Auto-discover any keyframe/media dataset folders in /kaggle/input
+    # Auto-discover any keyframe/media dataset folders in /kaggle/input (Shallow scan to prevent FS hang)
     kaggle_input = Path("/kaggle/input")
     if kaggle_input.exists():
         try:
-            for item in kaggle_input.glob("**/*"):
-                if item.is_dir() and any(x in item.name.lower() for x in ["keyframe", "frames", "media", "btc", "images"]):
-                    keyframe_dirs.append(item)
+            for ds in kaggle_input.iterdir():
+                if ds.is_dir():
+                    keyframe_dirs.append(ds)
+                    for sub in ds.iterdir():
+                        if sub.is_dir() and any(x in sub.name.lower() for x in ["keyframe", "frames", "media", "btc", "images"]):
+                            keyframe_dirs.append(sub)
         except Exception as e:
             logger.debug("Failed to scan /kaggle/input: %s", e)
 
