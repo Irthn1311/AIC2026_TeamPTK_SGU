@@ -81,10 +81,37 @@ def sample_stratified_edges(df_edges: pd.DataFrame, edge_type: str, n_top: int =
     return combined.to_dict("records")
 
 
+def extract_event_keyframes(node: Dict[str, Any], vid: str) -> List[Dict[str, str]]:
+    """Extract up to 3 representative keyframes (Start, Center, End) for an event."""
+    rk = node.get("representative_keyframes", [])
+    if isinstance(rk, (list, np.ndarray)) and len(rk) > 0:
+        kf_list = [str(k) for k in rk]
+    else:
+        kf_str = str(rk) if rk else "N/A"
+        kf_list = [kf_str]
+
+    # Pick start, center, end
+    n = len(kf_list)
+    if n == 1:
+        picked = [("Start", kf_list[0]), ("Center", kf_list[0]), ("End", kf_list[0])]
+    elif n == 2:
+        picked = [("Start", kf_list[0]), ("Center", kf_list[0]), ("End", kf_list[1])]
+    else:
+        picked = [("Start", kf_list[0]), ("Center", kf_list[n // 2]), ("End", kf_list[-1])]
+
+    result = []
+    for label, kf in picked:
+        clean_kf = kf.replace(".jpg", "").replace(".png", "")
+        img_url = f"keyframes/{vid}/{clean_kf}.jpg"
+        result.append({"label": label, "keyframe": clean_kf, "img_url": img_url})
+
+    return result
+
+
 def enrich_edge_samples(
     sampled_records: List[Dict[str, Any]], df_nodes: pd.DataFrame, df_shots: Optional[pd.DataFrame] = None
 ) -> List[Dict[str, Any]]:
-    """Enrich edge samples with full node metadata, timestamps, keyframes, image URLs, and captions."""
+    """Enrich edge samples with full node metadata, timestamps, 3 keyframes (Start/Center/End), and captions."""
     node_map = df_nodes.set_index("event_id").to_dict("index")
     
     shot_map = {}
@@ -102,19 +129,12 @@ def enrich_edge_samples(
         src_node = node_map.get(src_id, {})
         dst_node = node_map.get(dst_id, {})
 
-        # Keyframe formatting & path resolution
-        src_rk = src_node.get("representative_keyframes", ["N/A"])
-        src_kf_str = str(src_rk[0]) if isinstance(src_rk, (list, np.ndarray)) and len(src_rk) > 0 else str(src_rk)
-
-        dst_rk = dst_node.get("representative_keyframes", ["N/A"])
-        dst_kf_str = str(dst_rk[0]) if isinstance(dst_rk, (list, np.ndarray)) and len(dst_rk) > 0 else str(dst_rk)
-
         src_vid = str(src_node.get("video_id", e.get("src_video_id", "")))
         dst_vid = str(dst_node.get("video_id", e.get("dst_video_id", "")))
 
-        # Image paths (Local / Kaggle / Web fallback)
-        src_img_url = f"keyframes/{src_vid}/{src_kf_str}.jpg"
-        dst_img_url = f"keyframes/{dst_vid}/{dst_kf_str}.jpg"
+        # 3 Keyframes (Start / Center / End)
+        src_keyframes = extract_event_keyframes(src_node, src_vid)
+        dst_keyframes = extract_event_keyframes(dst_node, dst_vid)
 
         # Captions
         src_captions = []
@@ -142,8 +162,7 @@ def enrich_edge_samples(
                 "end_sec": float(src_node.get("end_sec", 0.0)),
                 "duration_sec": float(src_node.get("duration_sec", 0.0)),
                 "num_shots": int(src_node.get("num_shots", 0)),
-                "keyframe": src_kf_str,
-                "img_url": src_img_url,
+                "keyframes": src_keyframes,
                 "caption": " | ".join(src_captions[:3]) if src_captions else f"Event {src_id} in video {src_vid}",
             },
             "dst": {
@@ -153,8 +172,7 @@ def enrich_edge_samples(
                 "end_sec": float(dst_node.get("end_sec", 0.0)),
                 "duration_sec": float(dst_node.get("duration_sec", 0.0)),
                 "num_shots": int(dst_node.get("num_shots", 0)),
-                "keyframe": dst_kf_str,
-                "img_url": dst_img_url,
+                "keyframes": dst_keyframes,
                 "caption": " | ".join(dst_captions[:3]) if dst_captions else f"Event {dst_id} in video {dst_vid}",
             },
         }
@@ -164,7 +182,7 @@ def enrich_edge_samples(
 
 
 def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: Dict[str, Any], output_path: Path):
-    """Generate modern side-by-side interactive HTML audit dashboard with real keyframe images and strict progress tracking."""
+    """Generate modern side-by-side interactive HTML audit dashboard with 3 representative keyframes per event and strict progress tracking."""
     json_data = json.dumps(enriched_samples, indent=2)
 
     html_content = f"""<!DOCTYPE html>
@@ -260,32 +278,35 @@ def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: 
         .badge-low {{ background: rgba(239, 68, 68, 0.2); color: var(--accent-red); border: 1px solid var(--accent-red); }}
 
         .side-by-side {{
-            display: grid; grid-template-columns: 1fr 60px 1fr; gap: 16px; align-items: center;
+            display: grid; grid-template-columns: 1fr 60px 1fr; gap: 16px; align-items: stretch;
         }}
 
-        @media (max-width: 900px) {{
+        @media (max-width: 1100px) {{
             .side-by-side {{ grid-template-columns: 1fr; }}
             .vs-divider {{ text-align: center; margin: 10px 0; }}
         }}
 
         .event-box {{
             background: var(--card-bg); border: 1px solid var(--border-color);
-            border-radius: 8px; padding: 16px;
+            border-radius: 8px; padding: 16px; display: flex; flex-direction: column; justify-content: space-between;
         }}
 
         .event-box h4 {{ font-size: 15px; color: var(--accent-blue); margin-bottom: 8px; }}
         .meta-row {{ font-size: 13px; color: var(--text-muted); margin-bottom: 6px; }}
         .meta-row span {{ color: var(--text-light); font-weight: 600; }}
 
-        .keyframe-container {{
-            width: 100%; height: 200px; background: #0f172a; border: 1px solid var(--border-color);
-            border-radius: 6px; overflow: hidden; margin: 10px 0; display: flex;
-            align-items: center; justify-content: center; position: relative;
+        .keyframes-strip {{
+            display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 10px 0;
         }}
 
-        .keyframe-img {{
-            width: 100%; height: 100%; object-fit: cover;
+        .kf-item {{
+            background: #0f172a; border: 1px solid var(--border-color); border-radius: 6px; overflow: hidden; text-align: center;
         }}
+
+        .kf-lbl {{ font-size: 10px; font-weight: 700; background: #1e293b; color: var(--accent-blue); padding: 2px 4px; text-transform: uppercase; }}
+        .kf-img-box {{ width: 100%; height: 110px; position: relative; background: #000; }}
+        .kf-img-box img {{ width: 100%; height: 100%; object-fit: cover; }}
+        .kf-name {{ font-size: 9px; color: var(--text-muted); padding: 4px; font-family: monospace; word-break: break-all; }}
 
         .caption-box {{
             background: #182234; padding: 10px; border-radius: 6px; font-size: 12px; color: #cbd5e1;
@@ -293,7 +314,7 @@ def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: 
         }}
 
         .vs-divider {{
-            text-align: center; font-size: 20px; font-weight: 700; color: var(--text-muted);
+            display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: 700; color: var(--text-muted);
         }}
 
         .audit-action-bar {{
@@ -373,6 +394,23 @@ def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: 
         const samplesData = {json_data};
         const evaluations = {{}};
 
+        function renderKeyframesHtml(keyframesList, videoId) {{
+            return keyframesList.map(kf => {{
+                const fallbackText = encodeURIComponent(`${{videoId}} | ${{kf.keyframe}}`);
+                return `
+                    <div class="kf-item">
+                        <div class="kf-lbl">${{kf.label}}</div>
+                        <div class="kf-img-box">
+                            <img src="${{kf.img_url}}" 
+                                 onerror="this.onerror=null; this.src='https://placehold.co/200x110/1e293b/38bdf8?text=' + '${{fallbackText}}'" 
+                                 alt="${{kf.label}} Keyframe"/>
+                        </div>
+                        <div class="kf-name">${{kf.keyframe}}</div>
+                    </div>
+                `;
+            }}).join('');
+        }}
+
         function renderSamples(filterType = 'ALL') {{
             const container = document.getElementById('samples-container');
             container.innerHTML = '';
@@ -387,8 +425,8 @@ def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: 
                 const typeBadgeClass = s.edge_type === 'VISUAL_SIMILARITY' ? 'badge-vis' : 'badge-sem';
                 const bucketBadgeClass = s.bucket === 'TOP' ? 'badge-top' : (s.bucket === 'MIDDLE' ? 'badge-mid' : 'badge-low');
 
-                const srcFallbackText = encodeURIComponent(`${{s.src.video_id}} | ${{s.src.keyframe}}`);
-                const dstFallbackText = encodeURIComponent(`${{s.dst.video_id}} | ${{s.dst.keyframe}}`);
+                const srcKfHtml = renderKeyframesHtml(s.src.keyframes, s.src.video_id);
+                const dstKfHtml = renderKeyframesHtml(s.dst.keyframes, s.dst.video_id);
 
                 card.innerHTML = `
                     <div class="sample-header">
@@ -405,14 +443,14 @@ def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: 
                     <div class="side-by-side">
                         <!-- Source Event Box -->
                         <div class="event-box">
-                            <h4>Src Event: ${{s.src.event_id}}</h4>
-                            <div class="meta-row">Video: <span>${{s.src.video_id}}</span></div>
-                            <div class="meta-row">Time Range: <span>${{s.src.start_sec.toFixed(1)}}s - ${{s.src.end_sec.toFixed(1)}}s (${{s.src.duration_sec.toFixed(1)}}s)</span></div>
-                            <div class="meta-row">Shots: <span>${{s.src.num_shots}}</span> | Keyframe: <span>${{s.src.keyframe}}</span></div>
-                            <div class="keyframe-container">
-                                <img src="${{s.src.img_url}}" 
-                                     onerror="this.onerror=null; this.src='https://placehold.co/360x202/1e293b/38bdf8?text=' + '${{srcFallbackText}}'" 
-                                     class="keyframe-img" alt="Src Keyframe"/>
+                            <div>
+                                <h4>Src Event: ${{s.src.event_id}}</h4>
+                                <div class="meta-row">Video: <span>${{s.src.video_id}}</span></div>
+                                <div class="meta-row">Time Range: <span>${{s.src.start_sec.toFixed(1)}}s - ${{s.src.end_sec.toFixed(1)}}s (${{s.src.duration_sec.toFixed(1)}}s)</span></div>
+                                <div class="meta-row">Shots: <span>${{s.src.num_shots}}</span></div>
+                                <div class="keyframes-strip">
+                                    ${{srcKfHtml}}
+                                </div>
                             </div>
                             <div class="caption-box">💬 Caption: "${{s.src.caption}}"</div>
                         </div>
@@ -421,14 +459,14 @@ def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: 
 
                         <!-- Target Event Box -->
                         <div class="event-box">
-                            <h4>Dst Event: ${{s.dst.event_id}}</h4>
-                            <div class="meta-row">Video: <span>${{s.dst.video_id}}</span></div>
-                            <div class="meta-row">Time Range: <span>${{s.dst.start_sec.toFixed(1)}}s - ${{s.dst.end_sec.toFixed(1)}}s (${{s.dst.duration_sec.toFixed(1)}}s)</span></div>
-                            <div class="meta-row">Shots: <span>${{s.dst.num_shots}}</span> | Keyframe: <span>${{s.dst.keyframe}}</span></div>
-                            <div class="keyframe-container">
-                                <img src="${{s.dst.img_url}}" 
-                                     onerror="this.onerror=null; this.src='https://placehold.co/360x202/1e293b/38bdf8?text=' + '${{dstFallbackText}}'" 
-                                     class="keyframe-img" alt="Dst Keyframe"/>
+                            <div>
+                                <h4>Dst Event: ${{s.dst.event_id}}</h4>
+                                <div class="meta-row">Video: <span>${{s.dst.video_id}}</span></div>
+                                <div class="meta-row">Time Range: <span>${{s.dst.start_sec.toFixed(1)}}s - ${{s.dst.end_sec.toFixed(1)}}s (${{s.dst.duration_sec.toFixed(1)}}s)</span></div>
+                                <div class="meta-row">Shots: <span>${{s.dst.num_shots}}</span></div>
+                                <div class="keyframes-strip">
+                                    ${{dstKfHtml}}
+                                </div>
                             </div>
                             <div class="caption-box">💬 Caption: "${{s.dst.caption}}"</div>
                         </div>
@@ -573,6 +611,7 @@ def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: 
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(html_content)
     logger.info("Saved Stage 4B Interactive HTML Dashboard to: %s", output_path)
+
 
 
 

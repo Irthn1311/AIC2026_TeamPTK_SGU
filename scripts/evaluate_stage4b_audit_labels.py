@@ -183,6 +183,15 @@ def evaluate_metrics(records: List[Dict[str, Any]], labels_file_exists: bool) ->
     freeze_pass = overall_stats["precision_pct"] >= 80.0 and bucket_stats["NEAR_THRESHOLD"]["precision_pct"] >= 70.0
     verdict = "FREEZE STAGE 4" if freeze_pass else "TUNE STAGE 4"
 
+    # Derive tuning recommendations if needed
+    tuning_recommendations = []
+    if vis_stats["precision_pct"] < 80.0:
+        tuning_recommendations.append("Visual Precision < 80%: Increase --visual-threshold to 0.75 or reduce --top-k-visual to 5")
+    if sem_stats["precision_pct"] < 80.0:
+        tuning_recommendations.append("Semantic Precision < 80%: Increase --semantic-min-z to 2.0 or --semantic-threshold to 0.80")
+    if bucket_stats["NEAR_THRESHOLD"]["precision_pct"] < 70.0:
+        tuning_recommendations.append("Near-Threshold Precision < 70%: Tighten lower bound thresholds for similarity edge creation")
+
     return {
         "is_complete": True,
         "verdict": verdict,
@@ -197,6 +206,7 @@ def evaluate_metrics(records: List[Dict[str, Any]], labels_file_exists: bool) ->
         "bucket_stats": bucket_stats,
         "false_edges": false_edges,
         "ambiguous_edges": ambiguous_edges,
+        "tuning_recommendations": tuning_recommendations,
     }
 
 
@@ -316,6 +326,11 @@ def main():
         print(f" • Middle Bucket Precision  : {eval_results['bucket_stats']['MIDDLE']['precision_pct']:.2f}%")
         print(f" • Near-Threshold Precision : {eval_results['bucket_stats']['NEAR_THRESHOLD']['precision_pct']:.2f}%")
         print(f" • False Edges Count        : {len(eval_results['false_edges'])}")
+        print(f" • Ambiguous Edges Count    : {len(eval_results['ambiguous_edges'])}")
+        if eval_results.get("tuning_recommendations"):
+            print("\n 💡 TUNING RECOMMENDATIONS:")
+            for rec in eval_results["tuning_recommendations"]:
+                print(f"   👉 {rec}")
     else:
         print(" ⚠️  Precision Calculation   : BLOCKED (Requires 100% human ground truth labels)")
     print("=" * 80)
