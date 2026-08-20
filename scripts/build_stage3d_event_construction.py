@@ -66,24 +66,38 @@ def compute_vector_similarity(
 def compute_layout_constancy(row: pd.Series) -> float:
     """
     Estimate background / layout constancy metric S_layout [0, 1].
-    Slide / Infographic transitions have high visual similarity or similar background structure
-    despite high text/semantic divergence.
+    High when visual similarity between adjacent shots is high (static layout / slide template).
     """
     vis_sim = float(row.get("visual_similarity", 0.0))
-    sem_sim = float(row.get("semantic_similarity", 0.0))
+    return float(np.clip(vis_sim, 0.0, 1.0))
+
+
+def analyze_slide_false_positive(row: pd.Series) -> Tuple[bool, float]:
+    """
+    Strict Multi-Signal Slide / Infographic False Positive Detector.
+    Triggers when ALL of the following signals hold:
+      1. Visual boundary evidence is LOW (vis_evd <= 0.55) -> Background layout/scene is visually static.
+      2. Semantic boundary evidence is HIGH (sem_evd >= 0.82) -> Pure text/slide content change.
+      3. Evidence Gap (sem_evd - vis_evd >= 0.30) -> High disparity between text and visual scene.
+    """
     vis_evd = float(row.get("visual_boundary_evidence", 0.5))
     sem_evd = float(row.get("semantic_boundary_evidence", 0.5))
+    evd_gap = sem_evd - vis_evd
 
-    # Layout constancy is high when visual similarity is high relative to semantic similarity divergence
-    # or when semantic boundary evidence is high but visual evidence is low
-    layout_score = float(np.clip(vis_sim + max(0.0, sem_evd - vis_evd) * 0.5, 0.0, 1.0))
-    return layout_score
+    if vis_evd <= 0.55 and sem_evd >= 0.82 and evd_gap >= 0.30:
+        sim_factor = (0.55 - vis_evd) / 0.55
+        sem_factor = (sem_evd - 0.82) / 0.18
+        confidence = float(np.clip(sim_factor * sem_factor, 0.0, 1.0))
+        return True, confidence
+
+    return False, 0.0
 
 
 def refine_boundary_scores(
     df_boundaries: pd.DataFrame,
     threshold: float = 0.70,
     suppression_weight: float = 0.35,
+    max_allowed_suppression_pct: float = 30.0,
 ) -> pd.DataFrame:
     """
     Stage 3D Multimodal Refinement:
@@ -94,37 +108,91 @@ def refine_boundary_scores(
     if df.empty:
         return df
 
+    # 1. Feature Range & Distribution Inspection
+    logger.info("--- Feature Range & Distribution Inspection ---")
+    for col in ["boundary_score", "visual_similarity", "semantic_similarity", "visual_boundary_evidence", "semantic_boundary_evidence"]:
+        if col in df.columns:
+            vals = df[col].dropna().to_numpy()
+            logger.info(
+                "Feature %-28s | Min: %.4f | P25: %.4f | Med: %.4f | P75: %.4f | Max: %.4f | NaNs: %d",
+                col,
+                float(np.min(vals)),
+                float(np.percentile(vals, 25)),
+                float(np.median(vals)),
+                float(np.percentile(vals, 75)),
+                float(np.max(vals)),
+                int(df[col].isna().sum()),
+            )
+
     final_scores = []
     suppression_deltas = []
     is_boundary_final = []
+    layout_constancies = []
 
     for _, row in df.iterrows():
         base_score = float(row.get("boundary_score", 0.0))
-        vis_evd = float(row.get("visual_boundary_evidence", 0.5))
-        sem_evd = float(row.get("semantic_boundary_evidence", 0.5))
-        vis_sim = float(row.get("visual_similarity", 0.0))
-        sem_sim = float(row.get("semantic_similarity", 0.0))
-
         layout_constancy = compute_layout_constancy(row)
+        layout_constancies.append(layout_constancy)
 
-        # Refinement logic: If semantic evidence is high (slide text changed) but visual background layout
-        # is constant (high layout_constancy or high vis_sim), apply adaptive suppression.
-        sem_gap = max(0.0, sem_evd - vis_evd)
-        
-        # Slide pattern detection score
-        slide_pattern = layout_constancy * sem_gap
-        delta = float(np.clip(suppression_weight * slide_pattern, 0.0, 0.35))
+        is_slide_fp, fp_confidence = analyze_slide_false_positive(row)
+
+        if is_slide_fp:
+            # Apply targeted suppression delta
+            delta = float(np.clip(suppression_weight * fp_confidence * 0.35, 0.05, 0.25))
+        else:
+            delta = 0.0
 
         refined_score = float(np.clip(base_score - delta, 0.0, 1.0))
-        
+
         final_scores.append(refined_score)
         suppression_deltas.append(delta)
         is_boundary_final.append(refined_score > threshold)
 
-    df["layout_constancy"] = [compute_layout_constancy(r) for _, r in df.iterrows()]
+    df["layout_constancy"] = layout_constancies
     df["suppression_delta"] = suppression_deltas
     df["final_boundary_score"] = final_scores
     df["is_boundary_refined"] = is_boundary_final
+
+    # 2. Print Debug Log for Top 20 Boundaries (Highest Raw Score)
+    df_sorted_top = df.sort_values("boundary_score", ascending=False).head(20)
+    logger.info("\n" + "=" * 90)
+    logger.info("🔍 TOP 20 RAW BOUNDARIES REFINEMENT DEBUG INSPECTION:")
+    logger.info("=" * 90)
+    logger.info("%-10s | %-8s | %-8s | %-8s | %-8s | %-8s | %-8s | %-8s | %-8s", "Video", "Shot_i", "RawScore", "VisSim", "VisEvd", "SemEvd", "Penalty", "FinalScore", "IsBoundary")
+    logger.info("-" * 90)
+    for _, r in df_sorted_top.iterrows():
+        logger.info(
+            "%-10s | %-8d | %-8.4f | %-8.4f | %-8.4f | %-8.4f | %-8.4f | %-8.4f | %-8s",
+            str(r.get("video_id", "")),
+            int(r.get("shot_i", 0)),
+            float(r.get("boundary_score", 0.0)),
+            float(r.get("visual_similarity", 0.0)),
+            float(r.get("visual_boundary_evidence", 0.0)),
+            float(r.get("semantic_boundary_evidence", 0.0)),
+            float(r.get("suppression_delta", 0.0)),
+            float(r.get("final_boundary_score", 0.0)),
+            str(bool(r.get("is_boundary_refined", False))),
+        )
+    logger.info("=" * 90 + "\n")
+
+    # 3. Sanity Check on Suppression Percentage
+    raw_pos = int((df["boundary_score"] > threshold).sum())
+    refined_pos = int(df["is_boundary_refined"].sum())
+    suppressed_count = int(((df["boundary_score"] > threshold) & (~df["is_boundary_refined"])).sum())
+    suppression_pct = (suppressed_count / max(1, raw_pos)) * 100.0
+
+    logger.info("Sanity Check -> Raw Positives: %d | Refined Positives: %d | Suppressed: %d (%.2f%%)", raw_pos, refined_pos, suppressed_count, suppression_pct)
+
+    if suppression_pct > max_allowed_suppression_pct:
+        logger.warning(
+            "⚠️ SANITY CHECK WARNING: Suppression percentage (%.2f%%) exceeds safety limit (%.2f%%)! Applying conservative threshold fallback.",
+            suppression_pct,
+            max_allowed_suppression_pct,
+        )
+        # Conservative fallback: Keep boundaries where final_boundary_score > 0.65 or boundary_score > 0.75
+        df["is_boundary_refined"] = (df["final_boundary_score"] > (threshold - 0.05)) | (df["boundary_score"] > (threshold + 0.05))
+        refined_pos_fb = int(df["is_boundary_refined"].sum())
+        logger.info("Fallback Applied -> Conservative Refined Positives: %d", refined_pos_fb)
 
     return df
 
