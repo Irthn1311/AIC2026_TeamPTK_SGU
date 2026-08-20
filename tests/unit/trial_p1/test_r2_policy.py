@@ -10,6 +10,7 @@ from triage_eg.fs1.qwen_adapter import QwenEvidenceAdapter
 from triage_eg.trial_p1.r2_policy import (
     TIER_A,
     TIER_C,
+    _complete_ranked_rows,
     classify_asr_specificity,
     derive_anchor_profiles,
     rank_qa_r2,
@@ -320,6 +321,44 @@ def test_qa_r2_structural_fill_keeps_100_when_frozen_coordinates_repeat() -> Non
     assert len(rows) == 100
     assert [row["rank"] for row in rows] == list(range(1, 101))
     assert {row["answer"] for row in rows} == {"không đủ bằng chứng"}
+
+
+def test_trake_structural_fill_keeps_unique_graph_chains_then_b0_tail() -> None:
+    primary = [
+        {
+            "query_id": "Q1",
+            "video_id": "L21_V001",
+            "frame_ids": [rank, rank + 100, rank + 200, rank + 300],
+            "rank": rank,
+            "graph_candidate": True,
+        }
+        for rank in range(1, 21)
+    ]
+    fallback = [
+        {
+            "query_id": "Q1",
+            "video_id": f"L21_V{rank:03d}",
+            "frame_ids": [rank, rank + 10, rank + 20, rank + 30],
+            "rank": rank,
+            "graph_candidate": False,
+        }
+        for rank in range(1, 101)
+    ]
+    rows = _complete_ranked_rows(
+        primary,
+        fallback,
+        query_id="Q1",
+        variant="M1_R2",
+    )
+    assert len(rows) == 100
+    assert all(row["graph_candidate"] for row in rows[:20])
+    assert all(
+        all(
+            left < right
+            for left, right in zip(row["frame_ids"], row["frame_ids"][1:], strict=False)
+        )
+        for row in rows
+    )
 
 
 def test_qwen_r2_extraction_persists_sources_but_not_final_verdict(tmp_path: Path) -> None:

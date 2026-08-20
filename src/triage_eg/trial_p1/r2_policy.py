@@ -842,9 +842,31 @@ def build_r2_candidates(
                     ),
                 }
 
-            m0.extend(annotate_trake(row, "M0_R2") for row in m0_group[query_id])
-            m1.extend(annotate_trake(row, "M1_R2") for row in m1_group[query_id])
-            safe.extend(annotate_trake(row, "SAFE_R2") for row in trake_safe_group[query_id])
+            trake_baseline = [annotate_trake(row, "B0_FALLBACK") for row in baseline[query_id]]
+            m0.extend(
+                _complete_ranked_rows(
+                    (annotate_trake(row, "M0_R2") for row in m0_group[query_id]),
+                    trake_baseline,
+                    query_id=query_id,
+                    variant="M0_R2",
+                )
+            )
+            m1.extend(
+                _complete_ranked_rows(
+                    (annotate_trake(row, "M1_R2") for row in m1_group[query_id]),
+                    trake_baseline,
+                    query_id=query_id,
+                    variant="M1_R2",
+                )
+            )
+            safe.extend(
+                _complete_ranked_rows(
+                    (annotate_trake(row, "SAFE_R2") for row in trake_safe_group[query_id]),
+                    trake_baseline,
+                    query_id=query_id,
+                    variant="SAFE_R2",
+                )
+            )
     candidates = {"M0_R2": m0, "M1_R2": m1, "SAFE_R2": safe}
     validation = {}
     for name, rows in candidates.items():
