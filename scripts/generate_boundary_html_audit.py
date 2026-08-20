@@ -78,36 +78,58 @@ def resolve_keyframe_src(video_id: str, shot_id: Any, kf_id: str, keyframe_dirs:
         return create_svg_keyframe_placeholder(video_id, shot_id, f"Shot_{shot_id}")
 
     clean_kf = str(kf_id).strip()
+    level = video_id.split("_", 1)[0] if "_" in video_id else ""
     candidates = []
 
     for kdir in keyframe_dirs:
-        candidates.extend([
-            kdir / video_id / f"{clean_kf}.jpg",
-            kdir / video_id / f"{clean_kf}.png",
-            kdir / video_id / f"{clean_kf}.jpeg",
-            kdir / f"{video_id}_{clean_kf}.jpg",
-            kdir / f"{video_id}_{clean_kf}.png",
-            kdir / f"{clean_kf}.jpg",
-            kdir / f"{clean_kf}.png",
-            kdir / "keyframes" / video_id / f"{clean_kf}.jpg",
-            kdir / "keyframes" / video_id / f"{clean_kf}.png",
-            kdir / "media" / video_id / f"{clean_kf}.jpg",
-        ])
-        if clean_kf.isdigit():
+        # Base candidate paths
+        sub_dirs = [
+            kdir / video_id,
+            kdir / "keyframes" / video_id,
+            kdir / "keyframes" / "keyframes" / video_id,
+            kdir / f"Keyframes_{level}" / "keyframes" / video_id if level else kdir,
+            kdir / f"Keyframes_{level}" / video_id if level else kdir,
+            kdir,
+        ]
+        for sdir in sub_dirs:
             candidates.extend([
-                kdir / video_id / f"{int(clean_kf):05d}.jpg",
-                kdir / video_id / f"{int(clean_kf):06d}.jpg",
-                kdir / video_id / f"{int(clean_kf):04d}.jpg",
-                kdir / f"{video_id}_{int(clean_kf):05d}.jpg",
-                kdir / f"{video_id}_{int(clean_kf):06d}.jpg",
-                kdir / f"{int(clean_kf):05d}.jpg",
-                kdir / f"{int(clean_kf):06d}.jpg",
+                sdir / f"{clean_kf}.jpg",
+                sdir / f"{clean_kf}.png",
+                sdir / f"{clean_kf}.jpeg",
+                sdir / f"{video_id}_{clean_kf}.jpg",
             ])
+            if clean_kf.isdigit():
+                n_val = int(clean_kf)
+                candidates.extend([
+                    sdir / f"{n_val:03d}.jpg",
+                    sdir / f"{n_val:04d}.jpg",
+                    sdir / f"{n_val:05d}.jpg",
+                    sdir / f"{n_val:06d}.jpg",
+                    sdir / f"{n_val:03d}.png",
+                    sdir / f"{n_val:04d}.png",
+                ])
 
+    # Check explicit candidate list
     for cand in candidates:
         data_uri = resolve_image_to_data_uri(cand)
         if data_uri:
             return data_uri
+
+    # Fast glob search fallback across keyframe directories
+    for kdir in keyframe_dirs:
+        if kdir.exists():
+            matches = list(kdir.glob(f"**/{video_id}/*{clean_kf}*.jpg"))
+            if not matches and clean_kf.isdigit():
+                n_val = int(clean_kf)
+                matches = (
+                    list(kdir.glob(f"**/{video_id}/{n_val:03d}.jpg"))
+                    or list(kdir.glob(f"**/{video_id}/{n_val:04d}.jpg"))
+                    or list(kdir.glob(f"**/{video_id}/*{n_val:03d}*.jpg"))
+                )
+            if matches:
+                data_uri = resolve_image_to_data_uri(matches[0])
+                if data_uri:
+                    return data_uri
 
     # Fallback to SVG placeholder if image file not on disk
     return create_svg_keyframe_placeholder(video_id, shot_id, clean_kf)
