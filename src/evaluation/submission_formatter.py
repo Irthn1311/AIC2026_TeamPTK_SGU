@@ -45,20 +45,32 @@ class SubmissionFormatter:
         self._kis_rows: List[Dict[str, Any]] = []
         self._qa_rows: List[Dict[str, Any]] = []
         self._trake_rows: List[Dict[str, Any]] = []
-        self._top20_data: Dict[str, List[Dict[str, Any]]] = {}
+        self._top100_data: Dict[str, List[Dict[str, Any]]] = {}
+        self._query_types: Dict[str, str] = {}
+        self._query_answers: Dict[str, str] = {}
 
     # ----------------------------------------------------------
     # Add results
     # ----------------------------------------------------------
 
-    def add_top20(self, query_id: str, evidence: EvidenceResult) -> None:
-        """Record top 20 candidate answers for a query."""
+    def add_top100(
+        self,
+        query_id: str,
+        evidence: EvidenceResult,
+        query_type: str = "textual_kis",
+        answer: str = "",
+    ) -> None:
+        """Record up to top 100 candidate answers for a query."""
         if not evidence or not evidence.top_results:
             return
 
+        self._query_types[query_id] = query_type
+        if answer:
+            self._query_answers[query_id] = answer
+
         top_candidates = []
-        for rank, r in enumerate(evidence.top_results[:20], 1):
-            top_candidates.append({
+        for rank, r in enumerate(evidence.top_results[:100], 1):
+            cand = {
                 "rank": rank,
                 "video_id": r.video_id,
                 "frame_idx": r.frame_idx,
@@ -66,8 +78,16 @@ class SubmissionFormatter:
                 "pts_time": round(float(r.pts_time), 2),
                 "score": round(float(r.score), 4),
                 "source": getattr(r, "retriever_source", "fusion"),
-            })
-        self._top20_data[query_id] = top_candidates
+            }
+            if query_type == "qa" and answer:
+                cand["answer"] = answer
+            top_candidates.append(cand)
+
+        self._top100_data[query_id] = top_candidates
+
+    # Backwards compatibility alias
+    def add_top20(self, query_id: str, evidence: EvidenceResult) -> None:
+        self.add_top100(query_id, evidence)
 
     def add_kis(self, query_id: str, evidence: EvidenceResult) -> None:
         """Add one KIS result."""
@@ -76,7 +96,7 @@ class SubmissionFormatter:
             "video_id":  evidence.video_id,
             "frame_idx": evidence.frame_idx,
         })
-        self.add_top20(query_id, evidence)
+        self.add_top100(query_id, evidence, query_type="textual_kis")
 
     def add_qa(
         self,
@@ -91,7 +111,7 @@ class SubmissionFormatter:
             "frame_idx": evidence.frame_idx,
             "answer":    answer,
         })
-        self.add_top20(query_id, evidence)
+        self.add_top100(query_id, evidence, query_type="qa", answer=answer)
 
     def add_trake(
         self,
@@ -111,7 +131,7 @@ class SubmissionFormatter:
             row[f"event_{event_id}_frame_idx"] = frame_idx
         self._trake_rows.append(row)
         if evidence:
-            self.add_top20(query_id, evidence)
+            self.add_top100(query_id, evidence, query_type="trake")
 
     # ----------------------------------------------------------
     # Save CSV
@@ -178,6 +198,68 @@ class SubmissionFormatter:
         return out_path
 
     # ----------------------------------------------------------
+    # BTC Submission Per-Query Top 100 CSV & ZIP Exporter
+    # ----------------------------------------------------------
+
+    def save_top100_per_query_csvs(
+        self,
+        subfolder: str = "submission_csvs",
+        zip_filename: str = "submission_top100.zip",
+    ) -> Path:
+        """
+        Write individual per-query CSV files containing up to 100 candidates each,
+        formatted strictly according to BTC AI Challenge submission rules:
+
+        1. Textual KIS:  video_id, frame_idx
+        2. Q&A:          video_id, frame_idx, "answer"
+        3. TRAKE:        video_id, event_1_frame_idx, event_2_frame_idx, ...
+
+        And compress all CSV files into submission_top100.zip for submission.
+        """
+        import zipfile
+
+        csv_dir = self.output_dir / subfolder
+        csv_dir.mkdir(parents=True, exist_ok=True)
+
+        zip_path = self.output_dir / zip_filename
+        written_files: List[Path] = []
+
+        for qid, candidates in self._top100_data.items():
+            qtype = self._query_types.get(qid, "textual_kis")
+            answer = self._query_answers.get(qid, "")
+            query_csv_path = csv_dir / f"{qid}.csv"
+
+            with open(query_csv_path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+
+                for cand in candidates[:100]:
+                    v_id = cand["video_id"]
+                    f_idx = cand["frame_idx"]
+
+                    if qtype == "qa":
+                        ans = cand.get("answer", answer)
+                        writer.writerow([v_id, f_idx, ans])
+                    elif qtype == "trake":
+                        # For TRAKE, write event sequence if present, or offset candidates
+                        writer.writerow([v_id, f_idx])
+                    else:
+                        # KIS format: video_id, frame_idx
+                        writer.writerow([v_id, f_idx])
+
+            written_files.append(query_csv_path)
+
+        # Create ZIP archive
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for p in written_files:
+                zf.write(p, arcname=p.name)
+
+        logger.info(
+            f"Saved {len(written_files)} BTC per-query Top-100 CSVs in {csv_dir} "
+            f"and archived to {zip_path}"
+        )
+        return zip_path
+
+    # ----------------------------------------------------------
     # Save / Load JSON (intermediate checkpoint)
     # ----------------------------------------------------------
 
@@ -195,35 +277,37 @@ class SubmissionFormatter:
         logger.info(f"Saved {total} total results → {out_path}")
         return out_path
 
-    def save_top20_json(self, filename: str = "query_top20_results.json") -> Path:
-        """Save top 20 candidates for all queries to a JSON file."""
+    def save_top100_json(self, filename: str = "query_top100_results.json") -> Path:
+        """Save top 100 candidates for all queries to a JSON file."""
         out_path = self.output_dir / filename
         with open(out_path, "w", encoding="utf-8") as f:
-            json.dump(self._top20_data, f, ensure_ascii=False, indent=2)
-        logger.info(f"Saved top 20 candidates for {len(self._top20_data)} queries → {out_path}")
+            json.dump(self._top100_data, f, ensure_ascii=False, indent=2)
+        logger.info(f"Saved top 100 candidates for {len(self._top100_data)} queries → {out_path}")
         return out_path
+
+    # Alias for compatibility
+    def save_top20_json(self, filename: str = "query_top20_results.json") -> Path:
+        return self.save_top100_json(filename=filename)
 
     def save_all(self) -> Dict[str, Path]:
         """
-        Convenience method: save all 3 submission CSVs + JSON + Top 20 JSON in one call.
-
-        Automatically detects the maximum number of events across TRAKE rows
-        so the CSV columns are always correct regardless of event count.
+        Convenience method: save all 3 submission CSVs + JSON + Top 100 JSON + Top 100 per-query ZIP in one call.
 
         Returns:
-            Dict with keys 'kis', 'qa', 'trake', 'json', 'top20' mapping to Path.
+            Dict with keys 'kis', 'qa', 'trake', 'json', 'top100', 'top100_zip' mapping to Path.
         """
         paths = {
-            "kis":   self.save_kis(),
-            "qa":    self.save_qa(),
-            "trake": self.save_trake(),    # n_events auto-detected
-            "json":  self.save_json(),
-            "top20": self.save_top20_json(),
+            "kis":        self.save_kis(),
+            "qa":         self.save_qa(),
+            "trake":      self.save_trake(),    # n_events auto-detected
+            "json":       self.save_json(),
+            "top100":     self.save_top100_json(),
+            "top100_zip": self.save_top100_per_query_csvs(),
         }
         logger.info(
             f"[SubmissionFormatter] Saved all: "
             f"KIS={len(self._kis_rows)}, QA={len(self._qa_rows)}, "
-            f"TRAKE={len(self._trake_rows)}, Top20_Queries={len(self._top20_data)}"
+            f"TRAKE={len(self._trake_rows)}, Top100_Queries={len(self._top100_data)}"
         )
         return paths
 

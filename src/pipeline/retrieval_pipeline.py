@@ -387,15 +387,15 @@ class RetrievalPipeline:
         fused = self._temporal_reranker.rerank(kis_query, fused, top_k=self._top_k_fus)
         logger.info(f"  • Tầng 3 - Temporal Continuity Rerank: Hoàn tất (Đã tối ưu cụm thời gian)")
 
-        # Step 5: Final Selection & Top-20 Output
-        logger.info(f"\n[BƯỚC 5/5 - LỰA CHỌN KEYFRAME & XUẤT 20 ĐÁP ÁN ĐIỂM CAO NHẤT]")
+        # Step 5: Final Selection & Top Output
+        logger.info(f"\n[BƯỚC 5/5 - LỰA CHỌN KEYFRAME & XUẤT TOP 100 ĐÁP ÁN]")
         best_evidence = self._selector.select_best(fused, query_id=query_id)
         if best_evidence:
             clip_conf = round(float(top1_score), 4)
 
-            # Log top 20 candidates table
+            # Log top 20 candidates table (full 100 saved in top_results)
             top20 = fused[:20]
-            logger.info(f"\n  📋 DANH SÁCH TOP 20 ĐÁP ÁN ĐIỂM CAO NHẤT (QUERY '{query_id}'):")
+            logger.info(f"\n  📋 DANH SÁCH TOP 20 / 100 ĐÁP ÁN ĐIỂM CAO NHẤT (QUERY '{query_id}'):")
             logger.info(f"  {'Hạng':<5} | {'Video ID':<12} | {'Frame Index':<12} | {'Keyframe (n)':<14} | {'PTS Time':<10} | {'Score':<8}")
             logger.info(f"  {'-'*75}")
             for rank, r in enumerate(top20, 1):

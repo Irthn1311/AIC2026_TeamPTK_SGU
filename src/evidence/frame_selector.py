@@ -63,7 +63,7 @@ class FrameSelector:
             pts_time=best.pts_time,
             confidence=best.score,
             explanation=explanation or f"Top result from {best.retriever_source} (score={best.score:.4f})",
-            top_results=results[:20],
+            top_results=results[:100],
         )
 
         logger.debug(
