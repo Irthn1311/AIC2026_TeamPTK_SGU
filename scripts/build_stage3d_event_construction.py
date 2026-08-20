@@ -93,6 +93,48 @@ def analyze_slide_false_positive(row: pd.Series) -> Tuple[bool, float]:
     return False, 0.0
 
 
+def apply_robust_calibrated_fusion(
+    df_sim: pd.DataFrame,
+    vis_weight: float = 0.5,
+    sem_weight: float = 0.5,
+    boundary_threshold: float = 0.70,
+) -> pd.DataFrame:
+    """Apply Robust Z-score normalization and Sigmoidal Boundary Evidence Fusion if missing."""
+    df = df_sim.copy()
+    if df.empty:
+        return df
+
+    if "boundary_score" in df.columns and "visual_boundary_evidence" in df.columns:
+        return df
+
+    logger.info("Computing Robust Z-score & Boundary Evidence Fusion...")
+    vis_median = float(df["visual_similarity"].median())
+    vis_q25 = float(df["visual_similarity"].quantile(0.25))
+    vis_q75 = float(df["visual_similarity"].quantile(0.75))
+    vis_iqr = max(vis_q75 - vis_q25, 1e-8)
+
+    sem_median = float(df["semantic_similarity"].median())
+    sem_q25 = float(df["semantic_similarity"].quantile(0.25))
+    sem_q75 = float(df["semantic_similarity"].quantile(0.75))
+    sem_iqr = max(sem_q75 - sem_q25, 1e-8)
+
+    df["visual_z"] = (df["visual_similarity"] - vis_median) / vis_iqr
+    df["semantic_z"] = (df["semantic_similarity"] - sem_median) / sem_iqr
+
+    df["visual_boundary_evidence"] = 1.0 / (1.0 + np.exp(df["visual_z"].to_numpy(dtype=np.float64)))
+    df["semantic_boundary_evidence"] = 1.0 / (1.0 + np.exp(df["semantic_z"].to_numpy(dtype=np.float64)))
+
+    w_sum = vis_weight + sem_weight
+    w_v = vis_weight / w_sum if w_sum > 0 else 0.5
+    w_s = sem_weight / w_sum if w_sum > 0 else 0.5
+
+    df["boundary_score"] = (w_v * df["visual_boundary_evidence"]) + (w_s * df["semantic_boundary_evidence"])
+    df["fused_similarity"] = (w_v * df["visual_similarity"]) + (w_s * df["semantic_similarity"])
+    df["is_boundary"] = df["boundary_score"] > boundary_threshold
+
+    return df
+
+
 def refine_boundary_scores(
     df_boundaries: pd.DataFrame,
     threshold: float = 0.70,
@@ -104,9 +146,11 @@ def refine_boundary_scores(
     Calculates `final_boundary_score` by penalizing false boundaries caused by slide/infographic
     text changes with static background/layout.
     """
-    df = df_boundaries.copy()
-    if df.empty:
-        return df
+    if df_boundaries.empty:
+        return df_boundaries.copy()
+
+    # Ensure boundary_score and evidence features are computed
+    df = apply_robust_calibrated_fusion(df_boundaries, boundary_threshold=threshold)
 
     # 1. Feature Range & Distribution Inspection
     logger.info("--- Feature Range & Distribution Inspection ---")
