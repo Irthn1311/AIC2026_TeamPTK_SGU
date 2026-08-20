@@ -125,6 +125,7 @@ class QAPipeline:
 
         # Step 1: Retrieve candidate keyframes using enriched QA text
         candidates = self._retrieve_candidates(qa_query)
+        self.last_candidates = candidates
         if not candidates:
             logger.warning(f"[QA] No candidates for query_id='{query_id}'")
             return None

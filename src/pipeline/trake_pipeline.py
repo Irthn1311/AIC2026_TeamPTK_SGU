@@ -204,21 +204,34 @@ class TRAKEPipeline:
         # Build submission with STRICT DEDUPLICATION and MONOTONIC TEMPORAL ORDERING
         events = []
         used_frame_indices = set()
-        last_valid_fidx = 0
+        last_valid_fidx = -1
+
+        logger.info(
+            f"[TRAKE] Building submission for '{best.video_id}' — "
+            f"event_frames keys: {list(best.event_frames.keys())}"
+        )
 
         for event in trake_query.event_sequence:
             ev_id = event.event_id
             frame = best.event_frames.get(ev_id)
             
-            if frame is not None and frame.frame_idx > 0 and frame.frame_idx not in used_frame_indices:
+            if frame is not None and frame.frame_idx >= 0 and frame.frame_idx not in used_frame_indices:
                 f_idx = frame.frame_idx
                 pts = frame.pts_time
+                logger.debug(
+                    f"[TRAKE] Event {ev_id}: MATCHED frame_idx={f_idx} pts={pts:.2f}s "
+                    f"(score={frame.score:.4f})"
+                )
             else:
                 # Fallback: Find next available distinct frame index in video
-                f_idx = last_valid_fidx + 25 if last_valid_fidx > 0 else 1
+                f_idx = last_valid_fidx + 25 if last_valid_fidx >= 0 else 1
                 while f_idx in used_frame_indices:
                     f_idx += 25
                 pts = 0.0
+                reason = "no frame found" if frame is None else f"frame_idx={frame.frame_idx} (duplicate or invalid)"
+                logger.warning(
+                    f"[TRAKE] Event {ev_id}: FALLBACK frame_idx={f_idx} — {reason}"
+                )
 
             used_frame_indices.add(f_idx)
             last_valid_fidx = f_idx
@@ -228,6 +241,11 @@ class TRAKEPipeline:
                 frame_idx=f_idx,
                 pts_time=pts,
             ))
+
+        logger.info(
+            f"[TRAKE] Final submission: video={best.video_id} | "
+            + " | ".join(f"E{e.event_id}={e.frame_idx}" for e in events)
+        )
 
         return TRAKESubmission(
             query_id=query_id,

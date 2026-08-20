@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from src.common.enums import QueryType
-from src.common.types import EvidenceResult, QASubmission, TRAKESubmission, TRAKEEventResult
+from src.common.types import EvidenceResult, SearchResult, QASubmission, TRAKESubmission, TRAKEEventResult
 from src.reasoning.query_classifier import QueryClassifier
 from src.reasoning.query_parser import QueryParser
 from src.reasoning.batch_router import BatchRouter
@@ -586,6 +586,7 @@ class RetrievalPipeline:
 
         # Wrap in EvidenceResult so the run_queries.py runner can handle uniformly
         # Pillar 1: QA confidence = 0.85 (VLM-verified answer, higher than pure CLIP retrieval)
+        top_cands = getattr(self._qa_pipeline, "last_candidates", [])
         return EvidenceResult(
             video_id=qa_result.video_id,
             frame_idx=qa_result.frame_idx,
@@ -593,6 +594,7 @@ class RetrievalPipeline:
             pts_time=0.0,
             confidence=0.85,   # VLM-verified answer, not hardcoded 1.0
             explanation=f"QA answer: {qa_result.answer}",
+            top_results=top_cands[:self._top_k_ret],
             metadata={"answer": qa_result.answer, "query_type": "qa"},
         )
 
