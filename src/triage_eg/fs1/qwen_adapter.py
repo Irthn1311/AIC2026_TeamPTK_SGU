@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +10,40 @@ from triage_eg.e2e1.qa import garbage_reason, normalize_answer_text
 
 from .contracts import QWEN_REVISION
 from .qa import GroundingCandidate, parse_qwen_output
+
+
+def _first_complete_json_object(raw: str) -> dict[str, Any]:
+    """Return the first balanced JSON object; never repair truncated output."""
+
+    text = str(raw).replace("```json", "").replace("```JSON", "").replace("```", "")
+    start = text.find("{")
+    if start < 0:
+        raise ValueError("QWEN_JSON_OBJECT_MISSING")
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(start, len(text)):
+        char = text[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                value = json.loads(text[start : index + 1])
+                if not isinstance(value, dict):
+                    raise ValueError("QWEN_JSON_ROOT_NOT_OBJECT")
+                return value
+    raise ValueError("QWEN_JSON_OBJECT_TRUNCATED")
 
 
 class QwenEvidenceAdapter:
@@ -146,7 +179,9 @@ class QwenEvidenceAdapter:
             "(string), supporting_source_ids (list of catalog source_id strings), "
             "supporting_spans (list of copied or near-verbatim catalog spans), and "
             "evidence_sufficient (boolean). Do not explain, invent IDs, return metadata MIDs, "
-            "or cite evidence outside this catalog. If context is empty or unrelated, set "
+            "or cite evidence outside this catalog. Use at most 3 supporting_source_ids and "
+            "at most 3 supporting_spans; every span must be <=160 characters. If context is "
+            "empty or unrelated, set "
             "evidence_sufficient=false. "
             f"Compiled answer_type={answer_type}; answer_policy={answer_policy}. "
             f"Description={description}; Question={question}; Catalog="
@@ -164,14 +199,13 @@ class QwenEvidenceAdapter:
         inputs = self.processor(
             text=[rendered], images=[image], padding=True, return_tensors="pt"
         ).to(self.device)
-        generated = self.model.generate(**inputs, max_new_tokens=160, do_sample=False)
+        generated = self.model.generate(**inputs, max_new_tokens=256, do_sample=False)
         trimmed = generated[:, inputs.input_ids.shape[1] :]
         raw = self.processor.batch_decode(trimmed, skip_special_tokens=True)[0]
         parsed = None
         parse_reason = None
         try:
-            match = re.search(r"\{.*\}", raw, re.S)
-            value = json.loads(match.group(0) if match else raw)
+            value = _first_complete_json_object(raw)
             answer = normalize_answer_text(value["answer"])
             sources = value["supporting_source_ids"]
             spans = value["supporting_spans"]
@@ -181,8 +215,11 @@ class QwenEvidenceAdapter:
                 or str(value["answer_type"]).upper() != str(answer_type).upper()
                 or not isinstance(sources, list)
                 or not all(isinstance(item, str) for item in sources)
+                or len(sources) > 3
                 or not isinstance(spans, list)
                 or not all(isinstance(item, str) for item in spans)
+                or len(spans) > 3
+                or any(len(item) > 160 for item in spans)
                 or not isinstance(sufficient, bool)
                 or (
                     sufficient
