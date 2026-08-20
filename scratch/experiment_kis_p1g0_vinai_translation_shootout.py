@@ -108,8 +108,12 @@ class VinAIOfflineTranslator:
         self.model_id = VINAI_MODEL_ID
         print(f"\n[Loading Candidate VinAI Translator: '{self.model_id}' on device '{device}'...]", flush=True)
         t0 = time.time()
-        self.tokenizer = AutoTokenizer.from_pretrained(self.model_id, src_lang="vi_VN")
-        self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_id).to(device)
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_id, src_lang="vi_VN", use_fast=False)
+        self.model = AutoModelForSeq2SeqLM.from_pretrained(
+            self.model_id,
+            low_cpu_mem_usage=False,
+            torch_dtype=torch.float32,
+        ).to(device)
         self.model.eval()
         self.load_time = time.time() - t0
         
