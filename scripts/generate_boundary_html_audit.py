@@ -728,18 +728,30 @@ def main():
         Path("/kaggle/working/artifacts/keyframe_btc_full"),
     ])
 
-    # Auto-discover any keyframe/media dataset folders in /kaggle/input (Shallow scan to prevent FS hang)
+    # Auto-discover any folders containing .jpg / .png keyframe images in /kaggle/input
     kaggle_input = Path("/kaggle/input")
     if kaggle_input.exists():
+        found_dirs = set()
         try:
-            for ds in kaggle_input.iterdir():
-                if ds.is_dir():
-                    keyframe_dirs.append(ds)
-                    for sub in ds.iterdir():
-                        if sub.is_dir() and any(x in sub.name.lower() for x in ["keyframe", "frames", "media", "btc", "images"]):
-                            keyframe_dirs.append(sub)
+            for root, _, files in os.walk(str(kaggle_input)):
+                if any(f.lower().endswith((".jpg", ".png", ".jpeg")) for f in files[:20]):
+                    p = Path(root)
+                    found_dirs.add(p)
+                    found_dirs.add(p.parent)
+                    if len(found_dirs) >= 100:
+                        break
         except Exception as e:
-            logger.debug("Failed to scan /kaggle/input: %s", e)
+            logger.debug("Failed os.walk scan of /kaggle/input: %s", e)
+        keyframe_dirs.extend(list(found_dirs))
+
+    # Also check /kaggle/working
+    kaggle_working = Path("/kaggle/working")
+    if kaggle_working.exists():
+        for root, _, files in os.walk(str(kaggle_working)):
+            if any(f.lower().endswith((".jpg", ".png", ".jpeg")) for f in files[:20]):
+                p = Path(root)
+                keyframe_dirs.append(p)
+                keyframe_dirs.append(p.parent)
 
     logger.info("Keyframe search directories (%d total): %s", len(keyframe_dirs), [str(d) for d in keyframe_dirs[:5]])
 
