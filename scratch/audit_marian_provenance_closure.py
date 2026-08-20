@@ -56,14 +56,17 @@ def run_provenance_audit() -> None:
     print(f"• Pinned Revision Target           : {fp.get('pinned_revision')}", flush=True)
     print(f"• Resolved Local Snapshot Dir      : {fp.get('resolved_snapshot_dir')}", flush=True)
     print(f"• Local Snapshot Commit Hash       : {fp.get('snapshot_commit_hash')}", flush=True)
+    print(f"• Revision Matches Snapshot        : {'YES ✅' if fp.get('revision_matches_snapshot') else 'FALLBACK_LOCAL_CACHE ⚠️'}", flush=True)
+    print(f"• Primary Weight Artifact          : {fp.get('primary_weight_artifact')}", flush=True)
     print(f"• Execution Device                 : {fp.get('device')}", flush=True)
 
-    print("\n--- RESOLVED COMPONENT ARTIFACTS & EXACT SHA256 FINGERPRINTS ---", flush=True)
-    for k, v in fp.items():
+    print("\n--- COMPONENT ARTIFACTS & FULL SHA256 CHECKSUMS ---", flush=True)
+    for k, v in sorted(fp.items()):
         if k.endswith("_sha256"):
             base = k[:-7]
             size = fp.get(f"{base}_size_bytes", "N/A")
-            print(f"  [{base:<24}] Size: {size:>10} bytes | SHA256: {v}", flush=True)
+            is_primary = " [PRIMARY WEIGHT]" if base == fp.get("primary_weight_artifact") else ""
+            print(f"  • {base:<22} ({size:>10} bytes){is_primary} : {v}", flush=True)
 
     # Validate weight file and spm presence
     has_weights = "model.safetensors_sha256" in fp or "pytorch_model.bin_sha256" in fp

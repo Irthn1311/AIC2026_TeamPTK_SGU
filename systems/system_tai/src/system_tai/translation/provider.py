@@ -149,6 +149,11 @@ class MarianOfflineTranslator:
             if r.exists():
                 snaps = r / "snapshots"
                 if snaps.exists():
+                    # 1. Prioritize exact pinned revision
+                    if self.revision and (snaps / self.revision).is_dir():
+                        snapshot_dir = snaps / self.revision
+                        break
+                    # 2. Fallback to existing snapshot directory if revision was cached under default branch
                     for snap in snaps.iterdir():
                         if snap.is_dir():
                             snapshot_dir = snap
@@ -159,8 +164,15 @@ class MarianOfflineTranslator:
         if snapshot_dir and snapshot_dir.exists():
             info["resolved_snapshot_dir"] = str(snapshot_dir)
             info["snapshot_commit_hash"] = snapshot_dir.name
+            info["revision_matches_snapshot"] = (
+                True if (self.revision and snapshot_dir.name == self.revision) else False
+            )
 
-            # Scan key artifacts
+            # Determine primary weight artifact
+            primary_weights = "model.safetensors" if (snapshot_dir / "model.safetensors").exists() else "pytorch_model.bin"
+            info["primary_weight_artifact"] = primary_weights
+
+            # Scan and compute full SHA256 for all key artifacts
             for fname in [
                 "model.safetensors",
                 "pytorch_model.bin",
