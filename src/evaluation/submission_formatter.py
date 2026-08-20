@@ -38,6 +38,22 @@ class SubmissionFormatter:
         formatter.save_qa("submission_qa.csv")
     """
 
+class SubmissionFormatter:
+    """
+    Converts EvidenceResult objects into BTC-standard CSV submission files.
+
+    Usage:
+        formatter = SubmissionFormatter(output_dir="outputs/submission")
+
+        # KIS
+        formatter.add_kis(query_id="q001", evidence=evidence)
+        formatter.save_kis("submission_kis.csv")
+
+        # Q&A
+        formatter.add_qa(query_id="q002", evidence=evidence, answer="5")
+        formatter.save_qa("submission_qa.csv")
+    """
+
     def __init__(self, output_dir: str = "outputs/submission"):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -48,6 +64,7 @@ class SubmissionFormatter:
         self._top100_data: Dict[str, List[Dict[str, Any]]] = {}
         self._query_types: Dict[str, str] = {}
         self._query_answers: Dict[str, str] = {}
+        self._query_n_events: Dict[str, int] = {}
 
     # ----------------------------------------------------------
     # Add results
@@ -132,6 +149,8 @@ class SubmissionFormatter:
         for event_id, frame_idx in sorted(event_frame_idxs.items()):
             row[f"event_{event_id}_frame_idx"] = frame_idx
         self._trake_rows.append(row)
+        self._query_n_events[query_id] = len(event_frame_idxs)
+
         if evidence:
             if evidence.top_results and len(evidence.top_results) > 0:
                 if not hasattr(evidence.top_results[0], "metadata") or evidence.top_results[0].metadata is None:
@@ -184,10 +203,24 @@ class SubmissionFormatter:
                             pass
             n_events = max_ev if self._trake_rows else 4
 
+        # Fill missing event columns for rows that have fewer events than n_events
+        padded_rows = []
+        for row in self._trake_rows:
+            r = dict(row)
+            last_fidx = 1
+            for i in range(1, n_events + 1):
+                col = f"event_{i}_frame_idx"
+                if col in r and r[col] is not None:
+                    last_fidx = r[col]
+                else:
+                    last_fidx += 5
+                    r[col] = last_fidx
+            padded_rows.append(r)
+
         fieldnames = ["query_id", "video_id"] + [
             f"event_{i}_frame_idx" for i in range(1, n_events + 1)
         ]
-        return self._write_csv(self._trake_rows, filename, fieldnames)
+        return self._write_csv(padded_rows, filename, fieldnames)
 
     def _write_csv(
         self,
@@ -219,6 +252,7 @@ class SubmissionFormatter:
         1. Textual KIS:  video_id, frame_idx
         2. Q&A:          video_id, frame_idx, "answer"
         3. TRAKE:        video_id, event_1_frame_idx, event_2_frame_idx, ...
+                         (Dynamic N keyframe columns matching query events)
 
         And compress all CSV files into submission_top100.zip for submission.
         """
@@ -233,6 +267,7 @@ class SubmissionFormatter:
         for qid, candidates in self._top100_data.items():
             qtype = self._query_types.get(qid, "textual_kis")
             answer = self._query_answers.get(qid, "")
+            n_evs = self._query_n_events.get(qid, 4)
             query_csv_path = csv_dir / f"{qid}.csv"
 
             with open(query_csv_path, "w", newline="", encoding="utf-8") as f:
@@ -251,7 +286,9 @@ class SubmissionFormatter:
                             row_idxs = [event_idxs[k] for k in sorted(event_idxs.keys())]
                             writer.writerow([v_id] + row_idxs)
                         else:
-                            writer.writerow([v_id, f_idx, f_idx + 5, f_idx + 10])
+                            # Dynamic N keyframes corresponding exactly to query's n_events
+                            row_idxs = [f_idx + i * 5 for i in range(n_evs)]
+                            writer.writerow([v_id] + row_idxs)
                     else:
                         # KIS format: video_id, frame_idx
                         writer.writerow([v_id, f_idx])

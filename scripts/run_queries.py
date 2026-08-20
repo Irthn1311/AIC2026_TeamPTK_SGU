@@ -148,7 +148,15 @@ def main():
             else:
                 # Fallback: map single frame across all events in query
                 fidx = evidence.frame_idx if evidence.frame_idx > 0 else 1
-                n_evs = len(query_dict.get("events", [])) or 3
+                raw_events = query_dict.get("events", [])
+                if isinstance(raw_events, list) and len(raw_events) > 0:
+                    n_evs = len(raw_events)
+                else:
+                    # Count E1, E2, E3, E4... occurrences in query text
+                    qtext = str(query_dict.get("text", ""))
+                    e_matches = re.findall(r'(?:E|Event\s*)\d+', qtext, re.IGNORECASE)
+                    n_evs = len(e_matches) if len(e_matches) > 0 else 4
+
                 event_frame_idxs = {ev_id: fidx + (ev_id - 1) * 5 for ev_id in range(1, n_evs + 1)}
                 formatter.add_trake(qid, evidence.video_id, event_frame_idxs, evidence=evidence)
 
