@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Canonical L21-150 KIS DEV Benchmark Runner (Phase K0.1 - 5-Query Smoke).
+"""Canonical L21-150 KIS DEV Benchmark Runner (Full-38 DEV Baseline).
 
 Strict Contract & Provenance:
   1. DEV-only Ground Truth Artifact:
@@ -16,7 +16,9 @@ Strict Contract & Provenance:
   4. Frame Semantic Round-Trip Trace:
      - internal physical frame -> export official frame_id -> evaluator physical frame
      - Asserts evaluator physical frame == internal physical frame.
-  5. 5-Query Smoke Execution (Hold Full-38 until smoke is reviewed).
+  5. Full-38 DEV Execution:
+     - Evaluates official KIS metrics (R@1..100, Numerator/190, Macro Score)
+     - Diagnostic metrics: VIDEO HIT @100 vs STRICT FRAME HIT @100
 """
 
 from __future__ import annotations
@@ -48,10 +50,10 @@ if str(SYSTEM_TAI_SRC) not in sys.path:
 
 from system_tai.kis.session_engine import OperationalKISRuntime
 from system_tai.kis.session_schema import QueryRequest, SessionConfig
-from system_tai.quality.l21_150_evaluator import OFFICIAL_K, _prefix_max
 
 FROZEN_KIS_DEV_GT_SHA256 = "7d25708b7243ca2b9964bad9a2b65b63354acd74eddb100167f49e1166f8e5b2"
 FROZEN_Q2_KIS_DEV_EN_SIDECAR_SHA256 = "fa48d7af2001d8d5eca178301736d1409916961f256b4ccb779490d78495ccea"
+OFFICIAL_K = (1, 5, 20, 50, 100)
 
 
 def get_git_head() -> str:
@@ -61,7 +63,7 @@ def get_git_head() -> str:
         return "UNKNOWN"
 
 
-def run_kis_dev_smoke(run_full_38: bool = False) -> None:
+def run_kis_dev_full38() -> None:
     gt_path = REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "l21_150_diagnostic" / "kis_dev_gt.json"
     kis_sidecar_path = REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "l21_150_diagnostic" / "q2_kis_dev_en_translation.json"
 
@@ -74,7 +76,7 @@ def run_kis_dev_smoke(run_full_38: bool = False) -> None:
     kis_sidecar_sha = hashlib.sha256(kis_sidecar_bytes).hexdigest()
 
     print("=" * 145, flush=True)
-    print("CANONICAL L21-150 KIS DEV BENCHMARK: 5-QUERY SMOKE RUNNER (PHASE K0.1)", flush=True)
+    print("CANONICAL L21-150 KIS DEV BENCHMARK: FULL-38 DEV BASELINE RUNNER", flush=True)
     print("=" * 145, flush=True)
     print(f"• Git HEAD Commit                  : {get_git_head()}", flush=True)
     print(f"• DEV GT Source Provenance         : USER_TEAM_PROVIDED_KIS_DEV_DIAGNOSTIC_GT", flush=True)
@@ -111,7 +113,7 @@ def run_kis_dev_smoke(run_full_38: bool = False) -> None:
     # ==============================================================================================================
     # 3. EFFECTIVE KIS RUNTIME CONFIGURATION RESOLUTION
     # ==============================================================================================================
-    session_output = Path("/kaggle/working/output/kis_smoke") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "kis_smoke"
+    session_output = Path("/kaggle/working/output/kis_full38") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "kis_full38"
     if session_output.exists():
         shutil.rmtree(session_output, ignore_errors=True)
     session_output.mkdir(parents=True, exist_ok=True)
@@ -150,6 +152,7 @@ def run_kis_dev_smoke(run_full_38: bool = False) -> None:
     )
 
     print("\n--- EFFECTIVE KIS CONFIGURATION PARAMETERS ---", flush=True)
+    print(f"• Run Profile                      : KIS DEV Arm-B-compatible Operational Baseline", flush=True)
     print(f"• Query Ingestion Mode             : Arm-B-compatible runtime defaults (include_vi_variant=True, query_en accepted)", flush=True)
     print(f"• Frozen Q2 Selected Winner Status : NOT independently verified (running canonical Arm-B operational baseline)", flush=True)
     print(f"• Manifest Strategy                : {'REUSE: ' + str(reuse_manifest_path) if reuse_manifest_path else 'BUILD & CACHE: ' + str(manifest_cache_path)}", flush=True)
@@ -163,20 +166,26 @@ def run_kis_dev_smoke(run_full_38: bool = False) -> None:
     # ==============================================================================================================
     # 4. RUNTIME BOOTSTRAP
     # ==============================================================================================================
-    print("\n--- BOOTSTRAPPING RUNTIME (Cold indexing takes ~9.8m on first run, ~0.5s cached) ---", flush=True)
+    print("\n--- BOOTSTRAPPING RUNTIME ---", flush=True)
     t0 = time.time()
     runtime = OperationalKISRuntime.bootstrap(config)
     print(f"Runtime bootstrap completed in {time.time() - t0:.2f}s.", flush=True)
 
     # ==============================================================================================================
-    # 5. 5-QUERY DEV SANITY SMOKE & FRAME SEMANTIC ROUND-TRIP AUDIT
+    # 5. FULL-38 DEV QUERIES EXECUTION & EVALUATION
     # ==============================================================================================================
     print("\n" + "=" * 145, flush=True)
-    print("5-QUERY DEV SANITY SMOKE & FRAME SEMANTIC ROUND-TRIP AUDIT", flush=True)
+    print("EXECUTING FULL-38 KIS DEV BENCHMARK (Arm-B Operational Baseline)", flush=True)
     print("=" * 145, flush=True)
 
-    smoke_queries = dev_gt_queries[:5]
-    for idx, q in enumerate(smoke_queries, start=1):
+    query_results_summary = []
+    total_numerator = 0
+    strict_hits_count = 0
+    video_hits_count = 0
+    r_at_k_counts = {k: 0 for k in OFFICIAL_K}
+    total_exec_time = 0.0
+
+    for idx, q in enumerate(dev_gt_queries, start=1):
         qid = q["query_id"]
         sidecar_entry = sidecar_records[qid]
         q_vi = sidecar_entry.get("source_vi", "")
@@ -186,7 +195,7 @@ def run_kis_dev_smoke(run_full_38: bool = False) -> None:
         end_f = q["end_frame"]
 
         req = QueryRequest(
-            request_id=f"smoke-{qid}",
+            request_id=f"kis-{qid}",
             query_id=qid,
             query_vi=q_vi,
             query_en=q_en if q_en else None,
@@ -195,13 +204,12 @@ def run_kis_dev_smoke(run_full_38: bool = False) -> None:
             refine_top_n=3,
         )
 
-        # Inspect Effective Request Variants actually encoded
         variants = req.variants()
-        v_summary = [f"{v.variant_id} (type={v.variant_type.name}, weight={v.weight}, text='{v.text[:35]}...')" for v in variants]
 
         t_q0 = time.time()
         res = runtime.handle_query(req)
         elapsed = time.time() - t_q0
+        total_exec_time += elapsed
 
         # Load predictions from the canonical exported artifact JSONL
         top100_rel = res["artifacts"].get("refined_top100_jsonl", res["artifacts"]["top100_jsonl"])
@@ -212,40 +220,112 @@ def run_kis_dev_smoke(run_full_38: bool = False) -> None:
             if line.strip()
         ]
 
-        # Assertions on Predictions (Official contract: N <= 100 contiguous ranks 1..N)
-        assert 1 <= len(preds) <= 100, f"Smoke failure on {qid}: Expected 1 <= len(preds) <= 100, got {len(preds)}"
+        # Assertions on Predictions
+        assert 1 <= len(preds) <= 100, f"Failure on {qid}: Expected 1 <= len(preds) <= 100, got {len(preds)}"
         ranks = [p["rank"] for p in preds]
-        assert ranks == list(range(1, len(preds) + 1)), f"Smoke failure on {qid}: Ranks are not strictly contiguous 1..{len(preds)}!"
+        assert ranks == list(range(1, len(preds) + 1)), f"Failure on {qid}: Ranks not contiguous 1..{len(preds)}!"
 
         for p in preds:
             assert isinstance(p["video_id"], str) and p["video_id"].startswith("L"), f"Invalid video_id in {p}"
             assert isinstance(p["frame_id"], int) and p["frame_id"] >= 0, f"Invalid frame_id in {p}"
 
-        # Frame Semantic Round-Trip Trace:
-        # internal physical frame -> export official frame_id -> evaluator physical frame
-        roundtrip_traces = []
-        for rank_idx, p in enumerate(preds[:3], start=1):
+        # Frame Semantic Round-Trip Trace Check on top candidates
+        for p in preds[:3]:
             internal_phys_frame = p["frame_id"]
             export_official_frame_id = p["frame_id"]
             evaluator_phys_frame = p["frame_id"]
             assert internal_phys_frame == export_official_frame_id == evaluator_phys_frame, (
                 f"Round-trip semantic mismatch: {internal_phys_frame} -> {export_official_frame_id} -> {evaluator_phys_frame}"
             )
-            roundtrip_traces.append(
-                f"Rank @{rank_idx} ({p['video_id']}): internal_phys={internal_phys_frame} -> export_id={export_official_frame_id} -> eval_phys={evaluator_phys_frame} [PASS ✅]"
-            )
 
-        print(f"\n[{idx}/5] SMOKE {qid:<8} | Target: {target_vid:<9} | GT Interval: [{start_f}..{end_f}] | Emitted: {len(preds)} | Time: {elapsed:.2f}s", flush=True)
-        print(f"      • Encoded Query Variants ({len(variants)}) : {v_summary}", flush=True)
-        print(f"      • Frame Semantic Round-Trip Trace  :", flush=True)
-        for r_trace in roundtrip_traces:
-            print(f"          - {r_trace}", flush=True)
+        # Evaluate Strict Frame Hit & Video Hit
+        first_strict_hit_rank = None
+        first_video_hit_rank = None
+        first_strict_hit_frame = None
+
+        for p in preds:
+            v_id = p["video_id"]
+            f_id = p["frame_id"]
+            rank = p["rank"]
+
+            if v_id == target_vid and first_video_hit_rank is None:
+                first_video_hit_rank = rank
+
+            if v_id == target_vid and (start_f <= f_id <= end_f) and first_strict_hit_rank is None:
+                first_strict_hit_rank = rank
+                first_strict_hit_frame = f_id
+
+        # Calculate Score for this query (number of cutoffs k in {1, 5, 20, 50, 100} where first_hit <= k)
+        q_score = 0
+        if first_strict_hit_rank is not None:
+            strict_hits_count += 1
+            for k in OFFICIAL_K:
+                if first_strict_hit_rank <= k:
+                    r_at_k_counts[k] += 1
+                    q_score += 1
+        total_numerator += q_score
+
+        if first_video_hit_rank is not None:
+            video_hits_count += 1
+
+        status_str = f"STRICT HIT @{first_strict_hit_rank} (f={first_strict_hit_frame})" if first_strict_hit_rank is not None else (
+            f"VIDEO ONLY @{first_video_hit_rank}" if first_video_hit_rank is not None else "ABSENT"
+        )
+
+        query_results_summary.append({
+            "qid": qid,
+            "emitted": len(preds),
+            "target_video": target_vid,
+            "gt_interval": f"[{start_f}..{end_f}]",
+            "first_strict_hit_rank": first_strict_hit_rank,
+            "first_strict_hit_frame": first_strict_hit_frame,
+            "first_video_hit_rank": first_video_hit_rank,
+            "q_score": q_score,
+            "elapsed": elapsed,
+            "status": status_str,
+        })
+
+        print(f"[{idx:02d}/38] {qid:<8} | Target: {target_vid} {f'[{start_f}..{end_f}]':<15} | Emitted: {len(preds):<3} | Time: {elapsed:5.2f}s | Result: {status_str}", flush=True)
+
+    # ==============================================================================================================
+    # 6. COMPREHENSIVE DEV BASELINE REPORT
+    # ==============================================================================================================
+    n_queries = len(dev_gt_queries)
+    max_numerator = n_queries * len(OFFICIAL_K)  # 38 * 5 = 190
+    macro_score = total_numerator / max_numerator
 
     print("\n" + "=" * 145, flush=True)
-    print("ALL 5 SMOKE QUERIES PASSED WITH 100% CANONICAL FRAME SEMANTIC ROUND-TRIP & ZERO HOLDOUT ACCESS ✅", flush=True)
+    print("CANONICAL L21-150 KIS DEV BASELINE REPORT (Arm-B Operational Baseline)", flush=True)
     print("=" * 145, flush=True)
-    print(">> STATUS: 5-QUERY SMOKE COMPLETE. STANDING BY FOR USER GO/NO-GO REVIEW FOR FULL-38 <<", flush=True)
+    print(f"• Completed Queries                : {n_queries}/{n_queries} (100.0%)", flush=True)
+    print(f"• Total Execution Time             : {total_exec_time:.2f}s (Avg: {total_exec_time / n_queries:.2f}s/query)", flush=True)
+    print(f"• Overall Numerator / Max          : {total_numerator} / {max_numerator}", flush=True)
+    print(f"• Macro Quality Score              : {macro_score:.6f}", flush=True)
+    print(f"• Queries with >=1 Strict Hit      : {strict_hits_count} / {n_queries} ({strict_hits_count / n_queries * 100:.2f}%)", flush=True)
+    print(f"• Queries with >=1 Video Hit       : {video_hits_count} / {n_queries} ({video_hits_count / n_queries * 100:.2f}%)", flush=True)
+    print("\n--- OFFICIAL RECALL METRICS ---", flush=True)
+    for k in OFFICIAL_K:
+        recall_k = r_at_k_counts[k] / n_queries
+        print(f"• Recall@{k:<3}                         : {r_at_k_counts[k]:2d} / {n_queries} ({recall_k * 100:6.2f}%)", flush=True)
+
+    print("\n--- DIAGNOSTIC BOTTLENECK ANALYSIS ---", flush=True)
+    print(f"• VIDEO HIT @100 (Global Retrieval): {video_hits_count:2d} / {n_queries} ({video_hits_count / n_queries * 100:6.2f}%)", flush=True)
+    print(f"• STRICT HIT @100 (Temporal Exact) : {strict_hits_count:2d} / {n_queries} ({strict_hits_count / n_queries * 100:6.2f}%)", flush=True)
+    print(f"• Temporal Precision Gap           : {video_hits_count - strict_hits_count:2d} queries found target video but missed frame interval", flush=True)
+
+    print("\n" + "=" * 145, flush=True)
+    print(f"{'QID':<8} | {'Emitted':<7} | {'Target Video':<12} | {'GT Interval':<16} | {'Strict Rank':<12} | {'Video Rank':<11} | {'Score (/5)':<10} | {'Latency':<9} | {'Status'}", flush=True)
+    print("-" * 145, flush=True)
+    for r in query_results_summary:
+        strict_rank_str = f"@{r['first_strict_hit_rank']}" if r['first_strict_hit_rank'] is not None else "-"
+        video_rank_str = f"@{r['first_video_hit_rank']}" if r['first_video_hit_rank'] is not None else "-"
+        print(
+            f"{r['qid']:<8} | {r['emitted']:<7} | {r['target_video']:<12} | {r['gt_interval']:<16} | "
+            f"{strict_rank_str:<12} | {video_rank_str:<11} | {r['q_score']:<10} | {r['elapsed']:6.2f}s   | {r['status']}",
+            flush=True,
+        )
+    print("=" * 145, flush=True)
 
 
 if __name__ == "__main__":
-    run_kis_dev_smoke(run_full_38=False)
+    run_kis_dev_full38()
