@@ -236,14 +236,15 @@ def run_full38_dev_benchmark(runtime: OperationalKISRuntime, translator: MarianO
         return
 
     gt_data = json.loads(kis_gt_path.read_text(encoding="utf-8"))
+    raw_entries = gt_data.get("queries", gt_data) if isinstance(gt_data, dict) else gt_data
     gt_records = {
         entry["query_id"]: KISGroundTruth(
             query_id=entry["query_id"],
             video_id=entry["video_id"],
-            start_frame_id=entry["start_frame_id"],
-            end_frame_id=entry["end_frame_id"],
+            start_frame_id=int(entry.get("start_frame", entry.get("start_frame_id", 0))),
+            end_frame_id=int(entry.get("end_frame", entry.get("end_frame_id", 0))),
         )
-        for entry in gt_data
+        for entry in raw_entries
     }
 
     sidecar_data = json.loads(sidecar_path.read_text(encoding="utf-8"))
