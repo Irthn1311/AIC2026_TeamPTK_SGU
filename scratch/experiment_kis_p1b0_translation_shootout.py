@@ -91,12 +91,17 @@ def run_translation_shootout() -> None:
 
     # 2. Initialize NLLB
     print("\n[2/2] Loading Model B: Candidate NLLB-200 distilled 600M...", flush=True)
+    print("      • Config: src_lang = vie_Latn", flush=True)
+    print("      • Config: target_lang / forced_bos = eng_Latn", flush=True)
+    print("      • Config: model = facebook/nllb-200-distilled-600M", flush=True)
     t0_n = time.time()
     nllb = NLLBOfflineTranslator(
         model_name_or_path="facebook/nllb-200-distilled-600M",
         local_files_only=False,
     )
-    print(f"      NLLB loaded in {time.time() - t0_n:.2f}s", flush=True)
+    load_time_n = time.time() - t0_n
+    print(f"      • Config: device = {nllb._device}", flush=True)
+    print(f"      • Config: load_time = {load_time_n:.2f}s", flush=True)
 
     guard = TokenBudgetGuard()
     thunghiem_dir = REPO_ROOT / "systems" / "system_tai" / "THUNGHIEM_20-8"
@@ -161,14 +166,43 @@ def run_translation_shootout() -> None:
         elif qid == "query-p1-23-kis":
             print(f"    🔍 CONTROL CHECK (p1-23): Reasoning control -> Marian has shark: {'YES ⚠️' if 'shark' in marian_en.lower() else 'NO (Normal)'} | NLLB has shark: {'YES ⚠️' if 'shark' in nllb_en.lower() else 'NO (Normal)'}", flush=True)
 
-    # Summary table
+    # Detailed table
     print("\n" + "=" * 150, flush=True)
-    print("KIS P1B0 TRANSLATION SHOOTOUT SUMMARY TABLE", flush=True)
+    print("KIS P1B0 TRANSLATION SHOOTOUT DETAILED SUMMARY TABLE", flush=True)
     print("=" * 150, flush=True)
     print(f"{'Query ID':<18} | {'Category':<22} | {'Marian Tokens':<14} | {'NLLB Tokens':<12} | {'Marian Lat':<11} | {'NLLB Lat':<10}")
     print("-" * 100)
     for r in shootout_results:
         print(f"{r['qid']:<18} | {r['category']:<22} | {r['marian_toks']:<14d} | {r['nllb_toks']:<12d} | {r['marian_lat']*1000:6.1f} ms  | {r['nllb_lat']*1000:6.1f} ms")
+    print("=" * 150, flush=True)
+
+    # Aggregate metrics
+    marian_tok_list = [r["marian_toks"] for r in shootout_results]
+    nllb_tok_list = [r["nllb_toks"] for r in shootout_results]
+    marian_lat_list = [r["marian_lat"] for r in shootout_results]
+    nllb_lat_list = [r["nllb_lat"] for r in shootout_results]
+
+    marian_over_77 = sum(1 for t in marian_tok_list if t > 77)
+    nllb_over_77 = sum(1 for t in nllb_tok_list if t > 77)
+
+    marian_mean_tok = sum(marian_tok_list) / len(marian_tok_list) if marian_tok_list else 0
+    nllb_mean_tok = sum(nllb_tok_list) / len(nllb_tok_list) if nllb_tok_list else 0
+
+    marian_max_tok = max(marian_tok_list) if marian_tok_list else 0
+    nllb_max_tok = max(nllb_tok_list) if nllb_tok_list else 0
+
+    marian_mean_lat = sum(marian_lat_list) / len(marian_lat_list) if marian_lat_list else 0
+    nllb_mean_lat = sum(nllb_lat_list) / len(nllb_lat_list) if nllb_lat_list else 0
+
+    print("\n" + "=" * 150, flush=True)
+    print("AGGREGATE TRANSLATOR METRICS COMPARISON", flush=True)
+    print("=" * 150, flush=True)
+    print(f"{'Metric':<35} | {'Model A (Marian Baseline)':<30} | {'Model B (NLLB Candidate)':<30}")
+    print("-" * 100)
+    print(f"{'Queries > 77 Tokens':<35} | {f'{marian_over_77} / {len(shootout_results)} ({marian_over_77/len(shootout_results)*100:.1f}%)':<30} | {f'{nllb_over_77} / {len(shootout_results)} ({nllb_over_77/len(shootout_results)*100:.1f}%)':<30}")
+    print(f"{'Mean CLIP Tokens':<35} | {f'{marian_mean_tok:.1f} tokens':<30} | {f'{nllb_mean_tok:.1f} tokens':<30}")
+    print(f"{'Max CLIP Tokens':<35} | {f'{marian_max_tok} tokens':<30} | {f'{nllb_max_tok} tokens':<30}")
+    print(f"{'Mean Translation Latency':<35} | {f'{marian_mean_lat*1000:.1f} ms':<30} | {f'{nllb_mean_lat*1000:.1f} ms':<30}")
     print("=" * 150, flush=True)
 
 
