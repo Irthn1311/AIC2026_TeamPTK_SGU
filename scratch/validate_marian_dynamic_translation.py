@@ -308,11 +308,11 @@ def run_full38_dev_benchmark(runtime: OperationalKISRuntime, translator: MarianO
     print("=" * 150, flush=True)
 
 
-def main() -> None:
+def main(raw_args: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="KIS P0.1 Marian Dynamic Translation Validator")
     parser.add_argument("--device", default="auto", choices=["auto", "cuda", "cpu"])
     parser.add_argument("--skip-dev", action="store_true", help="Skip Full-38 DEV benchmark")
-    args = parser.parse_args()
+    args, _ = parser.parse_known_args(raw_args)
 
     print("=" * 150, flush=True)
     print("KIS P0.1: OFFLINE TRANSLATOR (Helsinki-NLP/opus-mt-vi-en) BENCHMARK & VALIDATION", flush=True)
