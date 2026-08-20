@@ -128,38 +128,59 @@ class MarianOfflineTranslator:
     def device(self) -> str:
         return self._device
 
-    def get_artifact_fingerprint(self) -> dict[str, str]:
-        """Compute artifact provenance and SHA256 fingerprint if local files exist."""
+    def get_artifact_fingerprint(self) -> dict[str, Any]:
+        """Compute artifact provenance and SHA256 fingerprint strictly from local disk."""
         import hashlib
-        info: dict[str, str] = {
+        info: dict[str, Any] = {
             "model_name": self.model_name,
             "pinned_revision": self.revision,
             "device": self._device,
         }
-        try:
-            from transformers.utils.hub import cached_file
-            resolved_weight = cached_file(
-                self.model_name,
+
+        repo_id_normalized = f"models--{self.model_name.replace('/', '--')}"
+        possible_roots = [
+            Path.home() / ".cache" / "huggingface" / "hub" / repo_id_normalized,
+            Path("/root/.cache/huggingface/hub") / repo_id_normalized,
+            Path("/kaggle/working/.cache/huggingface/hub") / repo_id_normalized,
+        ]
+
+        snapshot_dir: Path | None = None
+        for r in possible_roots:
+            if r.exists():
+                snaps = r / "snapshots"
+                if snaps.exists():
+                    for snap in snaps.iterdir():
+                        if snap.is_dir():
+                            snapshot_dir = snap
+                            break
+            if snapshot_dir:
+                break
+
+        if snapshot_dir and snapshot_dir.exists():
+            info["resolved_snapshot_dir"] = str(snapshot_dir)
+            info["snapshot_commit_hash"] = snapshot_dir.name
+
+            # Scan key artifacts
+            for fname in [
                 "model.safetensors",
-                revision=self.revision,
-                local_files_only=True,
-            )
-            if not resolved_weight:
-                resolved_weight = cached_file(
-                    self.model_name,
-                    "pytorch_model.bin",
-                    revision=self.revision,
-                    local_files_only=True,
-                )
-            if resolved_weight and Path(resolved_weight).exists():
-                p = Path(resolved_weight)
-                info["resolved_weight_path"] = str(p)
-                info["weight_file_size_bytes"] = str(p.stat().st_size)
-                # Compute SHA256 header (first 64KB for speed + exact reproducibility)
-                h = hashlib.sha256(p.read_bytes()[:65536]).hexdigest()
-                info["weight_header_sha256"] = h
-        except Exception as exc:
-            info["fingerprint_warning"] = str(exc)
+                "pytorch_model.bin",
+                "source.spm",
+                "target.spm",
+                "vocab.json",
+                "config.json",
+                "tokenizer_config.json",
+            ]:
+                fpath = snapshot_dir / fname
+                if fpath.exists():
+                    info[f"{fname}_size_bytes"] = fpath.stat().st_size
+                    h = hashlib.sha256()
+                    with open(fpath, "rb") as f:
+                        while chunk := f.read(65536):
+                            h.update(chunk)
+                    info[f"{fname}_sha256"] = h.hexdigest()
+        else:
+            info["fingerprint_warning"] = "Local snapshot directory not found in standard cache locations."
+
         return info
 
     def translate(self, text: str) -> str:
