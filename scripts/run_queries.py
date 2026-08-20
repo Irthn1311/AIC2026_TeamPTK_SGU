@@ -37,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.pipeline.retrieval_pipeline import RetrievalPipeline
 from src.evaluation.submission_formatter import SubmissionFormatter
 from src.common.enums import QueryType
+from src.common.query_loader import load_queries
 from src.reasoning.query_classifier import QueryClassifier
 from src.utils.logger import get_logger
 
@@ -48,7 +49,7 @@ def parse_args():
         description="Run AIC queries (KIS / Q&A / TRAKE) and produce submission CSVs"
     )
     parser.add_argument("--queries",       required=True,
-                        help="Path to queries JSON file")
+                        help="Path to queries JSON file, TXT file, or directory of query .txt files")
     parser.add_argument("--index-dir",     default="indexes",
                         help="Dir containing faiss_visual.index + keyframe_master.parquet")
     parser.add_argument("--output-dir",    default="outputs/submission",
@@ -80,13 +81,11 @@ def main():
     # --------------------------------------------------------
     queries_path = Path(args.queries)
     if not queries_path.exists():
-        logger.error(f"Query file not found: {queries_path}")
+        logger.error(f"Query path not found: {queries_path}")
         sys.exit(1)
 
-    with open(queries_path, encoding="utf-8") as f:
-        queries = json.load(f)
-
-    logger.info(f"Loaded {len(queries)} queries from {queries_path}")
+    queries = load_queries(queries_path)
+    logger.info(f"Successfully loaded {len(queries)} queries to execute.")
 
     # --------------------------------------------------------
     # Build pipeline
