@@ -100,6 +100,7 @@ def apply_robust_calibrated_fusion(
     df_sim: pd.DataFrame,
     vis_weight: float = 0.5,
     sem_weight: float = 0.5,
+    boundary_threshold: Optional[float] = None,
 ) -> pd.DataFrame:
     """Apply Robust Z-score normalization and Sigmoidal Boundary Evidence Fusion."""
     df = df_sim.copy()
@@ -134,6 +135,10 @@ def apply_robust_calibrated_fusion(
 
     # Legacy fallback calculation for comparison
     df["fused_similarity"] = (w_v * df["visual_similarity"]) + (w_s * df["semantic_similarity"])
+
+    # Dynamically ensure is_boundary is consistent with boundary_score threshold
+    threshold_to_use = 0.70 if boundary_threshold is None else boundary_threshold
+    df["is_boundary"] = df["boundary_score"] > threshold_to_use
 
     return df
 

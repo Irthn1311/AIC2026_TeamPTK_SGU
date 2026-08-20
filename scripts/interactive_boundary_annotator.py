@@ -275,7 +275,9 @@ def main():
     df_shots = pd.read_parquet(shots_path)
 
     # Apply Default Priority Config (0.3V / 0.7S @ 0.70)
-    df_cal = apply_robust_calibrated_fusion(df_raw_sim, vis_weight=args.vis_weight, sem_weight=args.sem_weight)
+    df_cal = apply_robust_calibrated_fusion(
+        df_raw_sim, vis_weight=args.vis_weight, sem_weight=args.sem_weight, boundary_threshold=args.threshold
+    )
 
     # Sample stratified boundaries across score bins
     df_samples = sample_stratified_boundaries(df_cal, df_shots, threshold=args.threshold, num_samples=args.num_samples)
