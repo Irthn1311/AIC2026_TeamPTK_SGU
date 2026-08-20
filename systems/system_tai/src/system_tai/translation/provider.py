@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import os
+import sys
 from pathlib import Path
 from typing import Any, Protocol
 
