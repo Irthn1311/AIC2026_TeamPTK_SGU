@@ -172,16 +172,30 @@ class MarianOfflineTranslator:
             primary_weights = "model.safetensors" if (snapshot_dir / "model.safetensors").exists() else "pytorch_model.bin"
             info["primary_weight_artifact"] = primary_weights
 
-            # Scan and compute full SHA256 for all artifacts present in snapshot
+            # Scan all files in snapshot_dir as well as any component artifacts in repo cache
+            scanned_files: dict[str, Path] = {}
             for fpath in snapshot_dir.iterdir():
                 if fpath.is_file():
-                    fname = fpath.name
+                    scanned_files[fpath.name] = fpath
+
+            # Also check parent repo snapshots for tokenizer artifacts if stored in parallel snapshot
+            repo_root_dir = snapshot_dir.parent.parent
+            if repo_root_dir.exists():
+                for fpath in repo_root_dir.rglob("*"):
+                    if fpath.is_file() and fpath.name not in scanned_files:
+                        if any(ext in fpath.name for ext in ["spm", "json", "safetensors", "bin", "model", "txt"]):
+                            scanned_files[fpath.name] = fpath
+
+            for fname, fpath in sorted(scanned_files.items()):
+                try:
                     info[f"{fname}_size_bytes"] = fpath.stat().st_size
                     h = hashlib.sha256()
                     with open(fpath, "rb") as f:
                         while chunk := f.read(65536):
                             h.update(chunk)
                     info[f"{fname}_sha256"] = h.hexdigest()
+                except Exception as exc:
+                    info[f"{fname}_hash_error"] = str(exc)
         else:
             info["fingerprint_warning"] = "Local snapshot directory not found in standard cache locations."
 
