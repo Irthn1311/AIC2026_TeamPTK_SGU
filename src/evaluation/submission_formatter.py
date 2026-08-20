@@ -81,6 +81,8 @@ class SubmissionFormatter:
             }
             if query_type == "qa" and answer:
                 cand["answer"] = answer
+            if hasattr(r, "metadata") and isinstance(r.metadata, dict) and "event_frame_idxs" in r.metadata:
+                cand["event_frame_idxs"] = r.metadata["event_frame_idxs"]
             top_candidates.append(cand)
 
         self._top100_data[query_id] = top_candidates
@@ -131,6 +133,10 @@ class SubmissionFormatter:
             row[f"event_{event_id}_frame_idx"] = frame_idx
         self._trake_rows.append(row)
         if evidence:
+            if evidence.top_results and len(evidence.top_results) > 0:
+                if not hasattr(evidence.top_results[0], "metadata") or evidence.top_results[0].metadata is None:
+                    evidence.top_results[0].metadata = {}
+                evidence.top_results[0].metadata["event_frame_idxs"] = event_frame_idxs
             self.add_top100(query_id, evidence, query_type="trake")
 
     # ----------------------------------------------------------
@@ -240,8 +246,12 @@ class SubmissionFormatter:
                         ans = cand.get("answer", answer)
                         writer.writerow([v_id, f_idx, ans])
                     elif qtype == "trake":
-                        # For TRAKE, write event sequence if present, or offset candidates
-                        writer.writerow([v_id, f_idx])
+                        event_idxs = cand.get("event_frame_idxs")
+                        if event_idxs:
+                            row_idxs = [event_idxs[k] for k in sorted(event_idxs.keys())]
+                            writer.writerow([v_id] + row_idxs)
+                        else:
+                            writer.writerow([v_id, f_idx, f_idx + 5, f_idx + 10])
                     else:
                         # KIS format: video_id, frame_idx
                         writer.writerow([v_id, f_idx])

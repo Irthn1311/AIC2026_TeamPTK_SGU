@@ -502,6 +502,13 @@ class RetrievalPipeline:
         event_desc    = query_dict.get("description", "")
         question      = query_dict.get("question", "")
         answer_lang   = query_dict.get("answer_language", "auto")
+
+        # Fallback if description is empty or missing
+        if not event_desc:
+            full_txt = query_dict.get("text", question)
+            from src.common.query_loader import split_qa_text
+            event_desc, question = split_qa_text(full_txt)
+
         # target_prefix intentionally disabled — full database search
         qa_query      = self._parser.parse_qa(
             event_desc, question, answer_language=answer_lang, target_prefix=""
@@ -619,15 +626,19 @@ class RetrievalPipeline:
         # Parse TRAKE query from dict
         from src.common.types import TRAKEQuery, EventStep
         events_raw = query_dict.get("events", query_dict.get("event_sequence", []))
-        event_seq = [
-            EventStep(
-                event_id=e.get("id", i + 1),
-                event_name=e.get("name", f"Event {i+1}"),
-                description=e.get("description", ""),
-                semantic_keyframe_hint=e.get("hint", e.get("semantic_keyframe_hint", "")),
-            )
-            for i, e in enumerate(events_raw)
-        ]
+        event_seq = []
+        for i, e in enumerate(events_raw):
+            ev_id = e.get("event_id", e.get("id", i + 1))
+            ev_name = e.get("name", e.get("event_name", e.get("description", f"Event {i+1}")))
+            ev_desc = e.get("description", e.get("name", ev_name))
+            ev_hint = e.get("hint", e.get("semantic_keyframe_hint", ""))
+            event_seq.append(EventStep(
+                event_id=ev_id,
+                event_name=ev_name,
+                description=ev_desc,
+                semantic_keyframe_hint=ev_hint,
+            ))
+
         trake_query = TRAKEQuery(
             activity_name=query_dict.get("activity", query_dict.get("activity_name", "")),
             event_sequence=event_seq,

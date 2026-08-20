@@ -65,6 +65,15 @@ class QueryClassifier:
         if explicit_type in ("trake", "temporal"):
             return QueryType.TRAKE
 
+        # --- Infer from query_id stem if available ---
+        qid = str(query_dict.get("query_id", "")).lower()
+        if "-qa" in qid or "_qa" in qid:
+            return QueryType.QA
+        if "-trake" in qid or "_trake" in qid:
+            return QueryType.TRAKE
+        if "-kis" in qid or "_kis" in qid:
+            return QueryType.TEXTUAL_KIS
+
         # --- Infer from structure ---
         if "event_sequence" in query_dict or "events" in query_dict:
             logger.debug("Inferred QueryType: TRAKE (has event_sequence/events key)")
@@ -72,6 +81,17 @@ class QueryClassifier:
 
         if "question" in query_dict:
             logger.debug("Inferred QueryType: QA (has question key)")
+            return QueryType.QA
+
+        # --- Infer from text content patterns ---
+        text_content = str(query_dict.get("text", "") or query_dict.get("description", ""))
+        import re
+        if re.search(r'\bE[1234][:\s]', text_content, re.IGNORECASE):
+            logger.debug("Inferred QueryType: TRAKE (matches E1/E2 pattern in text)")
+            return QueryType.TRAKE
+
+        if re.search(r'(\bHỏi\b|\bCho biết\b|\?)', text_content, re.IGNORECASE):
+            logger.debug("Inferred QueryType: QA (matches question keyword in text)")
             return QueryType.QA
 
         # Default to KIS

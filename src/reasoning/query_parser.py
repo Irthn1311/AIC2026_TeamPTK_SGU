@@ -29,9 +29,13 @@ from src.preprocessing.text_normalizer import TextNormalizer
 from src.preprocessing.negation_extractor import NegationExtractor
 from src.preprocessing.entity_extractor import DeepEntityExtractor, ExtractedEntities
 from src.preprocessing.intent_scorer import IntentScorer
+from src.preprocessing.vi_en_translator import get_translator
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Module-level singleton translator (lazy-initialized on first use)
+_vi_en_translator = get_translator()
 
 # ── Module-level singletons (created once per process) ───────────────────────
 _normalizer = TextNormalizer()
@@ -397,418 +401,31 @@ class QueryParser:
         return "\n".join(parts)
 
     # =========================================================
-    # Internal: Open-Domain Vi ➔ En Sentence Translation Engine (v6 Master Matrix)
+    # Internal: Open-Domain Vi ➔ En Sentence Translation Engine (v2 Multi-Tier)
     # =========================================================
 
     def translate_vi_sentence(self, raw_text: str) -> str:
         """
-        Translates Vietnamese natural language query to English preserving >95% semantics.
-        Uses 3-Tier Multi-Pass Compound Tokenizer + Unaccented Leak Filter + Entity Synthesizer.
-        Covers open-domain categories: Natural phenomena, Media/News, Cities/Alleys, Extreme Sports,
-        Agriculture, Hydroelectric/Graphics, Ruins, Culinary/Markets, Warning signs, Animals & Vehicles.
-        Guarantees 0% unaccented Vietnamese leaks ("phun", "sau", "hem", etc.) in CLIP Prompts.
+        Translates Vietnamese natural language query to English.
+
+        Uses ViEnTranslator with 3-tier fallback:
+          Tier 1: Gemini Flash (if GEMINI_API_KEY set) — highest quality
+          Tier 2: Google Translate free endpoint (deep-translator)
+          Tier 3: Legacy dictionary-based substitution
+
+        Returns clean English text ready for CLIP prompt generation.
         """
-        _VI2EN_DICT = [
-            # 1. Natural Phenomena, Volcanoes, Fires & Water Jets
-            ("cột nước trắng phun mạnh thẳng lên từ mặt đất", "white water jet spraying strongly straight up from ground"),
-            ("cột nước trắng phun mạnh", "strong white water jet spraying"),
-            ("cột nước trắng", "white water column"),
-            ("phun mạnh thẳng lên từ mặt đất", "spraying strongly straight up from ground"),
-            ("phun mạnh từ mặt đất", "spraying strongly from ground"),
-            ("phun mạnh", "spraying strongly"),
-            ("ngồi xổm bên", "squatting beside"),
-            ("ngồi xổm", "squatting"),
-            ("khu vực nông thôn", "rural countryside area"),
-            ("núi lửa đang phun", "an erupting volcano"),
-            ("núi lửa phun trào", "an erupting volcano"),
-            ("núi lửa phun", "an erupting volcano"),
-            ("núi lửa", "volcano"),
-            ("tạo cột khói rất lớn", "creating a massive plume of smoke"),
-            ("tạo cột khói lớn", "creating a large plume of smoke"),
-            ("cột khói rất lớn", "massive column of smoke"),
-            ("cột khói lớn", "large smoke plume"),
-            ("cột khói", "column of smoke"),
-            ("trên nền trời xanh", "against blue sky background"),
-            ("nền trời xanh", "blue sky background"),
-            ("trên nền trời", "against sky background"),
-            ("bầu trời xanh", "blue sky"),
-            ("bầu trời đêm", "night sky"),
-            ("bầu trời", "sky"),
-            ("cháy rừng lớn", "large wildfire"),
-            ("cháy rừng", "wildfire"),
-            ("đám cháy lớn", "large fire"),
-            ("đám cháy", "fire"),
-            ("lửa lan dọc sườn đồi", "flames spreading along the hillside"),
-            ("lửa lan dọc sườn núi", "flames spreading along the mountain slope"),
-            ("lửa lan dọc", "flames spreading along"),
-            ("ngọn lửa", "flames"),
-            ("hỏa hoạn", "fire disaster"),
-            ("khói dày phủ bầu trời", "thick smoke covering the sky"),
-            ("khói dày", "thick smoke"),
-            ("khói mù", "dense smoke"),
-            ("làn khói", "column of smoke"),
+        return _vi_en_translator.translate(raw_text)
 
-            # 2. Ruins, Historic Towers & Architecture
-            ("tháp cổ bằng gạch đã xuống cấp", "dilapidated ancient brick tower"),
-            ("tháp cổ bằng gạch", "ancient brick tower"),
-            ("tháp cổ", "ancient tower"),
-            ("cây xanh mọc trên phần thân công trình", "green plants growing on the building structure"),
-            ("cây xanh mọc trên thân", "green plants growing on structure"),
-            ("cây xanh mọc trên phần thân", "green plants growing on structure"),
-            ("cây xanh mọc trên", "green plants growing on"),
-            ("cây xanh mọc", "green plants growing"),
-            ("đã xuống cấp", "dilapidated"),
-            ("mọc trên", "growing on"),
-            ("thân công trình", "building structure"),
+    def _translate_vi_sentence_legacy(self, raw_text: str) -> str:
+        """Legacy dictionary approach — kept for reference only. Use translate_vi_sentence() instead."""
+        return _vi_en_translator._translate_dict(raw_text)
 
-            # 3. Extreme Sports, Skateparks & Graffiti
-            ("khu bmx/skatepark ngoài trời vào ban đêm", "outdoor BMX skatepark at night"),
-            ("khu bmx/skatepark ngoài trời", "outdoor BMX skatepark"),
-            ("khu bmx/skatepark", "BMX skatepark"),
-            ("dốc trượt và hình vẽ xe đạp trên tường", "skate ramps and bicycle graffiti on wall"),
-            ("nhiều dốc trượt", "multiple skate ramps"),
-            ("dốc trượt", "skate ramp"),
-            ("hình vẽ xe đạp trên tường", "bicycle graffiti mural on wall"),
-            ("hình vẽ trên tường", "graffiti mural on wall"),
-            ("hình vẽ xe đạp", "bicycle graffiti"),
+    def _translate_vi_sentence_UNUSED_LEGACY_DICT(self, raw_text: str) -> str:
+        """DEPRECATED — superseded by ViEnTranslator. Do not use."""
+        return _vi_en_translator._translate_dict(raw_text)
 
-            # 4. Media, Federal Reserve, Graphics & Studio
-            ("người đàn ông tóc bạc, đeo kính", "silver-haired man wearing glasses"),
-            ("người đàn ông tóc bạc", "silver-haired man"),
-            ("tóc bạc", "silver hair"),
-            ("đeo kính", "wearing glasses"),
-            ("phát biểu tại bục với cờ mỹ", "speaking at podium with American flag"),
-            ("phát biểu tại bục", "speaking at podium"),
-            ("bục phát biểu", "speech podium"),
-            ("biểu tượng ngân hàng trung ương", "central bank logo symbol"),
-            ("ngân hàng trung ương", "central bank"),
-            ("cờ mỹ", "American flag"),
-            ("đồ họa nền xanh liệt kê số cửa xả đang mở", "blue background graphic listing open spillway gates"),
-            ("đồ họa nền xanh", "blue background graphics chart"),
-            ("nền xanh", "blue background"),
-            ("số cửa xả đang mở", "number of open spillway gates"),
-            ("hồ thủy điện hòa bình", "Hoa Binh hydroelectric reservoir"),
-            ("hồ thủy điện sơn la", "Son La hydroelectric dam"),
-            ("hồ thủy điện tuyên quang", "Tuyen Quang hydroelectric reservoir"),
-            ("tuyên quang", "Tuyen Quang"),
-            ("sơn la", "Son La"),
-            ("hòa bình", "Hoa Binh"),
-            ("hồ thủy điện", "hydroelectric dam reservoir"),
-            ("thủy điện", "hydroelectric dam"),
-            ("nữ người dẫn chương trình mặc áo màu be/hồng nhạt đứng một mình trong trường quay", "female TV host wearing beige light pink shirt standing alone in studio"),
-            ("nữ người dẫn chương trình", "female TV host"),
-            ("mặc áo màu be/hồng nhạt", "wearing beige or light pink shirt"),
-            ("áo màu be", "beige shirt"),
-            ("màu hồng nhạt", "light pink"),
-            ("đứng một mình trong trường quay", "standing alone in news studio"),
-            ("đứng một mình", "standing alone"),
-            ("trong trường quay", "in news studio"),
-            ("màn hình lớn cạnh nữ mc", "large display screen beside female MC"),
-            ("màn hình lớn", "large display screen"),
 
-            # 5. Seashores, Basins, Animals & Food Markets
-            ("cận cảnh một thau/chậu tròn chứa rất nhiều cá nhỏ màu bạc", "close-up of a round basin containing many small silver fish"),
-            ("thau/chậu tròn chứa rất nhiều cá nhỏ màu bạc", "round basin containing many small silver fish"),
-            ("thau chậu tròn chứa rất nhiều cá nhỏ màu bạc", "round basin containing many small silver fish"),
-            ("chậu tròn chứa rất nhiều cá nhỏ màu bạc", "round basin with many small silver fish"),
-            ("cá nhỏ màu bạc", "small silver fish"),
-            ("cá màu bạc", "silver fish"),
-            ("thau/chậu tròn", "round basin bowl"),
-            ("thau chậu tròn", "round basin bowl"),
-            ("chậu tròn", "round basin bowl"),
-            ("cực kỳ nhiều cá", "abundance of fish"),
-            ("bữa tiệc sinh nhật hà mã", "birthday party for hippopotamus"),
-            ("tiệc sinh nhật hà mã", "hippo birthday party"),
-            ("bữa tiệc sinh nhật", "birthday party"),
-            ("con hà mã", "hippopotamus"),
-            ("hà mã", "hippopotamus"),
-            ("khu chợ/không gian ẩm thực đông người", "crowded food court market area"),
-            ("không gian ẩm thực đông người", "crowded culinary food space"),
-            ("không gian ẩm thực", "culinary food space"),
-            ("nhiều quầy chế biến món ăn dưới mái che lớn", "multiple cooking food stalls under large canopy roof"),
-            ("quầy chế biến món ăn", "food cooking stalls"),
-            ("dưới mái che lớn", "under large canopy roof"),
-            ("dưới mái che", "under canopy roof"),
-            ("mái che lớn", "large canopy roof"),
-            ("cạnh bờ biển nhiều đá", "near rocky seashore"),
-            ("bờ biển nhiều đá", "rocky seashore"),
-            ("bãi biển nhiều đá", "rocky beach"),
-            ("nhiều đá", "rocky"),
-            ("bờ biển", "seashore"),
-            ("bãi biển", "beach"),
-
-            # 6. Vintage Cars, Rescue Vehicles, Bars & Swings
-            ("chiếc xe mui trần cổ màu đỏ chở nhiều người đi qua đám đông", "vintage red convertible car carrying people driving through crowd"),
-            ("xe mui trần cổ màu đỏ", "vintage red convertible car"),
-            ("xe mui trần cổ", "vintage convertible car"),
-            ("xe mui trần", "convertible car"),
-            ("chở nhiều người đi qua đám đông", "carrying multiple people driving through crowd"),
-            ("đi qua đám đông", "passing through crowd"),
-            ("tấm biển cảnh báo màu vàng-đỏ nguy hiểm", "yellow red warning sign indicating danger"),
-            ("tấm biển cảnh báo màu vàng-đỏ", "yellow and red warning sign"),
-            ("biển cảnh báo sạt lở màu vàng đỏ nguy hiểm", "yellow red warning sign indicating landslide danger"),
-            ("biển cảnh báo màu vàng đỏ nguy hiểm", "yellow red warning sign indicating danger"),
-            ("màu vàng đỏ nguy hiểm", "yellow red danger"),
-            ("vàng đỏ nguy hiểm", "yellow red danger"),
-            ("màu vàng đỏ", "yellow red"),
-            ("nguy hiểm sạt lở", "landslide danger hazard"),
-            ("nguy hiểm", "danger hazard"),
-            ("sạt lở", "landslide"),
-            ("mặc áo sọc", "wearing striped shirt"),
-            ("áo sọc", "striped shirt"),
-            ("ngồi phía sau song sắt", "sitting behind iron bars"),
-            ("phía sau song sắt", "behind iron bars"),
-            ("khung cửa song sắt", "iron bar window frame"),
-            ("song sắt", "iron bars"),
-            ("người dắt hai con chó", "person walking two dogs"),
-            ("dắt hai con chó", "walking two dogs"),
-            ("dắt chó", "walking dog"),
-            ("xe cứu trợ hoặc xe chữ thập đỏ di chuyển vào ban đêm", "rescue vehicle or Red Cross vehicle moving at night"),
-            ("xe cứu trợ hoặc xe chữ thập đỏ", "rescue vehicle or Red Cross vehicle"),
-            ("di chuyển vào ban đêm", "moving at night"),
-            ("di chuyển", "moving"),
-            ("xe cứu trợ", "rescue relief vehicle"),
-            ("xe chữ thập đỏ", "Red Cross vehicle"),
-            ("chữ thập đỏ", "Red Cross"),
-            ("ở trên cao phía trên thành phố", "high above overlooking the city"),
-            ("phía trên thành phố", "above the city skyline"),
-            ("ngồi trên xích đu", "sitting on a swing"),
-            ("xích đu", "swing"),
-            ("cây trồng đang được máy thu hoạch trên đồng", "crops being harvested by machinery in field"),
-            ("được máy thu hoạch", "harvested by machinery"),
-            ("máy thu hoạch lúa", "rice combine harvester"),
-            ("máy thu hoạch", "combine harvester"),
-            ("thu hoạch", "harvesting"),
-            ("máy nông nghiệp nhìn từ trên cao", "aerial view of agricultural machinery"),
-            ("máy nông nghiệp", "agricultural machinery"),
-            ("nhìn từ trên cao", "aerial top-down view"),
-            ("cây trồng", "crops"),
-            ("phương tiện cỡ lớn", "large heavy vehicle"),
-            ("ở phía trái khung hình", "on the left side of frame"),
-            ("phía trái khung hình", "on the left side of frame"),
-            ("phía trái", "on the left side"),
-
-            # 7. Media, Interviews, Clothing & Documents
-            ("người đàn ông đội mũ rơm được phỏng vấn", "man wearing straw hat being interviewed"),
-            ("được phỏng vấn", "being interviewed"),
-            ("đang được phỏng vấn", "being interviewed"),
-            ("trả lời phỏng vấn", "answering interview"),
-            ("phỏng vấn", "interviewed"),
-            ("mặc áo xanh họa tiết", "wearing patterned blue shirt"),
-            ("áo xanh họa tiết", "patterned blue shirt"),
-            ("áo họa tiết", "patterned shirt"),
-            ("họa tiết", "patterned"),
-            ("phía sau có các gói sản phẩm và giấy chứng nhận", "in background with packaged products and certificates"),
-            ("phía sau có các gói sản phẩm", "in background with packaged products"),
-            ("các gói sản phẩm", "packaged products"),
-            ("gói sản phẩm", "packaged products"),
-            ("sản phẩm", "products"),
-            ("giấy chứng nhận", "certificates"),
-            ("bằng khen", "award certificates"),
-            ("giấy khen", "certificates"),
-            ("phía sau có", "in background with"),
-            ("phía sau", "in background"),
-            ("ở phía sau", "in background"),
-            ("phát biểu trong bản tin thời sự", "speaking in news broadcast"),
-            ("đang phát biểu trong", "speaking in"),
-            ("đang phát biểu", "speaking"),
-            ("phát biểu", "speaking"),
-            ("phát thanh viên", "news anchor"),
-            ("biên tập viên nam", "male news anchor"),
-            ("biên tập viên nữ", "female news anchor"),
-            ("biên tập viên", "news anchor"),
-            ("người dẫn chương trình", "TV host"),
-            ("bản tin thời sự", "news broadcast"),
-            ("bản tin", "news broadcast"),
-            ("phòng quay", "news studio"),
-
-            # 8. Alleys, Streets, Flags & Urban Scenes
-            ("con hẻm đông người và xe máy", "a crowded narrow alley with people and motorbikes"),
-            ("con hẻm đông người", "crowded narrow alley"),
-            ("hẻm đông người", "crowded narrow alley"),
-            ("con hẻm nhỏ", "narrow alleyway"),
-            ("hẻm nhỏ", "narrow alleyway"),
-            ("con hẻm", "narrow alley"),
-            ("ngõ hẻm", "narrow alley"),
-            ("hẻm", "alley"),
-            ("ngõ phố", "narrow street"),
-            ("con ngõ", "alleyway"),
-            ("đường phố đông người", "crowded city street"),
-            ("đường phố", "city street"),
-            ("con đường", "street"),
-            ("tuyến đường", "thoroughfare"),
-            ("vỉa hè", "sidewalk"),
-            ("ngã tư", "intersection"),
-            ("ngã ba", "three-way junction"),
-            ("bãi đỗ xe", "parking lot"),
-            ("bãi xe", "parking lot"),
-            ("khu dân cư", "residential area"),
-            ("chợ đông người", "crowded market"),
-            ("chợ", "market"),
-            ("siêu thị", "supermarket"),
-            ("công viên", "park"),
-            ("sân trường", "schoolyard"),
-            ("hai bên treo nhiều cờ việt nam", "hanging many Vietnamese flags on both sides"),
-            ("treo nhiều cờ việt nam", "hanging many Vietnamese flags"),
-            ("cờ đỏ sao vàng", "Vietnamese flag with yellow star"),
-            ("cờ việt nam", "Vietnamese flag"),
-            ("lá cờ việt nam", "Vietnamese flag"),
-            ("hai bên treo nhiều cờ", "hanging many flags on both sides"),
-            ("hai bên treo", "hanging on both sides"),
-            ("treo nhiều cờ", "hanging many flags"),
-            ("treo nhiều", "hanging many"),
-            ("được treo", "hung"),
-            ("treo", "hanging"),
-            ("hai bên đường", "on both sides of the street"),
-            ("hai bên", "on both sides"),
-            ("biển hiệu", "signboard"),
-            ("bảng hiệu", "signboard"),
-            ("biểu ngữ", "banner"),
-            ("băng rôn", "banner"),
-
-            # 9. Agriculture, Farmers & Animals
-            # 9. Sports, Athletics, Actions & Event Sequences
-            ("vận động viên chạy đà hướng về phía xà ngang", "athlete running up towards high jump bar"),
-            ("vận động viên chạy đà", "athlete running up"),
-            ("chạy đà hướng về phía xà ngang", "running towards high jump bar"),
-            ("chạy đà", "running up momentum"),
-            ("xà ngang", "high jump bar"),
-            ("vận động viên giậm nhảy bật người lên không trung qua xà", "athlete taking off jumping over high jump bar in air"),
-            ("giậm nhảy bật người", "taking off jumping over"),
-            ("giậm nhảy", "take-off jump"),
-            ("bật người lên không trung", "jumping up in air"),
-            ("qua xà", "over the bar"),
-            ("vận động viên tiếp lưng rơi xuống nệm bảo hộ màu xanh", "athlete landing on back onto blue safety mat"),
-            ("tiếp lưng rơi xuống nệm bảo hộ", "landing on back onto safety mat"),
-            ("rơi xuống nệm bảo hộ màu xanh", "falling onto blue landing mat"),
-            ("rơi xuống nệm bảo hộ", "falling onto landing mat"),
-            ("rơi xuống nệm", "landing on safety mat"),
-            ("nệm bảo hộ màu xanh", "blue safety landing mat"),
-            ("nệm bảo hộ", "safety landing mat"),
-            ("nệm xanh", "blue mat"),
-            ("vận động viên", "athlete"),
-            ("nhảy cao môn thể thao", "track and field high jump sport"),
-            ("nhảy cao", "high jump sport"),
-            ("môn thể thao", "sports competition"),
-            ("điền kinh", "track and field athletics"),
-
-            # 10. Fillers & Structural Stopwords
-            ("tìm cảnh một", ""),
-            ("tìm cảnh", ""),
-            ("tìm đồ họa", "graphics showing"),
-            ("tìm cận cảnh", "close-up of"),
-            ("cho tôi thấy", ""),
-            ("hình ảnh về", ""),
-            ("video quay cảnh", ""),
-            ("xuất hiện cảnh", ""),
-            ("đoạn clip quay", ""),
-            ("xác định", ""),
-            ("cho biết", ""),
-            ("tìm đoạn", ""),
-            ("tìm video", ""),
-            ("cho thấy", ""),
-            ("hình ảnh", ""),
-            ("cảnh một", ""),
-            ("cận cảnh", "close-up of"),
-            ("đồ họa", "graphics chart"),
-            ("có các", ""),
-            ("các", ""),
-            ("một", "a"),
-            ("đang", ""),
-            ("và", "and"),
-            ("với", "with"),
-            ("trên", "on"),
-            ("ở", "in"),
-            ("tại", "at"),
-        ]
-
-        _SINGLE_WORD_MAP = {
-            "hẻm": "alley", "ngõ": "alley", "đường": "street", "phố": "street",
-            "cờ": "flag", "lá": "flag", "xe": "vehicle", "máy": "motorbike",
-            "người": "people", "đông": "crowded", "treo": "hanging", "bên": "side",
-            "hai": "two", "nhiều": "many", "cảnh": "scene", "cháy": "fire",
-            "lửa": "flames", "khói": "smoke", "rừng": "forest", "núi": "mountain",
-            "đồi": "hill", "sông": "river", "biển": "sea", "hồ": "lake",
-            "cầu": "bridge", "nhà": "house", "tòa": "building", "áo": "shirt",
-            "quần": "pants", "váy": "skirt", "nón": "hat", "mũ": "hat",
-            "đỏ": "red", "xanh": "blue", "vàng": "yellow", "trắng": "white",
-            "đen": "black", "tím": "purple", "hồng": "pink", "cam": "orange",
-            "nâu": "brown", "xám": "gray", "trái": "left", "phải": "right",
-            "trên": "top", "dưới": "bottom", "giữa": "center", "nam": "male",
-            "nữ": "female", "trai": "boy", "gái": "girl", "ruộng": "paddy field",
-            "lúa": "rice", "nông": "farmer", "đồng": "field", "đá": "rocks",
-            "tháp": "tower", "gạch": "brick", "cổ": "ancient", "cây": "plants",
-            "dốc": "ramps", "tường": "wall", "bục": "podium", "cá": "fish",
-            "chậu": "basin", "thau": "basin", "hà mã": "hippo", "xích đu": "swing",
-            "nhảy": "jumping", "chạy": "running", "đà": "momentum", "xà": "bar",
-            "nệm": "mat", "rơi": "falling", "giậm": "takeoff", "bảo": "safety",
-            "thao": "sports", "thể": "athletic",
-            "con": "", "cái": "", "chiếc": "", "bức": "", "tấm": "", "đoạn": "", "bản": "",
-        }
-
-        # Unaccented Vietnamese words that leak through ASCII check if not explicitly filtered
-        _VI_UNACCENTED_LEAK_WORDS = {
-            "phun", "sau", "phia", "tao", "duoc", "cung", "nhung", "cac", "nguoi",
-            "vua", "qua", "mang", "cho", "lay", "xem", "lam", "ra", "vao", "theo",
-            "nhieu", "hay", "voi", "va", "tren", "duoi", "trai", "phai", "giua",
-            "ngoai", "trong", "tai", "den", "tu", "con", "cai", "chiec", "buc", "tam",
-            "do", "dang", "rat", "mot", "co", "la", "vinh", "tuan", "lan", "di",
-            "chuyen", "nguy", "hiem", "thu", "hoach", "ng", "vang"
-        }
-
-        # Pre-sort phrase dictionary by length descending to match longest phrases first
-        sorted_dict = sorted(_VI2EN_DICT, key=lambda x: len(x[0]), reverse=True)
-
-        text = raw_text.strip()
-        lowered = text.lower()
-
-        # If query is already native English, return immediately without applying Vi-En translation or leak filters
-        vi_chars = set("àáảãạăắặằẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđ")
-        has_vi_diacritics = any(c in vi_chars for c in lowered)
-        lang_mix = _normalizer.detect_language_mix(text)
-        if not has_vi_diacritics and lang_mix.get("en", 0.0) >= 0.5:
-            return text
-
-        # Step 1: Phrase substitution
-        for vi_phrase, en_phrase in sorted_dict:
-            if vi_phrase in lowered:
-                lowered = lowered.replace(vi_phrase, f" {en_phrase} ")
-
-        # Step 2: Token-level translation and residual Vietnamese filter
-        tokens = lowered.split()
-        clean_tokens = []
-        vi_chars = set("àáảãạăắặằẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđ")
-
-        for tok in tokens:
-            word = tok.strip(".,!?:;\"'()")
-            if not word:
-                continue
-
-            # Check single word dictionary fallback
-            if word in _SINGLE_WORD_MAP:
-                trans = _SINGLE_WORD_MAP[word]
-                if trans:
-                    clean_tokens.append(trans)
-                continue
-
-            # Check unaccented leak words
-            if word in _VI_UNACCENTED_LEAK_WORDS:
-                logger.debug(f"Filter out unaccented leak word: '{word}'")
-                continue
-
-            # Check if word still contains Vietnamese diacritics
-            has_vi_diacritics = any(c in vi_chars for c in word)
-            if has_vi_diacritics:
-                logger.debug(f"Filter out untranslated Vietnamese token: '{word}'")
-                continue
-
-            # Keep ASCII / English tokens
-            clean_tokens.append(word)
-
-        translated = " ".join(clean_tokens)
-        cleaned = re.sub(r'\s+', ' ', translated).strip(' .,!?:;')
-        cleaned = re.sub(r'\b(in|on|at|with|and|of|for)\s*$', '', cleaned, flags=re.IGNORECASE).strip()
-        return cleaned
 
     # =========================================================
     # Internal: CLIP Prompt Builders
@@ -827,7 +444,19 @@ class QueryParser:
         translated_en = self.translate_vi_sentence(raw_text)
 
         if translated_en and len(translated_en) > 3:
+            # Strip any existing "A photo of" prefix from translator output
             translated_en = re.sub(r"^(a photo of|a scene of|photo of|scene of)\s+", "", translated_en, flags=re.IGNORECASE)
+            # Strip common narrative fluff that hurts CLIP retrieval
+            # (e.g. "The news article introduces..." → focus on visual content)
+            translated_en = re.sub(
+                r"^(the (clip|video|news|article|segment|scene) (to look for is|shows?|begins?|introduces?|starts?)[\s:,]+|"
+                r"this is (an? )?(introduction to|news story about|report about|clip of|scene of|video of)[\s:,]+|"
+                r"(look for|find) (a|the) (clip|video|scene) (where|of)[\s:,]+)",
+                "", translated_en, flags=re.IGNORECASE
+            ).strip()
+            # Capitalize first letter
+            if translated_en:
+                translated_en = translated_en[0].upper() + translated_en[1:]
             prompt = f"A photo of {translated_en}"
             return prompt[:300].strip()
 
