@@ -522,15 +522,48 @@ class RetrievalPipeline:
 
         if self._vlm is None:
             logger.warning(
-                f"[QA] id='{query_id}' — VLM not loaded. Falling back to KIS + heuristic answer."
+                f"[QA] id='{query_id}' — VLM not loaded. Falling back to KIS + OCR heuristic."
             )
+            # Step A: Run KIS retrieval using combined description + question
             evidence = self._run_kis({
                 "text": f"{event_desc} {question}",
             }, query_id)
             if evidence is None:
                 logger.warning(f"[QA] id='{query_id}' — KIS fallback returned no results.")
                 return None
-            # Generate heuristic answer (no VLM call needed)
+
+            # Step B: Try to find OCR data for the best keyframe
+            ocr_text_for_answer = ""
+            best_keyframe_id = f"{evidence.video_id}_n{evidence.n}"
+
+            # B1. Search OCR retrievers for the specific keyframe
+            for tr in self._text_rets:
+                if getattr(tr, "name", "") == "ocr_inmemory" and hasattr(tr, "_records"):
+                    rec = tr._records.get(best_keyframe_id)
+                    if rec and rec.get("text"):
+                        ocr_text_for_answer = rec["text"]
+                        logger.debug(f"[QA] Found OCR for {best_keyframe_id}: '{ocr_text_for_answer[:60]}'")
+                        break
+
+            # B2. If no OCR for this specific keyframe, search OCR for the question text
+            if not ocr_text_for_answer:
+                for tr in self._text_rets:
+                    if getattr(tr, "name", "") == "ocr_inmemory" and getattr(tr, "is_configured", False):
+                        ocr_results = tr.retrieve(question, top_k=5)
+                        if ocr_results:
+                            ocr_text_for_answer = ocr_results[0].metadata.get("ocr_text", "")
+                            # Update evidence to use the OCR-matched keyframe instead
+                            evidence.video_id = ocr_results[0].video_id
+                            evidence.frame_idx = ocr_results[0].frame_idx
+                            evidence.n = ocr_results[0].n
+                            evidence.pts_time = ocr_results[0].pts_time
+                            logger.debug(
+                                f"[QA] OCR search found better match: {ocr_results[0].keyframe_id} "
+                                f"OCR='{ocr_text_for_answer[:60]}'"
+                            )
+                        break
+
+            # Step C: Generate heuristic answer using OCR data
             from src.pipeline.qa_pipeline import QAPipeline
             tmp_qa = QAPipeline(
                 visual_retriever=self._vis_ret,
@@ -540,17 +573,18 @@ class RetrievalPipeline:
                 rrf=self._rrf,
             )
             dummy_cand = SearchResult(
-                keyframe_id=f"{evidence.video_id}_n{evidence.n}",
+                keyframe_id=best_keyframe_id,
                 video_id=evidence.video_id,
                 n=evidence.n,
                 frame_idx=evidence.frame_idx,
                 pts_time=evidence.pts_time,
                 score=evidence.confidence,
                 retriever_source="fallback",
-                metadata=evidence.metadata,
+                metadata={"ocr_text": ocr_text_for_answer} if ocr_text_for_answer else {},
             )
             heuristic_answer = tmp_qa._generate_fallback_answer(dummy_cand, qa_query)
             evidence.metadata["answer"] = heuristic_answer
+            evidence.metadata["query_type"] = "qa"
             logger.info(
                 f"[QA] id='{query_id}' Fallback: "
                 f"video={evidence.video_id} frame={evidence.frame_idx} "

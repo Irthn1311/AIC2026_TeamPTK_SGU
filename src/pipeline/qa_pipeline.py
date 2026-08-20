@@ -292,49 +292,126 @@ class QAPipeline:
             return None
 
     def _generate_fallback_answer(self, candidate: SearchResult, qa_query: QAQuery) -> str:
-        """Generate a robust heuristic fallback answer when VLM is unavailable or returns nothing."""
-        ocr_text = candidate.metadata.get("ocr_text", "") or candidate.metadata.get("text_snippet", "")
+        """
+        Generate a heuristic fallback answer when VLM is unavailable or returns nothing.
         
-        # If ocr_text is empty, try looking up in text_retrievers (InMemoryOCRRetriever) if available
+        CRITICAL: Never return event_description or question text as the answer.
+        Priority: OCR text from keyframe > extracted entities > type-appropriate placeholder.
+        """
+        # ── Step 1: Try to get OCR text from the matched keyframe ──
+        ocr_text = ""
+        
+        # 1a. Check candidate metadata
+        if candidate.metadata:
+            ocr_text = candidate.metadata.get("ocr_text", "") or candidate.metadata.get("text_snippet", "")
+        
+        # 1b. Look up in InMemoryOCRRetriever if loaded
         if not ocr_text and hasattr(self, "_text_rets") and self._text_rets:
             for tr in self._text_rets:
                 if getattr(tr, "name", "") == "ocr_inmemory" and hasattr(tr, "_records"):
                     rec = tr._records.get(candidate.keyframe_id)
-                    if rec and rec.get("texts"):
-                        ocr_text = " ".join(rec["texts"])
+                    if rec and rec.get("text"):
+                        ocr_text = rec["text"]
                         break
-
-        full_context = f"{qa_query.event_description} {qa_query.question} {ocr_text}".strip()
-        ctx_lower = full_context.lower()
-        # Use fine-grained subtype if available
+        
+        ocr_text = ocr_text.strip() if ocr_text else ""
+        
+        # ── Step 2: Determine answer type ──
         q_type = getattr(qa_query, "answer_subtype", qa_query.answer_type)
-
+        question_lower = qa_query.question.lower()
+        
+        # ── Step 3: Generate type-appropriate answer ──
+        
         if q_type in ("count", "count_people", "count_objects", "count_events"):
-            digits = re.findall(r"\b\d+\b", ocr_text or full_context)
-            valid_digits = [d for d in digits if int(d) < 100]
-            return valid_digits[0] if valid_digits else "1"
+            # Try extracting digits from OCR first
+            if ocr_text:
+                digits = re.findall(r"\b\d+\b", ocr_text)
+                valid_digits = [d for d in digits if 0 < int(d) < 100]
+                if valid_digits:
+                    return valid_digits[0]
+            return "1"
 
-        elif q_type == "color":
-            colors = ["đỏ", "xanh", "vàng", "trắng", "đen", "tím", "hồng", "cam", "nâu", "xám"]
-            for col in colors:
-                if col in ctx_lower:
-                    return col
-            return "đỏ"
+        elif q_type in ("color", "color_clothing", "color_object", "color_background"):
+            colors_map = {
+                "đỏ": "đỏ", "xanh": "xanh", "vàng": "vàng", "trắng": "trắng",
+                "đen": "đen", "tím": "tím", "hồng": "hồng", "cam": "cam",
+                "nâu": "nâu", "xám": "xám",
+            }
+            # Search OCR text for colors first
+            search_text = (ocr_text or "").lower()
+            for vi_color in colors_map:
+                if vi_color in search_text:
+                    return vi_color
+            return "trắng"
 
-        elif q_type == "yes_no":
+        elif q_type in ("yes_no", "yes_no_presence", "yes_no_action", "yes_no_attribute"):
             return "có"
 
-        elif q_type == "name":
+        elif q_type in ("number_score", "number_time"):
             if ocr_text:
-                return ocr_text[:30].strip()
-            words = [w for w in qa_query.event_description.split() if len(w) > 2]
-            return " ".join(words[:3]) if words else "diễn giả"
+                nums = re.findall(r"\b\d+[:\-./]?\d*\b", ocr_text)
+                if nums:
+                    return nums[0]
+            return "0"
+
+        elif q_type in ("name", "name_person", "name_place", "name_thing"):
+            # Priority: OCR text (likely contains the name shown on screen)
+            if ocr_text:
+                return self._extract_best_ocr_answer(ocr_text, qa_query.question)
+            # Try to extract proper nouns from question as clues
+            # (e.g. "xã này có tên là gì" → cannot answer without OCR/VLM)
+            return "Không xác định"
 
         else:
+            # description_general and any other type
             if ocr_text:
-                return ocr_text[:50].strip()
-            words = qa_query.event_description.strip().split()
-            return " ".join(words[:6]) if words else "lễ trao giải"
+                return self._extract_best_ocr_answer(ocr_text, qa_query.question)
+            # NEVER return event_description words — that's the question, not the answer
+            return "Không xác định"
+
+    def _extract_best_ocr_answer(self, ocr_text: str, question: str) -> str:
+        """
+        Extract the most relevant portion of OCR text as an answer to the question.
+        
+        Filters out common noise (timestamps, channel logos) and returns
+        the most informative OCR segment.
+        """
+        if not ocr_text or not ocr_text.strip():
+            return "Không xác định"
+        
+        # Split OCR text into segments (by common delimiters)
+        segments = re.split(r'[|\n\r;]+', ocr_text)
+        segments = [s.strip() for s in segments if s.strip() and len(s.strip()) > 1]
+        
+        if not segments:
+            return ocr_text[:80].strip()
+        
+        # Filter out common noise patterns
+        noise_patterns = [
+            r'^(vtv|htv|thvl|antv|vov|vnews|sctv)\d*$',  # Channel logos
+            r'^\d{1,2}:\d{2}(:\d{2})?$',                  # Timestamps like 14:30
+            r'^\d{1,2}/\d{1,2}/\d{2,4}$',                 # Dates
+            r'^(http|www)\.',                               # URLs
+        ]
+        clean_segments = []
+        for seg in segments:
+            is_noise = any(re.match(pat, seg.strip(), re.IGNORECASE) for pat in noise_patterns)
+            if not is_noise and len(seg) > 2:
+                clean_segments.append(seg)
+        
+        if not clean_segments:
+            return segments[0][:80] if segments else "Không xác định"
+        
+        # For "tên là gì" / "là gì" questions → prefer the longest non-noise segment
+        # (likely the title, name, or text shown on screen)
+        question_lower = question.lower()
+        if any(kw in question_lower for kw in ["tên là gì", "là gì", "tiêu đề", "câu thơ", "nội dung"]):
+            # Return the longest clean segment (most likely to contain the answer)
+            best = max(clean_segments, key=len)
+            return best[:100].strip()
+        
+        # Default: return first clean segment
+        return clean_segments[0][:80].strip()
 
 
     def _vote_best_answer(
