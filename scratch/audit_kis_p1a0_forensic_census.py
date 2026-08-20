@@ -172,6 +172,7 @@ def run_forensic_census() -> None:
     runtime_instance = None
     gate3_output_dir = Path("/kaggle/working/output/kis_release_gates")
     thunghiem_dir = REPO_ROOT / "systems" / "system_tai" / "THUNGHIEM_20-8"
+    forensic_results: list[dict[str, Any]] = []
 
     for item in FORENSIC_QUERIES:
         qid = item["qid"]
