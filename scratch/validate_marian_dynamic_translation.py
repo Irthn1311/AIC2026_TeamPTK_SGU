@@ -45,6 +45,9 @@ except ImportError:
 from system_tai.features.query_encoder import SharedOpenAIClipEncoder
 from system_tai.kis.session_engine import OperationalKISRuntime
 from system_tai.kis.session_schema import QueryRequest, SessionConfig
+from system_tai.preliminary.evaluation import evaluate_ranked_query
+from system_tai.preliminary.schemas import KISGroundTruth, KISPrediction
+from system_tai.preliminary.scoring import score_kis_prediction
 from system_tai.translation.provider import MarianOfflineTranslator, TokenBudgetGuard
 
 BTC_5_QUERIES = [
@@ -232,21 +235,27 @@ def run_full38_dev_benchmark(runtime: OperationalKISRuntime, translator: MarianO
         print(f"ERROR: Sidecar not found at {sidecar_path}", flush=True)
         return
 
-    from system_tai.evaluation.groundtruth_loader import load_kis_groundtruth
-    from system_tai.evaluation.kis_evaluator import evaluate_kis_predictions
-    from system_tai.preliminary.schemas import KISPrediction
+    gt_data = json.loads(kis_gt_path.read_text(encoding="utf-8"))
+    gt_records = {
+        entry["query_id"]: KISGroundTruth(
+            query_id=entry["query_id"],
+            video_id=entry["video_id"],
+            start_frame_id=entry["start_frame_id"],
+            end_frame_id=entry["end_frame_id"],
+        )
+        for entry in gt_data
+    }
 
-    gt_records = load_kis_groundtruth(kis_gt_path)
     sidecar_data = json.loads(sidecar_path.read_text(encoding="utf-8"))
     vi_queries = {rec["query_id"]: rec["source_vi"] for rec in sidecar_data.get("records", [])}
 
     print(f"Loaded {len(gt_records)} Groundtruth queries and {len(vi_queries)} Vietnamese source queries for Full-38 evaluation.\n", flush=True)
 
-    all_predictions: list[KISPrediction] = []
-    trans_latencies: list[float] = []
+    query_reports = []
+    trans_latencies = []
+    strict_hits = []
+    video_hits_count = 0
     total_time_start = time.time()
-
-    query_details = []
 
     for idx, (qid, gt) in enumerate(gt_records.items(), start=1):
         vi_text = vi_queries.get(qid, "").strip()
@@ -268,6 +277,7 @@ def run_full38_dev_benchmark(runtime: OperationalKISRuntime, translator: MarianO
         res = runtime.exact_retriever.search_vector(query_id=f"{qid}-dev", query_vector=emb, top_k=100)
 
         preds = []
+        video_hit = False
         for r_idx, r in enumerate(res.ranked_candidates, start=1):
             preds.append(KISPrediction(
                 query_id=qid,
@@ -275,42 +285,65 @@ def run_full38_dev_benchmark(runtime: OperationalKISRuntime, translator: MarianO
                 video_id=r.video_id,
                 frame_id=r.frame_id,
             ))
-        all_predictions.extend(preds)
+            if r.video_id == gt.video_id:
+                video_hit = True
+
+        if video_hit:
+            video_hits_count += 1
+
+        # Evaluate query
+        q_report = evaluate_ranked_query(
+            query_id=qid,
+            task_type="kis",
+            predictions=preds,
+            ground_truth=gt,
+            scorer=score_kis_prediction,
+        )
+        query_reports.append(q_report)
 
         # Quick hit check
         hit_rank = None
         for p in preds:
             if p.video_id == gt.video_id and gt.start_frame_id <= p.frame_id <= gt.end_frame_id:
                 hit_rank = p.rank
+                strict_hits.append((qid, hit_rank, p.frame_id, p.video_id))
                 break
 
-        status_str = f"HIT @{hit_rank} ✅" if hit_rank is not None else "MISS ❌"
-        print(f"[{idx:02d}/38] {qid:<10} in {trans_lat_ms:5.1f}ms (Tokens: {tok_count:2d}) -> {status_str} | Target: {gt.video_id} [{gt.start_frame_id}..{gt.end_frame_id}]", flush=True)
-
-    eval_result = evaluate_kis_predictions(all_predictions, gt_records)
+        status_str = f"STRICT HIT @{hit_rank} (f={p.frame_id}) ✅" if hit_rank is not None else ("VIDEO HIT ✅" if video_hit else "MISS ❌")
+        print(f"[{idx:02d}/38] {qid:<8} in {trans_lat_ms:5.1f}ms (Tok: {tok_count:2d}) -> {status_str} | Target: {gt.video_id} [{gt.start_frame_id}..{gt.end_frame_id}]", flush=True)
 
     total_elapsed = time.time() - total_time_start
     mean_trans_lat = sum(trans_latencies) / max(len(trans_latencies), 1)
 
+    r_at_1 = sum(r.r_at_1 for r in query_reports)
+    r_at_5 = sum(r.r_at_5 for r in query_reports)
+    r_at_20 = sum(r.r_at_20 for r in query_reports)
+    r_at_50 = sum(r.r_at_50 for r in query_reports)
+    r_at_100 = sum(r.r_at_100 for r in query_reports)
+
+    numerator = int(r_at_1 + r_at_5 + r_at_20 + r_at_50 + r_at_100)
+    macro_score = numerator / 190.0
+
     print("\n" + "=" * 150, flush=True)
     print("FULL-38 KIS DEV OFFICIAL METRICS COMPARISON", flush=True)
     print("=" * 150, flush=True)
-    print(f"• Completed Queries    : {eval_result.completed_queries} / {eval_result.total_queries} (100.0%)")
+    print(f"• Completed Queries    : {len(query_reports)} / {len(gt_records)} (100.0%)")
     print(f"• Mean Translation Lat : {mean_trans_lat:.2f} ms / query")
-    print(f"• Total Evaluation Time: {total_elapsed:.2f} s\n")
+    print(f"• Total Evaluation Time: {total_elapsed:.2f} s")
+    print(f"• Strict Hits List     : {strict_hits}\n")
 
     print(f"{'Metric':<25} | {'Reference b49f628 (Arm-B)':<30} | {'Dynamic Marian EN_ONLY Candidate':<30}")
     print("-" * 95)
-    print(f"{'Recall @1':<25} | {0:<30} | {eval_result.recall_at_1:<30}")
-    print(f"{'Recall @5':<25} | {0:<30} | {eval_result.recall_at_5:<30}")
-    print(f"{'Recall @20':<25} | {2:<30} | {eval_result.recall_at_20:<30}")
-    print(f"{'Recall @50':<25} | {5:<30} | {eval_result.recall_at_50:<30}")
-    print(f"{'Recall @100':<25} | {5:<30} | {eval_result.recall_at_100:<30}")
+    print(f"{'Recall @1':<25} | {0:<30} | {int(r_at_1):<30}")
+    print(f"{'Recall @5':<25} | {0:<30} | {int(r_at_5):<30}")
+    print(f"{'Recall @20':<25} | {2:<30} | {int(r_at_20):<30}")
+    print(f"{'Recall @50':<25} | {5:<30} | {int(r_at_50):<30}")
+    print(f"{'Recall @100':<25} | {5:<30} | {int(r_at_100):<30}")
     print("-" * 95)
-    print(f"{'Numerator / 190':<25} | {'12 / 190':<30} | {f'{eval_result.official_numerator} / 190':<30}")
-    print(f"{'Macro Score':<25} | {'0.063158':<30} | {f'{eval_result.official_macro_score:.6f}':<30}")
-    print(f"{'Strict Hit @100':<25} | {'5 / 38 (13.16%)':<30} | {f'{eval_result.strict_hit_count} / 38 ({eval_result.strict_hit_count/38*100:.2f}%)':<30}")
-    print(f"{'Video Hit @100':<25} | {'34 / 38 (89.47%)':<30} | {f'{eval_result.video_hit_count} / 38 ({eval_result.video_hit_count/38*100:.2f}%)':<30}")
+    print(f"{'Numerator / 190':<25} | {'12 / 190':<30} | {f'{numerator} / 190':<30}")
+    print(f"{'Macro Score':<25} | {'0.063158':<30} | {f'{macro_score:.6f}':<30}")
+    print(f"{'Strict Hit @100':<25} | {'5 / 38 (13.16%)':<30} | {f'{len(strict_hits)} / 38 ({len(strict_hits)/38*100:.2f}%)':<30}")
+    print(f"{'Video Hit @100':<25} | {'34 / 38 (89.47%)':<30} | {f'{video_hits_count} / 38 ({video_hits_count/38*100:.2f}%)':<30}")
     print("=" * 150, flush=True)
 
 
