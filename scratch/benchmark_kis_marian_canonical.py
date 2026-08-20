@@ -46,6 +46,11 @@ except ImportError:
     subprocess.run([sys.executable, "-m", "pip", "install", "-q", "transformers", "sentencepiece"], check=False)
     from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
+# Purge stale system_tai modules from sys.modules if running interactively in Jupyter
+for mod in list(sys.modules.keys()):
+    if mod.startswith("system_tai"):
+        del sys.modules[mod]
+
 from system_tai.kis.session_engine import OperationalKISRuntime
 from system_tai.kis.session_schema import QueryRequest, SessionConfig
 
