@@ -45,10 +45,29 @@ class SubmissionFormatter:
         self._kis_rows: List[Dict[str, Any]] = []
         self._qa_rows: List[Dict[str, Any]] = []
         self._trake_rows: List[Dict[str, Any]] = []
+        self._top20_data: Dict[str, List[Dict[str, Any]]] = {}
 
     # ----------------------------------------------------------
     # Add results
     # ----------------------------------------------------------
+
+    def add_top20(self, query_id: str, evidence: EvidenceResult) -> None:
+        """Record top 20 candidate answers for a query."""
+        if not evidence or not evidence.top_results:
+            return
+
+        top_candidates = []
+        for rank, r in enumerate(evidence.top_results[:20], 1):
+            top_candidates.append({
+                "rank": rank,
+                "video_id": r.video_id,
+                "frame_idx": r.frame_idx,
+                "n": r.n,
+                "pts_time": round(float(r.pts_time), 2),
+                "score": round(float(r.score), 4),
+                "source": getattr(r, "retriever_source", "fusion"),
+            })
+        self._top20_data[query_id] = top_candidates
 
     def add_kis(self, query_id: str, evidence: EvidenceResult) -> None:
         """Add one KIS result."""
@@ -57,6 +76,7 @@ class SubmissionFormatter:
             "video_id":  evidence.video_id,
             "frame_idx": evidence.frame_idx,
         })
+        self.add_top20(query_id, evidence)
 
     def add_qa(
         self,
@@ -71,12 +91,14 @@ class SubmissionFormatter:
             "frame_idx": evidence.frame_idx,
             "answer":    answer,
         })
+        self.add_top20(query_id, evidence)
 
     def add_trake(
         self,
         query_id: str,
         video_id: str,
         event_frame_idxs: Dict[int, int],  # {event_id: frame_idx}
+        evidence: Optional[EvidenceResult] = None,
     ) -> None:
         """
         Add one TRAKE result.
@@ -88,6 +110,8 @@ class SubmissionFormatter:
         for event_id, frame_idx in sorted(event_frame_idxs.items()):
             row[f"event_{event_id}_frame_idx"] = frame_idx
         self._trake_rows.append(row)
+        if evidence:
+            self.add_top20(query_id, evidence)
 
     # ----------------------------------------------------------
     # Save CSV
@@ -171,26 +195,35 @@ class SubmissionFormatter:
         logger.info(f"Saved {total} total results → {out_path}")
         return out_path
 
+    def save_top20_json(self, filename: str = "query_top20_results.json") -> Path:
+        """Save top 20 candidates for all queries to a JSON file."""
+        out_path = self.output_dir / filename
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(self._top20_data, f, ensure_ascii=False, indent=2)
+        logger.info(f"Saved top 20 candidates for {len(self._top20_data)} queries → {out_path}")
+        return out_path
+
     def save_all(self) -> Dict[str, Path]:
         """
-        Convenience method: save all 3 submission CSVs + JSON in one call.
+        Convenience method: save all 3 submission CSVs + JSON + Top 20 JSON in one call.
 
         Automatically detects the maximum number of events across TRAKE rows
         so the CSV columns are always correct regardless of event count.
 
         Returns:
-            Dict with keys 'kis', 'qa', 'trake', 'json' mapping to Path.
+            Dict with keys 'kis', 'qa', 'trake', 'json', 'top20' mapping to Path.
         """
         paths = {
             "kis":   self.save_kis(),
             "qa":    self.save_qa(),
             "trake": self.save_trake(),    # n_events auto-detected
             "json":  self.save_json(),
+            "top20": self.save_top20_json(),
         }
         logger.info(
             f"[SubmissionFormatter] Saved all: "
             f"KIS={len(self._kis_rows)}, QA={len(self._qa_rows)}, "
-            f"TRAKE={len(self._trake_rows)}"
+            f"TRAKE={len(self._trake_rows)}, Top20_Queries={len(self._top20_data)}"
         )
         return paths
 
