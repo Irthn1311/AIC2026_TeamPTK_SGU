@@ -82,8 +82,7 @@ class ExecutableEventGraph:
             raise RuntimeError("GRAPH_REVISION_MUST_ADD_REAL_EVIDENCE")
         occupied = {
             (candidate.video_id, candidate.frame_id)
-            for values in self.by_event.values()
-            for candidate in values
+            for candidate in self.by_event[event_index]
         }
         novel_coordinates = {
             (candidate.video_id, candidate.frame_id)

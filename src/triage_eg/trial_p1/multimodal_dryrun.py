@@ -535,12 +535,103 @@ def build_xclip_event_evidence(
     return output
 
 
+def build_xclip_revision_evidence(
+    queries: list[dict[str, Any]],
+    baseline_rows: list[dict[str, Any]],
+    primary_action: dict[str, list[dict[str, Any]]],
+    score_window: Any,
+    *,
+    candidates_per_event: int = 8,
+    explore_offsets: tuple[int, ...] = (-192, 192, -384, 384, -768, 768),
+) -> dict[str, list[dict[str, Any]]]:
+    """Find one bounded, coordinate-novel XCLIP revision candidate per event."""
+
+    if candidates_per_event <= 0 or not explore_offsets or 0 in explore_offsets:
+        raise ValueError("TRIAL_XCLIP_REVISION_EXPLORE_CONTRACT_INVALID")
+    baseline = grouped(baseline_rows)
+    output: dict[str, list[dict[str, Any]]] = {}
+    for query in (row for row in queries if row["task"] == "TRAKE"):
+        query_id = str(query["query_id"])
+        events = list(query["event_descriptions"])
+        revision_rows = []
+        primary = primary_action.get(query_id, [])
+        for event_index, event_text in enumerate(events):
+            event_primary = [
+                row for row in primary if int(row.get("event_index", -1)) == event_index
+            ]
+            occupied = {
+                (str(row["video_id"]), int(row["frame_ids"][event_index]))
+                for row in baseline[query_id][:20]
+            }
+            occupied.update(
+                (str(row["video_id"]), int(row["frame_id"])) for row in event_primary[:20]
+            )
+            selected = next(
+                (
+                    dict(row)
+                    for row in event_primary[20:]
+                    if (str(row["video_id"]), int(row["frame_id"])) not in occupied
+                ),
+                None,
+            )
+            mode = "PRIMARY_OVERFLOW"
+            if selected is None:
+                mode = "EXPANDED_NEIGHBORHOOD"
+                for baseline_row in baseline[query_id][:candidates_per_event]:
+                    frames = list(baseline_row["frame_ids"])
+                    baseline_frame_id = int(frames[event_index])
+                    for offset in explore_offsets:
+                        result = score_window(
+                            str(event_text),
+                            str(baseline_row["video_id"]),
+                            baseline_frame_id + offset,
+                        )
+                        if not result or not result.get("finite"):
+                            continue
+                        frame_id = int(
+                            result.get("center_frame_id", baseline_frame_id + offset)
+                        )
+                        if frame_id < 0:
+                            continue
+                        identity = (str(baseline_row["video_id"]), frame_id)
+                        if identity in occupied:
+                            continue
+                        selected = {
+                            "query_id": query_id,
+                            "event_index": event_index,
+                            "video_id": identity[0],
+                            "frame_id": frame_id,
+                            "rank": 1,
+                            "requested_revision_offset": offset,
+                            "xclip": result,
+                        }
+                        break
+                    if selected is not None:
+                        break
+            if selected is None:
+                raise RuntimeError(
+                    f"XCLIP_BOUNDED_REVISION_EXPLORE_EXHAUSTED:{query_id}:{event_index}"
+                )
+            revision_rows.append(
+                {
+                    **selected,
+                    "rank": 1,
+                    "source": "xclip_graph_revision",
+                    "revision_search_mode": mode,
+                    "m0_coordinate_novel": True,
+                }
+            )
+        output[query_id] = revision_rows
+    return output
+
+
 def select_novel_graph_revision(
     query: dict[str, Any],
     event_index: int,
     *,
     baseline_rows: list[dict[str, Any]],
     action_rows: list[dict[str, Any]],
+    revision_rows: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Select one XCLIP coordinate absent from the complete M0 event pool."""
 
@@ -552,9 +643,10 @@ def select_novel_graph_revision(
         row for row in action_rows if int(row.get("event_index", -1)) == event_index
     ][:20]
     occupied.update((str(row["video_id"]), int(row["frame_id"])) for row in initial_action)
+    search_rows = action_rows if revision_rows is None else revision_rows
     novel = [
         row
-        for row in action_rows
+        for row in search_rows
         if int(row.get("event_index", -1)) == event_index
         and (str(row["video_id"]), int(row["frame_id"])) not in occupied
     ]
@@ -1102,7 +1194,7 @@ def write_dryrun_artifacts(
                 for item in top
             )
             review.append(f"- {arm}: {preview}")
-        for modality in ("asr", "ocr", "action", "object", "qwen"):
+        for modality in ("asr", "ocr", "action", "action_revision", "object", "qwen"):
             modality_rows = evidence.get(modality, {}).get(query_id, [])[:10]
             evidence_snapshot.append(
                 {

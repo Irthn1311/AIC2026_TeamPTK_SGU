@@ -169,6 +169,19 @@ def test_graph_revision_rejects_source_relabel_at_existing_coordinate() -> None:
         )
 
 
+def test_graph_revision_coordinate_novelty_is_scoped_to_target_event() -> None:
+    events = compile_query_events(trake_query(), [])
+    graph = ExecutableEventGraph("Q-T", events)
+    graph.add(Candidate(0, "L01_V001", 10, 1, "b0", {"rank": 1}))
+    graph.add(Candidate(1, "L01_V001", 20, 1, "b0", {"rank": 1}))
+    graph.revise_once(
+        "EXPLOIT",
+        0,
+        [Candidate(0, "L01_V001", 20, 1, "xclip", {"score": 0.8})],
+    )
+    assert graph.revision["novel_coordinate_count"] == 1
+
+
 def test_xclip_uniform_contract() -> None:
     values = uniform_indices(0, 70)
     assert len(values) == 8 and values[0] == 0 and values[-1] == 70

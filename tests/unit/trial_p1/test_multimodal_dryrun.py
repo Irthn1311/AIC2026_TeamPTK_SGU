@@ -12,6 +12,7 @@ from triage_eg.trial_p1.multimodal_dryrun import (
     build_external_parquet_evidence,
     build_qwen_context,
     build_xclip_event_evidence,
+    build_xclip_revision_evidence,
     candidate_comparison,
     normalize_trial_plans,
     prioritize_qa_sufficient,
@@ -387,6 +388,46 @@ def test_graph_revision_requires_coordinate_novel_to_complete_m0_pool() -> None:
     )
     assert selected[0]["frame_id"] == novel["frame_id"]
     assert selected[0]["source"] == "xclip_graph_revision"
+
+
+def test_xclip_revision_explores_when_primary_pool_has_no_overflow() -> None:
+    query = next(row for row in _queries() if row["task"] == "TRAKE")
+    baseline = _rows([query])
+    primary = {
+        query["query_id"]: [
+            {
+                "query_id": query["query_id"],
+                "event_index": event_index,
+                "video_id": baseline[0]["video_id"],
+                "frame_id": baseline[0]["frame_ids"][event_index],
+                "rank": 1,
+            }
+            for event_index in range(4)
+        ]
+    }
+
+    def score(_: str, video_id: str, frame_id: int) -> dict:
+        return {
+            "score": 0.5,
+            "finite": True,
+            "center_frame_id": max(frame_id, 0),
+            "video_id": video_id,
+        }
+
+    revisions = build_xclip_revision_evidence(
+        [query], baseline, primary, score, candidates_per_event=1
+    )[query["query_id"]]
+    assert len(revisions) == 4
+    assert all(row["revision_search_mode"] == "EXPANDED_NEIGHBORHOOD" for row in revisions)
+    assert all(row["m0_coordinate_novel"] is True for row in revisions)
+    selected = select_novel_graph_revision(
+        query,
+        3,
+        baseline_rows=baseline,
+        action_rows=primary[query["query_id"]],
+        revision_rows=revisions,
+    )
+    assert selected[0]["event_index"] == 3
 
 
 def test_causal_graph_fixture_is_executed_and_changes_prediction_content() -> None:
