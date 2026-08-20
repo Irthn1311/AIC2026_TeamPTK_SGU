@@ -23,6 +23,13 @@ _VISUAL = re.compile(
     r"góc quay|flycam|con lân|chảo|nấm|măng tây)\b",
     re.I,
 )
+_COLOR = re.compile(r"\b(đen|trắng|đỏ|cam|vàng|xanh|tím|hồng|nâu|xám)\b", re.I)
+_COUNT = re.compile(r"\b\d+\b|\b(hai|ba|bốn|năm|sáu|nhiều|một vài)\b", re.I)
+_PLACE_TOPIC = re.compile(
+    r"\b(đại học|bệnh viện|thị trấn|tỉnh|xã|địa phương|lễ hội|nghiên cứu|mẩu tin|"
+    r"chương trình|sự kiện|đạo diễn|bộ phim)\b",
+    re.I,
+)
 
 
 def _sentences(text: str) -> list[str]:
@@ -54,6 +61,87 @@ def _knowledge_expansions(text: str) -> list[dict[str, str]]:
     return []
 
 
+def _variant_features(sentence: str) -> list[str]:
+    features = []
+    if _VISUAL.search(sentence):
+        features.append("SPECIFIC_VISUAL_OBJECT_OR_SCENE")
+    if _ACTION.search(sentence):
+        features.append("UNIQUE_ACTION_OR_TEMPORAL_ENDPOINT")
+    if _TEXT.search(sentence):
+        features.append("TEXT_OR_ENTITY_ANCHOR")
+    if _COLOR.search(sentence):
+        features.append("COLOR_CONSTRAINT")
+    if _COUNT.search(sentence):
+        features.append("COUNT_CONSTRAINT")
+    if _PLACE_TOPIC.search(sentence):
+        features.append("INSTITUTION_PLACE_OR_TOPIC")
+    if len(set(re.findall(r"\w+", sentence.casefold()))) >= 9:
+        features.append("LEXICALLY_DISTINCTIVE_PHRASE")
+    return features
+
+
+def _select_variants(
+    sentences: list[str], expansions: list[dict[str, str]]
+) -> tuple[str, list[str], list[dict[str, Any]]]:
+    candidates = []
+    for index, sentence in enumerate(sentences):
+        features = _variant_features(sentence)
+        candidates.append(
+            {
+                "text": sentence,
+                "source_index": index,
+                "features": features,
+                "base_score": len(features),
+            }
+        )
+    ranked = sorted(
+        candidates,
+        key=lambda row: (-row["base_score"], -len(row["text"]), row["source_index"]),
+    )
+    semantic_core = ranked[0]["text"] if ranked else ""
+    selected: list[dict[str, Any]] = []
+    selected_tokens: set[str] = set()
+    category_limits = {"visual": 2, "action": 1, "text": 1}
+    category_counts = {key: 0 for key in category_limits}
+    for row in ranked:
+        text = row["text"]
+        tokens = set(re.findall(r"\w+", text.casefold()))
+        novelty = len(tokens - selected_tokens) / max(len(tokens), 1)
+        categories = []
+        if _VISUAL.search(text):
+            categories.append("visual")
+        if _ACTION.search(text):
+            categories.append("action")
+        if _TEXT.search(text) or _PLACE_TOPIC.search(text):
+            categories.append("text")
+        allowed = not selected or any(
+            category_counts[category] < category_limits[category] for category in categories
+        )
+        if not allowed or (selected and novelty < 0.35):
+            continue
+        row = {**row, "lexical_novelty": novelty, "source": "DETERMINISTIC_QUERY_COMPILER"}
+        selected.append(row)
+        selected_tokens.update(tokens)
+        for category in categories:
+            if category_counts[category] < category_limits[category]:
+                category_counts[category] += 1
+        if len(selected) == 4:
+            break
+    for expansion in expansions[:1]:
+        selected.append(
+            {
+                "text": expansion["text"],
+                "source_index": None,
+                "features": ["HIGH_CONFIDENCE_KNOWLEDGE_EXPANSION"],
+                "base_score": None,
+                "lexical_novelty": None,
+                "source": expansion["source"],
+            }
+        )
+    variants = _bounded([semantic_core, *[row["text"] for row in selected]], 5)
+    return semantic_core, variants, selected
+
+
 def _split_qa(text: str) -> tuple[str, str]:
     matches = list(re.finditer(r"(?:^|\s)(Hỏi\s+.+?\?)", text, re.I | re.S))
     if matches:
@@ -79,11 +167,11 @@ def compile_query(
     elif task == "TRAKE":
         grounding_text = str(row.get("context") or " ".join(e["description"] for e in events))
 
-    semantic_core = sentences[0] if sentences else text
+    expansions = _knowledge_expansions(text)
+    semantic_core, variants, variant_diagnostics = _select_variants(sentences, expansions)
     visual = _bounded([part for part in sentences if _VISUAL.search(part)], 4)
     action = _bounded([part for part in sentences if _ACTION.search(part)], 4)
     text_anchors = _bounded([part for part in sentences if _TEXT.search(part)], 4)
-    expansions = _knowledge_expansions(text)
     answer_kind = classify_answer_type(question or text) if task == "QA" else None
     if task == "TRAKE":
         routes = [
@@ -110,16 +198,6 @@ def compile_query(
             }
         ]
 
-    variants = _bounded(
-        [
-            semantic_core,
-            *visual[:2],
-            *action[:2],
-            *text_anchors[:2],
-            *[e["text"] for e in expansions],
-        ],
-        5,
-    )
     team_query: dict[str, Any] = {
         "query_id": row["query_id"],
         "task": task,
@@ -127,7 +205,20 @@ def compile_query(
         "query": grounding_text,
     }
     if task == "QA":
-        team_query["question"] = question
+        answer_policy = (
+            "TEXT_PRESERVING"
+            if answer_kind in {"LOCATION_NAME", "TITLE", "QUOTE_OR_VISIBLE_TEXT", "SPEECH"}
+            else "SHORT_SEMANTIC"
+        )
+        team_query.update(
+            {
+                "question": question,
+                "answer_type": answer_kind,
+                "answer_policy": answer_policy,
+                "compiled_routing": routes[0]["modalities"],
+                "evidence_provenance": ["TRIAL_P1_DETERMINISTIC_QUERY_COMPILER_V2"],
+            }
+        )
     if task == "TRAKE":
         team_query.update(
             {
@@ -147,8 +238,10 @@ def compile_query(
         "text_entity_anchors": text_anchors,
         "knowledge_expansions": expansions,
         "retrieval_variants": variants,
+        "variant_selection_diagnostics": variant_diagnostics,
         "events": events,
         "answer_type": answer_kind,
+        "answer_policy": team_query.get("answer_policy"),
         "routing": routes,
         "team_query": team_query,
         "gt_used": False,

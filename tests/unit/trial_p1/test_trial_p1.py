@@ -8,9 +8,16 @@ from types import SimpleNamespace
 
 import pytest
 
+from triage_eg.e2e1.planning import plan_query
+from triage_eg.e2e1.qa import (
+    dynamic_object_candidates,
+    garbage_reason,
+    reconstruct_ocr_lines,
+    select_text_preserving_answer,
+)
 from triage_eg.fs1.router import classify_answer_type, route_events, route_query
 from triage_eg.fs1_v11.qa import exact_text_variants
-from triage_eg.trial_p1 import compile_queries, parse_trial_zip, run_b0_safe
+from triage_eg.trial_p1 import compile_queries, parse_trial_zip, run_b0_safe, run_true_bcf1
 
 REPO = Path(__file__).resolve().parents[3]
 OFFICIAL = Path(os.environ.get("AIC_TRIAL_P1_ZIP", REPO / "outputs/Task/THUNGHIEM-bo-de-thi.zip"))
@@ -112,3 +119,93 @@ def test_b0_runner_creates_and_validates_official_zip(tmp_path: Path) -> None:
     with zipfile.ZipFile(result["submission_zip"]) as archive:
         assert len(archive.namelist()) == 24
         assert "submission/query-p1-18-trake.csv" in archive.namelist()
+
+
+def test_compiled_qa_contract_reaches_query_plan() -> None:
+    compiled = {row["query_id"]: row for row in compile_queries(parse_trial_zip(OFFICIAL))}
+    plan = plan_query(compiled["query-p1-19-qa"]["team_query"])
+    assert plan.answer_type == "QUOTE_OR_VISIBLE_TEXT"
+    assert plan.answer_policy == "TEXT_PRESERVING"
+    assert {"b0_visual", "ocr", "asr"} <= set(plan.compiled_routing)
+    assert plan.evidence_provenance == ("TRIAL_P1_DETERMINISTIC_QUERY_COMPILER_V2",)
+
+
+def test_openimages_mid_and_ocr_junk_are_rejected() -> None:
+    candidates = dynamic_object_candidates(["/m/01ww8y", "01ww8y", "03jm5", "traffic_light"])
+    assert [row.en_output for row in candidates] == ["traffic light"]
+    for value in ("/m/01ww8y", "01ww8y", "03jm5", "|", ">", "_Y", "Re"):
+        assert garbage_reason(value, "LOCATION_NAME") is not None
+
+
+def test_contextual_ocr_line_reconstruction_and_location_selection() -> None:
+    rows = [
+        {"text": "Xã", "confidence": 91, "block_num": 1, "par_num": 1, "line_num": 1, "left": 1},
+        {"text": "Vạn", "confidence": 90, "block_num": 1, "par_num": 1, "line_num": 1, "left": 20},
+        {
+            "text": "Thạnh",
+            "confidence": 89,
+            "block_num": 1,
+            "par_num": 1,
+            "line_num": 1,
+            "left": 40,
+        },
+    ]
+    assert reconstruct_ocr_lines(rows)[0]["text"] == "Xã Vạn Thạnh"
+    answer, diagnostic = select_text_preserving_answer(rows, "LOCATION_NAME")
+    assert answer == "Xã Vạn Thạnh" and diagnostic["garbage_rejection"] is None
+
+
+def test_true_bcf1_runner_uses_g1_and_frozen_protected_rrf(tmp_path: Path) -> None:
+    compiled = compile_queries(parse_trial_zip(OFFICIAL))
+
+    class FakeArm:
+        def __init__(self, offset: int):
+            self.offset = offset
+
+        def predict_queries(self, queries, variant):
+            assert variant == "G1_COVERAGE_COARSE"
+            output = []
+            for query in queries:
+                rows = []
+                for rank in range(1, 101):
+                    row = {
+                        "query_id": query["query_id"],
+                        "rank": rank,
+                        "video_id": (
+                            f"L{(rank + self.offset) % 9 + 1:02d}_V{rank + self.offset:03d}"
+                        ),
+                    }
+                    if query["task"] == "TRAKE":
+                        base = 10 * rank + self.offset
+                        row["frame_ids"] = [base, base + 1, base + 2, base + 3]
+                    else:
+                        row["frame_id"] = rank + self.offset
+                        if query["task"] == "QA":
+                            row["answer"] = "không đủ bằng chứng"
+                    rows.append(row)
+                diagnostics = ()
+                if query["task"] == "QA":
+                    diagnostics = (
+                        {
+                            "query_id": query["query_id"],
+                            "compiled_answer_type": query["answer_type"],
+                            "intent": "OCR_TEXT",
+                            "intent_source": "COMPILED_ANSWER_TYPE",
+                            "answer_policy": query["answer_policy"],
+                            "compiled_routing": query["compiled_routing"],
+                            "asr_status": "ASR_PENDING",
+                        },
+                    )
+                output.append(SimpleNamespace(predictions=tuple(rows), diagnostics=diagnostics))
+            return output
+
+    result = run_true_bcf1(
+        FakeArm(0),
+        FakeArm(100),
+        compiled,
+        tmp_path / "true",
+        tmp_path / "trial_p1_TRUE_BCF1_submission.zip",
+    )
+    assert result["status"] == "PASS"
+    assert result["policy"] == "A0_TOP5_PROTECTED_EQUAL_RRF60_LATE_FUSION"
+    assert result["submission_validation"]["query_count"] == 24

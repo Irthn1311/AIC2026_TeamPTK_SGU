@@ -57,6 +57,8 @@ class QwenEvidenceAdapter:
         description: str,
         question: str,
         evidence_context: str = "",
+        answer_type: str = "OTHER",
+        answer_policy: str = "SHORT_SEMANTIC",
     ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
         if self.model is None or self.processor is None:
             raise RuntimeError("QWEN_ADAPTER_NOT_LOADED")
@@ -64,6 +66,9 @@ class QwenEvidenceAdapter:
             "Answer only from the supplied frame and bounded evidence context. "
             "Return JSON with keys answer "
             "(concise string) and evidence_sufficient (boolean). "
+            "Never return a video ID, frame ID, metadata MID, explanation, "
+            "or unsupported OCR fragment. "
+            f"Compiled answer type: {answer_type}. Answer policy: {answer_policy}. "
             f"Event: {description}\nQuestion: {question}\n"
             f"Evidence context: {evidence_context[:2000]}"
         )
@@ -82,12 +87,14 @@ class QwenEvidenceAdapter:
         generated = self.model.generate(**inputs, max_new_tokens=64, do_sample=False)
         trimmed = generated[:, inputs.input_ids.shape[1] :]
         raw = self.processor.batch_decode(trimmed, skip_special_tokens=True)[0]
-        parsed = parse_qwen_output(raw, candidate)
+        parsed = parse_qwen_output(raw, candidate, answer_type=answer_type)
         audit = {
             "model_revision": QWEN_REVISION,
             "candidate": candidate.__dict__,
             "prompt": prompt,
             "raw_output": raw,
             "parsed": parsed,
+            "answer_type": answer_type,
+            "answer_policy": answer_policy,
         }
         return parsed, audit

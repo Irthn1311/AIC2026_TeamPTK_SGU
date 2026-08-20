@@ -38,6 +38,16 @@ def plan_query(raw: dict[str, Any]) -> QueryPlan:
             query["query_id"], task, language, query["query"].strip(), None, tuple(events)
         )
     question = query["question"].strip() if task == "QA" else None
+    compiled = query.get("compiled_routing", [])
+    if compiled is None:
+        compiled = []
+    if not isinstance(compiled, list) or any(not isinstance(value, str) for value in compiled):
+        raise ValueError("compiled_routing must be a list of modality names")
+    provenance = query.get("evidence_provenance", [])
+    if provenance is None:
+        provenance = []
+    if not isinstance(provenance, list) or any(not isinstance(value, str) for value in provenance):
+        raise ValueError("evidence_provenance must be a list of strings")
     return QueryPlan(
         query["query_id"],
         task,
@@ -45,6 +55,10 @@ def plan_query(raw: dict[str, Any]) -> QueryPlan:
         query["query"].strip(),
         question,
         (("E1", query["query"].strip()),),
+        str(query.get("answer_type") or "").upper() or None,
+        tuple(value.casefold() for value in compiled),
+        str(query.get("answer_policy") or "").upper() or None,
+        tuple(provenance),
     )
 
 

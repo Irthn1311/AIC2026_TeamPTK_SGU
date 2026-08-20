@@ -8,6 +8,8 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Any
 
+from triage_eg.e2e1.qa import garbage_reason
+
 
 @dataclass(frozen=True)
 class GroundingCandidate:
@@ -21,13 +23,15 @@ def canonical_answer(value: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", str(value)).strip().split())
 
 
-def parse_qwen_output(raw: str, candidate: GroundingCandidate) -> dict[str, Any] | None:
+def parse_qwen_output(
+    raw: str, candidate: GroundingCandidate, *, answer_type: str = "OTHER"
+) -> dict[str, Any] | None:
     try:
         match = re.search(r"\{.*\}", raw, re.S)
         value = json.loads(match.group(0) if match else raw)
         answer = canonical_answer(value["answer"])
         sufficient = value["evidence_sufficient"]
-        if not answer or not isinstance(sufficient, bool):
+        if not answer or not isinstance(sufficient, bool) or garbage_reason(answer, answer_type):
             return None
         return {
             "video_id": candidate.video_id,
@@ -35,6 +39,7 @@ def parse_qwen_output(raw: str, candidate: GroundingCandidate) -> dict[str, Any]
             "answer": answer,
             "evidence_sufficient": sufficient,
             "evidence_rank": candidate.evidence_rank,
+            "answer_type": answer_type,
         }
     except (KeyError, TypeError, ValueError, json.JSONDecodeError, AttributeError):
         return None

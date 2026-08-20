@@ -17,7 +17,10 @@ from triage_eg.e2e1.pipeline import (
 from triage_eg.e2e1.planning import plan_query
 from triage_eg.e2e1.qa import (
     VOCABULARIES,
+    answer_policy_for_type,
     dynamic_object_candidates,
+    garbage_reason,
+    normalize_answer_text,
     numeric_tokens,
     score_answers,
 )
@@ -235,6 +238,14 @@ class SafeCoveragePipeline(CanonicalTriagePipeline):
     def _answer_row(
         self, plan: QueryPlan, row: dict[str, Any], intent: str, rank: int
     ) -> tuple[str, dict[str, Any]]:
+        policy = plan.answer_policy or answer_policy_for_type(plan.answer_type)
+        if policy == "TEXT_PRESERVING":
+            answer, diagnostic = super()._answer_row(plan, row, intent, rank)
+            return answer, {
+                "diagnostic_type": "qa_compiler_causal_text_preserving",
+                "OBJECT_MACHINE_ID_FILTERED": False,
+                **diagnostic,
+            }
         language = plan.language if plan.language in {"vi", "en"} else "en"
         diagnostic: dict[str, Any] = {
             "diagnostic_type": "qa_machine_id_hygiene",
@@ -249,7 +260,11 @@ class SafeCoveragePipeline(CanonicalTriagePipeline):
                     values = [token for value in values for token in numeric_tokens(value)]
                 if values:
                     diagnostic.update({"ocr_status": "AVAILABLE", "ocr_tokens": values[:10]})
-                    return values[0], diagnostic
+                    candidate = normalize_answer_text(values[0])
+                    rejection = garbage_reason(candidate, plan.answer_type)
+                    if rejection is None:
+                        return candidate, diagnostic
+                    diagnostic["garbage_rejection"] = rejection
                 diagnostic["answer_fallback_reason"] = "OCR_NO_TEXT"
             else:
                 diagnostic["answer_fallback_reason"] = "OCR_UNAVAILABLE"
@@ -297,7 +312,14 @@ class SafeCoveragePipeline(CanonicalTriagePipeline):
                 "bbox_relations_used": False,
             }
         )
-        return answer or ("không xác định" if language == "vi" else "unknown"), diagnostic
+        answer = normalize_answer_text(
+            answer or ("không xác định" if language == "vi" else "unknown")
+        )
+        rejection = garbage_reason(answer, plan.answer_type)
+        if rejection:
+            diagnostic.update({"garbage_rejection": rejection, "evidence_sufficient": False})
+            answer = "không đủ bằng chứng" if language == "vi" else "insufficient evidence"
+        return answer, diagnostic
 
     def _coarse_trake_records(
         self, plan: QueryPlan

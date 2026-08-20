@@ -34,10 +34,14 @@ from .qa import (
     PROMPTS,
     VOCABULARIES,
     OptionalTesseract,
+    answer_policy_for_type,
+    compiled_qa_intent,
     dynamic_object_candidates,
+    garbage_reason,
+    normalize_answer_text,
     numeric_tokens,
-    route_intent,
     score_answers,
+    select_text_preserving_answer,
 )
 
 
@@ -412,7 +416,42 @@ class CanonicalTriagePipeline:
         self, plan: QueryPlan, row: dict[str, Any], intent: str, rank: int
     ) -> tuple[str, dict[str, Any]]:
         language = plan.language if plan.language in {"vi", "en"} else "en"
-        diagnostic: dict[str, Any] = {"intent": intent, "answer_fallback_reason": None}
+        answer_type = plan.answer_type or "OTHER"
+        policy = plan.answer_policy or answer_policy_for_type(answer_type)
+        diagnostic: dict[str, Any] = {
+            "intent": intent,
+            "compiled_answer_type": answer_type,
+            "answer_policy": policy,
+            "compiled_routing": list(plan.compiled_routing),
+            "answer_fallback_reason": None,
+            "asr_status": "ASR_PENDING" if "asr" in plan.compiled_routing else "NOT_ROUTED",
+        }
+        if policy == "TEXT_PRESERVING" and rank <= self.settings.ocr_max_grounding_ranks:
+            if self.ocr.status == "AVAILABLE":
+                tokens = self.ocr.read(self._decode_image(row["video_id"], int(row["frame_id"])))
+                answer, selection = select_text_preserving_answer(tokens, answer_type)
+                diagnostic.update(selection)
+                diagnostic["ocr_status"] = "AVAILABLE"
+                if answer:
+                    diagnostic["evidence_sufficient"] = True
+                    diagnostic["evidence_sources"] = ["LOCAL_OCR_CONTEXTUAL_SPAN"]
+                    return answer, diagnostic
+                diagnostic["answer_fallback_reason"] = "OCR_NO_SUPPORTED_CONTEXTUAL_SPAN"
+            else:
+                diagnostic.update(
+                    {"ocr_status": "UNAVAILABLE", "answer_fallback_reason": "OCR_UNAVAILABLE"}
+                )
+            diagnostic.update(
+                {
+                    "evidence_sufficient": False,
+                    "evidence_sources": [],
+                    "garbage_candidate_emitted": False,
+                }
+            )
+            return (
+                "không đủ bằng chứng" if language == "vi" else "insufficient evidence",
+                diagnostic,
+            )
         if intent in {"OCR_TEXT", "OCR_NUMERIC"} and rank <= self.settings.ocr_max_grounding_ranks:
             if self.ocr.status == "AVAILABLE":
                 tokens = self.ocr.read(self._decode_image(row["video_id"], int(row["frame_id"])))
@@ -421,7 +460,11 @@ class CanonicalTriagePipeline:
                     values = [token for value in values for token in numeric_tokens(value)]
                 if values:
                     diagnostic.update({"ocr_status": "AVAILABLE", "ocr_tokens": values[:10]})
-                    return values[0], diagnostic
+                    candidate = normalize_answer_text(values[0])
+                    rejection = garbage_reason(candidate, answer_type)
+                    if rejection is None:
+                        return candidate, diagnostic
+                    diagnostic["garbage_rejection"] = rejection
                 diagnostic["answer_fallback_reason"] = "OCR_NO_TEXT"
             else:
                 diagnostic["answer_fallback_reason"] = "OCR_UNAVAILABLE"
@@ -458,12 +501,19 @@ class CanonicalTriagePipeline:
                 "bbox_relations_used": False,
             }
         )
-        return answer or ("không xác định" if language == "vi" else "unknown"), diagnostic
+        answer = normalize_answer_text(
+            answer or ("không xác định" if language == "vi" else "unknown")
+        )
+        rejection = garbage_reason(answer, answer_type)
+        if rejection:
+            diagnostic.update({"garbage_rejection": rejection, "evidence_sufficient": False})
+            answer = "không đủ bằng chứng" if language == "vi" else "insufficient evidence"
+        return answer, diagnostic
 
     def predict_qa(self, plan: QueryPlan, variant: str) -> PredictionResult:
         started = monotonic()
         grounded, m1_diagnostics = self._ground_single(plan, variant)
-        intent = route_intent(plan.question or "")
+        intent, intent_source = compiled_qa_intent(plan.answer_type, plan.question or "")
         predictions, answer_diagnostics, seen = [], [], set()
         for grounding_rank, row in enumerate(grounded, 1):
             answer, diagnostic = self._answer_row(plan, row, intent, grounding_rank)
@@ -491,6 +541,9 @@ class CanonicalTriagePipeline:
                     "video_id": row["video_id"],
                     "frame_id": int(row["frame_id"]),
                     "answer": answer,
+                    "answer_type": plan.answer_type or "OTHER",
+                    "answer_policy": plan.answer_policy or answer_policy_for_type(plan.answer_type),
+                    "intent_source": intent_source,
                     **diagnostic,
                 }
             )
@@ -637,9 +690,7 @@ class CanonicalTriagePipeline:
         return {
             "m1_cache_hits": self.m1_cache_hits,
             "qa_frame_embedding_cache_hits": self.qa_frame_cache_hits,
-            "trake_non_strict_coarse_paths_dropped": (
-                self.trake_non_strict_coarse_paths_dropped
-            ),
+            "trake_non_strict_coarse_paths_dropped": (self.trake_non_strict_coarse_paths_dropped),
             "text_embedding_cache_size": len(self._encoded_text),
             "stage1_score_cache_size": len(self._score_cache),
             "m1_cache_size": len(self._m1_cache),

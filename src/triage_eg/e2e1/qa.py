@@ -36,6 +36,29 @@ class AnswerCandidate:
     en_output: str
 
 
+@dataclass(frozen=True)
+class GroundingCandidate:
+    video_id: str
+    frame_id: int
+    grounding_rank: int
+    sources: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class AnswerHypothesis:
+    answer: str
+    answer_type: str
+    evidence_sources: tuple[str, ...]
+    evidence_sufficient: bool
+    confidence: float | None = None
+
+
+SHORT_SEMANTIC_TYPES = frozenset({"COUNT", "COLOR", "OBJECT", "PERSON", "YES_NO", "ACTION"})
+TEXT_PRESERVING_TYPES = frozenset({"LOCATION_NAME", "TITLE", "QUOTE_OR_VISIBLE_TEXT", "SPEECH"})
+_MID = re.compile(r"^(?:/m/)?[0-9a-z_]*\d[0-9a-z_]*$", re.I)
+_PUNCTUATION_ONLY = re.compile(r"^[\W_]+$", re.UNICODE)
+
+
 def _candidate(value: str, vi: str | None = None, en: str | None = None) -> AnswerCandidate:
     label = value.replace("_", " ")
     return AnswerCandidate(value, label, vi or label, en or label)
@@ -254,10 +277,141 @@ def route_intent(question: str) -> str:
 def dynamic_object_candidates(names: list[str]) -> tuple[AnswerCandidate, ...]:
     cleaned = []
     for raw in names:
-        value = str(raw).strip().split("/")[-1].replace("_", " ")
-        if value and not value.isdigit() and value not in cleaned:
+        original = str(raw).strip()
+        value = original.split("/")[-1].replace("_", " ")
+        if (
+            value
+            and not value.isdigit()
+            and not is_metadata_id(original)
+            and not is_metadata_id(value.replace(" ", "_"))
+            and value not in cleaned
+        ):
             cleaned.append(value)
     return tuple(_candidate(value.replace(" ", "_"), en=value) for value in cleaned)
+
+
+def is_metadata_id(value: str) -> bool:
+    compact = str(value).strip().casefold()
+    suffix = compact.removeprefix("/m/")
+    return bool(
+        _MID.fullmatch(suffix)
+        and any(char.isdigit() for char in suffix)
+        and any(char.isalpha() for char in suffix)
+        and " " not in suffix
+    )
+
+
+def compiled_qa_intent(answer_type: str | None, question: str) -> tuple[str, str]:
+    kind = str(answer_type or "OTHER").upper()
+    mapping = {
+        "COUNT": "OCR_NUMERIC",
+        "COLOR": "COLOR",
+        "OBJECT": "OBJECT",
+        "PERSON": "OBJECT",
+        "LOCATION_NAME": "OCR_TEXT",
+        "TITLE": "OCR_TEXT",
+        "QUOTE_OR_VISIBLE_TEXT": "OCR_TEXT",
+        "ACTION": "ACTIVITY",
+        "SPEECH": "OCR_TEXT",
+        "YES_NO": "GENERIC_VISUAL",
+    }
+    if kind in mapping:
+        return mapping[kind], "COMPILED_ANSWER_TYPE"
+    return route_intent(question), "LEGACY_FALLBACK_FOR_OTHER"
+
+
+def answer_policy_for_type(answer_type: str | None) -> str:
+    kind = str(answer_type or "OTHER").upper()
+    return "TEXT_PRESERVING" if kind in TEXT_PRESERVING_TYPES else "SHORT_SEMANTIC"
+
+
+def normalize_answer_text(value: str) -> str:
+    return " ".join(unicodedata.normalize("NFKC", str(value)).strip().split())
+
+
+def garbage_reason(value: str, answer_type: str | None) -> str | None:
+    answer = normalize_answer_text(value)
+    kind = str(answer_type or "OTHER").upper()
+    if not answer:
+        return "EMPTY"
+    if len(answer) > 100:
+        return "OVER_100_CHARACTERS"
+    if is_metadata_id(answer):
+        return "OPENIMAGES_OR_METADATA_ID"
+    if _PUNCTUATION_ONLY.fullmatch(answer):
+        return "PUNCTUATION_ONLY"
+    if len(answer) == 1 and not (kind == "COUNT" and answer.isdigit()):
+        return "ONE_CHARACTER_JUNK"
+    if kind in TEXT_PRESERVING_TYPES and re.fullmatch(r"[_|>\\/\-]*[A-Za-z]{0,2}", answer):
+        return "UNSUPPORTED_ISOLATED_OCR_FRAGMENT"
+    return None
+
+
+def reconstruct_ocr_lines(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    groups: dict[tuple[int, int, int], list[dict[str, Any]]] = {}
+    for row in rows:
+        if float(row.get("confidence", -1)) < 20:
+            continue
+        token = normalize_answer_text(row.get("text", ""))
+        if garbage_reason(token, "QUOTE_OR_VISIBLE_TEXT"):
+            continue
+        key = (
+            int(row.get("block_num", 0)),
+            int(row.get("par_num", 0)),
+            int(row.get("line_num", row.get("top", 0))),
+        )
+        groups.setdefault(key, []).append({**row, "text": token})
+    lines = []
+    for key, tokens in groups.items():
+        tokens.sort(key=lambda row: (int(row.get("left", 0)), -float(row["confidence"])))
+        text = normalize_answer_text(" ".join(row["text"] for row in tokens))
+        confidence = sum(float(row["confidence"]) for row in tokens) / len(tokens)
+        if not garbage_reason(text, "QUOTE_OR_VISIBLE_TEXT"):
+            lines.append({"text": text, "confidence": confidence, "line_key": key})
+    return sorted(lines, key=lambda row: (row["line_key"], -row["confidence"]))
+
+
+def select_text_preserving_answer(
+    rows: list[dict[str, Any]], answer_type: str
+) -> tuple[str | None, dict[str, Any]]:
+    lines = reconstruct_ocr_lines(rows)
+    kind = str(answer_type).upper()
+    selected: list[dict[str, Any]] = []
+    if kind == "LOCATION_NAME":
+        anchored = [
+            row
+            for row in lines
+            if re.search(r"\b(xã|phường|huyện|tỉnh|thành phố)\b", row["text"], re.I)
+        ]
+        selected = anchored[:1]
+    elif kind == "QUOTE_OR_VISIBLE_TEXT":
+        selected = lines[:2]
+    elif kind == "TITLE":
+        selected = sorted(lines, key=lambda row: (-row["confidence"], -len(row["text"])))[:1]
+    elif kind == "SPEECH":
+        selected = []
+    if not selected:
+        return None, {"ocr_lines": lines[:20], "selection": "NO_SUPPORTED_CONTEXTUAL_SPAN"}
+    answer = normalize_answer_text(" / ".join(row["text"] for row in selected))
+    conflict = len(answer) > 100
+    if conflict:
+        words, bounded = answer.split(), []
+        for word in words:
+            candidate = " ".join([*bounded, word])
+            if len(candidate) > 100:
+                break
+            bounded.append(word)
+        answer = " ".join(bounded)
+    reason = garbage_reason(answer, kind)
+    return (
+        None if reason else answer,
+        {
+            "ocr_lines": lines[:20],
+            "selected_lines": selected,
+            "over_100_character_conflict": conflict,
+            "garbage_rejection": reason,
+        },
+    )
 
 
 def numeric_tokens(text: str) -> list[str]:
@@ -303,6 +457,13 @@ class OptionalTesseract:
                         "confidence": confidence,
                         "area": area,
                         "salience": confidence * area,
+                        "left": int(output.get("left", [0] * len(output["text"]))[index]),
+                        "top": int(output.get("top", [0] * len(output["text"]))[index]),
+                        "width": int(output["width"][index]),
+                        "height": int(output["height"][index]),
+                        "block_num": int(output.get("block_num", [0] * len(output["text"]))[index]),
+                        "par_num": int(output.get("par_num", [0] * len(output["text"]))[index]),
+                        "line_num": int(output.get("line_num", [0] * len(output["text"]))[index]),
                     }
                 )
         return sorted(rows, key=lambda row: (-row["salience"], row["text"]))
@@ -328,12 +489,21 @@ def score_answers(
 
 __all__ = [
     "AnswerCandidate",
+    "AnswerHypothesis",
+    "GroundingCandidate",
     "OptionalTesseract",
     "PROMPTS",
     "QA_INTENTS",
     "VOCABULARIES",
     "dynamic_object_candidates",
+    "answer_policy_for_type",
+    "compiled_qa_intent",
+    "garbage_reason",
+    "is_metadata_id",
     "numeric_tokens",
+    "normalize_answer_text",
+    "reconstruct_ocr_lines",
     "route_intent",
     "score_answers",
+    "select_text_preserving_answer",
 ]

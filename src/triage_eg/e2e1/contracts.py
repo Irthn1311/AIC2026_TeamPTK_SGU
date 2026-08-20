@@ -72,6 +72,10 @@ class QueryPlan:
     grounding_text: str
     question: str | None
     events: tuple[tuple[str, str], ...]
+    answer_type: str | None = None
+    compiled_routing: tuple[str, ...] = ()
+    answer_policy: str | None = None
+    evidence_provenance: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -83,6 +87,10 @@ class QueryPlan:
             "events": [
                 {"event_id": event_id, "description": text} for event_id, text in self.events
             ],
+            "answer_type": self.answer_type,
+            "compiled_routing": list(self.compiled_routing),
+            "answer_policy": self.answer_policy,
+            "evidence_provenance": list(self.evidence_provenance),
             "gt_available_to_inference": False,
         }
 
