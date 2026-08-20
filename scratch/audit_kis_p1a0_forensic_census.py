@@ -210,7 +210,8 @@ def run_forensic_census() -> None:
         print(f"• Effective CLIP Tokens        : {effective_tokens} tokens (Compacted? {'YES ⚠️' if was_compacted else 'NO ✅'})", flush=True)
         if was_compacted:
             print(f"• DROPPED TEXT / TAIL DETAILS : \"{dropped_text}\"", flush=True)
-        print(f"• Top 10 Candidates            : {[f'@{c[\"rank\"]}: {c[\"video_id\"]} (f={c[\"frame_id\"]})' for c in candidates[:10]]}", flush=True)
+        cand_desc = [f"@{c['rank']}: {c['video_id']} (f={c['frame_id']})" for c in candidates[:10]]
+        print(f"• Top 10 Candidates            : {cand_desc}", flush=True)
 
     # Output draft clause-aware compacted queries for p1-12 and p1-17
     print("\n" + "=" * 150, flush=True)
