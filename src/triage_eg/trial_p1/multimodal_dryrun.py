@@ -86,9 +86,7 @@ class CanonicalBTCFrameMapper:
         self.inventory = {str(row["video_id"]): dict(row) for row in inventory}
         self._cache: dict[str, list[dict[str, Any]]] = {}
 
-    def __call__(self, video_id: str, seconds: float) -> int:
-        if not math.isfinite(seconds) or seconds < 0:
-            raise RuntimeError("CANONICAL_BTC_SECONDS_INVALID")
+    def _rows(self, video_id: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         item = self.inventory.get(str(video_id))
         if item is None or not item.get("mapping_available"):
             raise RuntimeError(f"CANONICAL_BTC_MAPPING_MISSING:{video_id}")
@@ -98,6 +96,12 @@ class CanonicalBTCFrameMapper:
             if not rows:
                 raise RuntimeError(f"CANONICAL_BTC_MAPPING_EMPTY:{video_id}")
             self._cache[str(video_id)] = rows
+        return item, rows
+
+    def __call__(self, video_id: str, seconds: float) -> int:
+        if not math.isfinite(seconds) or seconds < 0:
+            raise RuntimeError("CANONICAL_BTC_SECONDS_INVALID")
+        item, rows = self._rows(video_id)
         selected = min(
             rows,
             key=lambda row: (
@@ -110,6 +114,21 @@ class CanonicalBTCFrameMapper:
         if not 0 <= frame_id < int(item["total_frames"]):
             raise RuntimeError(f"CANONICAL_BTC_FRAME_OUT_OF_BOUNDS:{video_id}:{frame_id}")
         return frame_id
+
+    def frame_seconds(self, video_id: str, frame_id: int) -> float:
+        """Return declared BTC time for a canonical frame; never infer from FPS."""
+
+        item, rows = self._rows(video_id)
+        if not 0 <= int(frame_id) < int(item["total_frames"]):
+            raise RuntimeError(f"CANONICAL_BTC_FRAME_OUT_OF_BOUNDS:{video_id}:{frame_id}")
+        selected = min(
+            rows,
+            key=lambda row: (
+                abs(int(row["frame_idx"]) - int(frame_id)),
+                int(row["n"]),
+            ),
+        )
+        return float(selected["pts_time"])
 
 
 def _load_manifest(root: Path, filename: str = "asset_manifest.json") -> dict[str, Any]:
@@ -427,6 +446,7 @@ def build_qwen_context(
     *,
     ocr_rows: list[dict[str, Any]],
     asr_rows: list[dict[str, Any]],
+    candidate_seconds: float | None = None,
     limit: int = 6,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Build bounded, candidate-local text context with explicit provenance."""
@@ -442,8 +462,21 @@ def build_qwen_context(
             text = str(row.get("text") or span.get("text") or "").strip()
             if not text:
                 continue
+            source_id = (
+                f"asr:{span.get('chunk_id')}"
+                if modality == "asr" and span.get("chunk_id")
+                else f"{modality}:{video_id}:{int(row['frame_id'])}:{int(row.get('rank', 999999))}"
+            )
+            midpoint = (
+                (float(span["start_seconds"]) + float(span["end_seconds"])) / 2
+                if modality == "asr"
+                and span.get("start_seconds") is not None
+                and span.get("end_seconds") is not None
+                else None
+            )
             context.append(
                 {
+                    "source_id": source_id,
                     "modality": modality,
                     "video_id": video_id,
                     "frame_id": int(row["frame_id"]),
@@ -451,6 +484,11 @@ def build_qwen_context(
                     "text": text,
                     "rank": int(row.get("rank", 999999)),
                     "confidence": row.get("source_confidence"),
+                    "time_distance_seconds": (
+                        abs(midpoint - candidate_seconds)
+                        if midpoint is not None and candidate_seconds is not None
+                        else None
+                    ),
                     "asr_span": span or None,
                     "source": row.get("source"),
                 }
@@ -464,7 +502,9 @@ def build_qwen_context(
         )
     )
     selected = context[:limit]
-    text = " | ".join(f"[{row['modality']}] {row['text']}" for row in selected)
+    text = " | ".join(
+        f"[{row['source_id']}|{row['modality']}] {row['text']}" for row in selected
+    )
     return text, selected
 
 

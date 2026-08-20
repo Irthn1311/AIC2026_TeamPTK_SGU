@@ -316,7 +316,8 @@ def test_qwen_context_is_nearest_first_and_persists_provenance() -> None:
     )
     assert rows[0]["text"] == "near title"
     assert rows[0]["confidence"] == 0.9
-    assert text.startswith("[ocr] near title")
+    assert rows[0]["source_id"] == "ocr:L01_V001:105:2"
+    assert text.startswith("[ocr:L01_V001:105:2|ocr] near title")
 
 
 def test_external_ocr_evidence_is_evidence_only(tmp_path: Path) -> None:
