@@ -33,6 +33,7 @@ class MarianOfflineTranslator:
     """
 
     DEFAULT_MODEL_NAME = "Helsinki-NLP/opus-mt-vi-en"
+    DEFAULT_PINNED_REVISION = "a0586e3fcf81ec01c7785c40467c699fa8403d6d"
 
     def __init__(
         self,
@@ -57,7 +58,7 @@ class MarianOfflineTranslator:
         self.max_length = max_length
         self.num_beams = num_beams
         self.local_files_only = local_files_only
-        self.revision = revision
+        self.revision = revision or self.DEFAULT_PINNED_REVISION
 
         # Resolve device
         if device == "auto":
@@ -75,7 +76,7 @@ class MarianOfflineTranslator:
             self._device,
             cache_dir,
             local_files_only,
-            revision,
+            self.revision,
         )
 
         resolved_cache = str(cache_dir) if cache_dir else None
@@ -84,29 +85,63 @@ class MarianOfflineTranslator:
                 self.model_name,
                 cache_dir=resolved_cache,
                 local_files_only=local_files_only,
-                revision=revision,
+                revision=self.revision,
             )
             self.model = AutoModelForSeq2SeqLM.from_pretrained(
                 self.model_name,
                 cache_dir=resolved_cache,
                 local_files_only=local_files_only,
-                revision=revision,
+                revision=self.revision,
             ).to(self._device)
             self.model.eval()
         except Exception as exc:
             raise TranslationError(
-                f"Failed to load Marian MT model from '{self.model_name}': {exc}"
+                f"Failed to load Marian MT model from '{self.model_name}' (revision={self.revision}): {exc}"
             ) from exc
 
         self._torch = torch
 
     @property
     def provider_name(self) -> str:
-        return f"marian-mt:{self.model_name}"
+        return f"marian-mt:{self.model_name}@{self.revision[:8]}"
 
     @property
     def device(self) -> str:
         return self._device
+
+    def get_artifact_fingerprint(self) -> dict[str, str]:
+        """Compute artifact provenance and SHA256 fingerprint if local files exist."""
+        import hashlib
+        info: dict[str, str] = {
+            "model_name": self.model_name,
+            "pinned_revision": self.revision,
+            "device": self._device,
+        }
+        try:
+            from transformers.utils.hub import cached_file
+            resolved_weight = cached_file(
+                self.model_name,
+                "model.safetensors",
+                revision=self.revision,
+                local_files_only=True,
+            )
+            if not resolved_weight:
+                resolved_weight = cached_file(
+                    self.model_name,
+                    "pytorch_model.bin",
+                    revision=self.revision,
+                    local_files_only=True,
+                )
+            if resolved_weight and Path(resolved_weight).exists():
+                p = Path(resolved_weight)
+                info["resolved_weight_path"] = str(p)
+                info["weight_file_size_bytes"] = str(p.stat().st_size)
+                # Compute SHA256 header (first 64KB for speed + exact reproducibility)
+                h = hashlib.sha256(p.read_bytes()[:65536]).hexdigest()
+                info["weight_header_sha256"] = h
+        except Exception as exc:
+            info["fingerprint_warning"] = str(exc)
+        return info
 
     def translate(self, text: str) -> str:
         """Translate Vietnamese text to English.

@@ -198,6 +198,40 @@ class SessionConfig:
                 "QA visual ontology and QA object evidence are mutually exclusive"
             )
 
+    @classmethod
+    def from_yaml(cls, yaml_path: str | Path, **overrides: Any) -> SessionConfig:
+        """Load SessionConfig from a production YAML configuration file."""
+        try:
+            import yaml
+        except ImportError:
+            import subprocess, sys
+            subprocess.run([sys.executable, "-m", "pip", "install", "-q", "pyyaml"], check=False)
+            import yaml
+
+        p = Path(yaml_path)
+        if not p.exists():
+            raise FileNotFoundError(f"Configuration file not found at {p}")
+        data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+
+        sys_cfg = data.get("system", {})
+        kis_cfg = data.get("kis", {})
+        ret_cfg = data.get("retrieval", {})
+
+        kwargs: dict[str, Any] = {
+            "device": sys_cfg.get("device", "auto"),
+            "allow_model_download": sys_cfg.get("allow_model_download", True),
+            "chunk_size": sys_cfg.get("chunk_size", 50000),
+            "rrf_constant": ret_cfg.get("rrf_k", 60.0),
+            "default_output_top_k": kis_cfg.get("top_k_candidates", 100),
+            "default_refine_top_n": kis_cfg.get("refine_top_n_anchors", 3),
+            "enable_dynamic_translation": kis_cfg.get("enable_dynamic_translation", False),
+            "translation_model_name": kis_cfg.get("translation_model_name", "Helsinki-NLP/opus-mt-vi-en"),
+            "translation_revision": kis_cfg.get("translation_revision", None),
+            "translation_local_files_only": kis_cfg.get("translation_local_files_only", False),
+        }
+        kwargs.update(overrides)
+        return cls(**kwargs)
+
 
 @dataclass(frozen=True, slots=True)
 class HealthRequest:

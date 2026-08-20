@@ -32,6 +32,11 @@ retrieval:
 # --- Textual KIS (Known-Item Search) Workspace (PROVEN_WINNER) ---
 kis:
   status: "PROVEN_WINNER"
+  enable_dynamic_translation: true
+  translation_model_name: "Helsinki-NLP/opus-mt-vi-en"
+  translation_revision: "a0586e3fcf81ec01c7785c40467c699fa8403d6d"
+  translation_local_files_only: true
+  language_policy: "en_only"
   top_k_candidates: 100
   coarse_to_fine_refinement: true
   refine_top_n_anchors: 3
