@@ -231,23 +231,195 @@ def build_topk_similarity_edges(
     return edges
 
 
+def standardize_keyframe_id(video_id: str, shot_id: int, rk_raw: Any) -> str:
+    """Format representative keyframe ID into a clean, standardized string format."""
+    s_rk = str(rk_raw).strip()
+    if not s_rk or s_rk.lower() == "none" or s_rk.lower() == "nan":
+        return f"{video_id}_S{shot_id:04d}_center"
+    if s_rk.isdigit():
+        return f"{video_id}_S{shot_id:04d}_K{int(s_rk):04d}"
+    if not s_rk.startswith(video_id):
+        return f"{video_id}_{s_rk}"
+    return s_rk
+
+
+def deduplicate_similarity_edges(edges: List[Dict[str, Any]], deduplicate_undirected: bool = True) -> Tuple[List[Dict[str, Any]], int, float]:
+    """
+    Remove symmetric duplicate edges (A->B and B->A) for undirected similarity relations.
+    Returns: (deduplicated_edges, duplicate_count, duplicate_rate)
+    """
+    if not deduplicate_undirected:
+        return edges, 0, 0.0
+
+    seen_pairs = set()
+    dedup_edges = []
+    duplicate_count = 0
+
+    for e in edges:
+        e_type = e["edge_type"]
+        src = e["src_event_id"]
+        dst = e["dst_event_id"]
+
+        if e_type in ["VISUAL_SIMILARITY", "SEMANTIC_CONTINUITY"]:
+            # Canonical pair key (min, max)
+            pair_key = (e_type, min(src, dst), max(src, dst))
+            if pair_key in seen_pairs:
+                duplicate_count += 1
+                continue
+            seen_pairs.add(pair_key)
+            dedup_edges.append(e)
+        else:
+            dedup_edges.append(e)
+
+    total_orig = len(edges)
+    duplicate_rate = round((duplicate_count / max(1, total_orig)) * 100, 2)
+    return dedup_edges, duplicate_count, duplicate_rate
+
+
+def build_topk_similarity_edges(
+    df_events: pd.DataFrame,
+    embeddings: np.ndarray,
+    edge_type: str,
+    top_k: int = 10,
+    threshold: float = 0.70,
+    min_z_score: Optional[float] = None,
+    deduplicate_undirected: bool = True,
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """
+    Build VISUAL_SIMILARITY or SEMANTIC_CONTINUITY edges using FAISS Top-K nearest neighbors.
+    Applies adaptive Z-Score thresholding if min_z_score is specified to prevent saturation.
+    """
+    logger.info("Building %s edges (top_k=%d, threshold=%.2f, min_z=%s)...", edge_type, top_k, threshold, min_z_score)
+    num_events, dim = embeddings.shape
+    raw_edges = []
+
+    event_ids = df_events["event_id"].tolist()
+    video_ids = df_events["video_id"].tolist()
+
+    if HAS_FAISS:
+        index = faiss.IndexFlatIP(dim)
+        index.add(embeddings)
+        scores, indices = index.search(embeddings, top_k + 1)
+
+        for i in range(num_events):
+            src_id = str(event_ids[i])
+            src_vid = str(video_ids[i])
+
+            # Extract valid neighbor scores (excluding self)
+            row_scores = []
+            row_dst_indices = []
+            for k in range(top_k + 1):
+                idx_j = indices[i, k]
+                s_val = float(scores[i, k])
+                if idx_j >= 0 and idx_j != i:
+                    row_scores.append(s_val)
+                    row_dst_indices.append(idx_j)
+
+            if not row_scores:
+                continue
+
+            # Compute node-local Z-score statistics if min_z_score is requested
+            mean_s = float(np.mean(row_scores))
+            std_s = float(np.std(row_scores)) + 1e-8
+
+            for s_val, idx_j in zip(row_scores, row_dst_indices):
+                z_val = (s_val - mean_s) / std_s
+
+                # Filter by absolute threshold AND optional Z-score
+                pass_abs = s_val >= threshold
+                pass_z = (min_z_score is None) or (z_val >= min_z_score)
+
+                if pass_abs and pass_z:
+                    dst_id = str(event_ids[idx_j])
+                    dst_vid = str(video_ids[idx_j])
+                    raw_edges.append({
+                        "src_event_id": src_id,
+                        "dst_event_id": dst_id,
+                        "edge_type": edge_type,
+                        "score": round(s_val, 4),
+                        "z_score": round(z_val, 2),
+                        "src_video_id": src_vid,
+                        "dst_video_id": dst_vid,
+                    })
+    else:
+        # Fallback numpy implementation
+        batch_size = 500
+        for start_idx in range(0, num_events, batch_size):
+            end_idx = min(start_idx + batch_size, num_events)
+            sim_batch = np.dot(embeddings[start_idx:end_idx], embeddings.T)
+
+            for local_i in range(end_idx - start_idx):
+                global_i = start_idx + local_i
+                src_id = str(event_ids[global_i])
+                src_vid = str(video_ids[global_i])
+
+                sims = sim_batch[local_i].copy()
+                sims[global_i] = -1.0  # Mask self
+
+                top_indices = np.argpartition(sims, -top_k)[-top_k:]
+                sorted_top = top_indices[np.argsort(-sims[top_indices])]
+
+                row_scores = [float(sims[j]) for j in sorted_top if sims[j] >= 0]
+                if not row_scores:
+                    continue
+
+                mean_s = float(np.mean(row_scores))
+                std_s = float(np.std(row_scores)) + 1e-8
+
+                for idx_j in sorted_top:
+                    s_val = float(sims[idx_j])
+                    if s_val < 0:
+                        continue
+                    z_val = (s_val - mean_s) / std_s
+
+                    pass_abs = s_val >= threshold
+                    pass_z = (min_z_score is None) or (z_val >= min_z_score)
+
+                    if pass_abs and pass_z:
+                        dst_id = str(event_ids[idx_j])
+                        dst_vid = str(video_ids[idx_j])
+                        raw_edges.append({
+                            "src_event_id": src_id,
+                            "dst_event_id": dst_id,
+                            "edge_type": edge_type,
+                            "score": round(s_val, 4),
+                            "z_score": round(z_val, 2),
+                            "src_video_id": src_vid,
+                            "dst_video_id": dst_vid,
+                        })
+
+    # Deduplicate symmetric edges
+    final_edges, dup_count, dup_rate = deduplicate_similarity_edges(raw_edges, deduplicate_undirected)
+
+    meta = {
+        "raw_edge_count": len(raw_edges),
+        "dedup_edge_count": len(final_edges),
+        "duplicate_count": dup_count,
+        "duplicate_rate_pct": dup_rate,
+    }
+
+    logger.info("Constructed %d %s edges (Raw: %d, Duplicates Removed: %d / %.2f%%).", len(final_edges), edge_type, len(raw_edges), dup_count, dup_rate)
+    return final_edges, meta
+
+
 def log_sample_inspection(df_nodes: pd.DataFrame, df_edges: pd.DataFrame):
     """Print sample inspection for 5 nodes and 5 sample edges per type."""
     logger.info("\n" + "=" * 110)
     logger.info("🔍 STAGE 4 EVENTGRAPH NODES INSPECTION (5 SAMPLE NODES):")
     logger.info("=" * 110)
-    logger.info("%-16s | %-10s | %-8s | %-8s | %-12s | %-20s", "Event_ID", "Video_ID", "Shots", "Duration", "Confidence", "RepKeyframe")
+    logger.info("%-16s | %-10s | %-8s | %-8s | %-12s | %-25s", "Event_ID", "Video_ID", "Shots", "Duration", "Confidence", "RepKeyframe")
     logger.info("-" * 110)
     for _, r in df_nodes.head(5).iterrows():
-        rk_str = str(r["representative_keyframes"][0]) if isinstance(r["representative_keyframes"], (list, np.ndarray)) and len(r["representative_keyframes"]) > 0 else str(r.get("representative_keyframes", ""))
+        rk_list = r.get("representative_keyframes", [])
+        rk_str = str(rk_list[0]) if isinstance(rk_list, (list, np.ndarray)) and len(rk_list) > 0 else str(rk_list)
         logger.info(
-            "%-16s | %-10s | %-8d | %-8.1fs | %-12.4f | %-20s",
+            "%-16s | %-10s | %-8d | %-8.1fs | %-12.4f | %-25s",
             str(r["event_id"]),
             str(r["video_id"]),
             int(r["num_shots"]),
             float(r["duration_sec"]),
             float(r.get("boundary_confidence", 0.85)),
-            rk_str[:20],
+            rk_str[:25],
         )
     logger.info("=" * 110 + "\n")
 
@@ -404,6 +576,8 @@ def main():
     parser.add_argument("--top-k-semantic", type=int, default=10, help="Top-K nearest neighbors for semantic similarity edges")
     parser.add_argument("--visual-threshold", type=float, default=0.70, help="Minimum cosine similarity threshold for visual edges")
     parser.add_argument("--semantic-threshold", type=float, default=0.75, help="Minimum cosine similarity threshold for semantic edges")
+    parser.add_argument("--semantic-min-z", type=float, default=None, help="Optional minimum Z-Score threshold for semantic edge filtering")
+    parser.add_argument("--deduplicate-undirected", action="store_true", default=True, help="Deduplicate symmetric bidirectional edges (A->B and B->A)")
     args = parser.parse_args()
 
     logger.info("==================================================================")
@@ -418,6 +592,14 @@ def main():
     logger.info("Loading events parquet from: %s", events_path)
     df_events = pd.read_parquet(events_path)
     logger.info("Loaded %d event nodes across %d videos.", len(df_events), df_events["video_id"].nunique())
+
+    # Standardize Keyframe ID format on nodes
+    df_events["representative_keyframes"] = df_events.apply(
+        lambda r: [standardize_keyframe_id(r["video_id"], r["start_shot"], k) for k in r.get("representative_keyframes", [])]
+        if isinstance(r.get("representative_keyframes"), (list, np.ndarray))
+        else [standardize_keyframe_id(r["video_id"], r["start_shot"], r.get("representative_keyframes"))],
+        axis=1
+    )
 
     shots_path = Path(args.shots_in)
     df_shots = None
@@ -435,11 +617,11 @@ def main():
 
     # 3. Construct Edges
     temporal_edges = build_temporal_edges(df_events)
-    visual_edges = build_topk_similarity_edges(
-        df_events, vis_embeds, edge_type="VISUAL_SIMILARITY", top_k=args.top_k_visual, threshold=args.visual_threshold
+    visual_edges, vis_meta = build_topk_similarity_edges(
+        df_events, vis_embeds, edge_type="VISUAL_SIMILARITY", top_k=args.top_k_visual, threshold=args.visual_threshold, deduplicate_undirected=args.deduplicate_undirected
     )
-    semantic_edges = build_topk_similarity_edges(
-        df_events, sem_embeds, edge_type="SEMANTIC_CONTINUITY", top_k=args.top_k_semantic, threshold=args.semantic_threshold
+    semantic_edges, sem_meta = build_topk_similarity_edges(
+        df_events, sem_embeds, edge_type="SEMANTIC_CONTINUITY", top_k=args.top_k_semantic, threshold=args.semantic_threshold, min_z_score=args.semantic_min_z, deduplicate_undirected=args.deduplicate_undirected
     )
 
     all_edges_list = temporal_edges + visual_edges + semantic_edges
@@ -447,6 +629,12 @@ def main():
 
     if df_edges.empty:
         df_edges = pd.DataFrame(columns=["src_event_id", "dst_event_id", "edge_type", "score", "src_video_id", "dst_video_id"])
+
+    # Ensure clean schema columns
+    cols_schema = ["src_event_id", "dst_event_id", "edge_type", "score", "src_video_id", "dst_video_id"]
+    if "z_score" in df_edges.columns:
+        cols_schema.append("z_score")
+    df_edges = df_edges[cols_schema]
 
     # 4. Save Parquet Outputs
     nodes_out_path = Path(args.nodes_out)
@@ -462,6 +650,7 @@ def main():
     # 5. Log Sample Inspection & Summary Statistics
     log_sample_inspection(df_nodes, df_edges)
     stats = compute_and_log_graph_statistics(df_nodes, df_edges)
+    stats["deduplication_meta"] = {"visual": vis_meta, "semantic": sem_meta}
 
     report = {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -470,6 +659,8 @@ def main():
             "top_k_semantic": args.top_k_semantic,
             "visual_threshold": args.visual_threshold,
             "semantic_threshold": args.semantic_threshold,
+            "semantic_min_z": args.semantic_min_z,
+            "deduplicate_undirected": args.deduplicate_undirected,
         },
         "summary_statistics": stats,
     }
