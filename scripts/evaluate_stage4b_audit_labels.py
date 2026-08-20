@@ -156,8 +156,10 @@ def evaluate_metrics(records: List[Dict[str, Any]], labels_file_exists: bool) ->
     }
 
     false_edges = []
+    ambiguous_edges = []
     for r in labeled_records:
-        if str(r.get("label", "")).upper() in ["IRRELEVANT", "FALSE", "FAIL"]:
+        lbl = str(r.get("label", "")).upper()
+        if lbl in ["IRRELEVANT", "FALSE", "FAIL"]:
             false_edges.append({
                 "sample_id": r.get("sample_id"),
                 "src_event_id": r.get("src_event_id"),
@@ -166,6 +168,15 @@ def evaluate_metrics(records: List[Dict[str, Any]], labels_file_exists: bool) ->
                 "score": float(r.get("score", 0.0)),
                 "bucket": r.get("bucket"),
                 "reason": r.get("reason", "N/A"),
+            })
+        elif lbl in ["AMBIGUOUS", "AMBIG", "UNSURE"]:
+            ambiguous_edges.append({
+                "sample_id": r.get("sample_id"),
+                "src_event_id": r.get("src_event_id"),
+                "dst_event_id": r.get("dst_event_id"),
+                "edge_type": r.get("edge_type"),
+                "score": float(r.get("score", 0.0)),
+                "bucket": r.get("bucket"),
             })
 
     # Threshold for FREEZE STAGE 4: Overall Precision >= 80% and Near-Threshold Precision >= 70%
@@ -185,6 +196,7 @@ def evaluate_metrics(records: List[Dict[str, Any]], labels_file_exists: bool) ->
         "semantic_continuity_stats": sem_stats,
         "bucket_stats": bucket_stats,
         "false_edges": false_edges,
+        "ambiguous_edges": ambiguous_edges,
     }
 
 
@@ -259,6 +271,8 @@ def main():
             logger.info(" • %-16s Bucket: Precision = %6.2f%% (%d Rel / %d Irrel)", b_name, b_s["precision_pct"], b_s["relevant"], b_s["irrelevant"])
 
         false_edges = eval_results["false_edges"]
+        ambiguous_edges = eval_results["ambiguous_edges"]
+
         logger.info("\n" + "=" * 90)
         logger.info("❌ FALSE EDGES DIAGNOSTICS (%d IRRELEVANT EDGES DETECTED):", len(false_edges))
         logger.info("=" * 90)
@@ -269,6 +283,18 @@ def main():
                 logger.info("%-16s → %-16s | %-18s | %-6.4f | %-14s | %-20s", e["src_event_id"], e["dst_event_id"], e["edge_type"], e["score"], e["bucket"], str(e.get("reason", ""))[:20])
         else:
             logger.info("  🎉 0 False Edges detected! All sampled edges passed relevance validation.")
+        logger.info("=" * 90)
+
+        logger.info("\n" + "=" * 90)
+        logger.info("❓ AMBIGUOUS EDGES DIAGNOSTICS (%d AMBIGUOUS EDGES DETECTED):", len(ambiguous_edges))
+        logger.info("=" * 90)
+        if ambiguous_edges:
+            logger.info("%-16s → %-16s | %-18s | %-6s | %-14s", "Src_Event", "Dst_Event", "Edge_Type", "Score", "Bucket")
+            logger.info("-" * 90)
+            for e in ambiguous_edges:
+                logger.info("%-16s → %-16s | %-18s | %-6.4f | %-14s", e["src_event_id"], e["dst_event_id"], e["edge_type"], e["score"], e["bucket"])
+        else:
+            logger.info("  🎉 0 Ambiguous Edges detected!")
         logger.info("=" * 90 + "\n")
 
     report_out = Path(args.report_out)

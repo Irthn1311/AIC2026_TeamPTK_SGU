@@ -84,7 +84,7 @@ def sample_stratified_edges(df_edges: pd.DataFrame, edge_type: str, n_top: int =
 def enrich_edge_samples(
     sampled_records: List[Dict[str, Any]], df_nodes: pd.DataFrame, df_shots: Optional[pd.DataFrame] = None
 ) -> List[Dict[str, Any]]:
-    """Enrich edge samples with full node metadata, timestamps, keyframes, and captions."""
+    """Enrich edge samples with full node metadata, timestamps, keyframes, image URLs, and captions."""
     node_map = df_nodes.set_index("event_id").to_dict("index")
     
     shot_map = {}
@@ -102,23 +102,30 @@ def enrich_edge_samples(
         src_node = node_map.get(src_id, {})
         dst_node = node_map.get(dst_id, {})
 
-        # Keyframe formatting
+        # Keyframe formatting & path resolution
         src_rk = src_node.get("representative_keyframes", ["N/A"])
         src_kf_str = str(src_rk[0]) if isinstance(src_rk, (list, np.ndarray)) and len(src_rk) > 0 else str(src_rk)
 
         dst_rk = dst_node.get("representative_keyframes", ["N/A"])
         dst_kf_str = str(dst_rk[0]) if isinstance(dst_rk, (list, np.ndarray)) and len(dst_rk) > 0 else str(dst_rk)
 
+        src_vid = str(src_node.get("video_id", e.get("src_video_id", "")))
+        dst_vid = str(dst_node.get("video_id", e.get("dst_video_id", "")))
+
+        # Image paths (Local / Kaggle / Web fallback)
+        src_img_url = f"keyframes/{src_vid}/{src_kf_str}.jpg"
+        dst_img_url = f"keyframes/{dst_vid}/{dst_kf_str}.jpg"
+
         # Captions
         src_captions = []
         for sid in src_node.get("shot_ids", []):
-            txt = shot_map.get((str(src_node.get("video_id", "")), int(sid)))
+            txt = shot_map.get((src_vid, int(sid)))
             if txt and txt not in src_captions:
                 src_captions.append(txt)
 
         dst_captions = []
         for sid in dst_node.get("shot_ids", []):
-            txt = shot_map.get((str(dst_node.get("video_id", "")), int(sid)))
+            txt = shot_map.get((dst_vid, int(sid)))
             if txt and txt not in dst_captions:
                 dst_captions.append(txt)
 
@@ -130,23 +137,25 @@ def enrich_edge_samples(
             "z_score": float(e.get("z_score", 0.0)),
             "src": {
                 "event_id": src_id,
-                "video_id": str(src_node.get("video_id", e.get("src_video_id", ""))),
+                "video_id": src_vid,
                 "start_sec": float(src_node.get("start_sec", 0.0)),
                 "end_sec": float(src_node.get("end_sec", 0.0)),
                 "duration_sec": float(src_node.get("duration_sec", 0.0)),
                 "num_shots": int(src_node.get("num_shots", 0)),
                 "keyframe": src_kf_str,
-                "caption": " | ".join(src_captions[:3]) if src_captions else f"Event {src_id} in video {src_node.get('video_id')}",
+                "img_url": src_img_url,
+                "caption": " | ".join(src_captions[:3]) if src_captions else f"Event {src_id} in video {src_vid}",
             },
             "dst": {
                 "event_id": dst_id,
-                "video_id": str(dst_node.get("video_id", e.get("dst_video_id", ""))),
+                "video_id": dst_vid,
                 "start_sec": float(dst_node.get("start_sec", 0.0)),
                 "end_sec": float(dst_node.get("end_sec", 0.0)),
                 "duration_sec": float(dst_node.get("duration_sec", 0.0)),
                 "num_shots": int(dst_node.get("num_shots", 0)),
                 "keyframe": dst_kf_str,
-                "caption": " | ".join(dst_captions[:3]) if dst_captions else f"Event {dst_id} in video {dst_node.get('video_id')}",
+                "img_url": dst_img_url,
+                "caption": " | ".join(dst_captions[:3]) if dst_captions else f"Event {dst_id} in video {dst_vid}",
             },
         }
         enriched.append(rec)
@@ -155,7 +164,7 @@ def enrich_edge_samples(
 
 
 def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: Dict[str, Any], output_path: Path):
-    """Generate modern side-by-side interactive HTML audit dashboard with Relevant, Irrelevant, Ambiguous labeling and Export functionality."""
+    """Generate modern side-by-side interactive HTML audit dashboard with real keyframe images and strict progress tracking."""
     json_data = json.dumps(enriched_samples, indent=2)
 
     html_content = f"""<!DOCTYPE html>
@@ -202,7 +211,7 @@ def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: 
             padding: 12px 16px; border-radius: 8px; text-align: center;
         }}
 
-        .stat-card .val {{ font-size: 22px; font-weight: 700; color: var(--accent-green); }}
+        .stat-card .val {{ font-size: 22px; font-weight: 700; color: var(--accent-blue); }}
         .stat-card .lbl {{ font-size: 12px; color: var(--text-muted); margin-top: 4px; }}
 
         .filter-bar {{
@@ -268,10 +277,14 @@ def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: 
         .meta-row {{ font-size: 13px; color: var(--text-muted); margin-bottom: 6px; }}
         .meta-row span {{ color: var(--text-light); font-weight: 600; }}
 
-        .keyframe-placeholder {{
-            background: #0f172a; border: 1px dashed var(--border-color); border-radius: 6px;
-            padding: 16px; text-align: center; color: var(--text-muted); font-size: 12px; margin: 10px 0;
-            font-family: monospace; word-break: break-all;
+        .keyframe-container {{
+            width: 100%; height: 200px; background: #0f172a; border: 1px solid var(--border-color);
+            border-radius: 6px; overflow: hidden; margin: 10px 0; display: flex;
+            align-items: center; justify-content: center; position: relative;
+        }}
+
+        .keyframe-img {{
+            width: 100%; height: 100%; object-fit: cover;
         }}
 
         .caption-box {{
@@ -280,7 +293,7 @@ def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: 
         }}
 
         .vs-divider {{
-            text-align: center; font-size: 18px; font-weight: 700; color: var(--text-muted);
+            text-align: center; font-size: 20px; font-weight: 700; color: var(--text-muted);
         }}
 
         .audit-action-bar {{
@@ -292,21 +305,18 @@ def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: 
             background: rgba(34, 197, 94, 0.2); color: var(--accent-green); border: 1px solid var(--accent-green);
             padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 13px;
         }}
-
         .btn-pass:hover, .btn-pass.selected {{ background: var(--accent-green); color: #000; }}
 
         .btn-fail {{
             background: rgba(239, 68, 68, 0.2); color: var(--accent-red); border: 1px solid var(--accent-red);
             padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 13px;
         }}
-
         .btn-fail:hover, .btn-fail.selected {{ background: var(--accent-red); color: #fff; }}
 
         .btn-ambiguous {{
             background: rgba(245, 158, 11, 0.2); color: var(--accent-amber); border: 1px solid var(--accent-amber);
             padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 13px;
         }}
-
         .btn-ambiguous:hover, .btn-ambiguous.selected {{ background: var(--accent-amber); color: #000; }}
 
         .fail-reason-select {{
@@ -323,20 +333,24 @@ def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: 
 
         <div class="stats-banner">
             <div class="stat-card">
-                <div class="val" id="stat-evaluated">0 / 60</div>
-                <div class="lbl">Audited Samples</div>
+                <div class="val" id="stat-evaluated" style="color: var(--accent-blue);">0 / 60</div>
+                <div class="lbl">Label Progress</div>
             </div>
             <div class="stat-card">
-                <div class="val" id="stat-overall-prec">100.0%</div>
-                <div class="lbl">Overall Precision@60</div>
+                <div class="val" id="stat-relevant-cnt" style="color: var(--accent-green);">0</div>
+                <div class="lbl">✓ Relevant</div>
             </div>
             <div class="stat-card">
-                <div class="val" id="stat-vis-prec">100.0%</div>
-                <div class="lbl">Visual Precision@30</div>
+                <div class="val" id="stat-irrelevant-cnt" style="color: var(--accent-red);">0</div>
+                <div class="lbl">✕ Irrelevant</div>
             </div>
             <div class="stat-card">
-                <div class="val" id="stat-sem-prec">100.0%</div>
-                <div class="lbl">Semantic Precision@30</div>
+                <div class="val" id="stat-ambig-cnt" style="color: var(--accent-amber);">0</div>
+                <div class="lbl">? Ambiguous</div>
+            </div>
+            <div class="stat-card">
+                <div class="val" id="stat-overall-prec" style="color: #c084fc;">N/A</div>
+                <div class="lbl">Current Precision</div>
             </div>
         </div>
     </div>
@@ -373,6 +387,9 @@ def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: 
                 const typeBadgeClass = s.edge_type === 'VISUAL_SIMILARITY' ? 'badge-vis' : 'badge-sem';
                 const bucketBadgeClass = s.bucket === 'TOP' ? 'badge-top' : (s.bucket === 'MIDDLE' ? 'badge-mid' : 'badge-low');
 
+                const srcFallbackText = encodeURIComponent(`${{s.src.video_id}} | ${{s.src.keyframe}}`);
+                const dstFallbackText = encodeURIComponent(`${{s.dst.video_id}} | ${{s.dst.keyframe}}`);
+
                 card.innerHTML = `
                     <div class="sample-header">
                         <div>
@@ -388,11 +405,15 @@ def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: 
                     <div class="side-by-side">
                         <!-- Source Event Box -->
                         <div class="event-box">
-                            <h4>Src: ${{s.src.event_id}}</h4>
+                            <h4>Src Event: ${{s.src.event_id}}</h4>
                             <div class="meta-row">Video: <span>${{s.src.video_id}}</span></div>
                             <div class="meta-row">Time Range: <span>${{s.src.start_sec.toFixed(1)}}s - ${{s.src.end_sec.toFixed(1)}}s (${{s.src.duration_sec.toFixed(1)}}s)</span></div>
-                            <div class="meta-row">Shots: <span>${{s.src.num_shots}}</span></div>
-                            <div class="keyframe-placeholder">🖼️ Keyframe: ${{s.src.keyframe}}</div>
+                            <div class="meta-row">Shots: <span>${{s.src.num_shots}}</span> | Keyframe: <span>${{s.src.keyframe}}</span></div>
+                            <div class="keyframe-container">
+                                <img src="${{s.src.img_url}}" 
+                                     onerror="this.onerror=null; this.src='https://placehold.co/360x202/1e293b/38bdf8?text=' + '${{srcFallbackText}}'" 
+                                     class="keyframe-img" alt="Src Keyframe"/>
+                            </div>
                             <div class="caption-box">💬 Caption: "${{s.src.caption}}"</div>
                         </div>
 
@@ -400,11 +421,15 @@ def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: 
 
                         <!-- Target Event Box -->
                         <div class="event-box">
-                            <h4>Dst: ${{s.dst.event_id}}</h4>
+                            <h4>Dst Event: ${{s.dst.event_id}}</h4>
                             <div class="meta-row">Video: <span>${{s.dst.video_id}}</span></div>
                             <div class="meta-row">Time Range: <span>${{s.dst.start_sec.toFixed(1)}}s - ${{s.dst.end_sec.toFixed(1)}}s (${{s.dst.duration_sec.toFixed(1)}}s)</span></div>
-                            <div class="meta-row">Shots: <span>${{s.dst.num_shots}}</span></div>
-                            <div class="keyframe-placeholder">🖼️ Keyframe: ${{s.dst.keyframe}}</div>
+                            <div class="meta-row">Shots: <span>${{s.dst.num_shots}}</span> | Keyframe: <span>${{s.dst.keyframe}}</span></div>
+                            <div class="keyframe-container">
+                                <img src="${{s.dst.img_url}}" 
+                                     onerror="this.onerror=null; this.src='https://placehold.co/360x202/1e293b/38bdf8?text=' + '${{dstFallbackText}}'" 
+                                     class="keyframe-img" alt="Dst Keyframe"/>
+                            </div>
                             <div class="caption-box">💬 Caption: "${{s.dst.caption}}"</div>
                         </div>
                     </div>
@@ -467,17 +492,30 @@ def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: 
 
         function updateStats() {{
             const totalEval = Object.keys(evaluations).length;
-            const passCount = Object.values(evaluations).filter(e => e.label === 'RELEVANT').length;
+            const relCount = Object.values(evaluations).filter(e => e.label === 'RELEVANT').length;
+            const irrelCount = Object.values(evaluations).filter(e => e.label === 'IRRELEVANT').length;
+            const ambigCount = Object.values(evaluations).filter(e => e.label === 'AMBIGUOUS').length;
 
             document.getElementById('stat-evaluated').innerText = `${{totalEval}} / ${{samplesData.length}}`;
+            document.getElementById('stat-relevant-cnt').innerText = relCount;
+            document.getElementById('stat-irrelevant-cnt').innerText = irrelCount;
+            document.getElementById('stat-ambig-cnt').innerText = ambigCount;
 
-            if (totalEval > 0) {{
-                const prec = ((passCount / totalEval) * 100).toFixed(1);
+            const denom = relCount + irrelCount;
+            if (denom > 0) {{
+                const prec = ((relCount / denom) * 100).toFixed(1);
                 document.getElementById('stat-overall-prec').innerText = `${{prec}}%`;
+            }} else {{
+                document.getElementById('stat-overall-prec').innerText = 'N/A';
             }}
         }}
 
         function exportJSON() {{
+            const totalEval = Object.keys(evaluations).length;
+            if (totalEval < samplesData.length) {{
+                alert(`⚠️ Warning: You have labeled ${{totalEval}} / ${{samplesData.length}} samples. Please label all 60 samples before performing final Freeze evaluation!`);
+            }}
+
             const exportList = samplesData.map(s => ({{
                 sample_id: s.sample_id,
                 src_event_id: s.src.event_id,
@@ -488,7 +526,7 @@ def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: 
                 score: s.score,
                 z_score: s.z_score,
                 bucket: s.bucket,
-                label: evaluations[s.sample_id]?.label || 'RELEVANT',
+                label: evaluations[s.sample_id]?.label || 'UNLABELED',
                 reason: evaluations[s.sample_id]?.reason || ''
             }}));
 
@@ -501,9 +539,14 @@ def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: 
         }}
 
         function exportCSV() {{
+            const totalEval = Object.keys(evaluations).length;
+            if (totalEval < samplesData.length) {{
+                alert(`⚠️ Warning: You have labeled ${{totalEval}} / ${{samplesData.length}} samples. Please label all 60 samples before performing final Freeze evaluation!`);
+            }}
+
             let csv = 'sample_id,src_event_id,dst_event_id,src_video_id,dst_video_id,edge_type,score,z_score,bucket,label,reason\\n';
             samplesData.forEach(s => {{
-                const ev = evaluations[s.sample_id] || {{ label: 'RELEVANT', reason: '' }};
+                const ev = evaluations[s.sample_id] || {{ label: 'UNLABELED', reason: '' }};
                 csv += `${{s.sample_id}},${{s.src.event_id}},${{s.dst.event_id}},${{s.src.video_id}},${{s.dst.video_id}},${{s.edge_type}},${{s.score}},${{s.z_score}},${{s.bucket}},${{ev.label}},${{ev.reason || ''}}\\n`;
             }});
 
@@ -530,6 +573,7 @@ def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: 
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(html_content)
     logger.info("Saved Stage 4B Interactive HTML Dashboard to: %s", output_path)
+
 
 
 
