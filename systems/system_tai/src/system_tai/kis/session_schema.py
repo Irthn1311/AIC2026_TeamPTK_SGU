@@ -100,6 +100,8 @@ class SessionConfig:
     translation_model_name: str = "Helsinki-NLP/opus-mt-vi-en"
     translation_cache_dir: Path | None = None
     translation_device: str = "auto"
+    translation_local_files_only: bool = False
+    translation_revision: str | None = None
 
     def __post_init__(self) -> None:
         if self.reuse_manifest is not None and self.manifest_cache is not None:

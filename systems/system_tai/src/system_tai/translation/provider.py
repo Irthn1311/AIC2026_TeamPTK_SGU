@@ -40,6 +40,8 @@ class MarianOfflineTranslator:
         model_name_or_path: str | Path | None = None,
         device: str = "auto",
         cache_dir: Path | None = None,
+        local_files_only: bool = False,
+        revision: str | None = None,
         max_length: int = 128,
         num_beams: int = 4,
     ) -> None:
@@ -54,6 +56,8 @@ class MarianOfflineTranslator:
         self.model_name = str(model_name_or_path or self.DEFAULT_MODEL_NAME)
         self.max_length = max_length
         self.num_beams = num_beams
+        self.local_files_only = local_files_only
+        self.revision = revision
 
         # Resolve device
         if device == "auto":
@@ -66,10 +70,12 @@ class MarianOfflineTranslator:
             raise ValueError(f"Unsupported device '{device}', must be 'auto', 'cuda', or 'cpu'")
 
         logger.info(
-            "Loading Marian MT model '%s' on %s (cache_dir=%s)...",
+            "Loading Marian MT model '%s' on %s (cache_dir=%s, local_files_only=%s, revision=%s)...",
             self.model_name,
             self._device,
             cache_dir,
+            local_files_only,
+            revision,
         )
 
         resolved_cache = str(cache_dir) if cache_dir else None
@@ -77,10 +83,14 @@ class MarianOfflineTranslator:
             self.tokenizer = AutoTokenizer.from_pretrained(
                 self.model_name,
                 cache_dir=resolved_cache,
+                local_files_only=local_files_only,
+                revision=revision,
             )
             self.model = AutoModelForSeq2SeqLM.from_pretrained(
                 self.model_name,
                 cache_dir=resolved_cache,
+                local_files_only=local_files_only,
+                revision=revision,
             ).to(self._device)
             self.model.eval()
         except Exception as exc:

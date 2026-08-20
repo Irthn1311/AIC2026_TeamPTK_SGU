@@ -264,6 +264,8 @@ class OperationalKISRuntime:
                 model_name_or_path=config.translation_model_name,
                 device=config.translation_device,
                 cache_dir=config.translation_cache_dir,
+                local_files_only=config.translation_local_files_only,
+                revision=config.translation_revision,
             )
             self.token_budget_guard = TokenBudgetGuard()
 
