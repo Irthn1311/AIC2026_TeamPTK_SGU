@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """P0 Diagnostic: Language & Tokenization Parity Ablation on 5 Representative BTC KIS Queries.
 
-Compares 3 Retrieval Arms (Fast vector search + RRF, zero heavy refinement):
-  - Arm A: Original Vietnamese (query_vi)
-  - Arm B: Literal English translation (query_en_literal)
-  - Arm C: Concise English retrieval description (query_en_concise)
+Compares 4 Retrieval Arms (Fast vector search + RRF, zero heavy refinement):
+  - Arm A: Original Vietnamese (query_vi only)
+  - Arm B: Literal English translation (query_en_literal only)
+  - Arm C: Concise English retrieval description (query_en_concise only)
+  - Arm D: Parity Arm - VI original + Literal EN (equal-weight 1.0 + 1.0, RRF k=60.0)
 
 Reports:
-  1. CLIP Token Counts & Truncation status for each query.
-  2. Top 10 Video IDs retrieved by Arm A vs Arm B vs Arm C.
+  1. Production Tokenization & Truncation Inspection (clip.tokenize(truncate=True)).
+  2. Top 10 Video IDs retrieved by Arm A vs Arm B vs Arm C vs Arm D.
   3. HTML visual gallery comparing Top 3 thumbnails side-by-side for each arm.
 """
 
@@ -80,14 +81,19 @@ BENCHMARK_QUERIES = [
 ]
 
 
-def inspect_tokens() -> None:
-    print("=" * 145, flush=True)
-    print("SECTION 1: CLIP TOKENIZATION & CONTEXT LENGTH ANALYSIS (77 Token Limit)", flush=True)
-    print("=" * 145, flush=True)
+def inspect_production_tokenization() -> None:
+    print("=" * 150, flush=True)
+    print("SECTION 1: PRODUCTION CLIP TOKENIZATION & TRUNCATION INSPECTION (77-Token Limit)", flush=True)
+    print("=" * 150, flush=True)
+    print("• Production Encoder Call Path      : SharedOpenAIClipEncoder.encode_texts(texts)")
+    print("• Production Invocation             : clip.tokenize(list(texts), truncate=True)")
+    print("• Maximum Context Window Length     : 77 tokens (including <start_of_text> and <end_of_text>)\n")
+
     tokenizer = clip.simple_tokenizer.SimpleTokenizer()
 
     for item in BENCHMARK_QUERIES:
         qid = item["qid"]
+        topic = item["topic"]
         vi_text = item["vi"]
         en_lit = item["en_literal"]
         en_con = item["en_concise"]
@@ -100,19 +106,23 @@ def inspect_tokens() -> None:
         lit_tok_len = len(lit_bpe) + 2
         con_tok_len = len(con_bpe) + 2
 
-        print(f"\n[{qid}] - {item['topic']}:", flush=True)
-        print(f"  • Arm A (VI Raw)      : {vi_tok_len:3d} tokens | Truncated? {'YES ❌ (lost ' + str(vi_tok_len-77) + ' tokens)' if vi_tok_len > 77 else 'NO ✅'}", flush=True)
+        print("-" * 150, flush=True)
+        print(f"[{qid}] - {topic}:", flush=True)
+        print(f"  • Arm A (VI Raw)      : {vi_tok_len:3d} raw tokens | Truncated by truncate=True? {'YES ❌ (lost ' + str(vi_tok_len-77) + ' tokens)' if vi_tok_len > 77 else 'NO ✅'}", flush=True)
         if vi_tok_len > 77:
-            print(f"    - Kept Text (1..75) : \"{tokenizer.decode(vi_bpe[:75])}\"", flush=True)
-            print(f"    - Lost Text (76..)  : \"{tokenizer.decode(vi_bpe[75:])}\"", flush=True)
-        print(f"  • Arm B (EN Literal)  : {lit_tok_len:3d} tokens | Truncated? {'YES ❌ (lost ' + str(lit_tok_len-77) + ' tokens)' if lit_tok_len > 77 else 'NO ✅'}", flush=True)
-        print(f"  • Arm C (EN Concise)  : {con_tok_len:3d} tokens | Truncated? {'YES ❌' if con_tok_len > 77 else 'NO ✅ (Clean 100% in context)'}", flush=True)
+            print(f"    - Text Seen by CLIP (1..75) : \"{tokenizer.decode(vi_bpe[:75])}\"", flush=True)
+            print(f"    - Text Discarded (76..end)  : \"{tokenizer.decode(vi_bpe[75:])}\"", flush=True)
+        print(f"  • Arm B (EN Literal)  : {lit_tok_len:3d} raw tokens | Truncated by truncate=True? {'YES ❌ (lost ' + str(lit_tok_len-77) + ' tokens)' if lit_tok_len > 77 else 'NO ✅'}", flush=True)
+        if lit_tok_len > 77:
+            print(f"    - Text Seen by CLIP (1..75) : \"{tokenizer.decode(lit_bpe[:75])}\"", flush=True)
+            print(f"    - Text Discarded (76..end)  : \"{tokenizer.decode(lit_bpe[75:])}\"", flush=True)
+        print(f"  • Arm C (EN Concise)  : {con_tok_len:3d} raw tokens | Truncated by truncate=True? {'YES ❌' if con_tok_len > 77 else 'NO ✅ (100% within context)'}", flush=True)
 
 
 def run_retrieval_ablation() -> None:
-    print("\n" + "=" * 145, flush=True)
-    print("SECTION 2: RETRIEVAL-ONLY ABLATION EXPERIMENT (Arm A vs Arm B vs Arm C)", flush=True)
-    print("=" * 145, flush=True)
+    print("\n" + "=" * 150, flush=True)
+    print("SECTION 2: 4-ARM RETRIEVAL-ONLY ABLATION EXPERIMENT (Arm A vs Arm B vs Arm C vs Arm D)", flush=True)
+    print("=" * 150, flush=True)
 
     reuse_manifest_path = None
     for p in [
@@ -136,32 +146,41 @@ def run_retrieval_ablation() -> None:
     runtime = OperationalKISRuntime.bootstrap(config)
     print(f"Runtime bootstrap completed in {time.time() - t0:.2f}s.\n", flush=True)
 
+    weighted_rrf = WeightedReciprocalRankFusion(rrf_constant=60.0)
     ablation_results = []
 
     for item in BENCHMARK_QUERIES:
         qid = item["qid"]
         topic = item["topic"]
-        print("-" * 145, flush=True)
+        print("-" * 150, flush=True)
         print(f"Testing Query: {qid} ({topic})", flush=True)
-
-        arms = {
-            "Arm A (VI Raw)": item["vi"],
-            "Arm B (EN Literal)": item["en_literal"],
-            "Arm C (EN Concise)": item["en_concise"],
-        }
 
         query_arm_outputs = {}
 
-        for arm_name, text in arms.items():
-            t_start = time.time()
-            emb = runtime.shared_encoder.encode_texts([text])
-            ranking = runtime.exact_retriever.search_vector(
-                emb[0],
-                top_k=20,
-                score_name="clip_cosine",
-            )
-            elapsed = time.time() - t_start
+        # 1. Encode single-text variants
+        emb_vi = runtime.shared_encoder.encode_texts([item["vi"]])[0]
+        emb_lit = runtime.shared_encoder.encode_texts([item["en_literal"]])[0]
+        emb_con = runtime.shared_encoder.encode_texts([item["en_concise"]])[0]
 
+        rank_vi = runtime.exact_retriever.search_vector(emb_vi, top_k=50, score_name="clip_cosine")
+        rank_lit = runtime.exact_retriever.search_vector(emb_lit, top_k=50, score_name="clip_cosine")
+        rank_con = runtime.exact_retriever.search_vector(emb_con, top_k=50, score_name="clip_cosine")
+
+        # 2. Arm D: Equal-weight VI + EN RRF Fusion (Simulating DEV Arm-B)
+        fused_d = weighted_rrf.fuse_rankings(
+            rankings=[rank_vi, rank_lit],
+            weights=[1.0, 1.0],
+            top_k=50,
+        )
+
+        arms_rankings = {
+            "Arm A (VI Raw)": rank_vi,
+            "Arm B (EN Literal)": rank_lit,
+            "Arm C (EN Concise)": rank_con,
+            "Arm D (VI+EN RRF Parity)": fused_d,
+        }
+
+        for arm_name, ranking in arms_rankings.items():
             top10_vids = []
             seen_vids = set()
             top3_candidates = []
@@ -176,12 +195,12 @@ def run_retrieval_ablation() -> None:
                             "rank": len(top3_candidates) + 1,
                             "video_id": vid,
                             "frame_id": r.frame_id,
-                            "score": float(r.score),
+                            "score": float(r.score) if hasattr(r, "score") else 0.0,
                         })
                 if len(top10_vids) >= 10:
                     break
 
-            print(f"  • {arm_name:<20} in {elapsed:.3f}s -> Top 5 Videos: {top10_vids[:5]}", flush=True)
+            print(f"  • {arm_name:<26} -> Top 5 Videos: {top10_vids[:5]}", flush=True)
             query_arm_outputs[arm_name] = {
                 "top10_vids": top10_vids,
                 "top3_candidates": top3_candidates,
@@ -210,12 +229,12 @@ def generate_ablation_html_gallery() -> str:
     html_cards = []
 
     html_cards.append("""
-    <div style="font-family: Arial, sans-serif; max-width: 1300px; margin: auto;">
+    <div style="font-family: Arial, sans-serif; max-width: 1450px; margin: auto;">
         <h1 style="text-align: center; color: #1a73e8; border-bottom: 2px solid #1a73e8; padding-bottom: 10px;">
-            🔬 BẢNG SO SÁNH TRỰC QUAN 3 CHẾ ĐỘ TRUY VẤN: ARM A vs ARM B vs ARM C
+            🔬 BẢNG SO SÁNH TRỰC QUAN 4 CHẾ ĐỘ TRUY VẤN: ARM A vs ARM B vs ARM C vs ARM D
         </h1>
-        <p style="text-align: center; color: #5f6368;">
-            <b>Arm A</b>: Tiếng Việt Nguyên Văn | <b>Arm B</b>: Tiếng Anh Dịch Sát Nghĩa | <b>Arm C</b>: Tiếng Anh Ngắn Gọn (Concise Retrieval)
+        <p style="text-align: center; color: #5f6368; font-size: 14px;">
+            <b>Arm A</b>: Tiếng Việt Nguyên Văn | <b>Arm B</b>: Tiếng Anh Literal | <b>Arm C</b>: Tiếng Anh Concise | <b>Arm D</b>: VI + EN RRF Parity (DEV Simulation)
         </p>
     """)
 
@@ -229,41 +248,40 @@ def generate_ablation_html_gallery() -> str:
                 <span style="background: #e8f0fe; color: #1967d2; padding: 4px 10px; border-radius: 4px; margin-right: 8px;">{qid}</span>
                 <span>{topic}</span>
             </div>
-            <div style="display: flex; gap: 15px; justify-content: space-between;">
+            <div style="display: flex; gap: 12px; justify-content: space-between;">
         """
 
         for arm_name, arm_data in q["arms"].items():
             top3 = arm_data["top3_candidates"]
-            color = "#d93025" if "Arm A" in arm_name else ("#188038" if "Arm C" in arm_name else "#1a73e8")
+            color = "#d93025" if "Arm A" in arm_name else ("#188038" if "Arm C" in arm_name else ("#e37400" if "Arm D" in arm_name else "#1a73e8"))
 
             arm_html = f"""
-            <div style="flex: 1; background: #f8f9fa; border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px;">
-                <div style="font-weight: bold; font-size: 14px; color: {color}; border-bottom: 1px solid #ddd; padding-bottom: 6px; margin-bottom: 8px; text-align: center;">
+            <div style="flex: 1; min-width: 220px; background: #f8f9fa; border: 1px solid #e0e0e0; border-radius: 6px; padding: 8px;">
+                <div style="font-weight: bold; font-size: 13px; color: {color}; border-bottom: 1px solid #ddd; padding-bottom: 6px; margin-bottom: 8px; text-align: center;">
                     {arm_name}
                 </div>
-                <div style="display: flex; flex-direction: column; gap: 10px;">
+                <div style="display: flex; flex-direction: column; gap: 8px;">
             """
 
             for cand in top3:
                 rank = cand["rank"]
                 v_id = cand["video_id"]
                 f_id = cand["frame_id"]
-                score = cand["score"]
                 sec = f_id // 25
                 time_str = f"{sec // 60:02d}:{sec % 60:02d}"
 
                 v_path = find_video_path(v_id)
-                img_b64 = extract_frame_base64(v_path, f_id, max_width=320) if v_path else None
+                img_b64 = extract_frame_base64(v_path, f_id, max_width=260) if v_path else None
 
                 img_tag = (
                     f'<img src="data:image/jpeg;base64,{img_b64}" style="width: 100%; height: auto; border-radius: 4px; border: 1px solid #ccc;" />'
                     if img_b64
-                    else '<div style="height: 120px; background: #eee; display: flex; align-items: center; justify-content: center; color: #888;">(No Video)</div>'
+                    else '<div style="height: 100px; background: #eee; display: flex; align-items: center; justify-content: center; color: #888; font-size: 11px;">(No Video)</div>'
                 )
 
                 arm_html += f"""
-                <div style="background: #ffffff; border: 1px solid #eee; border-radius: 4px; padding: 6px; text-align: center;">
-                    <div style="font-size: 12px; font-weight: bold; color: #333; margin-bottom: 4px;">
+                <div style="background: #ffffff; border: 1px solid #eee; border-radius: 4px; padding: 5px; text-align: center;">
+                    <div style="font-size: 11px; font-weight: bold; color: #333; margin-bottom: 3px;">
                         Top @{rank}: {v_id} (f={f_id}, ~{time_str})
                     </div>
                     {img_tag}
@@ -287,5 +305,5 @@ def generate_ablation_html_gallery() -> str:
 
 
 if __name__ == "__main__":
-    inspect_tokens()
+    inspect_production_tokenization()
     run_retrieval_ablation()
