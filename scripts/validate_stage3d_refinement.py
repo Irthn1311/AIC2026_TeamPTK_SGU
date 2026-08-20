@@ -216,6 +216,41 @@ def main():
     with open(out_json_path, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2)
 
+    logger.info("\n" + "=" * 115)
+    logger.info("🔍 SPECIFIC 5 GT AUDIT CASES DETAILED FEATURE INSPECTION:")
+    logger.info("=" * 115)
+    logger.info("%-10s | %-8s | %-8s | %-8s | %-8s | %-8s | %-8s | %-8s | %-12s | %-12s", "Video", "Shot_i", "VisSim", "SemSim", "VisEvd", "SemEvd", "Penalty", "FinalScore", "Prediction", "GT Label")
+    logger.info("-" * 115)
+
+    specific_5_cases = [
+        ("L25_V007", 91, True),
+        ("L22_V005", 111, True),
+        ("L22_V013", 188, True),
+        ("L25_V081", 107, True),
+        ("L26_V327", 42, True),
+    ]
+
+    for vid, s_i, gt_val in specific_5_cases:
+        m = df_refined[(df_refined["video_id"] == vid) & (df_refined["shot_i"] == s_i)]
+        if not m.empty:
+            r = m.iloc[0]
+            pred_str = "BOUNDARY" if bool(r["is_boundary_refined"]) else "SUPPRESSED"
+            gt_str = "TRUE" if gt_val else "FALSE"
+            logger.info(
+                "%-10s | %-8d | %-8.4f | %-8.4f | %-8.4f | %-8.4f | %-8.4f | %-8.4f | %-12s | %-12s",
+                str(r["video_id"]),
+                int(r["shot_i"]),
+                float(r["visual_similarity"]),
+                float(r["semantic_similarity"]),
+                float(r["visual_boundary_evidence"]),
+                float(r["semantic_boundary_evidence"]),
+                float(r["suppression_delta"]),
+                float(r["final_boundary_score"]),
+                pred_str,
+                gt_str,
+            )
+    logger.info("=" * 115 + "\n")
+
     logger.info("\n" + "=" * 90)
     logger.info("📊 STAGE 3B RAW VS STAGE 3D REFINED GROUND-TRUTH EVALUATION:")
     logger.info("=" * 90)
