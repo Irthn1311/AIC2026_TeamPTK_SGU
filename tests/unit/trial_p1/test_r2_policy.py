@@ -117,6 +117,29 @@ def test_safe_r2_never_allows_object_only_top5_override() -> None:
     assert diagnostics["weak_modality_override"] is False
 
 
+def test_kis_r2_preserves_100_frame_coordinates_when_videos_repeat() -> None:
+    query = {"query_id": "Q1", "task": "KIS", "query": "specific topic"}
+    baseline = [
+        {
+            "query_id": "Q1",
+            "video_id": f"L21_V{((rank - 1) // 10) + 1:03d}",
+            "frame_id": rank,
+            "rank": rank,
+        }
+        for rank in range(1, 101)
+    ]
+    full, safe, _ = repair_kis_ranking(
+        query, baseline, {"asr": [], "ocr": [], "object": []}
+    )
+    assert len(full) == len(safe) == 100
+    assert [row["rank"] for row in full] == list(range(1, 101))
+    assert [
+        (row["video_id"], row["frame_id"]) for row in safe[:5]
+    ] == [
+        (row["video_id"], row["frame_id"]) for row in baseline[:5]
+    ]
+
+
 def test_ocr_confidence_is_normalized_from_percentage_scale() -> None:
     query = {"query_id": "Q1", "task": "KIS", "query": "SpaceX"}
     profile = {
@@ -278,6 +301,24 @@ def test_qa_r2_uses_only_structural_fallback_when_no_verified_answer() -> None:
         _baseline("Q1", "QA"),
     )
     assert len(rows) == 100
+    assert {row["answer"] for row in rows} == {"không đủ bằng chứng"}
+
+
+def test_qa_r2_structural_fill_keeps_100_when_frozen_coordinates_repeat() -> None:
+    query = {"query_id": "Q1", "task": "QA", "answer_type": "TITLE"}
+    baseline = [
+        {
+            "query_id": "Q1",
+            "video_id": "L21_V001",
+            "frame_id": 1,
+            "rank": rank,
+            "answer": "legacy",
+        }
+        for rank in range(1, 101)
+    ]
+    rows = rank_qa_r2(query, [], baseline)
+    assert len(rows) == 100
+    assert [row["rank"] for row in rows] == list(range(1, 101))
     assert {row["answer"] for row in rows} == {"không đủ bằng chứng"}
 
 

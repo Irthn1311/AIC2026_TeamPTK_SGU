@@ -327,7 +327,11 @@ def _video_assessments(
         }
     )
     for row in baseline:
-        values[str(row["video_id"])]["bcf1_rank"] = int(row["rank"])
+        item = values[str(row["video_id"])]
+        rank = int(row["rank"])
+        item["bcf1_rank"] = (
+            rank if item["bcf1_rank"] is None else min(rank, int(item["bcf1_rank"]))
+        )
     for modality, rows in modality_rows.items():
         for row in rows:
             item = values[str(row["video_id"])]
@@ -354,6 +358,50 @@ def _video_assessments(
         item["reasons"] = _unique(item["reasons"])
         item["matched_query_anchors"] = _unique(item["matched_query_anchors"])
     return dict(values)
+
+
+def _coordinate_key(row: dict[str, Any]) -> tuple[Any, ...]:
+    if "frame_ids" in row:
+        return str(row["video_id"]), tuple(map(int, row["frame_ids"]))
+    return str(row["video_id"]), int(row["frame_id"])
+
+
+def _complete_ranked_rows(
+    primary: Iterable[dict[str, Any]],
+    fallback: list[dict[str, Any]],
+    *,
+    query_id: str,
+    variant: str,
+    identity: Any = _coordinate_key,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    """Fill to the submission limit without collapsing BCF1 frame coordinates."""
+
+    selected, seen = [], set()
+    for raw in [*primary, *fallback]:
+        row = dict(raw)
+        key = identity(row)
+        if key in seen:
+            continue
+        seen.add(key)
+        selected.append(row)
+        if len(selected) == limit:
+            break
+    # The shared validator permits repeated coordinates. Preserve frozen rows as
+    # the final structural fallback if the frozen ranking itself contains repeats.
+    if len(selected) < limit:
+        for raw in fallback:
+            selected.append(dict(raw))
+            if len(selected) == limit:
+                break
+    if len(selected) != limit:
+        raise RuntimeError(
+            f"R2_STRUCTURAL_FILL_FAILED:{query_id}:{variant}:{len(selected)}:{limit}"
+        )
+    return [
+        {**row, "query_id": query_id, "system_variant": variant, "rank": rank}
+        for rank, row in enumerate(selected, 1)
+    ]
 
 
 def _representative(
@@ -417,52 +465,88 @@ def repair_kis_ranking(
             for row in reciprocal_rank_fusion(sources, key=lambda row: str(row["video_id"]))
         ]
 
-    protected_videos = [str(row["video_id"]) for row in baseline[:5]]
+    protected_rows = [dict(row) for row in baseline[:5]]
+    protected_keys = {_coordinate_key(row) for row in protected_rows}
     weak_sources = [
         [row for row in rows if assessments[str(row["video_id"])]["evidence_tier"] == TIER_C]
         for rows in modalities.values()
     ]
     normal = reciprocal_rank_fusion(
-        [baseline, *weak_sources], key=lambda row: str(row["video_id"])
+        [baseline, *weak_sources], key=_coordinate_key
     )
-    full_order = _unique(
-        [
-            *tier_order(TIER_A),
-            *tier_order(TIER_B),
-            *protected_videos,
-            *[str(row["video_id"]) for row in normal],
-            *tier_order(TIER_C),
+
+    def annotate(raw: dict[str, Any]) -> dict[str, Any]:
+        row = dict(raw)
+        video_id = str(row["video_id"])
+        item = assessments[video_id]
+        exact_bcf1 = next(
+            (
+                candidate
+                for candidate in baseline
+                if _coordinate_key(candidate) == _coordinate_key(row)
+            ),
+            None,
+        )
+        return {
+            **row,
+            "evidence_tier": item["evidence_tier"],
+            "evidence_tier_reasons": item["reasons"],
+            "dominant_modalities": item["modalities"],
+            "matched_query_anchors": item["matched_query_anchors"],
+            "corroborating_sources": item["modalities"],
+            "bcf1_rank": (
+                int(exact_bcf1["rank"]) if exact_bcf1 is not None else item["bcf1_rank"]
+            ),
+        }
+
+    tier_representatives = {
+        tier: [
+            _representative(video_id, assessments[video_id], baseline)
+            for video_id in tier_order(tier)
         ]
+        for tier in (TIER_A, TIER_B, TIER_C)
+    }
+    full_primary = [
+        *tier_representatives[TIER_A],
+        *tier_representatives[TIER_B],
+        *map(annotate, protected_rows),
+        *map(annotate, normal),
+        *tier_representatives[TIER_C],
+    ]
+    annotated_baseline = [annotate(row) for row in baseline]
+    full = _complete_ranked_rows(
+        full_primary,
+        annotated_baseline,
+        query_id=str(query["query_id"]),
+        variant="M0_R2",
     )
-    full = [
-        {
-            **_representative(video_id, assessments[video_id], baseline),
-            "query_id": query["query_id"],
-            "system_variant": "M0_R2",
-            "rank": rank,
-        }
-        for rank, video_id in enumerate(full_order[:100], 1)
-    ]
-    direct = tier_order(TIER_A)
-    safe_prefix = _unique([*direct, *protected_videos])[:5]
-    safe_order = _unique([*safe_prefix, *full_order, *protected_videos])
-    safe = [
-        {
-            **_representative(video_id, assessments[video_id], baseline),
-            "query_id": query["query_id"],
-            "system_variant": "SAFE_R2",
-            "rank": rank,
-        }
-        for rank, video_id in enumerate(safe_order[:100], 1)
-    ]
+    direct = tier_representatives[TIER_A]
+    safe_prefix = []
+    prefix_seen = set()
+    for row in [*direct, *map(annotate, protected_rows)]:
+        key = _coordinate_key(row)
+        if key in prefix_seen:
+            continue
+        prefix_seen.add(key)
+        safe_prefix.append(row)
+        if len(safe_prefix) == 5:
+            break
+    safe = _complete_ranked_rows(
+        [*safe_prefix, *full],
+        annotated_baseline,
+        query_id=str(query["query_id"]),
+        variant="SAFE_R2",
+    )
     overrides = []
-    for rank, video_id in enumerate(safe_prefix, 1):
-        if video_id not in protected_videos:
+    for rank, row in enumerate(safe_prefix, 1):
+        if _coordinate_key(row) not in protected_keys:
+            video_id = str(row["video_id"])
             item = assessments[video_id]
             overrides.append(
                 {
                     "new_rank": rank,
                     "video_id": video_id,
+                    "frame_id": int(row["frame_id"]),
                     "original_bcf1_rank": item["bcf1_rank"],
                     "evidence_tier": item["evidence_tier"],
                     "reason": item["reasons"],
@@ -652,13 +736,7 @@ def rank_qa_r2(
         for row in verified_rows
         if row.get("final_evidence_sufficient") is True
     ]
-    seen, combined = set(), []
-    for row in [*verified_rows, *fallback]:
-        identity = (str(row["video_id"]), int(row["frame_id"]))
-        if identity in seen:
-            continue
-        seen.add(identity)
-        combined.append(row)
+    combined = [*verified_rows, *fallback]
     combined.sort(
         key=lambda row: (
             0 if row.get("final_evidence_sufficient") is True else 1,
@@ -671,10 +749,13 @@ def rank_qa_r2(
             str(row.get("answer", "")),
         )
     )
-    return [
-        {**row, "query_id": query["query_id"], "system_variant": "QA_R2", "rank": rank}
-        for rank, row in enumerate(combined[:100], 1)
-    ]
+    return _complete_ranked_rows(
+        combined,
+        fallback,
+        query_id=str(query["query_id"]),
+        variant="QA_R2",
+        identity=default_key,
+    )
 
 
 def build_r2_candidates(
@@ -771,7 +852,16 @@ def build_r2_candidates(
         exact = len(rows) == 2400 and all(len(values) == 100 for values in grouped(rows).values())
         validation[name] = {**summary, "exact_100_per_query": exact, "issues": issues}
         if summary["status"] != "PASS" or not exact:
-            raise RuntimeError(f"TRIAL_R2_CANDIDATE_VALIDATION_FAILED:{name}")
+            counts = {key: len(values) for key, values in grouped(rows).items()}
+            payload = {
+                "variant": name,
+                "summary": validation[name],
+                "per_query_counts": counts,
+            }
+            raise RuntimeError(
+                "TRIAL_R2_CANDIDATE_VALIDATION_FAILED:"
+                + json.dumps(payload, ensure_ascii=False, default=str)
+            )
     trake_checks = {}
     diagnostics_by_id = {
         str(row["query_id"]): row for row in m1_diagnostics if row.get("task") == "TRAKE"
