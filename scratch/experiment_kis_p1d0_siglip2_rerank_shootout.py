@@ -14,7 +14,7 @@ Strict constraints:
   - Strict SigLIP2 model requirement: google/siglip2-base-patch16-224. ZERO silent fallback to SigLIP1.
   - Full attention_mask, pixel_attention_mask, and spatial_shapes passed to feature extractors.
   - Ground-truth SigLIP2 tokenizer telemetry (raw input_ids count, effective attention_mask sum, truncation flag, max length).
-  - Marian Parity Gate: Asserts Marian translations match frozen P0 baseline across 3 reference probes.
+  - Exact 3-probe Marian Parity Gate: Asserts 100% exact byte-for-byte string equality on p1-2, p1-10, p1-12 against frozen P0.4c reference.
   - ZERO ground-truth leakage.
 """
 
@@ -177,27 +177,39 @@ def get_reuse_manifest() -> Path | None:
     return None
 
 
-def verify_marian_parity(runtime: OperationalKISRuntime) -> None:
-    """Verify Marian translation outputs match frozen production P0 baseline across reference probes."""
+def verify_exact_marian_parity(runtime: OperationalKISRuntime) -> None:
+    """Verify Marian translation outputs match frozen production P0 baseline across 3 reference probes with exact string equality."""
     print("\n" + "=" * 120, flush=True)
-    print("MARIAN TRANSLATION PARITY GATE VERIFICATION", flush=True)
+    print("EXACT 3-PROBE MARIAN TRANSLATION PARITY GATE VERIFICATION", flush=True)
     print("=" * 120, flush=True)
-    
-    probe_2_vi = "Mẩu tin giới thiệu về đàn hổ tại một địa phương ở miền Nam vừa có thêm khoảng 3-6 con hổ con. Đây là một giống hổ quý hiếm"
-    probe_2_en = runtime.translation_provider.translate(probe_2_vi).strip()
-    
-    probe_10_vi = "Tìm chính xác đoạn clip ngắn có ba người (hai phụ nữ và một nam giới) đang ngồi cạnh nhau, tập trung chơi nhạc cụ kim loại có dạng tròn, rỗng, với các vết lõm để tạo ra âm thanh khi gõ tay. Có 1 người mặc áo trắng ngồi giữa 2 người mặc áo đen. Bối cảnh phía sau là một kệ sách nhiều ngăn, xếp đầy sách với nhiều màu sắc"
-    probe_10_en = runtime.translation_provider.translate(probe_10_vi).strip()
-    
-    print(f"• Marian Probe p1-2  : \"{probe_2_en}\"", flush=True)
-    print(f"• Marian Probe p1-10 : \"{probe_10_en[:80]}...\"", flush=True)
-    
-    if "rare tiger species" not in probe_2_en.lower():
-        raise RuntimeError(f"Marian Parity Gate Failed on p1-2: Unexpected translation '{probe_2_en}'")
-    if "metal instruments" not in probe_10_en.lower():
-        raise RuntimeError(f"Marian Parity Gate Failed on p1-10: Unexpected translation '{probe_10_en}'")
-    
-    print("• Marian Parity Status: 100% MATCH WITH FROZEN P0 BASELINE ✅", flush=True)
+
+    expected_translations = {
+        "p1-2": (
+            "Mẩu tin giới thiệu về đàn hổ tại một địa phương ở miền Nam vừa có thêm khoảng 3-6 con hổ con. Đây là một giống hổ quý hiếm",
+            "This is a rare tiger species.",
+        ),
+        "p1-10": (
+            "Tìm chính xác đoạn clip ngắn có ba người (hai phụ nữ và một nam giới) đang ngồi cạnh nhau, tập trung chơi nhạc cụ kim loại có dạng tròn, rỗng, với các vết lõm để tạo ra âm thanh khi gõ tay. Có 1 người mặc áo trắng ngồi giữa 2 người mặc áo đen. Bối cảnh phía sau là một kệ sách nhiều ngăn, xếp đầy sách với nhiều màu sắc",
+            "Find exactly the short clip of three people (two women and a man) sitting next to each other, focusing on playing metal instruments in round, empty, with holes in which to make sounds when they type, there's a white man sitting between two people in black, and the background behind is a stack of books, filled with many colors.",
+        ),
+        "p1-12": (
+            "Đoạn video mô tả cảnh trang trí bánh rán. Phân cảnh bắt đầu là một chiếc đĩa sứ màu trắng nằm trên một khay gỗ hình chữ nhật. Bên cạnh chiếc đĩa sứ là một chén đựng một vài trái dâu, nhưng có 2 trái bị rơi ra ngoài. Ngoài ra, bên cạnh đĩa sứ còn có một chén sứ nhỏ màu trắng đựng chuối đã được cắt sẵn và một cái thìa nhỏ màu nâu. Phân cảnh tiếp theo cho thấy đầu bếp đặt 2 chiếc bánh rán lên đĩa sứ và bắt đầu trang trí. Bước đầu tiên là việc rưới chocolate lên trên mặt bánh. Sau đó, đầu bếp đặt các lát chuối lên trên một chiếc bánh rán, chiếc còn lại được đặt các lát dâu tây lên.",
+            "The video depicts a set of donut decorations. The scene begins as a white dish on a wooden tray of Japanese wood. Next to the dish is a bowl of some berries, but there are two lefts that have fallen out. Besides, besides the dish, there's a small white dish with bananas already cut and a little brown spoon, and the next scene shows that the chef puts two donuts on the porcelain and starts decorating. The first step is to spray chocolate on top of the cake. Then the chef places the banana slices on a donut, and the other is placed with strawberry slices.",
+        ),
+    }
+
+    for probe_id, (vi_text, expected_en) in expected_translations.items():
+        actual_en = runtime.translation_provider.translate(vi_text).strip()
+        print(f"• Marian Probe {probe_id:<6}: \"{actual_en[:65]}...\"", flush=True)
+        if actual_en != expected_en.strip():
+            print("=" * 120, flush=True)
+            print(f"FATAL PARITY ERROR on probe '{probe_id}':", flush=True)
+            print(f"  Expected: \"{expected_en}\"", flush=True)
+            print(f"  Actual  : \"{actual_en}\"", flush=True)
+            print("=" * 120, flush=True)
+            raise RuntimeError(f"Exact Marian Parity Gate FAILED on {probe_id}!")
+
+    print("• Result: 3/3 EXACT BYTE-FOR-BYTE TEXT PARITY PASS ✅", flush=True)
     print("=" * 120, flush=True)
 
 
@@ -210,10 +222,13 @@ def load_strict_siglip2_model(device: str) -> tuple[Any, Any]:
         processor = AutoProcessor.from_pretrained(SIGLIP2_MODEL_ID)
         model = AutoModel.from_pretrained(SIGLIP2_MODEL_ID).to(device)
         model.eval()
-        
-        # Log model config/revision info
-        model_type = getattr(getattr(model, "config", None), "model_type", "unknown")
-        hidden_size = getattr(getattr(model, "config", None), "text_config", {}).get("hidden_size", getattr(getattr(model, "config", None), "hidden_size", "unknown"))
+
+        # Safe config property extraction
+        model_cfg = getattr(model, "config", None)
+        text_cfg = getattr(model_cfg, "text_config", None)
+        hidden_size = getattr(text_cfg, "hidden_size", getattr(model_cfg, "hidden_size", "unknown"))
+        model_type = getattr(model_cfg, "model_type", "unknown")
+
         print(f"      • Model Architecture   : {model_type} (hidden_dim={hidden_size})", flush=True)
         print(f"      • Model Loading Status : SUCCESS (Model ID: {SIGLIP2_MODEL_ID}) ✅", flush=True)
         return model, processor
@@ -256,7 +271,7 @@ def score_candidates_with_siglip2(
 ) -> tuple[np.ndarray, float, dict[str, Any]]:
     """Compute SigLIP2 image-text similarity scores passing all processor outputs."""
     t0 = time.time()
-    
+
     # 1. Ground-Truth SigLIP2 Tokenizer Telemetry
     tokenizer = processor.tokenizer
     max_len = getattr(tokenizer, "model_max_length", 64)
@@ -354,8 +369,8 @@ def run_p1d0_experiment() -> None:
         device = "cuda"
     print(f"      Runtime Bootstrapped in {time.time() - t0_rt:.2f}s (device={device})", flush=True)
 
-    # Marian Parity Verification
-    verify_marian_parity(runtime)
+    # Exact 3-Probe Marian Parity Verification
+    verify_exact_marian_parity(runtime)
 
     # 2. Strict SigLIP2 Model Loading
     siglip_model, siglip_processor = load_strict_siglip2_model(device)
