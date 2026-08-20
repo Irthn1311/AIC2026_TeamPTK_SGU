@@ -2,6 +2,7 @@
 """Visual Inspector for BTC THUNGHIEM_20-8 Top Predictions.
 
 Extracts and displays the actual video frame images for Top 1..3 candidates of each query.
+Ultra-fast single-pass video indexing and real-time progress streaming.
 """
 
 from __future__ import annotations
@@ -11,30 +12,61 @@ import io
 import json
 import os
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 THUNGHIEM_DIR = REPO_ROOT / "systems" / "system_tai" / "THUNGHIEM_20-8"
 OUTPUT_DIR = Path("/kaggle/working/output/thunghiem_20_8/requests") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "thunghiem_20_8" / "requests"
-INPUT_DIR = Path("/kaggle/input") if Path("/kaggle/input").exists() else REPO_ROOT / "scratch"
+
+_VIDEO_MAP_CACHE: dict[str, Path] = {}
 
 
-def find_video_path(video_id: str) -> Path | None:
-    # 1. Search common video locations
-    for root in [
+def get_video_map() -> dict[str, Path]:
+    """Single-pass fast resolution of all video files."""
+    global _VIDEO_MAP_CACHE
+    if _VIDEO_MAP_CACHE:
+        return _VIDEO_MAP_CACHE
+
+    # 1. Fast resolve via manifest cache
+    for mf in [
+        Path("/kaggle/working/manifest_cache.json"),
+        Path("/kaggle/input/system-tai-manifest/feature_manifest.json"),
+        Path("/kaggle/working/feature_manifest.json"),
+    ]:
+        if mf.exists():
+            try:
+                data = json.loads(mf.read_text(encoding="utf-8"))
+                for v in data.get("videos", []):
+                    vid = v.get("video_id")
+                    vpath = v.get("raw_video_path")
+                    if vid and vpath and Path(vpath).exists():
+                        _VIDEO_MAP_CACHE[vid] = Path(vpath)
+                if _VIDEO_MAP_CACHE:
+                    return _VIDEO_MAP_CACHE
+            except Exception:
+                pass
+
+    # 2. Fast single-pass os.walk
+    for root_dir in [
         Path("/kaggle/input/datasets/videos"),
         Path("/kaggle/input/videos"),
         Path("/kaggle/input"),
     ]:
-        if root.exists():
-            direct = root / f"{video_id}.mp4"
-            if direct.exists():
-                return direct
-            matches = list(root.glob(f"**/{video_id}.mp4"))
-            if matches:
-                return matches[0]
-    return None
+        if root_dir.exists():
+            for dirpath, _, filenames in os.walk(str(root_dir)):
+                for fname in filenames:
+                    if fname.endswith(".mp4"):
+                        vid = fname[:-4]
+                        if vid not in _VIDEO_MAP_CACHE:
+                            _VIDEO_MAP_CACHE[vid] = Path(dirpath) / fname
+
+    return _VIDEO_MAP_CACHE
+
+
+def find_video_path(video_id: str) -> Path | None:
+    return get_video_map().get(video_id)
 
 
 def extract_frame_base64(video_path: Path, frame_id: int, max_width: int = 400) -> str | None:
@@ -59,15 +91,13 @@ def extract_frame_base64(video_path: Path, frame_id: int, max_width: int = 400) 
             img = img.resize((max_width, h), Image.Resampling.LANCZOS)
 
         buffer = io.BytesIO()
-        img.save(buffer, format="JPEG", quality=85)
+        img.save(buffer, format="JPEG", quality=80)
         return base64.b64encode(buffer.getvalue()).decode("utf-8")
     except Exception:
         return None
 
 
 def generate_html_gallery(top_n_images: int = 3) -> str:
-    from IPython.display import HTML, display
-
     query_files = sorted(THUNGHIEM_DIR.glob("*.txt"))
     html_cards = []
 
@@ -77,6 +107,10 @@ def generate_html_gallery(top_n_images: int = 3) -> str:
             🖼️ TRỰC QUAN HÓA KẾT QUẢ TOP PREDICTIONS (BTC THỬ NGHIỆM 20-8)
         </h1>
     """)
+
+    # Pre-index video paths once
+    v_map = get_video_map()
+    print(f"• Đã lập chỉ mục {len(v_map)} video từ dataset. Bắt đầu trích xuất hình ảnh...", flush=True)
 
     for idx, f in enumerate(query_files, start=1):
         filename = f.name
@@ -149,6 +183,7 @@ def generate_html_gallery(top_n_images: int = 3) -> str:
         </div>
         """
         html_cards.append(card_html)
+        print(f"[{idx:02d}/{len(query_files)}] Trích xuất xong {qid}", flush=True)
 
     html_cards.append("</div>")
     return "\n".join(html_cards)
