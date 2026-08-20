@@ -18,6 +18,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import math
 import os
 import subprocess
 import sys
@@ -36,10 +37,9 @@ except ImportError:
     import clip
 
 from system_tai.features.query_encoder import SharedOpenAIClipEncoder
-from system_tai.fusion.weighted_rrf import WeightedReciprocalRankFusion
 from system_tai.kis.session_engine import OperationalKISRuntime
 from system_tai.kis.session_schema import QueryRequest, SessionConfig
-from system_tai.retrieval.multi_query import QueryLanguage, QueryVariant, QueryVariantType
+from system_tai.retrieval.multi_query import QueryLanguage, QueryVariant, QueryVariantType, WeightedRRFRetriever
 from system_tai.retrieval.vector_search import ExactNumpyRetriever
 
 BENCHMARK_QUERIES = [
@@ -119,6 +119,35 @@ def inspect_production_tokenization() -> None:
         print(f"  • Arm C (EN Concise)  : {con_tok_len:3d} raw tokens | Truncated by truncate=True? {'YES ❌' if con_tok_len > 77 else 'NO ✅ (100% within context)'}", flush=True)
 
 
+def fuse_two_rankings(rank_a: list[Any], rank_b: list[Any], weight_a: float = 1.0, weight_b: float = 1.0, rrf_k: float = 60.0, top_k: int = 50) -> list[Any]:
+    """Reciprocal Rank Fusion for vector search rankings."""
+    scores: dict[tuple[str, int], float] = {}
+    record_map: dict[tuple[str, int], Any] = {}
+
+    for r_idx, r in enumerate(rank_a, start=1):
+        key = (r.video_id, r.frame_id)
+        scores[key] = scores.get(key, 0.0) + weight_a * (1.0 / (rrf_k + r_idx))
+        record_map[key] = r
+
+    for r_idx, r in enumerate(rank_b, start=1):
+        key = (r.video_id, r.frame_id)
+        scores[key] = scores.get(key, 0.0) + weight_b * (1.0 / (rrf_k + r_idx))
+        if key not in record_map:
+            record_map[key] = r
+
+    sorted_keys = sorted(scores.keys(), key=lambda k: scores[k], reverse=True)[:top_k]
+    fused = []
+    for k in sorted_keys:
+        rec = record_map[k]
+        # create candidate-like object
+        fused.append(type("FusedCandidate", (), {
+            "video_id": rec.video_id,
+            "frame_id": rec.frame_id,
+            "score": scores[k],
+        })())
+    return fused
+
+
 def run_retrieval_ablation() -> None:
     print("\n" + "=" * 150, flush=True)
     print("SECTION 2: 4-ARM RETRIEVAL-ONLY ABLATION EXPERIMENT (Arm A vs Arm B vs Arm C vs Arm D)", flush=True)
@@ -146,7 +175,6 @@ def run_retrieval_ablation() -> None:
     runtime = OperationalKISRuntime.bootstrap(config)
     print(f"Runtime bootstrap completed in {time.time() - t0:.2f}s.\n", flush=True)
 
-    weighted_rrf = WeightedReciprocalRankFusion(rrf_constant=60.0)
     ablation_results = []
 
     for item in BENCHMARK_QUERIES:
@@ -167,9 +195,12 @@ def run_retrieval_ablation() -> None:
         rank_con = runtime.exact_retriever.search_vector(emb_con, top_k=50, score_name="clip_cosine")
 
         # 2. Arm D: Equal-weight VI + EN RRF Fusion (Simulating DEV Arm-B)
-        fused_d = weighted_rrf.fuse_rankings(
-            rankings=[rank_vi, rank_lit],
-            weights=[1.0, 1.0],
+        fused_d = fuse_two_rankings(
+            rank_a=rank_vi,
+            rank_b=rank_lit,
+            weight_a=1.0,
+            weight_b=1.0,
+            rrf_k=60.0,
             top_k=50,
         )
 
