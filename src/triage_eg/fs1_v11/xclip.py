@@ -18,7 +18,14 @@ class XClipAdapter:
     def load(self) -> None:
         from transformers import XCLIPModel, XCLIPProcessor
 
-        self.processor = XCLIPProcessor.from_pretrained(self.root, local_files_only=True)
+        # X-CLIP stores a VideoMAE image processor, not a ProcessorMixin
+        # ``video_processor``.  Recent Transformers releases therefore ignore
+        # the generic ``videos=`` route for this legacy processor contract.
+        # Keep the frozen slow processor and feed the eight-frame clip through
+        # its official ``images=`` boundary.
+        self.processor = XCLIPProcessor.from_pretrained(
+            self.root, local_files_only=True, use_fast=False
+        )
         self.model = (
             XCLIPModel.from_pretrained(self.root, local_files_only=True).to(self.device).eval()
         )
@@ -28,7 +35,15 @@ class XClipAdapter:
 
         if self.model is None or self.processor is None or len(frames) != 8:
             raise RuntimeError("XCLIP_REQUIRES_LOADED_MODEL_AND_EXACTLY_8_FRAMES")
-        inputs = self.processor(text=[text], videos=frames, return_tensors="pt", padding=True)
+        inputs = self.processor(text=[text], images=frames, return_tensors="pt", padding=True)
+        pixel_values = inputs.get("pixel_values")
+        if (
+            pixel_values is None
+            or pixel_values.ndim != 5
+            or tuple(pixel_values.shape[:2]) != (1, 8)
+        ):
+            shape = None if pixel_values is None else list(pixel_values.shape)
+            raise RuntimeError(f"XCLIP_PROCESSOR_VIDEO_TENSOR_INVALID:{shape}")
         inputs = {key: value.to(self.device) for key, value in inputs.items()}
         with torch.inference_mode():
             output = self.model(**inputs)

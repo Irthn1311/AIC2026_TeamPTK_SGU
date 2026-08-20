@@ -77,7 +77,15 @@ def build_completion_arm(
         routes = (
             route_events(task, [event.event_text for event in events], available=available)
             if task == "TRAKE"
-            else (route_query(task, events[0].event_text, available=available, event_index=0),)
+            else (
+                route_query(
+                    task,
+                    events[0].event_text,
+                    available=available,
+                    event_index=0,
+                    answer_type=str(query.get("answer_type") or ""),
+                ),
+            )
         )
         modality_lists = [
             evidence.get(modality, {}).get(query_id, [])
@@ -113,11 +121,14 @@ def build_completion_arm(
                 for modality in routes[event.event_index].modalities:
                     if modality == "b0_visual":
                         continue
-                    for row in evidence.get(modality, {}).get(query_id, [])[:20]:
-                        if row.get("event_index") in {None, event.event_index}:
-                            event_pools[event.event_index].append(
-                                _candidate(event.event_index, row, modality)
-                            )
+                    event_rows = [
+                        row
+                        for row in evidence.get(modality, {}).get(query_id, [])
+                        if row.get("event_index") in {None, event.event_index}
+                    ][:20]
+                    event_pools[event.event_index].extend(
+                        _candidate(event.event_index, row, modality) for row in event_rows
+                    )
             m0 = solve_event_candidates(query_id, events, event_pools)
             if not m0:
                 raise RuntimeError("M0_T3_SOLVER_RETURNED_NO_CHAINS")
@@ -127,8 +138,7 @@ def build_completion_arm(
             graph = ExecutableEventGraph(query_id, events)
             for event in events:
                 for candidate in event_pools[event.event_index]:
-                    if candidate.source == "b0_t3":
-                        graph.add(candidate)
+                    graph.add(candidate)
             weak_event = min(graph.by_event, key=lambda index: len(graph.by_event[index]))
             if revision_provider is None:
                 raise RuntimeError("GRAPH_REVISION_PROVIDER_REQUIRED")

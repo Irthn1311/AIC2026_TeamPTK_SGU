@@ -88,6 +88,16 @@ class QwenEvidenceAdapter:
         trimmed = generated[:, inputs.input_ids.shape[1] :]
         raw = self.processor.batch_decode(trimmed, skip_special_tokens=True)[0]
         parsed = parse_qwen_output(raw, candidate, answer_type=answer_type)
+        if parsed is not None:
+            parsed = {
+                **parsed,
+                "answer_policy": answer_policy,
+                "qwen_verifier_result": {
+                    "parsed": True,
+                    "evidence_sufficient": bool(parsed["evidence_sufficient"]),
+                    "model_revision": QWEN_REVISION,
+                },
+            }
         audit = {
             "model_revision": QWEN_REVISION,
             "candidate": candidate.__dict__,

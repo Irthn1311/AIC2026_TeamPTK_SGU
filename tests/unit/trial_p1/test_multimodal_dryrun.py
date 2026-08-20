@@ -5,15 +5,22 @@ from pathlib import Path
 
 import pytest
 
+from triage_eg.trial_p1 import multimodal_dryrun as dryrun
 from triage_eg.trial_p1.multimodal_dryrun import (
+    CanonicalBTCFrameMapper,
     build_asr_candidate_evidence,
     build_external_parquet_evidence,
+    build_qwen_context,
     build_xclip_event_evidence,
     candidate_comparison,
     normalize_trial_plans,
     prioritize_qa_sufficient,
     qa_evidence_summary,
+    run_causal_graph_fixture,
+    select_novel_graph_revision,
+    select_qwen_grounding_rows,
     validate_trial_contract,
+    validate_trial_runtime_assets,
     write_blocked_artifacts,
 )
 
@@ -177,9 +184,8 @@ def test_blocked_artifacts_are_explicit_and_do_not_fabricate_candidate_zips(tmp_
     )
 
 
-def test_asr_evidence_maps_seconds_only_spans_to_frozen_frame_identities() -> None:
+def test_asr_evidence_can_introduce_new_video_through_injected_canonical_mapper() -> None:
     query = _queries()[0]
-    baseline = _rows([query])
 
     class Loader:
         @staticmethod
@@ -187,17 +193,129 @@ def test_asr_evidence_maps_seconds_only_spans_to_frozen_frame_identities() -> No
             assert text and max_spans == 200
             return [
                 {
-                    "video_id": baseline[3]["video_id"],
+                    "video_id": "L99_V999",
                     "start_seconds": 1.0,
                     "end_seconds": 2.0,
                     "text": "strong topic",
                 }
             ]
 
-    evidence = build_asr_candidate_evidence([query], baseline, Loader())
+        @staticmethod
+        def map_span_to_frame(span, mapper):
+            return {**span, "frame_id": mapper(span["video_id"], 1.5)}
+
+    evidence = build_asr_candidate_evidence(
+        [query], Loader(), canonical_mapper=lambda video_id, seconds: 777
+    )
     row = evidence[query["query_id"]][0]
-    assert row["frame_id"] == baseline[3]["frame_id"]
-    assert "frame_id" not in row["asr_span"]
+    assert row["video_id"] == "L99_V999"
+    assert row["frame_id"] == 777
+    assert row["asr_span"]["frame_id"] == 777
+
+
+def test_canonical_btc_mapper_uses_nearest_declared_pts_time(tmp_path: Path) -> None:
+    mapping = tmp_path / "L01_V001.csv"
+    mapping.write_text(
+        "n,pts_time,fps,frame_idx\n1,1.0,25,25\n2,2.0,25,50\n", encoding="utf-8"
+    )
+    mapper = CanonicalBTCFrameMapper(
+        [
+            {
+                "video_id": "L01_V001",
+                "mapping_available": True,
+                "mapping_path": str(mapping),
+                "total_frames": 100,
+            }
+        ]
+    )
+    assert mapper("L01_V001", 1.8) == 50
+
+
+def test_runtime_asset_identity_gate_hashes_all_frozen_weights(
+    tmp_path: Path, monkeypatch
+) -> None:
+    bcf1 = tmp_path / "bcf1.jsonl"
+    bcf1.write_bytes(b"bcf1\n")
+    xclip = tmp_path / "xasset" / "xclip"
+    xclip.mkdir(parents=True)
+    (xclip / "model.safetensors").write_bytes(b"xclip")
+    manifests = xclip.parent / "manifests"
+    manifests.mkdir()
+    (manifests / "asset_manifest.json").write_text(
+        json.dumps({"model_id": dryrun.XCLIP_MODEL_ID, "exact_revision": dryrun.XCLIP_REVISION})
+    )
+    e5 = tmp_path / "e5"
+    e5.mkdir()
+    (e5 / "model.onnx").write_bytes(b"e5")
+    (e5 / "asset_manifest.json").write_text(
+        json.dumps(
+            {
+                "model_id": dryrun.E5_MODEL_ID,
+                "exact_revision": dryrun.E5_REVISION,
+                "source_index_exact_encoder_revision_known": False,
+            }
+        )
+    )
+    qwen = tmp_path / "qwen"
+    (qwen / ".cache/huggingface/download").mkdir(parents=True)
+    (qwen / "config.json").write_text(json.dumps({"model_type": "qwen2_5_vl"}))
+    qwen_hashes = {}
+    for index in (1, 2):
+        name = f"model-{index:05d}-of-00002.safetensors"
+        (qwen / name).write_bytes(f"qwen-{index}".encode())
+        digest = dryrun.sha256_file(qwen / name)
+        qwen_hashes[name] = digest
+        (qwen / ".cache/huggingface/download" / f"{name}.metadata").write_text(
+            f"{dryrun.QWEN_REVISION}\n{digest}\n"
+        )
+    monkeypatch.setattr(dryrun, "TRIAL_BCF1_F1_SHA256", dryrun.sha256_file(bcf1))
+    monkeypatch.setattr(
+        dryrun,
+        "XCLIP_WEIGHT_SHA256",
+        dryrun.sha256_file(xclip / "model.safetensors"),
+    )
+    monkeypatch.setattr(dryrun, "E5_MODEL_SHA256", dryrun.sha256_file(e5 / "model.onnx"))
+    monkeypatch.setattr(dryrun, "QWEN_WEIGHT_SHA256", qwen_hashes)
+    report = validate_trial_runtime_assets(
+        bcf1_predictions=bcf1, xclip_root=xclip, e5_root=e5, qwen_root=qwen
+    )
+    assert report["status"] == "PASS"
+    assert len(report["qwen"]["weights"]) == 2
+
+
+def test_qwen_grounding_round_robin_prevents_ocr_starvation() -> None:
+    ocr = [
+        {"video_id": f"L01_V{rank:03d}", "frame_id": rank, "rank": rank}
+        for rank in range(1, 101)
+    ]
+    asr = [{"video_id": "L02_V001", "frame_id": 20, "rank": 1}]
+    baseline = [{"video_id": "L03_V001", "frame_id": 30, "rank": 1}]
+    selected = select_qwen_grounding_rows(
+        ocr_rows=ocr, asr_rows=asr, baseline_rows=baseline
+    )
+    assert len(selected) == 20
+    assert {row["grounding_source"] for row in selected} == {"ocr", "asr", "bcf1"}
+
+
+def test_qwen_context_is_nearest_first_and_persists_provenance() -> None:
+    text, rows = build_qwen_context(
+        {"video_id": "L01_V001", "frame_id": 100},
+        ocr_rows=[
+            {
+                "video_id": "L01_V001",
+                "frame_id": 105,
+                "rank": 2,
+                "text": "near title",
+                "source": "ocr",
+                "source_confidence": 0.9,
+            },
+            {"video_id": "L01_V001", "frame_id": 500, "rank": 1, "text": "far title"},
+        ],
+        asr_rows=[],
+    )
+    assert rows[0]["text"] == "near title"
+    assert rows[0]["confidence"] == 0.9
+    assert text.startswith("[ocr] near title")
 
 
 def test_external_ocr_evidence_is_evidence_only(tmp_path: Path) -> None:
@@ -229,11 +347,14 @@ def test_external_ocr_evidence_is_evidence_only(tmp_path: Path) -> None:
 def test_xclip_is_scored_for_every_ordinal_event() -> None:
     query = next(row for row in _queries() if row["query_id"] == "query-p1-18-trake")
     baseline = _rows([query])
+    for rank, row in enumerate(baseline, 1):
+        row["frame_ids"] = [100 + rank, 200 + rank, 300 + rank, 400 + rank]
 
     def score(text: str, video_id: str, frame_id: int) -> dict:
         return {
             "score": float(frame_id),
             "finite": True,
+            "center_frame_id": frame_id,
             "text": text,
             "video_id": video_id,
         }
@@ -242,4 +363,34 @@ def test_xclip_is_scored_for_every_ordinal_event() -> None:
         query["query_id"]
     ]
     assert {row["event_index"] for row in rows} == {0, 1, 2, 3}
-    assert len(rows) == 12
+    assert len(rows) == 36
+    assert {row["neighbor_offset"] for row in rows} == {-48, 0, 48}
+
+
+def test_graph_revision_requires_coordinate_novel_to_complete_m0_pool() -> None:
+    query = next(row for row in _queries() if row["task"] == "TRAKE")
+    baseline = _rows([query])
+    duplicate = {
+        "query_id": query["query_id"],
+        "event_index": 0,
+        "video_id": baseline[0]["video_id"],
+        "frame_id": baseline[0]["frame_ids"][0],
+        "rank": 1,
+    }
+    initial_action = [
+        {**duplicate, "frame_id": duplicate["frame_id"] + rank, "rank": rank}
+        for rank in range(1, 21)
+    ]
+    novel = {**duplicate, "frame_id": duplicate["frame_id"] + 48, "rank": 21}
+    selected = select_novel_graph_revision(
+        query, 0, baseline_rows=baseline, action_rows=[*initial_action, novel]
+    )
+    assert selected[0]["frame_id"] == novel["frame_id"]
+    assert selected[0]["source"] == "xclip_graph_revision"
+
+
+def test_causal_graph_fixture_is_executed_and_changes_prediction_content() -> None:
+    fixture = run_causal_graph_fixture()
+    assert fixture["status"] == "PASS"
+    assert fixture["content_changed"] is True
+    assert fixture["graph"]["revision"]["evidence_added"] > 0

@@ -80,14 +80,26 @@ class ExecutableEventGraph:
             raise RuntimeError("GRAPH_REVISION_LIMIT_EXCEEDED")
         if action not in {"EXPLOIT", "EXPLORE"} or not added:
             raise RuntimeError("GRAPH_REVISION_MUST_ADD_REAL_EVIDENCE")
+        occupied = {
+            (candidate.video_id, candidate.frame_id)
+            for values in self.by_event.values()
+            for candidate in values
+        }
+        novel_coordinates = {
+            (candidate.video_id, candidate.frame_id)
+            for candidate in added
+            if (candidate.video_id, candidate.frame_id) not in occupied
+        }
+        if not novel_coordinates:
+            raise RuntimeError("GRAPH_REVISION_ADDED_NO_NEW_COORDINATE")
         before = self.diagnostics()
         for candidate in added:
             if candidate.event_index != event_index:
                 raise ValueError("revision candidate event mismatch")
             self.add(candidate)
         after = self.diagnostics()
-        actual_added = after["node_count"] - before["node_count"]
-        if actual_added <= 0:
+        actual_nodes_added = after["node_count"] - before["node_count"]
+        if actual_nodes_added <= 0:
             raise RuntimeError("GRAPH_REVISION_ADDED_NO_NEW_CANDIDATE")
         self.revision_count = 1
         self.revision = {
@@ -99,8 +111,9 @@ class ExecutableEventGraph:
             "edges_after": after["edge_count"],
             "missing_before": before["missing_events"],
             "missing_after": after["missing_events"],
-            "evidence_added": actual_added,
-            "candidates_added": actual_added,
+            "evidence_added": len(novel_coordinates),
+            "candidates_added": actual_nodes_added,
+            "novel_coordinate_count": len(novel_coordinates),
         }
 
     def diagnostics(self) -> dict[str, Any]:

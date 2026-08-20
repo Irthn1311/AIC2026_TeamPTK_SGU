@@ -9,14 +9,16 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import math
 import re
 import unicodedata
 import zipfile
 from collections import Counter, defaultdict
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
+from aic2026_eval.mapping import read_mapping
 from aic2026_eval.validation import validate_predictions
 from triage_eg.fs1.fusion import default_key
 from triage_eg.fs1_v11.pipeline import build_completion_arm, grouped, semantic_content_hash
@@ -36,6 +38,22 @@ GENERIC_QA = re.compile(
     r"không đủ bằng chứng|unknown|n/?a)$",
     re.I,
 )
+TRIAL_BCF1_F1_SHA256 = "33a6e592e0222e0c4c503dbd2d9f52fcfc3dad257730a424c8f8d365ef310acd"
+XCLIP_MODEL_ID = "microsoft/xclip-base-patch32"
+XCLIP_REVISION = "a2e27a78a2b5d802e894b8a1ef14f3a8ce490963"
+XCLIP_WEIGHT_SHA256 = "abf286e8cdd0612761c3e42d3a55eca998382dfa67a04a0f3fdcdfa4f150cdbb"
+E5_MODEL_ID = "intfloat/multilingual-e5-small"
+E5_REVISION = "03415a4be176a1620747c692ed433219fabc3def"
+E5_MODEL_SHA256 = "ca456c06b3a9505ddfd9131408916dd79290368331e7d76bb621f1cba6bc8665"
+QWEN_REVISION = "66285546d2b821cf421d4f5eb2576359d3770cd3"
+QWEN_WEIGHT_SHA256 = {
+    "model-00001-of-00002.safetensors": (
+        "41a8895c164b4d32bae6b302f4603fcbc1797f32dafa45c7e9bcda23c6755df8"
+    ),
+    "model-00002-of-00002.safetensors": (
+        "365531ff8752420e89dee707b79d021fb2d6e25abafe486f080555a4fe6972e4"
+    ),
+}
 
 
 def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
@@ -59,6 +77,120 @@ def sha256_file(path: str | Path) -> str:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+class CanonicalBTCFrameMapper:
+    """Map seconds to the nearest declared BTC row, with cached mapping reads."""
+
+    def __init__(self, inventory: list[dict[str, Any]]) -> None:
+        self.inventory = {str(row["video_id"]): dict(row) for row in inventory}
+        self._cache: dict[str, list[dict[str, Any]]] = {}
+
+    def __call__(self, video_id: str, seconds: float) -> int:
+        if not math.isfinite(seconds) or seconds < 0:
+            raise RuntimeError("CANONICAL_BTC_SECONDS_INVALID")
+        item = self.inventory.get(str(video_id))
+        if item is None or not item.get("mapping_available"):
+            raise RuntimeError(f"CANONICAL_BTC_MAPPING_MISSING:{video_id}")
+        rows = self._cache.get(str(video_id))
+        if rows is None:
+            rows = read_mapping(item["mapping_path"])
+            if not rows:
+                raise RuntimeError(f"CANONICAL_BTC_MAPPING_EMPTY:{video_id}")
+            self._cache[str(video_id)] = rows
+        selected = min(
+            rows,
+            key=lambda row: (
+                abs(float(row["pts_time"]) - seconds),
+                int(row["n"]),
+                int(row["frame_idx"]),
+            ),
+        )
+        frame_id = int(selected["frame_idx"])
+        if not 0 <= frame_id < int(item["total_frames"]):
+            raise RuntimeError(f"CANONICAL_BTC_FRAME_OUT_OF_BOUNDS:{video_id}:{frame_id}")
+        return frame_id
+
+
+def _load_manifest(root: Path, filename: str = "asset_manifest.json") -> dict[str, Any]:
+    candidates = sorted(path for path in root.rglob(filename) if path.is_file())
+    if len(candidates) != 1:
+        raise RuntimeError(f"ASSET_MANIFEST_AMBIGUOUS:{root}:{candidates}")
+    return json.loads(candidates[0].read_text(encoding="utf-8"))
+
+
+def _require_hash(path: Path, expected: str, code: str) -> dict[str, Any]:
+    actual = sha256_file(path)
+    if actual != expected:
+        raise RuntimeError(f"{code}:{actual}:{expected}")
+    return {"path": str(path), "size_bytes": path.stat().st_size, "sha256": actual}
+
+
+def validate_trial_runtime_assets(
+    *,
+    bcf1_predictions: str | Path,
+    xclip_root: str | Path,
+    e5_root: str | Path,
+    qwen_root: str | Path,
+) -> dict[str, Any]:
+    """Fail closed on frozen prediction/model identity before expensive inference."""
+
+    bcf1_path = Path(bcf1_predictions).resolve(strict=True)
+    xclip = Path(xclip_root).resolve(strict=True)
+    e5 = Path(e5_root).resolve(strict=True)
+    qwen = Path(qwen_root).resolve(strict=True)
+    bcf1 = _require_hash(bcf1_path, TRIAL_BCF1_F1_SHA256, "TRIAL_BCF1_HASH_MISMATCH")
+
+    xclip_manifest = _load_manifest(xclip.parent)
+    if (
+        xclip_manifest.get("model_id") != XCLIP_MODEL_ID
+        or xclip_manifest.get("exact_revision") != XCLIP_REVISION
+    ):
+        raise RuntimeError("XCLIP_MANIFEST_IDENTITY_MISMATCH")
+    xclip_weight = _require_hash(
+        xclip / "model.safetensors", XCLIP_WEIGHT_SHA256, "XCLIP_WEIGHT_HASH_MISMATCH"
+    )
+
+    e5_manifest = _load_manifest(e5)
+    if (
+        e5_manifest.get("model_id") != E5_MODEL_ID
+        or e5_manifest.get("exact_revision") != E5_REVISION
+    ):
+        raise RuntimeError("E5_MANIFEST_IDENTITY_MISMATCH")
+    e5_weight = _require_hash(e5 / "model.onnx", E5_MODEL_SHA256, "E5_MODEL_HASH_MISMATCH")
+
+    config = json.loads((qwen / "config.json").read_text(encoding="utf-8"))
+    if config.get("model_type") != "qwen2_5_vl":
+        raise RuntimeError("QWEN_CONFIG_MODEL_TYPE_MISMATCH")
+    qwen_weights = []
+    for name, expected in QWEN_WEIGHT_SHA256.items():
+        metadata_path = qwen / ".cache" / "huggingface" / "download" / f"{name}.metadata"
+        metadata = metadata_path.read_text(encoding="utf-8").splitlines()
+        if len(metadata) < 2 or metadata[0] != QWEN_REVISION or metadata[1] != expected:
+            raise RuntimeError(f"QWEN_METADATA_IDENTITY_MISMATCH:{name}")
+        qwen_weights.append(_require_hash(qwen / name, expected, "QWEN_WEIGHT_HASH_MISMATCH"))
+    return {
+        "status": "PASS",
+        "bcf1": bcf1,
+        "xclip": {
+            "model_id": XCLIP_MODEL_ID,
+            "exact_revision": XCLIP_REVISION,
+            "weight": xclip_weight,
+        },
+        "e5": {
+            "model_id": E5_MODEL_ID,
+            "exact_revision": E5_REVISION,
+            "weight": e5_weight,
+            "source_index_exact_encoder_revision_known": bool(
+                e5_manifest.get("source_index_exact_encoder_revision_known")
+            ),
+        },
+        "qwen": {
+            "model_id": "Qwen/Qwen2.5-VL-3B-Instruct",
+            "exact_revision": QWEN_REVISION,
+            "weights": qwen_weights,
+        },
+    }
 
 
 def normalize_trial_plans(plans: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -128,37 +260,52 @@ def _tokens(value: str) -> set[str]:
 
 def build_asr_candidate_evidence(
     queries: list[dict[str, Any]],
-    baseline_rows: list[dict[str, Any]],
     loader: Any,
     *,
+    canonical_mapper: Callable[[str, float], int],
     e5_results: dict[str, list[dict[str, Any]]] | None = None,
     max_spans: int = 200,
+    max_videos: int = 100,
 ) -> dict[str, list[dict[str, Any]]]:
-    """Map second-based lexical/E5 evidence onto frozen BCF1 frame identities."""
+    """Create a rank-only ASR branch that may introduce canonical new videos."""
 
-    baseline = grouped(baseline_rows)
     output: dict[str, list[dict[str, Any]]] = {}
     for query in queries:
         query_id = str(query["query_id"])
         text = str(query.get("query") or query.get("question") or "")
         lexical = loader.retrieve_spans(text, max_spans=max_spans)
-        combined = [*lexical, *(e5_results or {}).get(query_id, [])]
-        best_by_video: dict[str, dict[str, Any]] = {}
-        for span in combined:
-            best_by_video.setdefault(str(span["video_id"]), dict(span))
+        branches = {"LEXICAL": lexical, "E5": (e5_results or {}).get(query_id, [])}
+        scores: dict[str, float] = defaultdict(float)
+        provenance: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        best_span: dict[str, dict[str, Any]] = {}
+        for branch, spans in branches.items():
+            seen = set()
+            for branch_rank, raw in enumerate(spans, 1):
+                span = dict(raw)
+                video_id = str(span["video_id"])
+                if video_id in seen:
+                    continue
+                seen.add(video_id)
+                scores[video_id] += 1.0 / (60 + branch_rank)
+                provenance[video_id].append({"branch": branch, "rank": branch_rank})
+                best_span.setdefault(video_id, {**span, "branch": branch})
+        ordered = sorted(scores, key=lambda video_id: (-scores[video_id], video_id))[:max_videos]
         rows = []
-        for baseline_row in baseline[query_id]:
-            video_id = str(baseline_row["video_id"])
-            if video_id not in best_by_video:
-                continue
-            span = best_by_video[video_id]
+        for rank, video_id in enumerate(ordered, 1):
+            span = best_span[video_id]
+            mapped = loader.map_span_to_frame(span, canonical_mapper)
             rows.append(
                 {
-                    **baseline_row,
-                    "rank": len(rows) + 1,
+                    "query_id": query_id,
+                    "video_id": video_id,
+                    "frame_id": int(mapped["frame_id"]),
+                    "rank": rank,
                     "source": "asr_external_v3",
-                    "asr_span": span,
-                    "asr_branch": span.get("branch", "LEXICAL"),
+                    "asr_span": mapped,
+                    "asr_branch": span["branch"],
+                    "asr_rrf_score": scores[video_id],
+                    "asr_source_ranks": provenance[video_id],
+                    "evidence_only": True,
                 }
             )
         output[query_id] = rows
@@ -216,6 +363,8 @@ def build_external_parquet_evidence(
                         "text": text,
                         "matched_tokens": sorted(overlap),
                         "source_score": score,
+                        "source_confidence": confidence if modality == "ocr" else None,
+                        "object_scores": raw.get("object_scores") if modality == "object" else None,
                         "evidence_only": True,
                     },
                 )
@@ -234,14 +383,103 @@ def build_external_parquet_evidence(
     return output
 
 
+def select_qwen_grounding_rows(
+    *,
+    ocr_rows: list[dict[str, Any]],
+    asr_rows: list[dict[str, Any]],
+    baseline_rows: list[dict[str, Any]],
+    budget: int = 20,
+) -> list[dict[str, Any]]:
+    """Round-robin ranked modalities so a long OCR list cannot starve ASR/B0."""
+
+    if budget != 20:
+        raise ValueError("TRIAL_QWEN_GROUNDING_BUDGET_MUST_BE_20")
+    sources = {
+        "ocr": sorted(ocr_rows, key=lambda row: int(row.get("rank", 999999))),
+        "asr": sorted(asr_rows, key=lambda row: int(row.get("rank", 999999))),
+        "bcf1": sorted(baseline_rows, key=lambda row: int(row.get("rank", 999999))),
+    }
+    output, seen = [], set()
+    index = 0
+    while len(output) < budget and any(index < len(rows) for rows in sources.values()):
+        for source, rows in sources.items():
+            if index >= len(rows):
+                continue
+            row = dict(rows[index])
+            identity = (str(row["video_id"]), int(row["frame_id"]))
+            if identity not in seen:
+                seen.add(identity)
+                output.append(
+                    {
+                        **row,
+                        "grounding_source": source,
+                        "grounding_source_rank": int(row.get("rank", 999999)),
+                    }
+                )
+                if len(output) == budget:
+                    break
+        index += 1
+    return output
+
+
+def build_qwen_context(
+    candidate: dict[str, Any],
+    *,
+    ocr_rows: list[dict[str, Any]],
+    asr_rows: list[dict[str, Any]],
+    limit: int = 6,
+) -> tuple[str, list[dict[str, Any]]]:
+    """Build bounded, candidate-local text context with explicit provenance."""
+
+    video_id, frame_id = str(candidate["video_id"]), int(candidate["frame_id"])
+    context = []
+    for modality, rows in (("ocr", ocr_rows), ("asr", asr_rows)):
+        for raw in rows:
+            if str(raw.get("video_id")) != video_id or raw.get("frame_id") is None:
+                continue
+            row = dict(raw)
+            span = row.get("asr_span") or {}
+            text = str(row.get("text") or span.get("text") or "").strip()
+            if not text:
+                continue
+            context.append(
+                {
+                    "modality": modality,
+                    "video_id": video_id,
+                    "frame_id": int(row["frame_id"]),
+                    "distance_frames": abs(int(row["frame_id"]) - frame_id),
+                    "text": text,
+                    "rank": int(row.get("rank", 999999)),
+                    "confidence": row.get("source_confidence"),
+                    "asr_span": span or None,
+                    "source": row.get("source"),
+                }
+            )
+    context.sort(
+        key=lambda row: (
+            int(row["distance_frames"]),
+            int(row["rank"]),
+            str(row["modality"]),
+            str(row["text"]),
+        )
+    )
+    selected = context[:limit]
+    text = " | ".join(f"[{row['modality']}] {row['text']}" for row in selected)
+    return text, selected
+
+
 def build_xclip_event_evidence(
     queries: list[dict[str, Any]],
     baseline_rows: list[dict[str, Any]],
     score_window: Any,
     *,
-    candidates_per_event: int = 20,
+    candidates_per_event: int = 8,
+    neighbor_offsets: tuple[int, ...] = (-48, 0, 48),
 ) -> dict[str, list[dict[str, Any]]]:
-    """Score frozen TRAKE candidate windows with the official XCLIP adapter boundary."""
+    """Score bounded B0 neighborhoods so graph revision can add new coordinates."""
+
+    if candidates_per_event <= 0 or neighbor_offsets != (-48, 0, 48):
+        raise ValueError("TRIAL_XCLIP_NEIGHBORHOOD_CONTRACT_INVALID")
 
     baseline = grouped(baseline_rows)
     output: dict[str, list[dict[str, Any]]] = {}
@@ -253,15 +491,34 @@ def build_xclip_event_evidence(
             scored = []
             for baseline_row in baseline[query_id][:candidates_per_event]:
                 frames = list(baseline_row["frame_ids"])
-                frame_id = int(frames[event_index])
-                result = score_window(str(event_text), str(baseline_row["video_id"]), frame_id)
-                if not result or not result.get("finite"):
-                    continue
-                scored.append(
-                    (-float(result["score"]), str(baseline_row["video_id"]), frame_id, result)
-                )
+                baseline_frame_id = int(frames[event_index])
+                for offset in neighbor_offsets:
+                    result = score_window(
+                        str(event_text),
+                        str(baseline_row["video_id"]),
+                        baseline_frame_id + offset,
+                    )
+                    if not result or not result.get("finite"):
+                        continue
+                    frame_id = int(result.get("center_frame_id", baseline_frame_id + offset))
+                    scored.append(
+                        (
+                            -float(result["score"]),
+                            str(baseline_row["video_id"]),
+                            frame_id,
+                            offset,
+                            result,
+                        )
+                    )
             scored.sort(key=lambda item: item[:3])
-            for event_rank, (_, video_id, frame_id, result) in enumerate(scored, 1):
+            seen = set()
+            event_rank = 0
+            for _, video_id, frame_id, offset, result in scored:
+                identity = (video_id, frame_id)
+                if identity in seen:
+                    continue
+                seen.add(identity)
+                event_rank += 1
                 rows.append(
                     {
                         "query_id": query_id,
@@ -270,6 +527,7 @@ def build_xclip_event_evidence(
                         "frame_id": frame_id,
                         "rank": event_rank,
                         "source": "xclip_official",
+                        "neighbor_offset": offset,
                         "xclip": result,
                     }
                 )
@@ -277,16 +535,126 @@ def build_xclip_event_evidence(
     return output
 
 
+def select_novel_graph_revision(
+    query: dict[str, Any],
+    event_index: int,
+    *,
+    baseline_rows: list[dict[str, Any]],
+    action_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Select one XCLIP coordinate absent from the complete M0 event pool."""
+
+    occupied = {
+        (str(row["video_id"]), int(row["frame_ids"][event_index]))
+        for row in baseline_rows[:20]
+    }
+    initial_action = [
+        row for row in action_rows if int(row.get("event_index", -1)) == event_index
+    ][:20]
+    occupied.update((str(row["video_id"]), int(row["frame_id"])) for row in initial_action)
+    novel = [
+        row
+        for row in action_rows
+        if int(row.get("event_index", -1)) == event_index
+        and (str(row["video_id"]), int(row["frame_id"])) not in occupied
+    ]
+    if not novel:
+        raise RuntimeError(
+            f"XCLIP_NOVEL_REVISION_EVIDENCE_MISSING:{query['query_id']}:{event_index}"
+        )
+    return [{**novel[0], "source": "xclip_graph_revision"}]
+
+
+def run_causal_graph_fixture() -> dict[str, Any]:
+    """Exercise a prediction-side graph revision with no Trial data or GT."""
+
+    query = {
+        "query_id": "CAUSAL_FIXTURE_TRAKE",
+        "task": "TRAKE",
+        "query": "first event then second event",
+        "event_count": 2,
+        "event_descriptions": ["first event", "second event"],
+    }
+    baseline = [
+        {
+            "query_id": query["query_id"],
+            "video_id": "L01_V001",
+            "frame_ids": [10 + rank, 30 + rank],
+            "rank": rank,
+        }
+        for rank in range(1, 6)
+    ]
+    evidence = {
+        "action": {
+            query["query_id"]: [
+                {
+                    "query_id": query["query_id"],
+                    "event_index": 0,
+                    "video_id": "L01_V001",
+                    "frame_id": 5,
+                    "rank": 1,
+                    "source": "causal_fixture_action",
+                },
+                {
+                    "query_id": query["query_id"],
+                    "event_index": 1,
+                    "video_id": "L01_V001",
+                    "frame_id": 20,
+                    "rank": 1,
+                    "source": "causal_fixture_action",
+                },
+            ]
+        }
+    }
+
+    def revision_provider(_: Any, event: Any, __: Any) -> list[dict[str, Any]]:
+        return [
+            {
+                "query_id": query["query_id"],
+                "event_index": event.event_index,
+                "video_id": "L01_V001",
+                "frame_id": 1 if event.event_index == 0 else 25,
+                "rank": 1,
+                "source": "causal_fixture_revision",
+            }
+        ]
+
+    m0, _, _ = build_completion_arm("M0_v11", [query], baseline, evidence, {"action"})
+    m1, _, diagnostics = build_completion_arm(
+        "M1_v11", [query], baseline, evidence, {"action"}, revision_provider=revision_provider
+    )
+    changed = semantic_content_hash(m0) != semantic_content_hash(m1)
+    graph = diagnostics[0].get("graph") or {}
+    passed = bool(
+        changed
+        and graph.get("revision_count") == 1
+        and (graph.get("revision") or {}).get("evidence_added", 0) > 0
+        and graph.get("chain_candidates_added", 0) > 0
+    )
+    return {
+        "status": "PASS" if passed else "FAIL",
+        "m0_sha256": semantic_content_hash(m0),
+        "m1_sha256": semantic_content_hash(m1),
+        "content_changed": changed,
+        "graph": graph,
+        "gt_opened": False,
+    }
+
+
 def _rank_and_fill(
-    rows: list[dict[str, Any]], baseline: list[dict[str, Any]], *, limit: int = 100
+    rows: list[dict[str, Any]],
+    baseline: list[dict[str, Any]],
+    *,
+    limit: int = 100,
+    identity: Callable[[dict[str, Any]], Any] = default_key,
 ) -> list[dict[str, Any]]:
     output, seen = [], set()
     for raw in [*rows, *baseline]:
         row = dict(raw)
-        identity = default_key(row)
-        if identity in seen:
+        key = identity(row)
+        if key in seen:
             continue
-        seen.add(identity)
+        seen.add(key)
         output.append(row)
         if len(output) == limit:
             break
@@ -318,7 +686,11 @@ def prioritize_qa_sufficient(
             row["answer"] = "không đủ bằng chứng"
             row["evidence_sufficient"] = False
         unsupported.append(row)
-    return _rank_and_fill([*sufficient, *unsupported], baseline)
+    return _rank_and_fill(
+        [*sufficient, *unsupported],
+        baseline,
+        identity=lambda row: (str(row["video_id"]), int(row["frame_id"])),
+    )
 
 
 def _candidate_arm(
@@ -363,8 +735,12 @@ def build_trial_candidates(
     baseline_rows: list[dict[str, Any]],
     evidence: dict[str, dict[str, list[dict[str, Any]]]],
     revision_provider: Any,
+    *,
+    inventory: list[dict[str, Any]],
 ) -> dict[str, Any]:
     validate_trial_contract(queries)
+    if not inventory:
+        raise RuntimeError("TRIAL_CANONICAL_INVENTORY_REQUIRED")
     required = {"asr", "ocr", "action", "object", "qwen"}
     missing = sorted(name for name in required if not evidence.get(name))
     if missing:
@@ -376,7 +752,7 @@ def build_trial_candidates(
     candidates = {"TRIAGEEG_M0_FULL": m0, "TRIAGEEG_M1_FULL": m1, "TRIAGEEG_SAFE": safe}
     validation = {}
     for name, rows in candidates.items():
-        summary, issues = validate_predictions(queries, rows)
+        summary, issues = validate_predictions(queries, rows, inventory=inventory)
         exact = len(rows) == 2400 and all(len(values) == 100 for values in grouped(rows).values())
         validation[name] = {**summary, "exact_100_per_query": exact, "issues": issues}
         if summary["status"] != "PASS" or not exact:
@@ -503,7 +879,7 @@ def candidate_comparison(
         )
         changed_m0 = b0[0]["video_id"] != m0[0]["video_id"]
         top1_changed += int(changed_m0)
-        changed5 = {row["video_id"] for row in b0[:5]} != {row["video_id"] for row in m0[:5]}
+        changed5 = {default_key(row) for row in b0[:5]} != {default_key(row) for row in m0[:5]}
         top5_changed += int(changed5)
         provenance = m1[0].get("source") or m1[0].get("fs1_source_ranks") or "b0_visual"
 

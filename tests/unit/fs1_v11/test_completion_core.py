@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -15,7 +16,7 @@ from triage_eg.fs1_v11.pipeline import (
     build_completion_arm,
     semantic_content_hash,
 )
-from triage_eg.fs1_v11.xclip import uniform_indices
+from triage_eg.fs1_v11.xclip import XClipAdapter, uniform_indices
 from triage_eg.submission.aic26_prelim import create_submission_zip, validate_submission_zip
 
 
@@ -125,9 +126,78 @@ def test_m0_and_m1_use_temporal_pools_and_m1_revision() -> None:
     assert m1_diagnostics[0]["graph"]["revision"]["evidence_added"] == 1
 
 
+def test_temporal_action_pool_filters_each_event_before_limit() -> None:
+    query = trake_query()
+    baseline = [
+        {
+            "query_id": "Q-T",
+            "video_id": "L01_V001",
+            "frame_ids": [100 + rank, 300 + rank],
+            "rank": rank,
+        }
+        for rank in range(1, 6)
+    ]
+    action_rows = [
+        {
+            "query_id": "Q-T",
+            "event_index": event_index,
+            "video_id": "L01_V001",
+            "frame_id": base + rank,
+            "rank": rank,
+        }
+        for event_index, base in ((0, 10), (1, 200))
+        for rank in range(1, 22)
+    ]
+    rows, _, _ = build_completion_arm(
+        "M0_v11", [query], baseline, {"action": {"Q-T": action_rows}}, {"action"}
+    )
+    assert rows
+    assert min(row["frame_ids"][0] for row in rows) < 100
+    assert min(row["frame_ids"][1] for row in rows) < 300
+
+
+def test_graph_revision_rejects_source_relabel_at_existing_coordinate() -> None:
+    events = compile_query_events(trake_query(), [])
+    graph = ExecutableEventGraph("Q-T", events)
+    graph.add(Candidate(0, "L01_V001", 10, 1, "b0", {"rank": 1}))
+    graph.add(Candidate(1, "L01_V001", 20, 1, "b0", {"rank": 1}))
+    with pytest.raises(RuntimeError, match="GRAPH_REVISION_ADDED_NO_NEW_COORDINATE"):
+        graph.revise_once(
+            "EXPLOIT",
+            0,
+            [Candidate(0, "L01_V001", 10, 1, "xclip", {"score": 0.8})],
+        )
+
+
 def test_xclip_uniform_contract() -> None:
     values = uniform_indices(0, 70)
     assert len(values) == 8 and values[0] == 0 and values[-1] == 70
+
+
+def test_xclip_processor_uses_images_and_emits_batched_video_tensor(tmp_path: Path) -> None:
+    import torch
+
+    class Processor:
+        def __call__(self, **kwargs):
+            assert "videos" not in kwargs
+            assert len(kwargs["images"]) == 8
+            return {
+                "input_ids": torch.ones((1, 3), dtype=torch.long),
+                "attention_mask": torch.ones((1, 3), dtype=torch.long),
+                "pixel_values": torch.zeros((1, 8, 3, 2, 2)),
+            }
+
+    class Model:
+        def __call__(self, **inputs):
+            assert tuple(inputs["pixel_values"].shape) == (1, 8, 3, 2, 2)
+            return SimpleNamespace(logits_per_video=torch.tensor([[0.75]]))
+
+    adapter = XClipAdapter(tmp_path, device="cpu")
+    adapter.processor = Processor()
+    adapter.model = Model()
+    result = adapter.score("event", [np.zeros((2, 2, 3), np.uint8) for _ in range(8)])
+    assert result["finite"] is True
+    assert result["pixel_values_shape"] == [1, 8, 3, 2, 2]
 
 
 def test_qwen_answer_updates_only_matching_grounded_candidate() -> None:
@@ -153,6 +223,33 @@ def test_qwen_answer_updates_only_matching_grounded_candidate() -> None:
         ("L01_V001", "x"),
         ("L01_V002", "đỏ"),
     ]
+
+
+def test_compiled_qa_answer_type_reaches_modality_router() -> None:
+    query = {
+        "query_id": "Q-TITLE",
+        "task": "QA",
+        "query": "ambiguous wording",
+        "answer_type": "TITLE",
+    }
+    baseline = [
+        {
+            "query_id": "Q-TITLE",
+            "video_id": "L01_V001",
+            "frame_id": rank,
+            "answer": "unknown",
+            "rank": rank,
+        }
+        for rank in range(1, 101)
+    ]
+    evidence = {
+        "ocr": {"Q-TITLE": [{"video_id": "L01_V002", "frame_id": 10, "rank": 1}]},
+        "asr": {"Q-TITLE": [{"video_id": "L01_V003", "frame_id": 20, "rank": 1}]},
+    }
+    _, _, diagnostics = build_completion_arm(
+        "M0_v11", [query], baseline, evidence, {"ocr", "asr"}
+    )
+    assert diagnostics[0]["routing"][0]["modalities"] == ("b0_visual", "ocr", "asr")
 
 
 def test_submission_zip_contract_and_root(tmp_path: Path) -> None:
