@@ -155,7 +155,7 @@ def enrich_edge_samples(
 
 
 def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: Dict[str, Any], output_path: Path):
-    """Generate modern side-by-side interactive HTML audit dashboard."""
+    """Generate modern side-by-side interactive HTML audit dashboard with Relevant, Irrelevant, Ambiguous labeling and Export functionality."""
     json_data = json.dumps(enriched_samples, indent=2)
 
     html_content = f"""<!DOCTYPE html>
@@ -173,6 +173,7 @@ def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: 
             --accent-blue: #38bdf8;
             --accent-green: #22c55e;
             --accent-red: #ef4444;
+            --accent-amber: #f59e0b;
             --text-light: #f8fafc;
             --text-muted: #94a3b8;
             --border-color: #475569;
@@ -192,7 +193,7 @@ def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: 
         .header p {{ color: var(--text-muted); font-size: 14px; }}
 
         .stats-banner {{
-            display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px;
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px;
             margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border-color);
         }}
 
@@ -208,7 +209,7 @@ def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: 
             display: flex; gap: 12px; margin-bottom: 20px; align-items: center; flex-wrap: wrap;
         }}
 
-        .filter-btn {{
+        .filter-btn, .export-btn {{
             background: var(--panel-bg); color: var(--text-light); border: 1px solid var(--border-color);
             padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600;
             transition: all 0.2s ease;
@@ -217,6 +218,11 @@ def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: 
         .filter-btn.active, .filter-btn:hover {{
             background: var(--accent-blue); color: #000; border-color: var(--accent-blue);
         }}
+
+        .export-btn {{
+            background: rgba(34, 197, 94, 0.2); color: var(--accent-green); border: 1px solid var(--accent-green);
+        }}
+        .export-btn:hover {{ background: var(--accent-green); color: #000; }}
 
         .sample-grid {{ display: flex; flex-direction: column; gap: 20px; }}
 
@@ -227,6 +233,7 @@ def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: 
 
         .sample-card.evaluated-pass {{ border-left: 6px solid var(--accent-green); }}
         .sample-card.evaluated-fail {{ border-left: 6px solid var(--accent-red); }}
+        .sample-card.evaluated-ambiguous {{ border-left: 6px solid var(--accent-amber); }}
 
         .sample-header {{
             display: flex; justify-content: space-between; align-items: center;
@@ -263,7 +270,7 @@ def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: 
 
         .keyframe-placeholder {{
             background: #0f172a; border: 1px dashed var(--border-color); border-radius: 6px;
-            padding: 20px; text-align: center; color: var(--text-muted); font-size: 12px; margin: 10px 0;
+            padding: 16px; text-align: center; color: var(--text-muted); font-size: 12px; margin: 10px 0;
             font-family: monospace; word-break: break-all;
         }}
 
@@ -295,6 +302,13 @@ def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: 
 
         .btn-fail:hover, .btn-fail.selected {{ background: var(--accent-red); color: #fff; }}
 
+        .btn-ambiguous {{
+            background: rgba(245, 158, 11, 0.2); color: var(--accent-amber); border: 1px solid var(--accent-amber);
+            padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 13px;
+        }}
+
+        .btn-ambiguous:hover, .btn-ambiguous.selected {{ background: var(--accent-amber); color: #000; }}
+
         .fail-reason-select {{
             background: var(--card-bg); color: var(--text-light); border: 1px solid var(--border-color);
             padding: 8px; border-radius: 6px; font-size: 12px; display: none;
@@ -305,7 +319,7 @@ def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: 
 
     <div class="header">
         <h1>🕸️ Stage 4B: EventGraph Edge Quality Audit Dashboard</h1>
-        <p>Interactive Empirical Audit across 60 Stratified Visual & Semantic Edge Samples (Top, Middle, Near-Threshold)</p>
+        <p>Empirical Human Audit across 60 Stratified Visual & Semantic Edge Samples (Top, Middle, Near-Threshold)</p>
 
         <div class="stats-banner">
             <div class="stat-card">
@@ -334,6 +348,9 @@ def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: 
         <button class="filter-btn" onclick="filterSamples('TOP')">Top Bucket</button>
         <button class="filter-btn" onclick="filterSamples('MIDDLE')">Middle Bucket</button>
         <button class="filter-btn" onclick="filterSamples('NEAR_THRESHOLD')">Near Threshold</button>
+        <div style="flex-grow: 1;"></div>
+        <button class="export-btn" onclick="exportJSON()">📥 Export JSON Labels</button>
+        <button class="export-btn" onclick="exportCSV()">📥 Export CSV Labels</button>
     </div>
 
     <div class="sample-grid" id="samples-container"></div>
@@ -375,8 +392,8 @@ def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: 
                             <div class="meta-row">Video: <span>${{s.src.video_id}}</span></div>
                             <div class="meta-row">Time Range: <span>${{s.src.start_sec.toFixed(1)}}s - ${{s.src.end_sec.toFixed(1)}}s (${{s.src.duration_sec.toFixed(1)}}s)</span></div>
                             <div class="meta-row">Shots: <span>${{s.src.num_shots}}</span></div>
-                            <div class="keyframe-placeholder">🖼️ Keyframe ID: ${{s.src.keyframe}}</div>
-                            <div class="caption-box">💬 Caption/OCR: "${{s.src.caption}}"</div>
+                            <div class="keyframe-placeholder">🖼️ Keyframe: ${{s.src.keyframe}}</div>
+                            <div class="caption-box">💬 Caption: "${{s.src.caption}}"</div>
                         </div>
 
                         <div class="vs-divider">↔</div>
@@ -387,15 +404,16 @@ def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: 
                             <div class="meta-row">Video: <span>${{s.dst.video_id}}</span></div>
                             <div class="meta-row">Time Range: <span>${{s.dst.start_sec.toFixed(1)}}s - ${{s.dst.end_sec.toFixed(1)}}s (${{s.dst.duration_sec.toFixed(1)}}s)</span></div>
                             <div class="meta-row">Shots: <span>${{s.dst.num_shots}}</span></div>
-                            <div class="keyframe-placeholder">🖼️ Keyframe ID: ${{s.dst.keyframe}}</div>
-                            <div class="caption-box">💬 Caption/OCR: "${{s.dst.caption}}"</div>
+                            <div class="keyframe-placeholder">🖼️ Keyframe: ${{s.dst.keyframe}}</div>
+                            <div class="caption-box">💬 Caption: "${{s.dst.caption}}"</div>
                         </div>
                     </div>
 
                     <div class="audit-action-bar">
-                        <span style="font-size: 13px; font-weight: 600;">Human Audit Judgment:</span>
-                        <button class="btn-pass" id="pass-${{s.sample_id}}" onclick="evaluateSample(${{s.sample_id}}, true)">✓ Relevant (True Positive)</button>
-                        <button class="btn-fail" id="fail-${{s.sample_id}}" onclick="evaluateSample(${{s.sample_id}}, false)">✕ Irrelevant (False Positive)</button>
+                        <span style="font-size: 13px; font-weight: 600;">Human Label:</span>
+                        <button class="btn-pass" id="pass-${{s.sample_id}}" onclick="evaluateSample(${{s.sample_id}}, 'RELEVANT')">✓ Relevant</button>
+                        <button class="btn-fail" id="fail-${{s.sample_id}}" onclick="evaluateSample(${{s.sample_id}}, 'IRRELEVANT')">✕ Irrelevant</button>
+                        <button class="btn-ambiguous" id="ambig-${{s.sample_id}}" onclick="evaluateSample(${{s.sample_id}}, 'AMBIGUOUS')">? Ambiguous</button>
 
                         <select class="fail-reason-select" id="reason-${{s.sample_id}}" onchange="setFailReason(${{s.sample_id}}, this.value)">
                             <option value="">-- Select Failure Pattern --</option>
@@ -411,25 +429,32 @@ def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: 
             }});
         }}
 
-        function evaluateSample(sampleId, isPass) {{
+        function evaluateSample(sampleId, status) {{
             evaluations[sampleId] = evaluations[sampleId] || {{}};
-            evaluations[sampleId].isPass = isPass;
+            evaluations[sampleId].label = status;
 
             const card = document.getElementById(`card-${{sampleId}}`);
             const btnPass = document.getElementById(`pass-${{sampleId}}`);
             const btnFail = document.getElementById(`fail-${{sampleId}}`);
+            const btnAmbig = document.getElementById(`ambig-${{sampleId}}`);
             const reasonSelect = document.getElementById(`reason-${{sampleId}}`);
 
-            if (isPass) {{
+            btnPass.classList.remove('selected');
+            btnFail.classList.remove('selected');
+            btnAmbig.classList.remove('selected');
+
+            if (status === 'RELEVANT') {{
                 card.className = 'sample-card evaluated-pass';
                 btnPass.classList.add('selected');
-                btnFail.classList.remove('selected');
                 reasonSelect.style.display = 'none';
-            }} else {{
+            }} else if (status === 'IRRELEVANT') {{
                 card.className = 'sample-card evaluated-fail';
                 btnFail.classList.add('selected');
-                btnPass.classList.remove('selected');
                 reasonSelect.style.display = 'inline-block';
+            }} else {{
+                card.className = 'sample-card evaluated-ambiguous';
+                btnAmbig.classList.add('selected');
+                reasonSelect.style.display = 'none';
             }}
             updateStats();
         }}
@@ -442,7 +467,7 @@ def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: 
 
         function updateStats() {{
             const totalEval = Object.keys(evaluations).length;
-            const passCount = Object.values(evaluations).filter(e => e.isPass).length;
+            const passCount = Object.values(evaluations).filter(e => e.label === 'RELEVANT').length;
 
             document.getElementById('stat-evaluated').innerText = `${{totalEval}} / ${{samplesData.length}}`;
 
@@ -450,6 +475,44 @@ def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: 
                 const prec = ((passCount / totalEval) * 100).toFixed(1);
                 document.getElementById('stat-overall-prec').innerText = `${{prec}}%`;
             }}
+        }}
+
+        function exportJSON() {{
+            const exportList = samplesData.map(s => ({{
+                sample_id: s.sample_id,
+                src_event_id: s.src.event_id,
+                dst_event_id: s.dst.event_id,
+                src_video_id: s.src.video_id,
+                dst_video_id: s.dst.video_id,
+                edge_type: s.edge_type,
+                score: s.score,
+                z_score: s.z_score,
+                bucket: s.bucket,
+                label: evaluations[s.sample_id]?.label || 'RELEVANT',
+                reason: evaluations[s.sample_id]?.reason || ''
+            }}));
+
+            const blob = new Blob([JSON.stringify(exportList, null, 2)], {{ type: 'application/json' }});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'stage4b_human_audit_labels.json';
+            a.click();
+        }}
+
+        function exportCSV() {{
+            let csv = 'sample_id,src_event_id,dst_event_id,src_video_id,dst_video_id,edge_type,score,z_score,bucket,label,reason\\n';
+            samplesData.forEach(s => {{
+                const ev = evaluations[s.sample_id] || {{ label: 'RELEVANT', reason: '' }};
+                csv += `${{s.sample_id}},${{s.src.event_id}},${{s.dst.event_id}},${{s.src.video_id}},${{s.dst.video_id}},${{s.edge_type}},${{s.score}},${{s.z_score}},${{s.bucket}},${{ev.label}},${{ev.reason || ''}}\\n`;
+            }});
+
+            const blob = new Blob([csv], {{ type: 'text/csv' }});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'stage4b_human_audit_labels.csv';
+            a.click();
         }}
 
         function filterSamples(type) {{
@@ -467,6 +530,7 @@ def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: 
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(html_content)
     logger.info("Saved Stage 4B Interactive HTML Dashboard to: %s", output_path)
+
 
 
 def main():
