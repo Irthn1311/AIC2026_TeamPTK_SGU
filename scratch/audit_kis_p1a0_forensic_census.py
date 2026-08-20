@@ -91,42 +91,40 @@ FORENSIC_QUERIES = [
 ]
 
 
-VIDEO_PATH_CACHE: dict[str, Path | None] = {}
+VIDEO_PATH_CACHE: dict[str, Path] = {}
 
-def resolve_video_path(video_id: str) -> Path | None:
+def populate_video_index_once() -> None:
+    if VIDEO_PATH_CACHE:
+        return
+    for search_root in [Path("/kaggle/input"), REPO_ROOT / "systems" / "system_tai" / "data"]:
+        if not search_root.exists():
+            continue
+        for root_dir, _, files in os.walk(str(search_root)):
+            for fname in files:
+                if fname.endswith(".mp4"):
+                    vid = fname[:-4]
+                    if vid not in VIDEO_PATH_CACHE:
+                        VIDEO_PATH_CACHE[vid] = Path(root_dir) / fname
+
+
+def resolve_video_path(video_id: str, raw_video_registry: Any = None) -> Path | None:
+    if raw_video_registry:
+        try:
+            rec = raw_video_registry.get(video_id)
+            if rec and rec.raw_video_path and rec.raw_video_path.exists():
+                return rec.raw_video_path
+        except Exception:
+            pass
+
     if video_id in VIDEO_PATH_CACHE:
         return VIDEO_PATH_CACHE[video_id]
 
-    search_dirs = [
-        Path("/kaggle/input/datasets/videos"),
-        Path("/kaggle/input/datasets"),
-        Path("/kaggle/input"),
-        REPO_ROOT / "systems" / "system_tai" / "data",
-    ]
-    batch_prefix = video_id.split("_")[0] if "_" in video_id else ""
-
-    for root in search_dirs:
-        if not root.exists():
-            continue
-        # Direct
-        direct = root / f"{video_id}.mp4"
-        if direct.exists():
-            VIDEO_PATH_CACHE[video_id] = direct
-            return direct
-        # Subfolders
-        if batch_prefix:
-            for sub_name in [batch_prefix, f"videos_{batch_prefix}", f"video_{batch_prefix}", f"data/{batch_prefix}"]:
-                sub = root / sub_name / f"{video_id}.mp4"
-                if sub.exists():
-                    VIDEO_PATH_CACHE[video_id] = sub
-                    return sub
-
-    VIDEO_PATH_CACHE[video_id] = None
-    return None
+    populate_video_index_once()
+    return VIDEO_PATH_CACHE.get(video_id)
 
 
-def extract_thumbnail_base64(video_id: str, frame_id: int) -> str:
-    vpath = resolve_video_path(video_id)
+def extract_thumbnail_base64(video_id: str, frame_id: int, raw_video_registry: Any = None) -> str:
+    vpath = resolve_video_path(video_id, raw_video_registry)
     if not vpath or not vpath.exists():
         return ""
     try:
@@ -138,7 +136,6 @@ def extract_thumbnail_base64(video_id: str, frame_id: int) -> str:
         cap.release()
         if not ret or frame is None:
             return ""
-        # Resize to thumbnail
         h, w = frame.shape[:2]
         new_w = 240
         new_h = int(h * (new_w / w))
@@ -147,11 +144,6 @@ def extract_thumbnail_base64(video_id: str, frame_id: int) -> str:
         return base64.b64encode(buf).decode("utf-8")
     except Exception:
         return ""
-    new_w = 280
-    new_h = int(h * (new_w / w))
-    resized = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
-    _, buf = cv2.imencode(".jpg", resized, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
-    return base64.b64encode(buf).decode("utf-8")
 
 
 def run_forensic_census() -> None:
@@ -292,11 +284,12 @@ def run_forensic_census() -> None:
 
     # Generate HTML Contact Sheet for Ranks 4-30
     out_html = Path("/kaggle/working/kis_p1a0_forensic_gallery.html")
-    generate_forensic_gallery_html(forensic_results, out_html)
+    registry = runtime_instance.raw_video_registry if runtime_instance else None
+    generate_forensic_gallery_html(forensic_results, out_html, registry)
     print(f"\nSaved Ranks 4-30 forensic gallery to: {out_html}", flush=True)
 
 
-def generate_forensic_gallery_html(results: list[dict[str, Any]], out_path: Path) -> None:
+def generate_forensic_gallery_html(results: list[dict[str, Any]], out_path: Path, raw_video_registry: Any = None) -> None:
     html_cards = []
     print("\n--- EXTRACTING VISUAL SHORTLIST THUMBNAILS (RANKS 4..20) ---", flush=True)
     for idx, r in enumerate(results, start=1):
@@ -317,7 +310,7 @@ def generate_forensic_gallery_html(results: list[dict[str, Any]], out_path: Path
             rank = c["rank"]
             vid = c["video_id"]
             fid = c["frame_id"]
-            img_b64 = extract_thumbnail_base64(vid, fid)
+            img_b64 = extract_thumbnail_base64(vid, fid, raw_video_registry)
             img_tag = (
                 f'<img src="data:image/jpeg;base64,{img_b64}" style="width:100%; border-radius:4px;" />'
                 if img_b64
