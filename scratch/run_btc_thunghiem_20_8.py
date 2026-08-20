@@ -140,7 +140,8 @@ def run_btc_blind_benchmark(target_pattern: str | None = None) -> None:
 
     all_files = sorted(THUNGHIEM_DIR.glob("*.txt"))
     if target_pattern:
-        files = [f for f in all_files if target_pattern.lower() in f.name.lower()]
+        patterns = [p.strip().lower() for p in target_pattern.split(",") if p.strip()]
+        files = [f for f in all_files if any(p in f.name.lower() for p in patterns)]
     else:
         files = all_files
 
@@ -188,7 +189,7 @@ def run_btc_blind_benchmark(target_pattern: str | None = None) -> None:
     print(f"• KIS Production Profile           : include_vi_variant=True, query_en=None, RRF=60.0, TopK=100, RefineTopN=3", flush=True)
     print(f"• QA Production Profile            : canonical production pipeline, visual ontology enabled, ranking=decision_10_top100", flush=True)
     print(f"• TRAKE Production Profile         : video_first restricted candidate search, bounded_beam solver, beam_width=100", flush=True)
-    print(f"• Status Marker                    : BTC_BLIND_RUNNER_READY ✅", flush=True)
+    print(f"• Initial Status Marker            : BTC_BLIND_RUNNER_PARTIAL_PASS (QA/TRAKE artifact contract being verified) ⚠️", flush=True)
 
     print("\n--- BOOTSTRAPPING RUNTIME ---", flush=True)
     t0 = time.time()
@@ -227,7 +228,9 @@ def run_btc_blind_benchmark(target_pattern: str | None = None) -> None:
                     refine_top_n=3,
                 )
                 res = runtime.handle_query(req)
-                top100_rel = res["artifacts"].get("refined_top100_jsonl", res["artifacts"]["top100_jsonl"])
+                top100_rel = res["artifacts"].get("refined_top100_jsonl", res["artifacts"].get("top100_jsonl"))
+                if not top100_rel:
+                    raise KeyError(f"No valid KIS predictions artifact in {res['artifacts']}")
                 top100_path = runtime.output_root / top100_rel
                 preds = [json.loads(l) for l in top100_path.read_text(encoding="utf-8").splitlines() if l.strip()]
 
@@ -259,9 +262,15 @@ def run_btc_blind_benchmark(target_pattern: str | None = None) -> None:
                     refine_top_n=3,
                 )
                 res = runtime.handle_qa_query(req_qa)
-                top100_rel = res["artifacts"].get("refined_top100_jsonl", res["artifacts"]["top100_jsonl"])
-                top100_path = runtime.output_root / top100_rel
-                preds = [json.loads(l) for l in top100_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+
+                # Correct Artifact Resolution from handle_qa_query() schema contract
+                if "qa_predictions_jsonl" in res["artifacts"]:
+                    qa_path = runtime.output_root / res["artifacts"]["qa_predictions_jsonl"]
+                    preds = [json.loads(l) for l in qa_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+                elif "predictions" in res and res["predictions"]:
+                    preds = res["predictions"]
+                else:
+                    raise KeyError(f"No valid QA predictions artifact in {res['artifacts']}")
 
                 # Export Schema & Contract Validation
                 assert 1 <= len(preds) <= 100, f"Contract violation: {len(preds)} predictions"
@@ -271,6 +280,7 @@ def run_btc_blind_benchmark(target_pattern: str | None = None) -> None:
                     assert p["query_id"] == query_id, f"Query ID mismatch: {p}"
                     assert isinstance(p["video_id"], str) and p["video_id"].startswith("L"), f"Invalid video_id: {p}"
                     assert isinstance(p["frame_id"], int) and p["frame_id"] >= 0, f"Invalid frame_id: {p}"
+                    assert "answer" in p, f"Missing answer field in QA prediction: {p}"
 
                 for p in preds[:5]:
                     f_id = p["frame_id"]
@@ -289,9 +299,15 @@ def run_btc_blind_benchmark(target_pattern: str | None = None) -> None:
                     refine_top_n=3,
                 )
                 res = runtime.handle_trake_query(req_trake)
-                top100_rel = res["artifacts"].get("refined_top100_jsonl", res["artifacts"]["top100_jsonl"])
-                top100_path = runtime.output_root / top100_rel
-                preds = [json.loads(l) for l in top100_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+
+                # Correct Artifact Resolution from handle_trake_query() schema contract
+                if "trake_predictions_jsonl" in res["artifacts"]:
+                    trake_path = runtime.output_root / res["artifacts"]["trake_predictions_jsonl"]
+                    preds = [json.loads(l) for l in trake_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+                elif "predictions" in res and res["predictions"]:
+                    preds = res["predictions"]
+                else:
+                    raise KeyError(f"No valid TRAKE predictions artifact in {res['artifacts']}")
 
                 # Export Schema & Contract Validation
                 assert 1 <= len(preds) <= 100, f"Contract violation: {len(preds)} predictions"
@@ -300,6 +316,8 @@ def run_btc_blind_benchmark(target_pattern: str | None = None) -> None:
                 for p in preds:
                     assert p["query_id"] == query_id, f"Query ID mismatch: {p}"
                     assert isinstance(p["video_id"], str) and p["video_id"].startswith("L"), f"Invalid video_id: {p}"
+                    f_ids = p.get("frame_ids", [p.get("frame_id")])
+                    assert isinstance(f_ids, (list, tuple)) and len(f_ids) > 0, f"Invalid frame_ids in TRAKE: {p}"
 
                 for p in preds[:5]:
                     f_ids = p.get("frame_ids", [p.get("frame_id")])
@@ -355,12 +373,15 @@ def run_btc_blind_benchmark(target_pattern: str | None = None) -> None:
     n_zero_queries = [r["query_id"] for r in results_summary if r["emitted"] == 0]
     n_under_100_queries = [f"{r['query_id']} (N={r['emitted']})" for r in results_summary if 0 < r["emitted"] < 100]
 
+    all_passed = (export_validation_failures == 0) and (kis_completed == kis_total) and (qa_completed == qa_total) and (trake_completed == trake_total)
+
     print(f"• KIS   Completed                  : {kis_completed}/{kis_total} | Exceptions: {kis_total - kis_completed}", flush=True)
     print(f"• QA    Completed                  : {qa_completed}/{qa_total} | Exceptions: {qa_total - qa_completed}", flush=True)
     print(f"• TRAKE Completed                  : {trake_completed}/{trake_total} | Exceptions: {trake_total - trake_completed}", flush=True)
     print(f"• Queries with N=0                 : {len(n_zero_queries)} {n_zero_queries if n_zero_queries else 'None'}", flush=True)
     print(f"• Queries with N<100 (dedup/short) : {len(n_under_100_queries)} {n_under_100_queries if n_under_100_queries else 'None'}", flush=True)
     print(f"• Export Validation Status         : {'ALL PASS ✅' if export_validation_failures == 0 else f'{export_validation_failures} FAILURES ❌'}", flush=True)
+    print(f"• Overall Status Marker            : {'BTC_BLIND_RUNNER_READY ✅' if all_passed else 'BTC_BLIND_RUNNER_PARTIAL_PASS ⚠️'}", flush=True)
 
     print("\n--- LATENCY BY TASK ---", flush=True)
     for task_name, l_list in latencies_by_task.items():
@@ -382,6 +403,6 @@ def run_btc_blind_benchmark(target_pattern: str | None = None) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--query", "-q", type=str, default=None, help="Filter specific query (e.g. 'p1-1' or 'qa')")
+    parser.add_argument("--query", "-q", type=str, default=None, help="Filter specific query (e.g. 'qa,trake' or 'p1-15')")
     args = parser.parse_args()
     run_btc_blind_benchmark(args.query)
