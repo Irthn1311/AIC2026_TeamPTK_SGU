@@ -668,13 +668,27 @@ def main():
 
     input_csv = Path(args.input_csv)
     if not input_csv.exists():
-        # Fallback search inside workspace/artifacts
-        cand = PROJECT_ROOT / args.input_csv
-        if cand.exists():
-            input_csv = cand
+        candidates = [
+            PROJECT_ROOT / args.input_csv,
+            PROJECT_ROOT / "artifacts" / "event_graph" / "validation" / "boundary_samples_for_manual_check.csv",
+            Path("artifacts/event_graph/validation/boundary_samples_for_manual_check.csv"),
+            Path("/kaggle/working/boundary_samples.csv"),
+            Path("/kaggle/working/boundary_samples_150.csv"),
+            Path("/kaggle/working/AIC2026_TeamPTK_SGU/artifacts/event_graph/validation/boundary_samples_for_manual_check.csv"),
+            Path("/kaggle/working/AIC2026_TeamPTK_SGU/boundary_samples_150.csv"),
+            Path("../boundary_samples_150.csv"),
+        ]
+        for cand in candidates:
+            if cand.exists():
+                input_csv = cand
+                logger.info("Auto-resolved input CSV path to: %s", input_csv)
+                break
 
     if not input_csv.exists():
-        raise FileNotFoundError(f"Input boundary CSV not found at: {args.input_csv}")
+        raise FileNotFoundError(
+            f"Input boundary CSV not found at '{args.input_csv}'. "
+            f"Please pass --input-csv path/to/file.csv or generate samples first using interactive_boundary_annotator.py!"
+        )
 
     logger.info("==================================================================")
     logger.info("🖼️ STAGE 3C HTML VISUAL AUDIT DASHBOARD GENERATOR")
