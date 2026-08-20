@@ -197,35 +197,47 @@ def refine_boundary_scores(
     df["final_boundary_score"] = final_scores
     df["is_boundary_refined"] = is_boundary_final
 
-    # 2. Print Debug Log for Top 20 Boundaries (Highest Raw Score)
-    df_sorted_top = df.sort_values("boundary_score", ascending=False).head(20)
-    logger.info("\n" + "=" * 90)
-    logger.info("🔍 TOP 20 RAW BOUNDARIES REFINEMENT DEBUG INSPECTION:")
-    logger.info("=" * 90)
-    logger.info("%-10s | %-8s | %-8s | %-8s | %-8s | %-8s | %-8s | %-8s | %-8s", "Video", "Shot_i", "RawScore", "VisSim", "VisEvd", "SemEvd", "Penalty", "FinalScore", "IsBoundary")
-    logger.info("-" * 90)
-    for _, r in df_sorted_top.iterrows():
-        logger.info(
-            "%-10s | %-8d | %-8.4f | %-8.4f | %-8.4f | %-8.4f | %-8.4f | %-8.4f | %-8s",
-            str(r.get("video_id", "")),
-            int(r.get("shot_i", 0)),
-            float(r.get("boundary_score", 0.0)),
-            float(r.get("visual_similarity", 0.0)),
-            float(r.get("visual_boundary_evidence", 0.0)),
-            float(r.get("semantic_boundary_evidence", 0.0)),
-            float(r.get("suppression_delta", 0.0)),
-            float(r.get("final_boundary_score", 0.0)),
-            str(bool(r.get("is_boundary_refined", False))),
-        )
-    logger.info("=" * 90 + "\n")
+    # 2. Print Debug Log for Known Ground-Truth Audit Cases & Top Boundaries
+    logger.info("\n" + "=" * 105)
+    logger.info("🔍 KNOWN AUDIT GROUND-TRUTH CASES INSPECTION:")
+    logger.info("=" * 105)
+    logger.info("%-10s | %-8s | %-8s | %-8s | %-8s | %-8s | %-8s | %-8s | %-10s", "Video", "Shot_i", "RawScore", "VisSim", "VisEvd", "SemEvd", "Penalty", "FinalScore", "Prediction")
+    logger.info("-" * 105)
 
-    # 3. Sanity Check on Suppression Percentage
+    known_cases = [
+        ("L25_V007", 91),  # Slide False Boundary
+        ("L22_V005", 111), # Slide False Boundary
+        ("L22_V013", 188), # Lab -> Stage True Boundary
+        ("L25_V081", 107), # Classroom -> Office True Boundary
+        ("L26_V327", 42),  # Kitchen -> Outdoor Stage True Boundary
+    ]
+
+    for vid, s_i in known_cases:
+        match_row = df[(df["video_id"] == vid) & (df["shot_i"] == s_i)]
+        if not match_row.empty:
+            r = match_row.iloc[0]
+            logger.info(
+                "%-10s | %-8d | %-8.4f | %-8.4f | %-8.4f | %-8.4f | %-8.4f | %-8.4f | %-10s",
+                str(r.get("video_id", "")),
+                int(r.get("shot_i", 0)),
+                float(r.get("boundary_score", 0.0)),
+                float(r.get("visual_similarity", 0.0)),
+                float(r.get("visual_boundary_evidence", 0.0)),
+                float(r.get("semantic_boundary_evidence", 0.0)),
+                float(r.get("suppression_delta", 0.0)),
+                float(r.get("final_boundary_score", 0.0)),
+                "BOUNDARY" if bool(r.get("is_boundary_refined", False)) else "SUPPRESSED",
+            )
+    logger.info("=" * 105 + "\n")
+
+    # 3. Sanity Check & Clear Statistical Metrics
+    total_candidate_pairs = int(len(df))
     raw_pos = int((df["boundary_score"] > threshold).sum())
     refined_pos = int(df["is_boundary_refined"].sum())
     suppressed_count = int(((df["boundary_score"] > threshold) & (~df["is_boundary_refined"])).sum())
     suppression_pct = (suppressed_count / max(1, raw_pos)) * 100.0
 
-    logger.info("Sanity Check -> Raw Positives: %d | Refined Positives: %d | Suppressed: %d (%.2f%%)", raw_pos, refined_pos, suppressed_count, suppression_pct)
+    logger.info("Stat Metrics -> Total Candidate Pairs: %d | Raw Positives (>%.2f): %d | Refined Positives: %d | Suppressed FPs: %d (%.2f%%)", total_candidate_pairs, threshold, raw_pos, refined_pos, suppressed_count, suppression_pct)
 
     if suppression_pct > max_allowed_suppression_pct:
         logger.warning(
@@ -233,7 +245,6 @@ def refine_boundary_scores(
             suppression_pct,
             max_allowed_suppression_pct,
         )
-        # Conservative fallback: Keep boundaries where final_boundary_score > 0.65 or boundary_score > 0.75
         df["is_boundary_refined"] = (df["final_boundary_score"] > (threshold - 0.05)) | (df["boundary_score"] > (threshold + 0.05))
         refined_pos_fb = int(df["is_boundary_refined"].sum())
         logger.info("Fallback Applied -> Conservative Refined Positives: %d", refined_pos_fb)
@@ -453,13 +464,16 @@ def main():
         suppression_weight=args.suppression_weight,
     )
 
-    # Compute boundary statistics before and after refinement
-    raw_b_count = int(df_boundaries["is_boundary"].sum()) if "is_boundary" in df_boundaries else 0
+    # Compute boundary statistics consistently from refined boundaries DataFrame
+    total_candidate_pairs = int(len(df_refined_boundaries))
+    raw_b_count = int((df_refined_boundaries["boundary_score"] > args.threshold).sum())
     refined_b_count = int(df_refined_boundaries["is_boundary_refined"].sum())
-    suppressed_count = int(((df_boundaries.get("is_boundary", False)) & (~df_refined_boundaries["is_boundary_refined"])).sum())
+    suppressed_count = int(((df_refined_boundaries["boundary_score"] > args.threshold) & (~df_refined_boundaries["is_boundary_refined"])).sum())
+    suppression_pct = round((suppressed_count / max(1, raw_b_count)) * 100, 2)
 
+    logger.info("Total Candidate Pairs: %d", total_candidate_pairs)
     logger.info("Raw Boundaries (>%.2f): %d", args.threshold, raw_b_count)
-    logger.info("Refined Boundaries (>%.2f): %d (Suppressed False Positives: %d)", args.threshold, refined_b_count, suppressed_count)
+    logger.info("Refined Boundaries (>%.2f): %d (Suppressed False Positives: %d / %.2f%%)", args.threshold, refined_b_count, suppressed_count, suppression_pct)
 
     # Construct Events per video
     logger.info("Constructing Events for %d videos...", df_shots["video_id"].nunique())
@@ -498,13 +512,15 @@ def main():
         "execution_time_sec": round(t_elapsed, 2),
         "total_videos": int(df_shots["video_id"].nunique()),
         "total_shots": int(len(df_shots)),
+        "total_candidate_pairs": total_candidate_pairs,
         "total_events": int(len(df_events)),
         "boundary_statistics": {
             "threshold": args.threshold,
+            "total_candidate_pairs": total_candidate_pairs,
             "raw_boundary_count": raw_b_count,
             "refined_boundary_count": refined_b_count,
             "suppressed_false_positives": suppressed_count,
-            "suppression_percentage": round((suppressed_count / max(1, raw_b_count)) * 100, 2),
+            "suppression_percentage": suppression_pct,
         },
         "event_duration_statistics": {
             "mean_sec": round(float(np.mean(durations)), 2),
@@ -532,9 +548,10 @@ def main():
     print("=" * 80)
     print(f" • Total Videos Processed    : {report['total_videos']:,}")
     print(f" • Total Shots               : {report['total_shots']:,}")
+    print(f" • Total Candidate Pairs     : {total_candidate_pairs:,}")
+    print(f" • Raw Positive Boundaries   : {raw_b_count:,}")
+    print(f" • Refined Positive Boundaries: {refined_b_count:,} (Suppressed {suppressed_count:,} slide FPs / {suppression_pct}%)")
     print(f" • Total Events Constructed  : {report['total_events']:,}")
-    print(f" • Raw Boundaries            : {raw_b_count:,}")
-    print(f" • Refined Boundaries        : {refined_b_count:,} (Suppressed {suppressed_count} slide FPs)")
     print(f" • Mean Event Duration       : {report['event_duration_statistics']['mean_sec']}s")
     print(f" • Mean Shots / Event        : {report['shots_per_event_statistics']['mean']}")
     print(f" • Events Output Path        : {events_out_path}")

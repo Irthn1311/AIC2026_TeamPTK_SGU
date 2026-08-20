@@ -88,6 +88,55 @@ def main():
     logger.info("Refined Positive Boundaries (>%.2f): %d / %d", args.threshold, refined_count, len(df_samples))
     logger.info("Suppressed Slide/Infographic False Positives: %d (%.2f%%)", suppressed_count, (suppressed_count / max(1, raw_count)) * 100)
 
+    # Compute GT Evaluation Metrics if Ground-Truth column exists
+    gt_col = None
+    for candidate in ["gt_label", "audit_label", "label", "is_true_boundary", "gt", "is_correct"]:
+        if candidate in df_samples.columns:
+            gt_col = candidate
+            break
+
+    gt_metrics = {}
+    if gt_col:
+        gt_binary = (df_refined[gt_col] == 1) | (df_refined[gt_col] == True) | (df_refined[gt_col].astype(str).str.lower().str.contains("correct|true|1"))
+        
+        # Before Refinement
+        raw_pred = df_refined["boundary_score"] > args.threshold
+        tp_raw = int((raw_pred & gt_binary).sum())
+        fp_raw = int((raw_pred & (~gt_binary)).sum())
+        fn_raw = int(((~raw_pred) & gt_binary).sum())
+        tn_raw = int(((~raw_pred) & (~gt_binary)).sum())
+
+        prec_raw = tp_raw / max(1, tp_raw + fp_raw)
+        rec_raw = tp_raw / max(1, tp_raw + fn_raw)
+        f1_raw = 2 * prec_raw * rec_raw / max(1e-8, prec_raw + rec_raw)
+
+        # After Refinement
+        ref_pred = df_refined["is_boundary_refined"]
+        tp_ref = int((ref_pred & gt_binary).sum())
+        fp_ref = int((ref_pred & (~gt_binary)).sum())
+        fn_ref = int(((~ref_pred) & gt_binary).sum())
+        tn_ref = int(((~ref_pred) & (~gt_binary)).sum())
+
+        prec_ref = tp_ref / max(1, tp_ref + fp_ref)
+        rec_ref = tp_ref / max(1, tp_ref + fn_ref)
+        f1_ref = 2 * prec_ref * rec_ref / max(1e-8, prec_ref + rec_ref)
+
+        gt_metrics = {
+            "gt_column_found": gt_col,
+            "raw_performance": {
+                "TP": tp_raw, "FP": fp_raw, "FN": fn_raw, "TN": tn_raw,
+                "Precision": round(prec_raw, 4),
+                "Recall": round(rec_raw, 4),
+                "F1": round(f1_raw, 4),
+            },
+            "refined_performance": {
+                "TP": tp_ref, "FP": fp_ref, "FN": fn_ref, "TN": tn_ref,
+                "Precision": round(prec_ref, 4),
+                "Recall": round(rec_ref, 4),
+                "F1": round(f1_ref, 4),
+            },
+        }
+
     # Detailed report breakdown
     report = {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -98,6 +147,7 @@ def main():
         "refined_positive_boundaries": refined_count,
         "suppressed_false_positives_count": suppressed_count,
         "suppression_rate_percentage": round((suppressed_count / max(1, raw_count)) * 100, 2),
+        "ground_truth_metrics": gt_metrics,
         "raw_score_stats": {
             "mean": round(float(df_refined["boundary_score"].mean()), 4),
             "median": round(float(df_refined["boundary_score"].median()), 4),
@@ -136,6 +186,10 @@ def main():
     print(f" • Suppressed False Positives  : {suppressed_count} (Slide / Infographic transitions)")
     print(f" • Mean Raw Boundary Score    : {report['raw_score_stats']['mean']:.4f}")
     print(f" • Mean Refined Score         : {report['refined_score_stats']['mean']:.4f}")
+    if gt_metrics:
+        print(f" • GT Ground-Truth Evaluated  : Column '{gt_col}'")
+        print(f"   - BEFORE Refinement: Precision={gt_metrics['raw_performance']['Precision']:.4f}, Recall={gt_metrics['raw_performance']['Recall']:.4f}, F1={gt_metrics['raw_performance']['F1']:.4f} (TP={gt_metrics['raw_performance']['TP']}, FP={gt_metrics['raw_performance']['FP']})")
+        print(f"   - AFTER Refinement : Precision={gt_metrics['refined_performance']['Precision']:.4f}, Recall={gt_metrics['refined_performance']['Recall']:.4f}, F1={gt_metrics['refined_performance']['F1']:.4f} (TP={gt_metrics['refined_performance']['TP']}, FP={gt_metrics['refined_performance']['FP']})")
     print(f" • Output Audit Report        : {out_json_path}")
     print("=" * 80 + "\n")
 
