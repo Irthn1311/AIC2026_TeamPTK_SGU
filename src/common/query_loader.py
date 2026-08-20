@@ -50,6 +50,7 @@ def split_qa_text(content: str) -> tuple[str, str]:
 def parse_trake_text(content: str) -> Dict[str, Any]:
     """
     Parse TRAKE query content into activity and structured event list.
+    Produces clean, non-redundant event objects.
     """
     lines = [line.strip() for line in content.splitlines() if line.strip()]
     if not lines:
@@ -77,9 +78,6 @@ def parse_trake_text(content: str) -> Dict[str, Any]:
 
         events.append({
             "event_id": ev_id,
-            "id": ev_id,
-            "name": clean_text,
-            "event_name": clean_text,
             "description": clean_text,
         })
 
@@ -91,12 +89,7 @@ def parse_trake_text(content: str) -> Dict[str, Any]:
 
 def parse_single_txt_file(file_path: Path) -> Dict[str, Any]:
     """
-    Parse a single .txt query file from BTC competition format.
-
-    Filename conventions:
-      - query-p1-5-kis.txt   -> qtype = "textual_kis"
-      - query-p1-15-qa.txt   -> qtype = "qa"
-      - query-p1-16-trake.txt-> qtype = "trake"
+    Parse a single .txt query file into clean, lean BTC query dictionary format.
     """
     stem = file_path.stem  # e.g. "query-p1-5-kis"
     qid = stem
@@ -123,15 +116,14 @@ def parse_single_txt_file(file_path: Path) -> Dict[str, Any]:
         except Exception:
             pass
 
-    # Parse raw text content
+    # Parse raw text content into lean dictionary
     if qtype == "qa":
         description, question = split_qa_text(content)
         return {
             "query_id": qid,
             "type": "qa",
-            "question": question,
             "description": description,
-            "text": content,
+            "question": question,
         }
 
     elif qtype == "trake":
@@ -140,7 +132,6 @@ def parse_single_txt_file(file_path: Path) -> Dict[str, Any]:
             "query_id": qid,
             "type": "trake",
             "activity": parsed["activity"],
-            "text": content,
             "events": parsed["events"],
         }
 
