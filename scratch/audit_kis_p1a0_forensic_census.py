@@ -91,31 +91,37 @@ FORENSIC_QUERIES = [
 ]
 
 
+VIDEO_PATH_CACHE: dict[str, Path | None] = {}
+
 def resolve_video_path(video_id: str) -> Path | None:
+    if video_id in VIDEO_PATH_CACHE:
+        return VIDEO_PATH_CACHE[video_id]
+
     search_dirs = [
         Path("/kaggle/input/datasets/videos"),
         Path("/kaggle/input/datasets"),
         Path("/kaggle/input"),
         REPO_ROOT / "systems" / "system_tai" / "data",
     ]
+    batch_prefix = video_id.split("_")[0] if "_" in video_id else ""
+
     for root in search_dirs:
         if not root.exists():
             continue
+        # Direct
         direct = root / f"{video_id}.mp4"
         if direct.exists():
+            VIDEO_PATH_CACHE[video_id] = direct
             return direct
-        batch_prefix = video_id.split("_")[0] if "_" in video_id else ""
+        # Subfolders
         if batch_prefix:
-            sub = root / batch_prefix / f"{video_id}.mp4"
-            if sub.exists():
-                return sub
-            sub_batch = root / f"videos_{batch_prefix}" / f"{video_id}.mp4"
-            if sub_batch.exists():
-                return sub_batch
-        # Glob fallback
-        matches = list(root.rglob(f"{video_id}.mp4"))
-        if matches:
-            return matches[0]
+            for sub_name in [batch_prefix, f"videos_{batch_prefix}", f"video_{batch_prefix}", f"data/{batch_prefix}"]:
+                sub = root / sub_name / f"{video_id}.mp4"
+                if sub.exists():
+                    VIDEO_PATH_CACHE[video_id] = sub
+                    return sub
+
+    VIDEO_PATH_CACHE[video_id] = None
     return None
 
 
@@ -123,16 +129,24 @@ def extract_thumbnail_base64(video_id: str, frame_id: int) -> str:
     vpath = resolve_video_path(video_id)
     if not vpath or not vpath.exists():
         return ""
-    cap = cv2.VideoCapture(str(vpath))
-    if not cap.isOpened():
+    try:
+        cap = cv2.VideoCapture(str(vpath))
+        if not cap.isOpened():
+            return ""
+        cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, frame_id))
+        ret, frame = cap.read()
+        cap.release()
+        if not ret or frame is None:
+            return ""
+        # Resize to thumbnail
+        h, w = frame.shape[:2]
+        new_w = 240
+        new_h = int(h * (new_w / w))
+        resized = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        _, buf = cv2.imencode(".jpg", resized, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
+        return base64.b64encode(buf).decode("utf-8")
+    except Exception:
         return ""
-    cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, frame_id))
-    ret, frame = cap.read()
-    cap.release()
-    if not ret or frame is None:
-        return ""
-    # Resize to thumbnail
-    h, w = frame.shape[:2]
     new_w = 280
     new_h = int(h * (new_w / w))
     resized = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
@@ -284,7 +298,8 @@ def run_forensic_census() -> None:
 
 def generate_forensic_gallery_html(results: list[dict[str, Any]], out_path: Path) -> None:
     html_cards = []
-    for r in results:
+    print("\n--- EXTRACTING VISUAL SHORTLIST THUMBNAILS (RANKS 4..20) ---", flush=True)
+    for idx, r in enumerate(results, start=1):
         qid = r["qid"]
         name = r["name"]
         q_vi = r["query_vi"]
@@ -293,8 +308,9 @@ def generate_forensic_gallery_html(results: list[dict[str, Any]], out_path: Path
         cands = r["candidates"]
         mech = r["hypothesized_mechanism"]
 
-        # Ranks 4 to 30
-        shortlist = cands[3:30] if len(cands) >= 4 else cands
+        # Ranks 4 to 20
+        shortlist = cands[3:20] if len(cands) >= 4 else cands
+        print(f"[{idx}/{len(results)}] Extracting {len(shortlist)} thumbnails for {qid} ...", flush=True)
 
         thumb_items = []
         for c in shortlist:
