@@ -163,6 +163,8 @@ def run_forensic_census() -> None:
             break
 
     runtime_instance = None
+    gate3_output_dir = Path("/kaggle/working/output/kis_release_gates")
+    thunghiem_dir = REPO_ROOT / "systems" / "system_tai" / "THUNGHIEM_20-8"
 
     for item in FORENSIC_QUERIES:
         qid = item["qid"]
