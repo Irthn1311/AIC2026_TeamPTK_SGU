@@ -39,7 +39,7 @@ def _has_vi_diacritics(text: str) -> bool:
 
 
 # ── LRU translation cache (shared across all instances) ───────────────────────
-@functools.lru_cache(maxsize=512)
+@functools.lru_cache(maxsize=4096)
 def _cached_translate(text: str, tier: str) -> Optional[str]:
     """Internal cached wrapper — keyed by (text, tier)."""
     return None  # Filled by actual translation logic below

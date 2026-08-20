@@ -518,14 +518,18 @@ class QueryParser:
         if translated_en and len(translated_en) > 3:
             # Strip any existing "A photo of" prefix from translator output
             translated_en = re.sub(r"^(a photo of|a scene of|photo of|scene of)\s+", "", translated_en, flags=re.IGNORECASE)
-            # Strip common narrative fluff that hurts CLIP retrieval
-            # (e.g. "The news article introduces..." → focus on visual content)
+            # Strip common narrative fluff in both Vietnamese and English that hurts CLIP retrieval
+            # (e.g. "The clip needed is...", "Find the exact scene where...", "Đoạn clip cần tìm...")
             translated_en = re.sub(
-                r"^(the (clip|video|news|article|segment|scene) (to look for is|shows?|begins?|introduces?|starts?)[\s:,]+|"
+                r"^(the (clip|video|news|article|segment|scene) (we are )?(looking for|to look for|to find|needed)? (is|shows?|begins?|introduces?|starts?)[\s:,]+|"
+                r"(the scene of|a scene of|scene of)[\s:,]+|"
                 r"this is (an? )?(introduction to|news story about|report about|clip of|scene of|video of)[\s:,]+|"
-                r"(look for|find) (a|the) (clip|video|scene) (where|of)[\s:,]+)",
+                r"(look for|find|search for) (a|the|exact)? (clip|video|scene|segment) (where|of|showing)?[\s:,]+|"
+                r"(the segment|the clip|the video) (shows?|depicts?|begins? with|starts? with)[\s:,]+)",
                 "", translated_en, flags=re.IGNORECASE
             ).strip()
+            # If "the scene of" remains after prefix cleaning, strip it
+            translated_en = re.sub(r"^(the scene of|a scene of|scene of)\s+", "", translated_en, flags=re.IGNORECASE).strip()
             # Capitalize first letter
             if translated_en:
                 translated_en = translated_en[0].upper() + translated_en[1:]
