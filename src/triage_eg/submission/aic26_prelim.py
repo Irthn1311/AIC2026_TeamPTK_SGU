@@ -27,8 +27,8 @@ def _values(task: str, row: dict[str, Any], event_count: int | None) -> list[str
         return [video, str(int(row["frame_id"]))]
     if task == "QA":
         answer = str(row["answer"])
-        if len(answer.encode("utf-8")) > 100 or "\n" in answer or "\r" in answer:
-            raise ValueError("QA answer exceeds 100 UTF-8 bytes or contains newline")
+        if len(answer) > 100 or "\n" in answer or "\r" in answer:
+            raise ValueError("QA answer exceeds 100 Unicode characters or contains newline")
         return [video, str(int(row["frame_id"])), answer]
     frames = [int(value) for value in row["frame_ids"]]
     if event_count is None or len(frames) != event_count:
