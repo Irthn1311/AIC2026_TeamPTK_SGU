@@ -10,12 +10,31 @@ Evaluates the exact distance from Top100 candidate frames to GT interval (assumi
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
+import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+SYSTEM_TAI_SRC = REPO_ROOT / "systems" / "system_tai" / "src"
+if str(SYSTEM_TAI_SRC) not in sys.path:
+    sys.path.insert(0, str(SYSTEM_TAI_SRC))
+
 GT_PATH = REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "l21_150_diagnostic" / "kis_dev_gt.json"
-OUTPUT_ROOT = Path("/kaggle/working/output/kis_full38/requests") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "kis_full38" / "requests"
+
+POSSIBLE_OUTPUT_ROOTS = [
+    Path("/kaggle/working/output/kis_full38/requests"),
+    Path("/kaggle/working/output/kis_full38"),
+    REPO_ROOT / "scratch" / "kis_full38" / "requests",
+    REPO_ROOT / "scratch" / "kis_full38",
+]
+
+
+def safe_request_directory_name(request_id: str) -> str:
+    normalized = re.sub(r"[^A-Za-z0-9._-]+", "_", request_id).strip("._-") or "request"
+    digest = hashlib.sha256(request_id.encode("utf-8")).hexdigest()[:8]
+    return f"{normalized}-{digest}"
 
 
 def distance_to_interval(frame: int, start: int, end: int) -> int:
@@ -26,6 +45,27 @@ def distance_to_interval(frame: int, start: int, end: int) -> int:
     return frame - end
 
 
+def find_top100_file(output_root: Path, qid: str) -> Path | None:
+    # 1. Direct safe_request_directory_name
+    candidates = [
+        output_root / safe_request_directory_name(f"kis-{qid}") / "refined_top100.jsonl",
+        output_root / safe_request_directory_name(f"kis-{qid}") / "top100.jsonl",
+        output_root / f"kis-{qid}" / "refined_top100.jsonl",
+        output_root / f"kis-{qid}" / "top100.jsonl",
+    ]
+    for c in candidates:
+        if c.exists():
+            return c
+
+    # 2. Pattern glob search
+    for pattern in [f"*{qid}*/refined_top100.jsonl", f"*{qid}*/top100.jsonl"]:
+        matches = list(output_root.glob(pattern))
+        if matches:
+            return matches[0]
+
+    return None
+
+
 def audit_temporal_gaps() -> None:
     print("=" * 145, flush=True)
     print("OFFLINE TEMPORAL-DISTANCE DIAGNOSTIC: 29 KIS VIDEO-ONLY QUERIES (~30 fps)", flush=True)
@@ -33,6 +73,18 @@ def audit_temporal_gaps() -> None:
 
     gt_data = json.loads(GT_PATH.read_text(encoding="utf-8"))
     gt_map = {q["query_id"]: q for q in gt_data["queries"]}
+
+    output_root = None
+    for r in POSSIBLE_OUTPUT_ROOTS:
+        if r.exists():
+            output_root = r
+            break
+
+    if output_root is None:
+        print("❌ Error: Output root directory not found. Please ensure Full-38 output exists in /kaggle/working/output/kis_full38.")
+        return
+
+    print(f"• Ingested Output Directory: {output_root}", flush=True)
 
     bucket_a = []  # <= 30
     bucket_b = []  # 31..90
@@ -46,16 +98,11 @@ def audit_temporal_gaps() -> None:
         start_f = gt["start_frame"]
         end_f = gt["end_frame"]
 
-        # Search for top100 file in output root
-        query_dir = OUTPUT_ROOT / f"kis-{qid}"
-        top100_jsonl = query_dir / "refined_top100.jsonl"
-        if not top100_jsonl.exists():
-            top100_jsonl = query_dir / "top100.jsonl"
-
-        if not top100_jsonl.exists():
+        top100_file = find_top100_file(output_root, qid)
+        if top100_file is None:
             continue
 
-        preds = [json.loads(l) for l in top100_jsonl.read_text(encoding="utf-8").splitlines() if l.strip()]
+        preds = [json.loads(l) for l in top100_file.read_text(encoding="utf-8").splitlines() if l.strip()]
 
         # Filter target video candidates
         target_candidates = [p for p in preds if p["video_id"] == target_vid]
@@ -81,10 +128,10 @@ def audit_temporal_gaps() -> None:
             bucket_str = "Bucket A (<=30f, <=1.0s)"
             bucket_a.append(qid)
         elif min_dist <= 90:
-            bucket_str = "Bucket B (31-90f, 1-3.0s)"
+            bucket_str = "Bucket B (31-90f, 1.0-3.0s)"
             bucket_b.append(qid)
         elif min_dist <= 300:
-            bucket_str = "Bucket C (91-300f, 3-10s)"
+            bucket_str = "Bucket C (91-300f, 3.0-10.0s)"
             bucket_c.append(qid)
         else:
             bucket_str = "Bucket D (>300f, >10.0s)"
@@ -115,11 +162,14 @@ def audit_temporal_gaps() -> None:
     print("DISTRIBUTION SUMMARY OF 29 VIDEO-ONLY QUERIES (~30 fps)", flush=True)
     print("=" * 145, flush=True)
     total_analyzed = len(results)
-    print(f"• Total Video-Only Queries Analyzed : {total_analyzed} / 29", flush=True)
-    print(f"• Bucket A (<= 30 frames / <= 1.0s) : {len(bucket_a):2d} ({len(bucket_a)/total_analyzed*100:5.1f}%) -> {bucket_a}", flush=True)
-    print(f"• Bucket B (31..90 frames / 1.0-3.0s): {len(bucket_b):2d} ({len(bucket_b)/total_analyzed*100:5.1f}%) -> {bucket_b}", flush=True)
-    print(f"• Bucket C (91..300 frames / 3-10.0s): {len(bucket_c):2d} ({len(bucket_c)/total_analyzed*100:5.1f}%) -> {bucket_c}", flush=True)
-    print(f"• Bucket D (> 300 frames / > 10.0s) : {len(bucket_d):2d} ({len(bucket_d)/total_analyzed*100:5.1f}%) -> {bucket_d}", flush=True)
+    if total_analyzed == 0:
+        print("• Total Video-Only Queries Analyzed : 0 / 29 (No output files found)", flush=True)
+    else:
+        print(f"• Total Video-Only Queries Analyzed : {total_analyzed} / 29", flush=True)
+        print(f"• Bucket A (<= 30 frames / <= 1.0s) : {len(bucket_a):2d} ({len(bucket_a)/total_analyzed*100:5.1f}%) -> {bucket_a}", flush=True)
+        print(f"• Bucket B (31..90 frames / 1.0-3.0s): {len(bucket_b):2d} ({len(bucket_b)/total_analyzed*100:5.1f}%) -> {bucket_b}", flush=True)
+        print(f"• Bucket C (91..300 frames / 3-10.0s): {len(bucket_c):2d} ({len(bucket_c)/total_analyzed*100:5.1f}%) -> {bucket_c}", flush=True)
+        print(f"• Bucket D (> 300 frames / > 10.0s) : {len(bucket_d):2d} ({len(bucket_d)/total_analyzed*100:5.1f}%) -> {bucket_d}", flush=True)
     print("=" * 145, flush=True)
 
 
