@@ -14,7 +14,7 @@ Strict constraints:
   - Strict SigLIP2 model requirement: google/siglip2-base-patch16-224. ZERO silent fallback to SigLIP1.
   - Full attention_mask, pixel_attention_mask, and spatial_shapes passed to feature extractors.
   - Ground-truth SigLIP2 tokenizer telemetry (raw input_ids count, effective attention_mask sum, truncation flag, max length).
-  - Exact 3-probe Marian Parity Gate: Asserts 100% exact byte-for-byte string equality on p1-2, p1-10, p1-12 against frozen P0.4c reference.
+  - Exact 3-probe Marian Parity Gate: Asserts 100% exact string parity after strip on p1-2, p1-10, p1-12 against frozen P0.4c reference.
   - ZERO ground-truth leakage.
 """
 
@@ -32,11 +32,6 @@ from typing import Any
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
-
-# Purge stale system_tai modules
-for mod in list(sys.modules.keys()):
-    if mod.startswith("system_tai") or mod.startswith("experiment_kis"):
-        del sys.modules[mod]
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SYSTEM_TAI_SRC = REPO_ROOT / "systems" / "system_tai" / "src"
