@@ -37,9 +37,9 @@ def _qa_gates(
     compiled: list[dict[str, Any]],
     arm_runs: list[dict[str, Any]],
     fused: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
     expected = {plan["query_id"]: plan["answer_type"] for plan in compiled if plan["task"] == "QA"}
-    causal_rows, garbage_rows = [], []
+    causal_rows, syntax_rows = [], []
     for run in arm_runs:
         for row in run["diagnostics"]:
             query_id = str(row.get("query_id", ""))
@@ -72,20 +72,29 @@ def _qa_gates(
         if row["query_id"] not in expected:
             continue
         reason = garbage_reason(str(row.get("answer", "")), expected[row["query_id"]])
-        garbage_rows.append(
+        syntax_rows.append(
             {
                 "query_id": row["query_id"],
                 "rank": row["rank"],
                 "answer": row.get("answer"),
                 "answer_type": expected[row["query_id"]],
-                "rejection_reason": reason,
-                "status": "PASS" if reason is None else "FAIL",
+                "syntax_rejection_reason": reason,
+                "syntax_pass": reason is None,
             }
         )
-    failures = [row for row in garbage_rows if row["status"] == "FAIL"]
+    failures = [row for row in syntax_rows if not row["syntax_pass"]]
     if failures:
-        raise RuntimeError(f"QA_GARBAGE_ANSWER_GATE: {failures[:10]}")
-    return causal_rows, garbage_rows
+        raise RuntimeError(f"QA_SYNTAX_SANITY_GATE: {failures[:10]}")
+    readiness = {
+        "status": "QA_PRE_ASR_NOT_READY",
+        "qa_syntax_sanity_gate": "PASS",
+        "qa_evidence_sufficiency_gate": "NOT_EVALUATED_WITHOUT_TUPLE_LEVEL_EVIDENCE",
+        "historical_exact_label": "BCF1_FROZEN_EXACT",
+        "active_semantics_label": "BCF1_VISUAL_GROUNDING_REPAIRED_QA",
+        "historical_exactness": "NOT_PROVEN_UNTIL_FROZEN_CROSS_L21_HASHES_REPRODUCE",
+        "kis_trake_packaging_blocked": False,
+    }
+    return causal_rows, syntax_rows, readiness
 
 
 def run_true_bcf1(
@@ -109,7 +118,7 @@ def run_true_bcf1(
     fused, provenance = fuse_predictions(
         queries, a0["predictions"], s1["predictions"], settings=BCF1Settings()
     )
-    qa_causal, qa_garbage = _qa_gates(compiled, [a0, s1], fused)
+    qa_causal, qa_syntax, qa_readiness = _qa_gates(compiled, [a0, s1], fused)
     paths = {
         "a0": root / "trial_p1_A0_predictions.jsonl",
         "s1": root / "trial_p1_S1_predictions.jsonl",
@@ -120,7 +129,8 @@ def run_true_bcf1(
     write_jsonl(paths["f1"], fused)
     write_jsonl(root / "trial_p1_BCF1_F1_provenance.jsonl", provenance)
     write_jsonl(root / "qa_causal_routing_diagnostics.jsonl", qa_causal)
-    write_jsonl(root / "qa_garbage_filter_diagnostics.jsonl", qa_garbage)
+    write_jsonl(root / "qa_syntax_sanity_diagnostics.jsonl", qa_syntax)
+    write_json(root / "qa_readiness_summary.json", qa_readiness)
     write_jsonl(
         root / "long_kis_variant_diagnostics.jsonl",
         (
@@ -148,7 +158,10 @@ def run_true_bcf1(
         "s1_sha256": sha256_file(paths["s1"]),
         "f1_sha256": sha256_file(paths["f1"]),
         "qa_compiler_causal_gate": "PASS",
-        "qa_garbage_answer_gate": "PASS",
+        "qa_syntax_sanity_gate": "PASS",
+        "qa_evidence_sufficiency_gate": qa_readiness["qa_evidence_sufficiency_gate"],
+        "baseline_semantics": "BCF1_VISUAL_GROUNDING_REPAIRED_QA",
+        "historical_bcf1_exactness": qa_readiness["historical_exactness"],
         "submission_validation": submission_validation,
         "submission_zip": str(submission),
         "gt_opened": False,
@@ -180,7 +193,10 @@ def write_report_and_bundle(
             f"- S1 SHA-256: `{result['s1_sha256']}`",
             f"- F1 SHA-256: `{result['f1_sha256']}`",
             f"- QA compiler causal gate: {result['qa_compiler_causal_gate']}",
-            f"- QA garbage answer gate: {result['qa_garbage_answer_gate']}",
+            f"- QA syntax sanity gate: {result['qa_syntax_sanity_gate']}",
+            f"- QA evidence sufficiency gate: {result['qa_evidence_sufficiency_gate']}",
+            f"- Active semantics: {result['baseline_semantics']}",
+            f"- Historical BCF1 exactness: {result['historical_bcf1_exactness']}",
             f"- Submission validator: {result['submission_validation']['status']}",
             "- GT opened: NO",
             "- ASR v1.2 touched: NO",
