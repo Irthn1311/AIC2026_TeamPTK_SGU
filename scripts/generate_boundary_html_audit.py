@@ -72,6 +72,39 @@ def resolve_image_to_data_uri(img_path: Path) -> Optional[str]:
         return None
 
 
+# Global RAM Keyframe Image Index for O(1) lookup
+KEYFRAME_RAM_INDEX: Dict[Tuple[str, str], Path] = {}
+
+
+def preindex_keyframe_images(keyframe_dirs: List[Path]) -> None:
+    """Pre-index keyframe image paths once into a RAM dictionary for lightning fast O(1) lookup."""
+    global KEYFRAME_RAM_INDEX
+    KEYFRAME_RAM_INDEX.clear()
+    count = 0
+    start_t = time.time()
+
+    for kdir in keyframe_dirs:
+        if not kdir.exists():
+            continue
+        try:
+            for root, _, files in os.walk(str(kdir)):
+                r_path = Path(root)
+                v_id = r_path.name
+                for f in files:
+                    if f.lower().endswith((".jpg", ".png", ".jpeg")):
+                        full_p = r_path / f
+                        f_stem = full_p.stem
+                        KEYFRAME_RAM_INDEX[(v_id, f_stem)] = full_p
+                        if f_stem.isdigit():
+                            KEYFRAME_RAM_INDEX[(v_id, str(int(f_stem)))] = full_p
+                        count += 1
+        except Exception as e:
+            logger.debug("Failed preindexing %s: %s", kdir, e)
+
+    elapsed = time.time() - start_t
+    logger.info("Pre-indexed %d keyframe image files in %.2f seconds.", count, elapsed)
+
+
 def resolve_keyframe_src(video_id: str, shot_id: Any, kf_id: str, keyframe_dirs: List[Path]) -> str:
     """Find keyframe image across search paths, convert to Data URI or return SVG fallback."""
     if not kf_id or str(kf_id).strip() == "" or kf_id == "None":
@@ -79,10 +112,20 @@ def resolve_keyframe_src(video_id: str, shot_id: Any, kf_id: str, keyframe_dirs:
 
     clean_kf = str(kf_id).strip()
     level = video_id.split("_", 1)[0] if "_" in video_id else ""
-    candidates = []
 
+    # 1. Fast O(1) RAM Index Lookup
+    ram_hit = KEYFRAME_RAM_INDEX.get((video_id, clean_kf))
+    if not ram_hit and clean_kf.isdigit():
+        ram_hit = KEYFRAME_RAM_INDEX.get((video_id, str(int(clean_kf))))
+
+    if ram_hit:
+        data_uri = resolve_image_to_data_uri(ram_hit)
+        if data_uri:
+            return data_uri
+
+    # 2. Fast O(1) Direct Path Candidate Checks
+    candidates = []
     for kdir in keyframe_dirs:
-        # Base candidate paths
         sub_dirs = [
             kdir / video_id,
             kdir / "keyframes" / video_id,
@@ -95,7 +138,6 @@ def resolve_keyframe_src(video_id: str, shot_id: Any, kf_id: str, keyframe_dirs:
             candidates.extend([
                 sdir / f"{clean_kf}.jpg",
                 sdir / f"{clean_kf}.png",
-                sdir / f"{clean_kf}.jpeg",
                 sdir / f"{video_id}_{clean_kf}.jpg",
             ])
             if clean_kf.isdigit():
@@ -105,33 +147,15 @@ def resolve_keyframe_src(video_id: str, shot_id: Any, kf_id: str, keyframe_dirs:
                     sdir / f"{n_val:04d}.jpg",
                     sdir / f"{n_val:05d}.jpg",
                     sdir / f"{n_val:06d}.jpg",
-                    sdir / f"{n_val:03d}.png",
-                    sdir / f"{n_val:04d}.png",
                 ])
 
-    # Check explicit candidate list
     for cand in candidates:
-        data_uri = resolve_image_to_data_uri(cand)
-        if data_uri:
-            return data_uri
+        if cand.is_file():
+            data_uri = resolve_image_to_data_uri(cand)
+            if data_uri:
+                return data_uri
 
-    # Fast glob search fallback across keyframe directories
-    for kdir in keyframe_dirs:
-        if kdir.exists():
-            matches = list(kdir.glob(f"**/{video_id}/*{clean_kf}*.jpg"))
-            if not matches and clean_kf.isdigit():
-                n_val = int(clean_kf)
-                matches = (
-                    list(kdir.glob(f"**/{video_id}/{n_val:03d}.jpg"))
-                    or list(kdir.glob(f"**/{video_id}/{n_val:04d}.jpg"))
-                    or list(kdir.glob(f"**/{video_id}/*{n_val:03d}*.jpg"))
-                )
-            if matches:
-                data_uri = resolve_image_to_data_uri(matches[0])
-                if data_uri:
-                    return data_uri
-
-    # Fallback to SVG placeholder if image file not on disk
+    # Fallback to SVG placeholder if image file not found on disk
     return create_svg_keyframe_placeholder(video_id, shot_id, clean_kf)
 
 
@@ -776,6 +800,7 @@ def main():
                 keyframe_dirs.append(p.parent)
 
     logger.info("Keyframe search directories (%d total): %s", len(keyframe_dirs), [str(d) for d in keyframe_dirs[:5]])
+    preindex_keyframe_images(keyframe_dirs)
 
     output_html_path = Path(args.output)
     output_html_path.parent.mkdir(parents=True, exist_ok=True)
