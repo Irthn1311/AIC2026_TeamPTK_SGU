@@ -141,9 +141,10 @@ def apply_robust_calibrated_fusion(
 def detect_video_event_boundaries(
     df_video_shots: pd.DataFrame,
     df_adj_sim: pd.DataFrame,
-    boundary_threshold: float = 0.60,
+    boundary_threshold: float = 0.70,
     min_event_shots: int = 1,
     fusion_method: str = "robust_calibrated",
+    merge_threshold: float = 0.55,
 ) -> Tuple[pd.DataFrame, List[Dict[str, Any]]]:
     """Stage 3C & 3D: Detect event boundaries and construct Events for one video."""
     df_sorted = df_video_shots.sort_values("start_sec").reset_index(drop=True)
@@ -161,7 +162,6 @@ def detect_video_event_boundaries(
             if fusion_method == "robust_calibrated":
                 score_map[pair_key] = float(row.get("boundary_score", 0.0))
             else:
-                # Legacy method (boundary if similarity < threshold)
                 score_map[pair_key] = 1.0 - float(row.get("fused_similarity", 1.0))
 
     boundaries_flags = []
@@ -170,33 +170,67 @@ def detect_video_event_boundaries(
         shot_next_id = int(df_sorted.iloc[i + 1]["shot_id"])
         score_val = score_map.get((shot_i_id, shot_next_id), 0.0)
 
-        # Boundary condition: boundary_score > threshold
         is_boundary = score_val > boundary_threshold if fusion_method == "robust_calibrated" else score_val > (1.0 - boundary_threshold)
         boundaries_flags.append(is_boundary)
 
-    # Group contiguous shots into Events
-    events: List[Dict[str, Any]] = []
+    # Initial Event Construction
+    raw_events: List[List[pd.Series]] = []
     current_shots: List[pd.Series] = [df_sorted.iloc[0]]
-    event_idx = 0
 
     for i in range(num_shots - 1):
-        is_boundary = boundaries_flags[i]
+        is_b = boundaries_flags[i]
         shot_next = df_sorted.iloc[i + 1]
 
-        if is_boundary:
-            if len(current_shots) < min_event_shots and i < num_shots - 2:
-                current_shots.append(shot_next)
-            else:
-                event_rec = build_single_event_record(video_id, event_idx, current_shots)
-                events.append(event_rec)
-                event_idx += 1
-                current_shots = [shot_next]
+        if is_b:
+            raw_events.append(current_shots)
+            current_shots = [shot_next]
         else:
             current_shots.append(shot_next)
 
     if current_shots:
-        event_rec = build_single_event_record(video_id, event_idx, current_shots)
-        events.append(event_rec)
+        raw_events.append(current_shots)
+
+    # Conditional Threshold-Gated Adaptive Neighbor Merging for 1-shot events
+    final_events_shots: List[List[pd.Series]] = []
+    e_idx = 0
+    while e_idx < len(raw_events):
+        evt = raw_events[e_idx]
+        if len(evt) == 1 and len(raw_events) > 1:
+            shot = evt[0]
+            s_id = int(shot["shot_id"])
+
+            left_score = float("inf")
+            right_score = float("inf")
+
+            if final_events_shots:
+                left_last_s_id = int(final_events_shots[-1][-1]["shot_id"])
+                left_score = score_map.get((left_last_s_id, s_id), float("inf"))
+
+            if e_idx + 1 < len(raw_events):
+                right_first_s_id = int(raw_events[e_idx + 1][0]["shot_id"])
+                right_score = score_map.get((s_id, right_first_s_id), float("inf"))
+
+            min_boundary_score = min(left_score, right_score)
+
+            # ONLY merge if similarity with a neighbor is sufficiently high (boundary_score < merge_threshold)
+            if min_boundary_score < merge_threshold:
+                if left_score <= right_score and final_events_shots:
+                    final_events_shots[-1].append(shot)
+                elif e_idx + 1 < len(raw_events):
+                    raw_events[e_idx + 1].insert(0, shot)
+                else:
+                    final_events_shots.append(evt)
+            else:
+                # Keep as a valid 1-shot event because it is distinctly different from both sides!
+                final_events_shots.append(evt)
+        else:
+            final_events_shots.append(evt)
+        e_idx += 1
+
+    events: List[Dict[str, Any]] = [
+        build_single_event_record(video_id, idx, e_shots)
+        for idx, e_shots in enumerate(final_events_shots)
+    ]
 
     df_adj_updated = df_adj_sim.copy()
     if not df_adj_updated.empty:
