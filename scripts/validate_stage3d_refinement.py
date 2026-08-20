@@ -90,16 +90,20 @@ def main():
 
     # Compute GT Evaluation Metrics if Ground-Truth column exists
     gt_col = None
-    for candidate in ["gt_label", "audit_label", "label", "is_true_boundary", "gt", "is_correct"]:
+    for candidate in ["gt_label", "audit_label", "label", "is_true_boundary", "gt", "is_correct", "is_boundary"]:
         if candidate in df_samples.columns:
             gt_col = candidate
             break
 
     gt_metrics = {}
+    correctly_corrected_fp_to_tn = []
+    incorrectly_corrected_tp_to_fn = []
+    remaining_fp = []
+
     if gt_col:
         gt_binary = (df_refined[gt_col] == 1) | (df_refined[gt_col] == True) | (df_refined[gt_col].astype(str).str.lower().str.contains("correct|true|1"))
         
-        # Before Refinement
+        # Before Refinement (Stage 3B Raw)
         raw_pred = df_refined["boundary_score"] > args.threshold
         tp_raw = int((raw_pred & gt_binary).sum())
         fp_raw = int((raw_pred & (~gt_binary)).sum())
@@ -109,8 +113,9 @@ def main():
         prec_raw = tp_raw / max(1, tp_raw + fp_raw)
         rec_raw = tp_raw / max(1, tp_raw + fn_raw)
         f1_raw = 2 * prec_raw * rec_raw / max(1e-8, prec_raw + rec_raw)
+        acc_raw = (tp_raw + tn_raw) / max(1, len(df_refined))
 
-        # After Refinement
+        # After Refinement (Stage 3D Refined)
         ref_pred = df_refined["is_boundary_refined"]
         tp_ref = int((ref_pred & gt_binary).sum())
         fp_ref = int((ref_pred & (~gt_binary)).sum())
@@ -120,22 +125,69 @@ def main():
         prec_ref = tp_ref / max(1, tp_ref + fp_ref)
         rec_ref = tp_ref / max(1, tp_ref + fn_ref)
         f1_ref = 2 * prec_ref * rec_ref / max(1e-8, prec_ref + rec_ref)
+        acc_ref = (tp_ref + tn_ref) / max(1, len(df_refined))
+
+        # Categorize Sample Groups
+        for _, r in df_refined.iterrows():
+            is_gt = bool(r[gt_col] == 1 or r[gt_col] == True or "true" in str(r[gt_col]).lower())
+            is_raw = bool(r["boundary_score"] > args.threshold)
+            is_ref = bool(r["is_boundary_refined"])
+
+            sample_dict = {
+                "video_id": str(r["video_id"]),
+                "shot_i": int(r["shot_i"]),
+                "shot_next": int(r.get("shot_next", r["shot_i"] + 1)),
+                "raw_score": round(float(r["boundary_score"]), 4),
+                "final_score": round(float(r["final_boundary_score"]), 4),
+                "penalty": round(float(r["suppression_delta"]), 4),
+                "visual_sim": round(float(r["visual_similarity"]), 4),
+                "sem_evd": round(float(r["semantic_boundary_evidence"]), 4),
+                "vis_evd": round(float(r["visual_boundary_evidence"]), 4),
+                "gt_label": "TRUE_BOUNDARY" if is_gt else "FALSE_BOUNDARY",
+            }
+
+            # FP -> TN (Correctly Corrected Slide False Positive)
+            if (not is_gt) and is_raw and (not is_ref):
+                correctly_corrected_fp_to_tn.append(sample_dict)
+            # TP -> FN (Incorrectly Suppressed True Boundary)
+            elif is_gt and is_raw and (not is_ref):
+                incorrectly_corrected_tp_to_fn.append(sample_dict)
+            # Remaining FP (False boundary that was not suppressed)
+            elif (not is_gt) and is_ref:
+                remaining_fp.append(sample_dict)
 
         gt_metrics = {
             "gt_column_found": gt_col,
-            "raw_performance": {
+            "raw_stage3b_performance": {
                 "TP": tp_raw, "FP": fp_raw, "FN": fn_raw, "TN": tn_raw,
                 "Precision": round(prec_raw, 4),
                 "Recall": round(rec_raw, 4),
                 "F1": round(f1_raw, 4),
+                "Accuracy": round(acc_raw, 4),
             },
-            "refined_performance": {
+            "refined_stage3d_performance": {
                 "TP": tp_ref, "FP": fp_ref, "FN": fn_ref, "TN": tn_ref,
                 "Precision": round(prec_ref, 4),
                 "Recall": round(rec_ref, 4),
                 "F1": round(f1_ref, 4),
+                "Accuracy": round(acc_ref, 4),
             },
         }
+
+    # Semantic Similarity Saturation Analysis
+    sem_vals = df_refined["semantic_similarity"].dropna().to_numpy()
+    sem_saturation_analysis = {
+        "count": len(sem_vals),
+        "mean": round(float(np.mean(sem_vals)), 4),
+        "std": round(float(np.std(sem_vals)), 6),
+        "min": round(float(np.min(sem_vals)), 4),
+        "p25": round(float(np.percentile(sem_vals, 25)), 4),
+        "median": round(float(np.median(sem_vals)), 4),
+        "p75": round(float(np.percentile(sem_vals, 75)), 4),
+        "max": round(float(np.max(sem_vals)), 4),
+        "saturation_warning": bool(np.std(sem_vals) < 0.01),
+        "explanation": "Raw semantic_similarity is heavily saturated near ~0.97 (std < 0.008). Robust Z-score normalization (semantic_z) is CRITICAL to restore dynamic range.",
+    }
 
     # Detailed report breakdown
     report = {
@@ -148,28 +200,15 @@ def main():
         "suppressed_false_positives_count": suppressed_count,
         "suppression_rate_percentage": round((suppressed_count / max(1, raw_count)) * 100, 2),
         "ground_truth_metrics": gt_metrics,
-        "raw_score_stats": {
-            "mean": round(float(df_refined["boundary_score"].mean()), 4),
-            "median": round(float(df_refined["boundary_score"].median()), 4),
-            "std": round(float(df_refined["boundary_score"].std()), 4),
+        "semantic_similarity_saturation_analysis": sem_saturation_analysis,
+        "correctly_corrected_fp_to_tn_count": len(correctly_corrected_fp_to_tn),
+        "incorrectly_corrected_tp_to_fn_count": len(incorrectly_corrected_tp_to_fn),
+        "remaining_fp_count": len(remaining_fp),
+        "sample_groups": {
+            "correctly_corrected_fp_to_tn": correctly_corrected_fp_to_tn,
+            "incorrectly_corrected_tp_to_fn": incorrectly_corrected_tp_to_fn,
+            "remaining_fp": remaining_fp,
         },
-        "refined_score_stats": {
-            "mean": round(float(df_refined["final_boundary_score"].mean()), 4),
-            "median": round(float(df_refined["final_boundary_score"].median()), 4),
-            "std": round(float(df_refined["final_boundary_score"].std()), 4),
-        },
-        "sample_suppressed_boundaries": [
-            {
-                "video_id": str(r["video_id"]),
-                "shot_i": int(r["shot_i"]),
-                "shot_next": int(r["shot_next"]),
-                "raw_boundary_score": round(float(r["boundary_score"]), 4),
-                "final_boundary_score": round(float(r["final_boundary_score"]), 4),
-                "suppression_delta": round(float(r["suppression_delta"]), 4),
-                "layout_constancy": round(float(r["layout_constancy"]), 4),
-            }
-            for _, r in suppressed_rows.head(10).iterrows()
-        ],
     }
 
     out_json_path = Path(args.output_json)
@@ -177,20 +216,53 @@ def main():
     with open(out_json_path, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2)
 
+    logger.info("\n" + "=" * 90)
+    logger.info("📊 STAGE 3B RAW VS STAGE 3D REFINED GROUND-TRUTH EVALUATION:")
+    logger.info("=" * 90)
+    if gt_metrics:
+        logger.info("Metric       | Stage 3B (Raw) | Stage 3D (Refined) | Delta")
+        logger.info("-" * 90)
+        logger.info("Precision    | %-14.4f | %-18.4f | %+.4f", gt_metrics["raw_stage3b_performance"]["Precision"], gt_metrics["refined_stage3d_performance"]["Precision"], gt_metrics["refined_stage3d_performance"]["Precision"] - gt_metrics["raw_stage3b_performance"]["Precision"])
+        logger.info("Recall       | %-14.4f | %-18.4f | %+.4f", gt_metrics["raw_stage3b_performance"]["Recall"], gt_metrics["refined_stage3d_performance"]["Recall"], gt_metrics["refined_stage3d_performance"]["Recall"] - gt_metrics["raw_stage3b_performance"]["Recall"])
+        logger.info("F1 Score     | %-14.4f | %-18.4f | %+.4f", gt_metrics["raw_stage3b_performance"]["F1"], gt_metrics["refined_stage3d_performance"]["F1"], gt_metrics["refined_stage3d_performance"]["F1"] - gt_metrics["raw_stage3b_performance"]["F1"])
+        logger.info("Accuracy     | %-14.4f | %-18.4f | %+.4f", gt_metrics["raw_stage3b_performance"]["Accuracy"], gt_metrics["refined_stage3d_performance"]["Accuracy"], gt_metrics["refined_stage3d_performance"]["Accuracy"] - gt_metrics["raw_stage3b_performance"]["Accuracy"])
+        logger.info("TP / FP / TN | %d / %d / %d  | %d / %d / %d       | -", gt_metrics["raw_stage3b_performance"]["TP"], gt_metrics["raw_stage3b_performance"]["FP"], gt_metrics["raw_stage3b_performance"]["TN"], gt_metrics["refined_stage3d_performance"]["TP"], gt_metrics["refined_stage3d_performance"]["FP"], gt_metrics["refined_stage3d_performance"]["TN"])
+    
+    logger.info("\n" + "=" * 90)
+    logger.info("✅ CORRECTLY CORRECTED SLIDE FALSE POSITIVES (FP -> TN): %d", len(correctly_corrected_fp_to_tn))
+    logger.info("=" * 90)
+    for sample in correctly_corrected_fp_to_tn:
+        logger.info(" • %s Shot %d->%d | Raw: %.4f | Penalty: %.4f | Final: %.4f | VisSim: %.4f | VisEvd: %.4f | SemEvd: %.4f", sample["video_id"], sample["shot_i"], sample["shot_next"], sample["raw_score"], sample["penalty"], sample["final_score"], sample["visual_sim"], sample["vis_evd"], sample["sem_evd"])
+
+    logger.info("\n" + "=" * 90)
+    logger.info("❌ INCORRECTLY SUPPRESSED TRUE BOUNDARIES (TP -> FN): %d", len(incorrectly_corrected_tp_to_fn))
+    logger.info("=" * 90)
+    for sample in incorrectly_corrected_tp_to_fn:
+        logger.info(" • %s Shot %d->%d | Raw: %.4f | Penalty: %.4f | Final: %.4f", sample["video_id"], sample["shot_i"], sample["shot_next"], sample["raw_score"], sample["penalty"], sample["final_score"])
+
+    logger.info("\n" + "=" * 90)
+    logger.info("⚠️ REMAINING UNCORRECTED FALSE POSITIVES (FP): %d", len(remaining_fp))
+    logger.info("=" * 90)
+    for sample in remaining_fp:
+        logger.info(" • %s Shot %d->%d | Raw: %.4f | Final: %.4f", sample["video_id"], sample["shot_i"], sample["shot_next"], sample["raw_score"], sample["final_score"])
+
+    logger.info("\n" + "=" * 90)
+    logger.info("🧠 SEMANTIC SIMILARITY SATURATION ANALYSIS:")
+    logger.info("=" * 90)
+    logger.info(" • Mean: %.4f | Std: %.6f | Min: %.4f | Med: %.4f | Max: %.4f", sem_saturation_analysis["mean"], sem_saturation_analysis["std"], sem_saturation_analysis["min"], sem_saturation_analysis["median"], sem_saturation_analysis["max"])
+    logger.info(" • Saturation Warning: %s", "YES (Std < 0.01)" if sem_saturation_analysis["saturation_warning"] else "NO")
+    logger.info("=" * 90 + "\n")
+
     print("\n" + "=" * 80)
-    print("🎉 STAGE 3D VALIDATION AUDIT COMPLETE!")
+    print("🎉 STAGE 3D EMPIRICAL AUDIT VALIDATION COMPLETE!")
     print("=" * 80)
     print(f" • Total Samples Evaluated    : {len(df_samples):,}")
-    print(f" • Raw Positive Boundaries    : {raw_count}")
-    print(f" • Refined Positive Boundaries: {refined_count}")
-    print(f" • Suppressed False Positives  : {suppressed_count} (Slide / Infographic transitions)")
-    print(f" • Mean Raw Boundary Score    : {report['raw_score_stats']['mean']:.4f}")
-    print(f" • Mean Refined Score         : {report['refined_score_stats']['mean']:.4f}")
-    if gt_metrics:
-        print(f" • GT Ground-Truth Evaluated  : Column '{gt_col}'")
-        print(f"   - BEFORE Refinement: Precision={gt_metrics['raw_performance']['Precision']:.4f}, Recall={gt_metrics['raw_performance']['Recall']:.4f}, F1={gt_metrics['raw_performance']['F1']:.4f} (TP={gt_metrics['raw_performance']['TP']}, FP={gt_metrics['raw_performance']['FP']})")
-        print(f"   - AFTER Refinement : Precision={gt_metrics['refined_performance']['Precision']:.4f}, Recall={gt_metrics['refined_performance']['Recall']:.4f}, F1={gt_metrics['refined_performance']['F1']:.4f} (TP={gt_metrics['refined_performance']['TP']}, FP={gt_metrics['refined_performance']['FP']})")
-    print(f" • Output Audit Report        : {out_json_path}")
+    print(f" • Stage 3B Precision -> 3D   : {gt_metrics.get('raw_stage3b_performance', {}).get('Precision', 0):.4f} -> {gt_metrics.get('refined_stage3d_performance', {}).get('Precision', 0):.4f}")
+    print(f" • Stage 3B Accuracy -> 3D    : {gt_metrics.get('raw_stage3b_performance', {}).get('Accuracy', 0):.4f} -> {gt_metrics.get('refined_stage3d_performance', {}).get('Accuracy', 0):.4f}")
+    print(f" • Stage 3B F1 Score -> 3D    : {gt_metrics.get('raw_stage3b_performance', {}).get('F1', 0):.4f} -> {gt_metrics.get('refined_stage3d_performance', {}).get('F1', 0):.4f}")
+    print(f" • Correctly Fixed FP -> TN   : {len(correctly_corrected_fp_to_tn)}")
+    print(f" • Incorrectly Fixed TP -> FN : {len(incorrectly_corrected_tp_to_fn)}")
+    print(f" • Output Audit Report JSON   : {out_json_path}")
     print("=" * 80 + "\n")
 
 

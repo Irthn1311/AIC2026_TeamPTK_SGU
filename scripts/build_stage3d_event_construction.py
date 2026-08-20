@@ -76,17 +76,17 @@ def analyze_slide_false_positive(row: pd.Series) -> Tuple[bool, float]:
     """
     Strict Multi-Signal Slide / Infographic False Positive Detector.
     Triggers when ALL of the following signals hold:
-      1. Visual boundary evidence is LOW (vis_evd <= 0.55) -> Background layout/scene is visually static.
-      2. Semantic boundary evidence is HIGH (sem_evd >= 0.82) -> Pure text/slide content change.
-      3. Evidence Gap (sem_evd - vis_evd >= 0.30) -> High disparity between text and visual scene.
+      1. Visual boundary evidence is VERY LOW (vis_evd <= 0.40) -> Background layout/scene is visually static.
+      2. Semantic boundary evidence is HIGH (sem_evd >= 0.85) -> Pure text/slide content change.
+      3. Evidence Gap (sem_evd - vis_evd >= 0.40) -> High disparity between text and visual scene.
     """
     vis_evd = float(row.get("visual_boundary_evidence", 0.5))
     sem_evd = float(row.get("semantic_boundary_evidence", 0.5))
     evd_gap = sem_evd - vis_evd
 
-    if vis_evd <= 0.55 and sem_evd >= 0.82 and evd_gap >= 0.30:
-        sim_factor = (0.55 - vis_evd) / 0.55
-        sem_factor = (sem_evd - 0.82) / 0.18
+    if vis_evd <= 0.40 and sem_evd >= 0.85 and evd_gap >= 0.40:
+        sim_factor = (0.40 - vis_evd) / 0.40
+        sem_factor = (sem_evd - 0.85) / 0.15
         confidence = float(np.clip(sim_factor * sem_factor, 0.0, 1.0))
         return True, confidence
 
