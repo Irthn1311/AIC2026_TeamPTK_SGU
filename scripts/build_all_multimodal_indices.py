@@ -34,21 +34,23 @@ def main():
     print(" 🚀 STARTING FULL 4-BRANCH MULTIMODAL INDEX BUILDING PIPELINE")
     print("=" * 75)
 
+    import importlib
+
     # STEP 1: Visual Index
     print("\n[STEP 1/4] Building Visual FAISS Index (CLIP ViT-B/32)...")
-    from scripts.07_build_l21_visual_faiss import main as build_visual
-    sys.argv = ["07_build_l21_visual_faiss.py", "--dataset-root", args.dataset_root, "--output-dir", str(Path(args.output_dir) / "visual")]
     try:
-        build_visual()
+        mod_visual = importlib.import_module("scripts.07_build_l21_visual_faiss")
+        sys.argv = ["07_build_l21_visual_faiss.py", "--dataset-root", args.dataset_root, "--output-dir", str(Path(args.output_dir) / "visual")]
+        mod_visual.main()
     except Exception as e:
         logger.error("Visual index build error: %s", e)
 
     # STEP 2: Objects Index
     print("\n[STEP 2/4] Building BTC Objects Detection Index...")
-    from scripts.11_build_l21_object_index import main as build_objects
-    sys.argv = ["11_build_l21_object_index.py", "--dataset-root", args.dataset_root, "--output-dir", str(Path(args.output_dir) / "object")]
     try:
-        build_objects()
+        mod_objects = importlib.import_module("scripts.11_build_l21_object_index")
+        sys.argv = ["11_build_l21_object_index.py", "--dataset-root", args.dataset_root, "--output-dir", str(Path(args.output_dir) / "object")]
+        mod_objects.main()
     except Exception as e:
         logger.error("Object index build error: %s", e)
 
