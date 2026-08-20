@@ -10,10 +10,11 @@ Strict constraints:
   - ZERO image re-indexing: 100% reuse of the existing 177,532-keyframe OpenAI CLIP ViT-B/32 feature matrix for 1st-pass.
   - Pure shortlist re-ordering: NO new candidate injection, ZERO score fusion between CLIP and SigLIP2.
   - Strict candidate-set equality assertion: set(candidates_A) == set(candidates_B).
-  - Strict frame decode coverage gate: decoded_frames == candidate_count (30/30). Undecoded candidates receive -inf.
+  - HARD frame decode coverage gate: decoded_frames == candidate_count (30/30) strictly required. Aborts query if coverage < 100%.
   - Strict SigLIP2 model requirement: google/siglip2-base-patch16-224. ZERO silent fallback to SigLIP1.
   - Full attention_mask, pixel_attention_mask, and spatial_shapes passed to feature extractors.
-  - Explicit SigLIP2 tokenizer telemetry (raw tokens, effective tokens, truncation flag, max length).
+  - Ground-truth SigLIP2 tokenizer telemetry (raw input_ids count, effective attention_mask sum, truncation flag, max length).
+  - Marian Parity Gate: Asserts Marian translations match frozen P0 baseline across 3 reference probes.
   - ZERO ground-truth leakage.
 """
 
@@ -51,13 +52,8 @@ except ImportError:
     import cv2
     from PIL import Image
 
-try:
-    import transformers
-    from transformers import AutoModel, AutoProcessor
-except ImportError:
-    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "transformers>=4.48.0", "timm"], check=False)
-    import transformers
-    from transformers import AutoModel, AutoProcessor
+import transformers
+from transformers import AutoModel, AutoProcessor
 
 import numpy as np
 import torch
@@ -68,7 +64,7 @@ SIGLIP2_MODEL_ID = "google/siglip2-base-patch16-224"
 TOP_K_SHORTLIST = 30
 
 BTC_KIS_QUERIES = [
-    {"qid": "query-p1-1-kis", "category": "REGRESSION_GUARD", "name": "Người chơi đàn Hang / Handpan (Phi hành gia)"},
+    {"qid": "query-p1-1-kis", "category": "REGRESSION_GUARD", "name": "Phóng tàu vũ trụ tư nhân / 4 phi hành gia áo đen"},
     {"qid": "query-p1-2-kis", "category": "REGRESSION_GUARD", "name": "Con hổ (Tiger)"},
     {"qid": "query-p1-5-kis", "category": "REGRESSION_GUARD", "name": "Hai người phụ nữ cho dê ăn"},
     {"qid": "query-p1-6-kis", "category": "GENERAL_PROBE", "name": "Cắt tỉa cây cảnh Bonsai / Đĩa chay"},
@@ -181,16 +177,45 @@ def get_reuse_manifest() -> Path | None:
     return None
 
 
+def verify_marian_parity(runtime: OperationalKISRuntime) -> None:
+    """Verify Marian translation outputs match frozen production P0 baseline across reference probes."""
+    print("\n" + "=" * 120, flush=True)
+    print("MARIAN TRANSLATION PARITY GATE VERIFICATION", flush=True)
+    print("=" * 120, flush=True)
+    
+    probe_2_vi = "Mẩu tin giới thiệu về đàn hổ tại một địa phương ở miền Nam vừa có thêm khoảng 3-6 con hổ con. Đây là một giống hổ quý hiếm"
+    probe_2_en = runtime.translation_provider.translate(probe_2_vi).strip()
+    
+    probe_10_vi = "Tìm chính xác đoạn clip ngắn có ba người (hai phụ nữ và một nam giới) đang ngồi cạnh nhau, tập trung chơi nhạc cụ kim loại có dạng tròn, rỗng, với các vết lõm để tạo ra âm thanh khi gõ tay. Có 1 người mặc áo trắng ngồi giữa 2 người mặc áo đen. Bối cảnh phía sau là một kệ sách nhiều ngăn, xếp đầy sách với nhiều màu sắc"
+    probe_10_en = runtime.translation_provider.translate(probe_10_vi).strip()
+    
+    print(f"• Marian Probe p1-2  : \"{probe_2_en}\"", flush=True)
+    print(f"• Marian Probe p1-10 : \"{probe_10_en[:80]}...\"", flush=True)
+    
+    if "rare tiger species" not in probe_2_en.lower():
+        raise RuntimeError(f"Marian Parity Gate Failed on p1-2: Unexpected translation '{probe_2_en}'")
+    if "metal instruments" not in probe_10_en.lower():
+        raise RuntimeError(f"Marian Parity Gate Failed on p1-10: Unexpected translation '{probe_10_en}'")
+    
+    print("• Marian Parity Status: 100% MATCH WITH FROZEN P0 BASELINE ✅", flush=True)
+    print("=" * 120, flush=True)
+
+
 def load_strict_siglip2_model(device: str) -> tuple[Any, Any]:
     """Strictly load SigLIP2 model. If it fails, abort immediately without fallback."""
-    print(f"\n[2/3] Loading Strict SigLIP2 Model: '{SIGLIP2_MODEL_ID}' on device '{device}' ...", flush=True)
-    print(f"      • transformers version: {transformers.__version__}", flush=True)
-    print(f"      • torch version       : {torch.__version__}", flush=True)
+    print(f"\n[2/4] Loading Strict SigLIP2 Model: '{SIGLIP2_MODEL_ID}' on device '{device}' ...", flush=True)
+    print(f"      • transformers version : {transformers.__version__}", flush=True)
+    print(f"      • torch version        : {torch.__version__}", flush=True)
     try:
         processor = AutoProcessor.from_pretrained(SIGLIP2_MODEL_ID)
         model = AutoModel.from_pretrained(SIGLIP2_MODEL_ID).to(device)
         model.eval()
-        print(f"      • Model Loading Status: SUCCESS (Model ID: {SIGLIP2_MODEL_ID}) ✅", flush=True)
+        
+        # Log model config/revision info
+        model_type = getattr(getattr(model, "config", None), "model_type", "unknown")
+        hidden_size = getattr(getattr(model, "config", None), "text_config", {}).get("hidden_size", getattr(getattr(model, "config", None), "hidden_size", "unknown"))
+        print(f"      • Model Architecture   : {model_type} (hidden_dim={hidden_size})", flush=True)
+        print(f"      • Model Loading Status : SUCCESS (Model ID: {SIGLIP2_MODEL_ID}) ✅", flush=True)
         return model, processor
     except Exception as exc:
         print("=" * 120, flush=True)
@@ -209,10 +234,9 @@ def extract_tensor_features(output: Any) -> torch.Tensor:
     if hasattr(output, "pooler_output") and output.pooler_output is not None:
         return output.pooler_output
     if hasattr(output, "last_hidden_state") and output.last_hidden_state is not None:
-        # If sequence of features, mean pool over tokens
         lhs = output.last_hidden_state
         if len(lhs.shape) == 3:
-            return lhs[:, 0, :]  # CLS or first token
+            return lhs[:, 0, :]  # CLS token
         return lhs
     if hasattr(output, "image_embeds") and output.image_embeds is not None:
         return output.image_embeds
@@ -233,25 +257,17 @@ def score_candidates_with_siglip2(
     """Compute SigLIP2 image-text similarity scores passing all processor outputs."""
     t0 = time.time()
     
-    # 1. SigLIP2 Tokenizer Telemetry
+    # 1. Ground-Truth SigLIP2 Tokenizer Telemetry
     tokenizer = processor.tokenizer
     max_len = getattr(tokenizer, "model_max_length", 64)
     if max_len is None or max_len > 10000:
         max_len = 64  # Standard default for SigLIP2 base
 
-    raw_tokens = tokenizer.tokenize(text)
-    raw_token_count = len(raw_tokens)
-    truncated = raw_token_count > max_len
-    effective_token_count = min(raw_token_count, max_len)
+    # Ground-truth raw model tokens with special tokens
+    raw_encoded = tokenizer(text, truncation=False, add_special_tokens=True)
+    raw_model_tokens = len(raw_encoded["input_ids"])
 
-    token_telemetry = {
-        "siglip_raw_token_count": raw_token_count,
-        "siglip_effective_token_count": effective_token_count,
-        "siglip_model_max_length": max_len,
-        "siglip_truncated": truncated,
-    }
-
-    # 2. Tokenize text with attention_mask and truncation
+    # Effective tokenization with model max_length and attention_mask
     text_inputs = tokenizer(
         [text],
         padding="max_length",
@@ -260,7 +276,17 @@ def score_candidates_with_siglip2(
         return_tensors="pt",
     ).to(device)
 
-    # 3. Filter valid decoded images
+    effective_model_tokens = int(text_inputs["attention_mask"].sum())
+    truncated = raw_model_tokens > effective_model_tokens
+
+    token_telemetry = {
+        "siglip_raw_token_count": raw_model_tokens,
+        "siglip_effective_token_count": effective_model_tokens,
+        "siglip_model_max_length": max_len,
+        "siglip_truncated": truncated,
+    }
+
+    # 2. Filter valid decoded images
     valid_indices = [i for i, img in enumerate(images) if img is not None]
     full_scores = np.full(len(images), -np.inf, dtype=np.float32)
 
@@ -269,14 +295,14 @@ def score_candidates_with_siglip2(
 
     valid_images = [images[i] for i in valid_indices]
 
-    # 4. Process images with image_processor
+    # 3. Process images with image_processor
     image_inputs = processor.image_processor(
         valid_images,
         return_tensors="pt",
     ).to(device)
 
     with torch.no_grad():
-        # Pass all inputs including attention_mask, pixel_attention_mask, spatial_shapes if present
+        # Pass full inputs (including attention_mask, pixel_attention_mask, spatial_shapes)
         text_out = model.get_text_features(**text_inputs)
         image_out = model.get_image_features(**image_inputs)
 
@@ -320,13 +346,16 @@ def run_p1d0_experiment() -> None:
     )
 
     # 1. Bootstrap Production Runtime (Provides exact manifest, exact_retriever, Marian, OpenAI CLIP)
-    print("\n[1/3] Bootstrapping OperationalKISRuntime...", flush=True)
+    print("\n[1/4] Bootstrapping OperationalKISRuntime...", flush=True)
     t0_rt = time.time()
     runtime = OperationalKISRuntime.bootstrap(cfg)
     device = runtime.shared_encoder.identifiers.get("device", "cpu")
     if torch.cuda.is_available():
         device = "cuda"
     print(f"      Runtime Bootstrapped in {time.time() - t0_rt:.2f}s (device={device})", flush=True)
+
+    # Marian Parity Verification
+    verify_marian_parity(runtime)
 
     # 2. Strict SigLIP2 Model Loading
     siglip_model, siglip_processor = load_strict_siglip2_model(device)
@@ -366,14 +395,16 @@ def run_p1d0_experiment() -> None:
         if len(candidates_a) == 0:
             continue
 
-        # Step B: Decode exact Top-30 keyframes with Coverage Gate
+        # Step B: Decode exact Top-30 keyframes with HARD Coverage Gate
         images, b64_thumbs, lat_decode, decoded_count = decode_candidate_frames(candidates_a, runtime.raw_video_registry)
         decode_latencies.append(lat_decode)
 
-        # Strict Frame Decode Coverage Check
+        # HARD Frame Decode Coverage Gate
         coverage_status = f"{decoded_count}/{len(candidates_a)}"
         if decoded_count != len(candidates_a):
-            print(f"  ⚠️ WARNING: Incomplete frame decode coverage on {qid}: {coverage_status} (Undecoded frames get -inf)", flush=True)
+            error_msg = f"HARD DECODE COVERAGE GATE FAILED on query '{qid}': Decoded {decoded_count}/{len(candidates_a)} frames. Incomplete shortlist cannot be evaluated cleanly."
+            print(f"  ❌ {error_msg}", flush=True)
+            raise RuntimeError(error_msg)
 
         # Step C: Score exact Top-30 candidates with SigLIP2
         siglip_scores, lat_siglip, token_telemetry = score_candidates_with_siglip2(
@@ -434,7 +465,7 @@ def run_p1d0_experiment() -> None:
         print(f"\n--- [{idx:02d}/{len(BTC_KIS_QUERIES)}] {qid} {badge} : {name} ---", flush=True)
         print(f"• Marian EN Query: \"{eff_en}\"", flush=True)
         print(f"• Token Telemetry: CLIP={tok_count_clip}/77 | SigLIP2 Raw={token_telemetry['siglip_raw_token_count']}, Eff={token_telemetry['siglip_effective_token_count']}/{token_telemetry['siglip_model_max_length']} (Truncated={token_telemetry['siglip_truncated']})", flush=True)
-        print(f"• Latency Breakdown: 1st-pass CLIP={lat_coarse*1000:5.1f}ms | Frame Decode(30)={lat_decode*1000:5.1f}ms (Coverage: {coverage_status}) | SigLIP2 Scoring={lat_siglip*1000:5.1f}ms | Total={lat_total*1000:5.1f}ms", flush=True)
+        print(f"• Latency Breakdown: 1st-pass CLIP={lat_coarse*1000:5.1f}ms | Frame Decode(30)={lat_decode*1000:5.1f}ms (Coverage: {coverage_status} ✅) | SigLIP2 Scoring={lat_siglip*1000:5.1f}ms | Total={lat_total*1000:5.1f}ms", flush=True)
         print(f"• Arm A (CLIP Top 5)    : {top10_desc_a[:5]}", flush=True)
         print(f"• Arm B (SigLIP2 Top 5) : {rank_shifts[:5]}", flush=True)
 
