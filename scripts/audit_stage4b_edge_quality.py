@@ -87,8 +87,14 @@ def extract_event_keyframes(node: Dict[str, Any], vid: str) -> List[Dict[str, st
     if isinstance(rk, (list, np.ndarray)) and len(rk) > 0:
         kf_list = [str(k) for k in rk]
     else:
-        kf_str = str(rk) if rk else "N/A"
-        kf_list = [kf_str]
+        kf_str = str(rk) if rk and str(rk).strip().lower() != "nan" else ""
+        kf_list = [kf_str] if kf_str else []
+
+    if not kf_list:
+        start_sec = float(node.get("start_sec", 0.0))
+        shots = node.get("shot_ids", [0])
+        shot_id = int(shots[0]) if len(shots) > 0 else 0
+        kf_list = [f"{vid}_S{shot_id:04d}_center"]
 
     # Pick start, center, end
     n = len(kf_list)
@@ -101,11 +107,21 @@ def extract_event_keyframes(node: Dict[str, Any], vid: str) -> List[Dict[str, st
 
     result = []
     for label, kf in picked:
-        clean_kf = kf.replace(".jpg", "").replace(".png", "")
+        clean_kf = kf.replace(".jpg", "").replace(".png", "").strip()
         img_url = f"keyframes/{vid}/{clean_kf}.jpg"
         result.append({"label": label, "keyframe": clean_kf, "img_url": img_url})
 
     return result
+
+
+def clean_text_val(val: Any) -> str:
+    """Clean text value removing nan or empty placeholders."""
+    if val is None or pd.isna(val):
+        return ""
+    s = str(val).strip()
+    if not s or s.lower() == "nan" or s.lower() == "none":
+        return ""
+    return s
 
 
 def enrich_edge_samples(
@@ -117,9 +133,14 @@ def enrich_edge_samples(
     shot_map = {}
     if df_shots is not None and not df_shots.empty:
         for _, s in df_shots.iterrows():
-            key = (str(s["video_id"]), int(s["shot_id"]))
-            txt = str(s.get("ocr_text", s.get("asr_text", s.get("caption", ""))))
-            shot_map[key] = txt
+            vid = clean_text_val(s.get("video_id"))
+            sid = clean_text_val(s.get("shot_id"))
+            txt = clean_text_val(s.get("caption")) or clean_text_val(s.get("ocr_text")) or clean_text_val(s.get("asr_text"))
+            if vid and sid and txt:
+                try:
+                    shot_map[(vid, int(sid))] = txt
+                except ValueError:
+                    shot_map[(vid, sid)] = txt
 
     enriched = []
     for idx, e in enumerate(sampled_records):
@@ -136,18 +157,32 @@ def enrich_edge_samples(
         src_keyframes = extract_event_keyframes(src_node, src_vid)
         dst_keyframes = extract_event_keyframes(dst_node, dst_vid)
 
-        # Captions
-        src_captions = []
-        for sid in src_node.get("shot_ids", []):
-            txt = shot_map.get((src_vid, int(sid)))
-            if txt and txt not in src_captions:
-                src_captions.append(txt)
+        # Robust Caption Extraction
+        def extract_caption(node_dict: Dict[str, Any], vid: str) -> str:
+            # 1. Direct text fields on node
+            for field in ["event_text", "caption", "ocr_text", "asr_text", "summary", "description"]:
+                txt = clean_text_val(node_dict.get(field))
+                if txt:
+                    return txt
 
-        dst_captions = []
-        for sid in dst_node.get("shot_ids", []):
-            txt = shot_map.get((dst_vid, int(sid)))
-            if txt and txt not in dst_captions:
-                dst_captions.append(txt)
+            # 2. Shot map lookup
+            shots = node_dict.get("shot_ids", [])
+            captions = []
+            for sid in shots:
+                txt = shot_map.get((vid, int(sid))) if str(sid).isdigit() else shot_map.get((vid, str(sid)))
+                if txt and txt not in captions:
+                    captions.append(txt)
+            if captions:
+                return " | ".join(captions[:3])
+
+            start_s = float(node_dict.get("start_sec", 0.0))
+            end_s = float(node_dict.get("end_sec", 0.0))
+            dur_s = float(node_dict.get("duration_sec", end_s - start_s))
+            n_shots = int(node_dict.get("num_shots", len(shots)))
+            return f"Event {node_dict.get('event_id', '')} in Video {vid} ({start_s:.1f}s-{end_s:.1f}s, {dur_s:.1f}s duration, {n_shots} shots)"
+
+        src_caption = extract_caption(src_node, src_vid)
+        dst_caption = extract_caption(dst_node, dst_vid)
 
         rec = {
             "sample_id": idx + 1,
@@ -162,8 +197,9 @@ def enrich_edge_samples(
                 "end_sec": float(src_node.get("end_sec", 0.0)),
                 "duration_sec": float(src_node.get("duration_sec", 0.0)),
                 "num_shots": int(src_node.get("num_shots", 0)),
+                "shot_ids": [int(s) for s in src_node.get("shot_ids", []) if str(s).isdigit()],
                 "keyframes": src_keyframes,
-                "caption": " | ".join(src_captions[:3]) if src_captions else f"Event {src_id} in video {src_vid}",
+                "caption": src_caption,
             },
             "dst": {
                 "event_id": dst_id,
@@ -172,8 +208,9 @@ def enrich_edge_samples(
                 "end_sec": float(dst_node.get("end_sec", 0.0)),
                 "duration_sec": float(dst_node.get("duration_sec", 0.0)),
                 "num_shots": int(dst_node.get("num_shots", 0)),
+                "shot_ids": [int(s) for s in dst_node.get("shot_ids", []) if str(s).isdigit()],
                 "keyframes": dst_keyframes,
-                "caption": " | ".join(dst_captions[:3]) if dst_captions else f"Event {dst_id} in video {dst_vid}",
+                "caption": dst_caption,
             },
         }
         enriched.append(rec)
@@ -182,7 +219,7 @@ def enrich_edge_samples(
 
 
 def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: Dict[str, Any], output_path: Path):
-    """Generate modern side-by-side interactive HTML audit dashboard with 3 representative keyframes per event and strict progress tracking."""
+    """Generate modern side-by-side interactive HTML audit dashboard with local image folder loading capability and full metadata display."""
     json_data = json.dumps(enriched_samples, indent=2)
 
     html_content = f"""<!DOCTYPE html>
@@ -236,7 +273,7 @@ def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: 
             display: flex; gap: 12px; margin-bottom: 20px; align-items: center; flex-wrap: wrap;
         }}
 
-        .filter-btn, .export-btn {{
+        .filter-btn, .export-btn, .folder-btn {{
             background: var(--panel-bg); color: var(--text-light); border: 1px solid var(--border-color);
             padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600;
             transition: all 0.2s ease;
@@ -245,6 +282,11 @@ def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: 
         .filter-btn.active, .filter-btn:hover {{
             background: var(--accent-blue); color: #000; border-color: var(--accent-blue);
         }}
+
+        .folder-btn {{
+            background: rgba(56, 189, 248, 0.2); color: var(--accent-blue); border: 1px solid var(--accent-blue);
+        }}
+        .folder-btn:hover {{ background: var(--accent-blue); color: #000; }}
 
         .export-btn {{
             background: rgba(34, 197, 94, 0.2); color: var(--accent-green); border: 1px solid var(--accent-green);
@@ -383,7 +425,14 @@ def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: 
         <button class="filter-btn" onclick="filterSamples('TOP')">Top Bucket</button>
         <button class="filter-btn" onclick="filterSamples('MIDDLE')">Middle Bucket</button>
         <button class="filter-btn" onclick="filterSamples('NEAR_THRESHOLD')">Near Threshold</button>
+
         <div style="flex-grow: 1;"></div>
+        
+        <label class="folder-btn" style="display: inline-block;">
+            📁 Load Keyframes Folder
+            <input type="file" id="local-folder-input" webkitdirectory directory multiple style="display: none;" onchange="loadLocalImages(event)"/>
+        </label>
+
         <button class="export-btn" onclick="exportJSON()">📥 Export JSON Labels</button>
         <button class="export-btn" onclick="exportCSV()">📥 Export CSV Labels</button>
     </div>
@@ -393,15 +442,32 @@ def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: 
     <script>
         const samplesData = {json_data};
         const evaluations = {{}};
+        const imageFileMap = {{}};
+
+        function loadLocalImages(event) {{
+            const files = event.target.files;
+            if (!files || files.length === 0) return;
+
+            for (let i = 0; i < files.length; i++) {{
+                const file = files[i];
+                if (file.type.startsWith('image/')) {{
+                    const fname = file.name.replace('.jpg', '').replace('.png', '').trim();
+                    imageFileMap[fname] = URL.createObjectURL(file);
+                }}
+            }}
+            alert(`✅ Loaded ${{Object.keys(imageFileMap).length}} local keyframe images! Rendering images now...`);
+            renderSamples();
+        }}
 
         function renderKeyframesHtml(keyframesList, videoId) {{
-            return keyframesList.map(kf => {{
+            return keyframesList.map((kf, idx) => {{
                 const fallbackText = encodeURIComponent(`${{videoId}} | ${{kf.keyframe}}`);
+                const imgSrc = imageFileMap[kf.keyframe] || kf.img_url;
                 return `
                     <div class="kf-item">
                         <div class="kf-lbl">${{kf.label}}</div>
                         <div class="kf-img-box">
-                            <img src="${{kf.img_url}}" 
+                            <img id="img-${{kf.keyframe}}-${{idx}}" src="${{imgSrc}}" 
                                  onerror="this.onerror=null; this.src='https://placehold.co/200x110/1e293b/38bdf8?text=' + '${{fallbackText}}'" 
                                  alt="${{kf.label}} Keyframe"/>
                         </div>
@@ -447,12 +513,12 @@ def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: 
                                 <h4>Src Event: ${{s.src.event_id}}</h4>
                                 <div class="meta-row">Video: <span>${{s.src.video_id}}</span></div>
                                 <div class="meta-row">Time Range: <span>${{s.src.start_sec.toFixed(1)}}s - ${{s.src.end_sec.toFixed(1)}}s (${{s.src.duration_sec.toFixed(1)}}s)</span></div>
-                                <div class="meta-row">Shots: <span>${{s.src.num_shots}}</span></div>
+                                <div class="meta-row">Shots Count: <span>${{s.src.num_shots}}</span> (Shot IDs: <span>${{s.src.shot_ids.join(', ') || 'N/A'}}</span>)</div>
                                 <div class="keyframes-strip">
                                     ${{srcKfHtml}}
                                 </div>
                             </div>
-                            <div class="caption-box">💬 Caption: "${{s.src.caption}}"</div>
+                            <div class="caption-box">💬 Event Details: "${{s.src.caption}}"</div>
                         </div>
 
                         <div class="vs-divider">↔</div>
@@ -463,12 +529,12 @@ def generate_html_audit_dashboard(enriched_samples: List[Dict[str, Any]], meta: 
                                 <h4>Dst Event: ${{s.dst.event_id}}</h4>
                                 <div class="meta-row">Video: <span>${{s.dst.video_id}}</span></div>
                                 <div class="meta-row">Time Range: <span>${{s.dst.start_sec.toFixed(1)}}s - ${{s.dst.end_sec.toFixed(1)}}s (${{s.dst.duration_sec.toFixed(1)}}s)</span></div>
-                                <div class="meta-row">Shots: <span>${{s.dst.num_shots}}</span></div>
+                                <div class="meta-row">Shots Count: <span>${{s.dst.num_shots}}</span> (Shot IDs: <span>${{s.dst.shot_ids.join(', ') || 'N/A'}}</span>)</div>
                                 <div class="keyframes-strip">
                                     ${{dstKfHtml}}
                                 </div>
                             </div>
-                            <div class="caption-box">💬 Caption: "${{s.dst.caption}}"</div>
+                            <div class="caption-box">💬 Event Details: "${{s.dst.caption}}"</div>
                         </div>
                     </div>
 
