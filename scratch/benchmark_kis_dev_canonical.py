@@ -203,7 +203,14 @@ def run_kis_dev_smoke(run_full_38: bool = False) -> None:
         res = runtime.handle_query(req)
         elapsed = time.time() - t_q0
 
-        preds = res.get("results", [])
+        # Load predictions from the canonical exported artifact JSONL
+        top100_rel = res["artifacts"].get("refined_top100_jsonl", res["artifacts"]["top100_jsonl"])
+        top100_path = runtime.output_root / top100_rel
+        preds = [
+            json.loads(line)
+            for line in top100_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
 
         # Assertions on Predictions
         assert len(preds) == 100, f"Smoke failure on {qid}: Expected exactly 100 predictions, got {len(preds)}"
