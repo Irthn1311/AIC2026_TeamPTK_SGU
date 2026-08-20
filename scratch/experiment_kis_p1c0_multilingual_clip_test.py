@@ -248,11 +248,11 @@ def run_p1c0_experiment() -> None:
         lat_b = time.time() - t_b0
         arm_b_latencies.append(lat_b)
 
-        top10_desc_a = [f"@{i}: {c.video_id} (f={c.frame_id}, s={c.similarity_score:.3f})" for i, c in enumerate(res_a.candidates[:10], start=1)]
-        top10_desc_b = [f"@{i}: {c.video_id} (f={c.frame_id}, s={c.similarity_score:.3f})" for i, c in enumerate(res_b.candidates[:10], start=1)]
+        top10_desc_a = [f"@{i}: {c.video_id} (f={c.frame_id}, s={c.score:.3f})" for i, c in enumerate(res_a.ranked_candidates[:10], start=1)]
+        top10_desc_b = [f"@{i}: {c.video_id} (f={c.frame_id}, s={c.score:.3f})" for i, c in enumerate(res_b.ranked_candidates[:10], start=1)]
 
-        vids_a = set(c.video_id for c in res_a.candidates[:10])
-        vids_b = set(c.video_id for c in res_b.candidates[:10])
+        vids_a = set(c.video_id for c in res_a.ranked_candidates[:10])
+        vids_b = set(c.video_id for c in res_b.ranked_candidates[:10])
         overlap_10 = len(vids_a.intersection(vids_b))
 
         results.append({
@@ -263,8 +263,8 @@ def run_p1c0_experiment() -> None:
             "eff_en_a": eff_en,
             "lat_a": lat_a,
             "lat_b": lat_b,
-            "candidates_a": res_a.candidates,
-            "candidates_b": res_b.candidates,
+            "candidates_a": res_a.ranked_candidates,
+            "candidates_b": res_b.ranked_candidates,
             "top10_desc_a": top10_desc_a,
             "top10_desc_b": top10_desc_b,
             "overlap_10": overlap_10,
@@ -280,11 +280,11 @@ def run_p1c0_experiment() -> None:
         print(f"• Top 10 Overlap: {overlap_10}/10 shared video entities", flush=True)
 
         if qid == "query-p1-13-kis":
-            print(f"  🔍 TARGET PROBE (p1-13): Does Arm B pull camera cleaning (L30_V095) into Top 3? -> Arm A Top 1: {res_a.candidates[0].video_id} | Arm B Top 1: {res_b.candidates[0].video_id}", flush=True)
+            print(f"  🔍 TARGET PROBE (p1-13): Does Arm B pull camera cleaning (L30_V095) into Top 3? -> Arm A Top 1: {res_a.ranked_candidates[0].video_id} | Arm B Top 1: {res_b.ranked_candidates[0].video_id}", flush=True)
         elif qid == "query-p1-21-kis":
-            print(f"  🔍 TARGET PROBE (p1-21): Does Arm B pull beetle/robot into Top 3? -> Arm A Top 1: {res_a.candidates[0].video_id} | Arm B Top 1: {res_b.candidates[0].video_id}", flush=True)
+            print(f"  🔍 TARGET PROBE (p1-21): Does Arm B pull beetle/robot into Top 3? -> Arm A Top 1: {res_a.ranked_candidates[0].video_id} | Arm B Top 1: {res_b.ranked_candidates[0].video_id}", flush=True)
         elif qid == "query-p1-24-kis":
-            print(f"  🔍 TARGET PROBE (p1-24): Does Arm B pull cycling race into Top 3? -> Arm A Top 1: {res_a.candidates[0].video_id} | Arm B Top 1: {res_b.candidates[0].video_id}", flush=True)
+            print(f"  🔍 TARGET PROBE (p1-24): Does Arm B pull cycling race into Top 3? -> Arm A Top 1: {res_a.ranked_candidates[0].video_id} | Arm B Top 1: {res_b.ranked_candidates[0].video_id}", flush=True)
 
     # Generate HTML gallery
     gallery_out = Path("/kaggle/working/kis_p1c0_multilingual_gallery.html")
@@ -322,7 +322,7 @@ def generate_ab_gallery_html(results: list[dict[str, Any]], out_path: Path, raw_
             for rank_idx, p in enumerate(preds, start=1):
                 vid = p.video_id
                 fid = p.frame_id
-                score = p.similarity_score
+                score = p.score
                 img_b64 = extract_thumbnail_base64(vid, fid, raw_video_registry)
                 img_tag = f'<img src="data:image/jpeg;base64,{img_b64}" style="width:100%; border-radius:4px;" />' if img_b64 else '<div style="background:#333;color:#888;height:80px;display:flex;align-items:center;justify-content:center;">No Frame</div>'
                 items.append(f"""
