@@ -10,7 +10,10 @@ Strict constraints:
   - ZERO image re-indexing: 100% reuse of the existing 177,532-keyframe OpenAI CLIP ViT-B/32 feature matrix for 1st-pass.
   - Pure shortlist re-ordering: NO new candidate injection, ZERO score fusion between CLIP and SigLIP2.
   - Strict candidate-set equality assertion: set(candidates_A) == set(candidates_B).
-  - Decode exact Top-30 keyframes on-the-fly from raw videos.
+  - Strict frame decode coverage gate: decoded_frames == candidate_count (30/30). Undecoded candidates receive -inf.
+  - Strict SigLIP2 model requirement: google/siglip2-base-patch16-224. ZERO silent fallback to SigLIP1.
+  - Full attention_mask, pixel_attention_mask, and spatial_shapes passed to feature extractors.
+  - Explicit SigLIP2 tokenizer telemetry (raw tokens, effective tokens, truncation flag, max length).
   - ZERO ground-truth leakage.
 """
 
@@ -18,6 +21,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import os
 import subprocess
 import sys
@@ -60,8 +64,7 @@ import torch
 from system_tai.kis.session_engine import OperationalKISRuntime
 from system_tai.kis.session_schema import SessionConfig
 
-PRIMARY_SIGLIP_MODEL_ID = "google/siglip2-base-patch16-224"
-FALLBACK_SIGLIP_MODEL_ID = "google/siglip-base-patch16-224"
+SIGLIP2_MODEL_ID = "google/siglip2-base-patch16-224"
 TOP_K_SHORTLIST = 30
 
 BTC_KIS_QUERIES = [
@@ -119,11 +122,12 @@ def resolve_video_path(video_id: str, raw_video_registry: Any = None) -> Path | 
 def decode_candidate_frames(
     candidates: list[Any],
     raw_video_registry: Any = None,
-) -> tuple[list[Image.Image | None], list[str], float]:
+) -> tuple[list[Image.Image | None], list[str], float, int]:
     """Decode exact keyframes for candidate list grouped by video to maximize IO efficiency."""
     t0 = time.time()
     images: list[Image.Image | None] = [None] * len(candidates)
     b64_thumbnails: list[str] = [""] * len(candidates)
+    decoded_count = 0
 
     # Group by video_id
     video_to_items: dict[str, list[tuple[int, int]]] = {}
@@ -147,6 +151,7 @@ def decode_candidate_frames(
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 pil_img = Image.fromarray(rgb)
                 images[orig_idx] = pil_img
+                decoded_count += 1
 
                 # Generate thumbnail base64 for gallery
                 h, w = frame.shape[:2]
@@ -160,7 +165,7 @@ def decode_candidate_frames(
             pass
 
     decode_seconds = time.time() - t0
-    return images, b64_thumbnails, decode_seconds
+    return images, b64_thumbnails, decode_seconds, decoded_count
 
 
 def get_reuse_manifest() -> Path | None:
@@ -176,79 +181,130 @@ def get_reuse_manifest() -> Path | None:
     return None
 
 
-def load_siglip_model(device: str) -> tuple[Any, Any, str]:
-    """Load SigLIP2 model with graceful fallback to SigLIP-base if model architecture is not yet in transformers."""
-    print(f"\n[2/3] Loading Visual Reranker Model on device '{device}' ...", flush=True)
-    loaded_id = PRIMARY_SIGLIP_MODEL_ID
+def load_strict_siglip2_model(device: str) -> tuple[Any, Any]:
+    """Strictly load SigLIP2 model. If it fails, abort immediately without fallback."""
+    print(f"\n[2/3] Loading Strict SigLIP2 Model: '{SIGLIP2_MODEL_ID}' on device '{device}' ...", flush=True)
+    print(f"      • transformers version: {transformers.__version__}", flush=True)
+    print(f"      • torch version       : {torch.__version__}", flush=True)
     try:
-        print(f"      Attempting to load {PRIMARY_SIGLIP_MODEL_ID} ...", flush=True)
-        processor = AutoProcessor.from_pretrained(PRIMARY_SIGLIP_MODEL_ID)
-        model = AutoModel.from_pretrained(PRIMARY_SIGLIP_MODEL_ID).to(device)
+        processor = AutoProcessor.from_pretrained(SIGLIP2_MODEL_ID)
+        model = AutoModel.from_pretrained(SIGLIP2_MODEL_ID).to(device)
         model.eval()
-        print(f"      Successfully loaded {PRIMARY_SIGLIP_MODEL_ID} ✅", flush=True)
-        return model, processor, PRIMARY_SIGLIP_MODEL_ID
+        print(f"      • Model Loading Status: SUCCESS (Model ID: {SIGLIP2_MODEL_ID}) ✅", flush=True)
+        return model, processor
     except Exception as exc:
-        print(f"      Notice: Could not load {PRIMARY_SIGLIP_MODEL_ID} ({exc}).", flush=True)
-        print(f"      Falling back to {FALLBACK_SIGLIP_MODEL_ID} ...", flush=True)
-        processor = AutoProcessor.from_pretrained(FALLBACK_SIGLIP_MODEL_ID)
-        model = AutoModel.from_pretrained(FALLBACK_SIGLIP_MODEL_ID).to(device)
-        model.eval()
-        print(f"      Successfully loaded fallback {FALLBACK_SIGLIP_MODEL_ID} ✅", flush=True)
-        return model, processor, FALLBACK_SIGLIP_MODEL_ID
+        print("=" * 120, flush=True)
+        print(f"FATAL ERROR: Could not load required SigLIP2 model '{SIGLIP2_MODEL_ID}'.", flush=True)
+        print(f"Details: {exc}", flush=True)
+        print("P1D0 requires google/siglip2-base-patch16-224 strictly. Silent fallback to SigLIP1 is forbidden.", flush=True)
+        print("Status: UNSUPPORTED_OR_ERROR -> ABORTING EXPERIMENT.", flush=True)
+        print("=" * 120, flush=True)
+        raise RuntimeError(f"P1D0 Aborted: Failed to load {SIGLIP2_MODEL_ID}: {exc}") from exc
 
 
-def score_candidates_with_siglip(
+def extract_tensor_features(output: Any) -> torch.Tensor:
+    """Extract the primary feature tensor from model feature extractor output across Transformers versions."""
+    if isinstance(output, torch.Tensor):
+        return output
+    if hasattr(output, "pooler_output") and output.pooler_output is not None:
+        return output.pooler_output
+    if hasattr(output, "last_hidden_state") and output.last_hidden_state is not None:
+        # If sequence of features, mean pool over tokens
+        lhs = output.last_hidden_state
+        if len(lhs.shape) == 3:
+            return lhs[:, 0, :]  # CLS or first token
+        return lhs
+    if hasattr(output, "image_embeds") and output.image_embeds is not None:
+        return output.image_embeds
+    if hasattr(output, "text_embeds") and output.text_embeds is not None:
+        return output.text_embeds
+    if isinstance(output, (tuple, list)) and len(output) > 0 and isinstance(output[0], torch.Tensor):
+        return output[0]
+    raise TypeError(f"Cannot extract feature tensor from output of type {type(output)}")
+
+
+def score_candidates_with_siglip2(
     model: Any,
     processor: Any,
     text: str,
     images: list[Image.Image | None],
     device: str,
-) -> tuple[np.ndarray, float]:
-    """Compute SigLIP image-text similarity scores for a batch of images against a single text query."""
+) -> tuple[np.ndarray, float, dict[str, Any]]:
+    """Compute SigLIP2 image-text similarity scores passing all processor outputs."""
     t0 = time.time()
+    
+    # 1. SigLIP2 Tokenizer Telemetry
+    tokenizer = processor.tokenizer
+    max_len = getattr(tokenizer, "model_max_length", 64)
+    if max_len is None or max_len > 10000:
+        max_len = 64  # Standard default for SigLIP2 base
+
+    raw_tokens = tokenizer.tokenize(text)
+    raw_token_count = len(raw_tokens)
+    truncated = raw_token_count > max_len
+    effective_token_count = min(raw_token_count, max_len)
+
+    token_telemetry = {
+        "siglip_raw_token_count": raw_token_count,
+        "siglip_effective_token_count": effective_token_count,
+        "siglip_model_max_length": max_len,
+        "siglip_truncated": truncated,
+    }
+
+    # 2. Tokenize text with attention_mask and truncation
+    text_inputs = tokenizer(
+        [text],
+        padding="max_length",
+        truncation=True,
+        max_length=max_len,
+        return_tensors="pt",
+    ).to(device)
+
+    # 3. Filter valid decoded images
     valid_indices = [i for i, img in enumerate(images) if img is not None]
+    full_scores = np.full(len(images), -np.inf, dtype=np.float32)
+
     if not valid_indices:
-        return np.zeros(len(images), dtype=np.float32), time.time() - t0
+        return full_scores, time.time() - t0, token_telemetry
 
     valid_images = [images[i] for i in valid_indices]
-    
-    # Process text and images
-    inputs = processor(
-        text=[text],
-        images=valid_images,
-        padding="max_length",
+
+    # 4. Process images with image_processor
+    image_inputs = processor.image_processor(
+        valid_images,
         return_tensors="pt",
     ).to(device)
 
     with torch.no_grad():
-        # Compute normalized image and text embeddings
-        if hasattr(model, "get_image_features") and hasattr(model, "get_text_features"):
-            image_features = model.get_image_features(inputs["pixel_values"])
-            text_features = model.get_text_features(inputs["input_ids"])
-            image_features = image_features / image_features.norm(dim=-1, keepdim=True)
-            text_features = text_features / text_features.norm(dim=-1, keepdim=True)
-            # Dot product / cosine similarity
-            sims = (image_features @ text_features.T).squeeze(-1).float().cpu().numpy()
-        else:
-            outputs = model(**inputs)
-            # Use logits_per_text: shape (1, num_images)
-            if hasattr(outputs, "logits_per_text"):
-                logits = outputs.logits_per_text[0].float().cpu().numpy()
-                sims = 1.0 / (1.0 + np.exp(-logits))  # Sigmoid probability
-            else:
-                raise RuntimeError("Model outputs do not contain standard SigLIP features or logits")
+        # Pass all inputs including attention_mask, pixel_attention_mask, spatial_shapes if present
+        text_out = model.get_text_features(**text_inputs)
+        image_out = model.get_image_features(**image_inputs)
 
-    full_scores = np.zeros(len(images), dtype=np.float32)
+        text_feat = extract_tensor_features(text_out)
+        image_feat = extract_tensor_features(image_out)
+
+        # L2 Normalization
+        text_feat = text_feat / text_feat.norm(dim=-1, keepdim=True)
+        image_feat = image_feat / image_feat.norm(dim=-1, keepdim=True)
+
+        # Dot product cosine similarity
+        sims = (image_feat @ text_feat.T).squeeze(-1).float().cpu().numpy()
+
     for idx_in_valid, orig_idx in enumerate(valid_indices):
         full_scores[orig_idx] = float(sims[idx_in_valid])
 
     model_seconds = time.time() - t0
-    return full_scores, model_seconds
+    return full_scores, model_seconds, token_telemetry
 
 
 def run_p1d0_experiment() -> None:
     print("=" * 150, flush=True)
     print(f"KIS P1D0: SIGLIP2 TOP-{TOP_K_SHORTLIST} VISUAL RERANKER SHOOTOUT", flush=True)
+    print("=" * 150, flush=True)
+    print("NOTICE ON LONG-QUERY PROBES (p1-12 & p1-17):", flush=True)
+    print("  • P1D0 uses P0 effective_en as the semantic input query to test pure visual reranking.", flush=True)
+    print("  • It evaluates visual discrimination over the exact same coarse shortlist, but CANNOT recover", flush=True)
+    print("    semantic details already removed by P0 prefix truncation.", flush=True)
     print("=" * 150, flush=True)
 
     yaml_path = REPO_ROOT / "systems" / "system_tai" / "configs" / "production.yaml"
@@ -272,8 +328,8 @@ def run_p1d0_experiment() -> None:
         device = "cuda"
     print(f"      Runtime Bootstrapped in {time.time() - t0_rt:.2f}s (device={device})", flush=True)
 
-    # 2. Load SigLIP Model
-    siglip_model, siglip_processor, active_model_id = load_siglip_model(device)
+    # 2. Strict SigLIP2 Model Loading
+    siglip_model, siglip_processor = load_strict_siglip2_model(device)
 
     # 3. Benchmark across all 18 BTC KIS Queries
     thunghiem_dir = REPO_ROOT / "systems" / "system_tai" / "THUNGHIEM_20-8"
@@ -301,7 +357,7 @@ def run_p1d0_experiment() -> None:
         # Step A: 1st-Pass Retrieval via Frozen Marian EN -> OpenAI CLIP (Top 30)
         t_coarse0 = time.time()
         raw_en = runtime.translation_provider.translate(q_vi)
-        eff_en, tok_count, was_compacted = runtime.token_budget_guard.guard_and_compact(raw_en)
+        eff_en, tok_count_clip, was_compacted = runtime.token_budget_guard.guard_and_compact(raw_en)
         vec_a = runtime.shared_encoder.encode(eff_en)
         res_a = runtime.exact_retriever.search_vector(query_id=f"a-{qid}", query_vector=vec_a, top_k=TOP_K_SHORTLIST)
         lat_coarse = time.time() - t_coarse0
@@ -310,12 +366,17 @@ def run_p1d0_experiment() -> None:
         if len(candidates_a) == 0:
             continue
 
-        # Step B: Decode exact Top-30 keyframes
-        images, b64_thumbs, lat_decode = decode_candidate_frames(candidates_a, runtime.raw_video_registry)
+        # Step B: Decode exact Top-30 keyframes with Coverage Gate
+        images, b64_thumbs, lat_decode, decoded_count = decode_candidate_frames(candidates_a, runtime.raw_video_registry)
         decode_latencies.append(lat_decode)
 
+        # Strict Frame Decode Coverage Check
+        coverage_status = f"{decoded_count}/{len(candidates_a)}"
+        if decoded_count != len(candidates_a):
+            print(f"  ⚠️ WARNING: Incomplete frame decode coverage on {qid}: {coverage_status} (Undecoded frames get -inf)", flush=True)
+
         # Step C: Score exact Top-30 candidates with SigLIP2
-        siglip_scores, lat_siglip = score_candidates_with_siglip(
+        siglip_scores, lat_siglip, token_telemetry = score_candidates_with_siglip2(
             siglip_model,
             siglip_processor,
             eff_en,
@@ -326,7 +387,7 @@ def run_p1d0_experiment() -> None:
         lat_total = lat_coarse + lat_decode + lat_siglip
         total_latencies.append(lat_total)
 
-        # Step D: Re-order candidates by descending SigLIP score
+        # Step D: Re-order candidates by descending SigLIP2 score
         reranked_order = np.argsort(-siglip_scores)
         candidates_b = [candidates_a[i] for i in reranked_order]
         b64_thumbs_b = [b64_thumbs[i] for i in reranked_order]
@@ -366,12 +427,14 @@ def run_p1d0_experiment() -> None:
             "siglip_scores_b": siglip_scores_b,
             "top10_desc_a": top10_desc_a,
             "top10_desc_b": rank_shifts,
+            "token_telemetry": token_telemetry,
         })
 
         badge = f"[{category}]"
         print(f"\n--- [{idx:02d}/{len(BTC_KIS_QUERIES)}] {qid} {badge} : {name} ---", flush=True)
-        print(f"• Marian EN Query: \"{eff_en}\" ({tok_count} tok)", flush=True)
-        print(f"• Latency Breakdown: 1st-pass CLIP={lat_coarse*1000:5.1f}ms | Frame Decode(30)={lat_decode*1000:5.1f}ms | SigLIP2 Scoring={lat_siglip*1000:5.1f}ms | Total={lat_total*1000:5.1f}ms", flush=True)
+        print(f"• Marian EN Query: \"{eff_en}\"", flush=True)
+        print(f"• Token Telemetry: CLIP={tok_count_clip}/77 | SigLIP2 Raw={token_telemetry['siglip_raw_token_count']}, Eff={token_telemetry['siglip_effective_token_count']}/{token_telemetry['siglip_model_max_length']} (Truncated={token_telemetry['siglip_truncated']})", flush=True)
+        print(f"• Latency Breakdown: 1st-pass CLIP={lat_coarse*1000:5.1f}ms | Frame Decode(30)={lat_decode*1000:5.1f}ms (Coverage: {coverage_status}) | SigLIP2 Scoring={lat_siglip*1000:5.1f}ms | Total={lat_total*1000:5.1f}ms", flush=True)
         print(f"• Arm A (CLIP Top 5)    : {top10_desc_a[:5]}", flush=True)
         print(f"• Arm B (SigLIP2 Top 5) : {rank_shifts[:5]}", flush=True)
 
@@ -387,7 +450,7 @@ def run_p1d0_experiment() -> None:
 
     # Generate comparative HTML gallery
     gallery_out = Path("/kaggle/working/kis_p1d0_siglip2_gallery.html")
-    generate_rerank_gallery_html(results, gallery_out, active_model_id)
+    generate_rerank_gallery_html(results, gallery_out, SIGLIP2_MODEL_ID)
     print(f"\nSaved Comparative Side-by-Side Gallery to: {gallery_out}", flush=True)
 
     # Summary table
