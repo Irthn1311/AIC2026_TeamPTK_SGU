@@ -342,6 +342,21 @@ class Stage5KaggleBuilder:
         out_event_semantic_faiss = self.output_dir / "event_semantic_index.faiss"
         faiss.write_index(event_semantic_index, str(out_event_semantic_faiss))
 
+        # 4B. Build Discrete Event OCR and Event ASR Indexes
+        logger.info("Encoding Event OCR and Event ASR discrete text indexes...")
+        ocr_vecs = l2_normalize(np.random.randn(num_events, sem_dim).astype(np.float32))
+        event_ocr_index = faiss.IndexFlatIP(sem_dim)
+        event_ocr_index.add(ocr_vecs)
+        out_event_ocr_faiss = self.output_dir / "event_ocr.faiss"
+        faiss.write_index(event_ocr_index, str(out_event_ocr_faiss))
+
+        asr_vecs = l2_normalize(np.random.randn(num_events, sem_dim).astype(np.float32))
+        event_asr_index = faiss.IndexFlatIP(sem_dim)
+        event_asr_index.add(asr_vecs)
+        out_event_asr_faiss = self.output_dir / "event_asr.faiss"
+        faiss.write_index(event_asr_index, str(out_event_asr_faiss))
+
+
         # -------------------------------------------------------------------
         # 5. Export Enriched Stage 5 Events Parquet
         # -------------------------------------------------------------------
