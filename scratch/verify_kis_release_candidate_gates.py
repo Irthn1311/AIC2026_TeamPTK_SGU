@@ -230,10 +230,11 @@ def run_gate3_btc18_canonical_replay() -> list[dict[str, Any]]:
                 "frame_id": p["frame_id"],
             })
 
+        top3_desc = [f"@{c['rank']}: {c['video_id']} (f={c['frame_id']})" for c in top3_candidates]
         print(f"[{idx:02d}/18] {qid:<18} in {elapsed:5.1f}s (Tokens: {tok_count:2d})", flush=True)
         print(f"     • VI Raw    : \"{q_vi[:80]}...\"", flush=True)
         print(f"     • Marian EN : \"{marian_en}\"", flush=True)
-        print(f"     • Top 3     : {[f'@{c[\"rank\"]}: {c[\"video_id\"]} (f={c[\"frame_id\"]})' for c in top3_candidates]}\n", flush=True)
+        print(f"     • Top 3     : {top3_desc}\n", flush=True)
 
         all_results.append({
             "qid": qid,
