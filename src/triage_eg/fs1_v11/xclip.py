@@ -35,7 +35,22 @@ class XClipAdapter:
 
         if self.model is None or self.processor is None or len(frames) != 8:
             raise RuntimeError("XCLIP_REQUIRES_LOADED_MODEL_AND_EXACTLY_8_FRAMES")
-        inputs = self.processor(text=[text], images=frames, return_tensors="pt", padding=True)
+        text_config = getattr(getattr(self.model, "config", None), "text_config", None)
+        text_limit = int(getattr(text_config, "max_position_embeddings", 77))
+        if text_limit <= 0:
+            raise RuntimeError(f"XCLIP_TEXT_POSITION_LIMIT_INVALID:{text_limit}")
+        inputs = self.processor(
+            text=[text],
+            images=frames,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=text_limit,
+        )
+        input_ids = inputs.get("input_ids")
+        if input_ids is None or input_ids.ndim != 2 or input_ids.shape[-1] > text_limit:
+            shape = None if input_ids is None else list(input_ids.shape)
+            raise RuntimeError(f"XCLIP_PROCESSOR_TEXT_TENSOR_INVALID:{shape}:{text_limit}")
         pixel_values = inputs.get("pixel_values")
         if (
             pixel_values is None
@@ -53,6 +68,8 @@ class XClipAdapter:
         return {
             "score": float(logits.reshape(-1)[0].item()),
             "logits_shape": list(logits.shape),
+            "text_token_count": int(input_ids.shape[-1]),
+            "text_max_position_embeddings": text_limit,
             "pixel_values_shape": list(inputs["pixel_values"].shape),
             "finite": True,
         }

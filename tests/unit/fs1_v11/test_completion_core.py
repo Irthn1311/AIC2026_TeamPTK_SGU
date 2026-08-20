@@ -181,6 +181,8 @@ def test_xclip_processor_uses_images_and_emits_batched_video_tensor(tmp_path: Pa
         def __call__(self, **kwargs):
             assert "videos" not in kwargs
             assert len(kwargs["images"]) == 8
+            assert kwargs["truncation"] is True
+            assert kwargs["max_length"] == 77
             return {
                 "input_ids": torch.ones((1, 3), dtype=torch.long),
                 "attention_mask": torch.ones((1, 3), dtype=torch.long),
@@ -197,7 +199,29 @@ def test_xclip_processor_uses_images_and_emits_batched_video_tensor(tmp_path: Pa
     adapter.model = Model()
     result = adapter.score("event", [np.zeros((2, 2, 3), np.uint8) for _ in range(8)])
     assert result["finite"] is True
+    assert result["text_token_count"] == 3
+    assert result["text_max_position_embeddings"] == 77
     assert result["pixel_values_shape"] == [1, 8, 3, 2, 2]
+
+
+def test_xclip_rejects_processor_text_tensor_above_model_limit(tmp_path: Path) -> None:
+    import torch
+
+    class Processor:
+        def __call__(self, **kwargs):
+            return {
+                "input_ids": torch.ones((1, 78), dtype=torch.long),
+                "attention_mask": torch.ones((1, 78), dtype=torch.long),
+                "pixel_values": torch.zeros((1, 8, 3, 2, 2)),
+            }
+
+    adapter = XClipAdapter(tmp_path, device="cpu")
+    adapter.processor = Processor()
+    adapter.model = SimpleNamespace(
+        config=SimpleNamespace(text_config=SimpleNamespace(max_position_embeddings=77))
+    )
+    with pytest.raises(RuntimeError, match="XCLIP_PROCESSOR_TEXT_TENSOR_INVALID"):
+        adapter.score("long event", [np.zeros((2, 2, 3), np.uint8) for _ in range(8)])
 
 
 def test_qwen_answer_updates_only_matching_grounded_candidate() -> None:
