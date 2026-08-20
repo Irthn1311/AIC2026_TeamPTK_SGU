@@ -40,7 +40,8 @@ if str(SYSTEM_TAI_SRC) not in sys.path:
     sys.path.insert(0, str(SYSTEM_TAI_SRC))
 
 import cv2
-from system_tai.kis.session_schema import SessionConfig
+from system_tai.kis.session_engine import OperationalKISRuntime
+from system_tai.kis.session_schema import QueryRequest, SessionConfig
 from system_tai.translation.provider import MarianOfflineTranslator, TokenBudgetGuard
 
 FORENSIC_QUERIES = [
@@ -146,14 +147,22 @@ def run_forensic_census() -> None:
     )
     guard = TokenBudgetGuard()
 
-    # Load top100 search results from previous Gate 3 replay if available
-    gate3_output_dir = Path("/kaggle/working/output/kis_release_gates")
-    if not gate3_output_dir.exists():
-        gate3_output_dir = Path("/kaggle/working/output/kis_production_smoke")
+    # Initialize runtime if needed for candidates
+    session_output = Path("/kaggle/working/output/kis_forensic_census") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "kis_forensic_census"
+    session_output.mkdir(parents=True, exist_ok=True)
 
-    thunghiem_dir = REPO_ROOT / "systems" / "system_tai" / "THUNGHIEM_20-8"
+    reuse_manifest_path: Path | None = None
+    for p in [
+        Path("/kaggle/working/manifest_cache.json"),
+        Path("/kaggle/input/system-tai-manifest/feature_manifest.json"),
+        Path("/kaggle/input/datasets/manifest_cache.json"),
+        Path("/kaggle/input/manifest_cache.json"),
+    ]:
+        if p.exists() and p.stat().st_size > 1000:
+            reuse_manifest_path = p
+            break
 
-    forensic_results = []
+    runtime_instance = None
 
     for item in FORENSIC_QUERIES:
         qid = item["qid"]
@@ -168,24 +177,51 @@ def run_forensic_census() -> None:
         # Compute exact dropped content if compacted
         dropped_text = ""
         if was_compacted:
-            # Find the difference
             if len(raw_marian_en) > len(effective_en):
                 dropped_text = raw_marian_en[len(effective_en):].strip()
 
         # Try to locate Top100 candidates from jsonl
-        top100_file = None
         candidates = []
         for cand_path in [
             gate3_output_dir / f"gate3-{qid}.top100.jsonl",
             gate3_output_dir / f"prod-smoke-{qid}.top100.jsonl",
+            session_output / f"forensic-{qid}.top100.jsonl",
             Path(f"/kaggle/working/output/{qid}.top100.jsonl"),
         ]:
             if cand_path.exists():
-                top100_file = cand_path
                 for line in cand_path.read_text(encoding="utf-8").splitlines():
                     if line.strip():
                         candidates.append(json.loads(line.strip()))
-                break
+                if candidates:
+                    break
+
+        if not candidates:
+            if runtime_instance is None:
+                print("Bootstrapping OperationalKISRuntime for on-demand candidate generation...", flush=True)
+                exec_cfg = SessionConfig.from_yaml(
+                    yaml_path,
+                    input_root=Path("/kaggle/input/datasets") if Path("/kaggle/input/datasets").exists() else Path("/kaggle/input"),
+                    output_root=session_output,
+                    reuse_manifest=reuse_manifest_path,
+                )
+                runtime_instance = OperationalKISRuntime.bootstrap(exec_cfg)
+
+            req = QueryRequest(
+                request_id=f"forensic-{qid}",
+                query_id=qid,
+                query_vi=q_vi,
+                query_en=None,
+                output_top_k=100,
+                refine_top_n=3,
+            )
+            res = runtime_instance.handle_query(req)
+            top100_rel = res["artifacts"].get("refined_top100_jsonl", res["artifacts"]["top100_jsonl"])
+            top100_path = runtime_instance.output_root / top100_rel
+            candidates = [
+                json.loads(line)
+                for line in top100_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
 
         forensic_results.append({
             "qid": qid,

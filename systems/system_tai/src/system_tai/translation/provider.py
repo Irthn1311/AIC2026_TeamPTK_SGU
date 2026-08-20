@@ -97,7 +97,7 @@ class MarianOfflineTranslator:
         except Exception as exc:
             if local_files_only:
                 try:
-                    logger.info("Retrying offline load from local cache without revision pin...")
+                    # 1. Try local cache without revision pin
                     self.tokenizer = AutoTokenizer.from_pretrained(
                         self.model_name,
                         cache_dir=resolved_cache,
@@ -109,10 +109,27 @@ class MarianOfflineTranslator:
                         local_files_only=True,
                     ).to(self._device)
                     self.model.eval()
-                except Exception as inner_exc:
-                    raise TranslationError(
-                        f"Failed to load Marian MT model from '{self.model_name}' (revision={self.revision}, offline): {inner_exc}"
-                    ) from inner_exc
+                except Exception:
+                    try:
+                        # 2. If fresh container has empty cache, provision once from Hub
+                        logger.info("Fresh container cache miss; provisioning model '%s' from Hugging Face hub...", self.model_name)
+                        self.tokenizer = AutoTokenizer.from_pretrained(
+                            self.model_name,
+                            cache_dir=resolved_cache,
+                            local_files_only=False,
+                            revision=self.revision,
+                        )
+                        self.model = AutoModelForSeq2SeqLM.from_pretrained(
+                            self.model_name,
+                            cache_dir=resolved_cache,
+                            local_files_only=False,
+                            revision=self.revision,
+                        ).to(self._device)
+                        self.model.eval()
+                    except Exception as dl_exc:
+                        raise TranslationError(
+                            f"Failed to load/provision Marian MT model from '{self.model_name}' (revision={self.revision}): {dl_exc}"
+                        ) from dl_exc
             else:
                 raise TranslationError(
                     f"Failed to load Marian MT model from '{self.model_name}' (revision={self.revision}): {exc}"
