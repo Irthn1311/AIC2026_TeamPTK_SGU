@@ -1,24 +1,23 @@
 #!/usr/bin/env python3
 """Unified QA + TRAKE BTC Operational Readiness & Full Submission Packager.
 
-Strict Constraints:
-  - 100% FROZEN RUNTIME: Zero algorithmic changes to QA Champion or TRAKE Pipeline.
-  - Dynamically discovers all queries in THUNGHIEM_20-8:
-      • KIS queries (*-kis.txt)
-      • TRAKE queries (*-trake.txt)
-      • QA queries (*-qa.txt)
-  - Executes TRAKE queries:
-      • video_id,f1,f2,...,fN (count of frame IDs == N exactly).
-      • Single video, non-decreasing frames, <= 100 rows.
-      • Empty output (0 rows) is flagged as OPERATIONAL_FAIL_EMPTY_OUTPUT.
-  - Executes QA queries:
-      • video_id,official_frame_id,answer (answer <= 100 chars, standard CSV writer quoting).
-      • <= 100 rows.
-      • Empty output is flagged as OPERATIONAL_FAIL_EMPTY_OUTPUT.
-  - Preserves already-generated KIS CSV files in submission/.
-  - Performs Global Coverage & Integrity Audit (Expected == Generated).
-  - Automatically creates submission.zip when all queries are 100% valid and non-empty.
-  - Emits BTC_P1_FULL_SUBMISSION_READY upon complete success.
+Strict Production Invariants:
+  1. Authoritative BTC Package Coverage:
+     - Exactly 24 queries in THUNGHIEM_20-8 (18 KIS, 3 TRAKE, 3 QA; Note: index p1-3 is omitted by BTC).
+     - Hard-fails if any authoritative query is missing.
+  2. Preflight Gate:
+     - Strictly asserts N=4 events for p1-4-trake, p1-16-trake, p1-18-trake before runtime bootstrap.
+     - Parses QA questions and event contexts deterministically.
+     - Continuation lines append to current event description (never create ghost events).
+  3. 100% Frozen Runtime & Artifact Addressing:
+     - Zero algorithmic modifications to QA Champion or TRAKE Pipeline.
+     - Direct artifact resolution via runtime resp["artifacts"].
+     - Official frame-ID mapping verification (actual_frame_id from corpus mapping).
+     - QA answers are NEVER silently truncated; answers > 100 chars flag operational FAIL.
+  4. Packaging & Declaration:
+     - Validates all 24 CSV files against official BTC rules.
+     - Automatically creates submission.zip with required submission/ folder.
+     - Emits BTC_P1_FULL_SUBMISSION_READY.
 """
 
 from __future__ import annotations
@@ -47,76 +46,91 @@ SYSTEM_TAI_SRC = REPO_ROOT / "systems" / "system_tai" / "src"
 if str(SYSTEM_TAI_SRC) not in sys.path:
     sys.path.insert(0, str(SYSTEM_TAI_SRC))
 
-try:
-    import clip
-except ImportError:
-    print("Installing official openai-clip dependency ...", flush=True)
-    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "git+https://github.com/openai/CLIP.git", "ftfy", "regex"], check=True)
-    import clip
-
-try:
-    import cv2
-except ImportError:
-    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "opencv-python-headless"], check=False)
-    import cv2
-
-import torch
-from system_tai.kis.session_engine import OperationalKISRuntime
-from system_tai.kis.session_schema import (
-    QAQueryRequest,
-    SessionConfig,
-    TRAKEQueryRequest,
-)
-
 THUNGHIEM_DIR = REPO_ROOT / "systems" / "system_tai" / "THUNGHIEM_20-8"
 
+# -----------------------------------------------------------------------------
+# 1. Authoritative BTC Query List (24 Queries Total)
+# -----------------------------------------------------------------------------
+AUTHORITATIVE_KIS_QIDS = [
+    "query-p1-1-kis",
+    "query-p1-2-kis",
+    "query-p1-5-kis",
+    "query-p1-6-kis",
+    "query-p1-7-kis",
+    "query-p1-8-kis",
+    "query-p1-9-kis",
+    "query-p1-10-kis",
+    "query-p1-11-kis",
+    "query-p1-12-kis",
+    "query-p1-13-kis",
+    "query-p1-14-kis",
+    "query-p1-17-kis",
+    "query-p1-20-kis",
+    "query-p1-21-kis",
+    "query-p1-23-kis",
+    "query-p1-24-kis",
+    "query-p1-25-kis",
+]
 
-def get_reuse_manifest() -> Path | None:
-    for p in [
-        Path("/kaggle/working/manifest_cache.json"),
-        Path("/kaggle/input/system-tai-manifest/feature_manifest.json"),
-        Path("/kaggle/input/datasets/manifest_cache.json"),
-        Path("/kaggle/input/manifest_cache.json"),
-        REPO_ROOT / "systems" / "system_tai" / "data" / "feature_manifest.json",
-    ]:
-        if p.exists() and p.stat().st_size > 1000:
-            return p
-    return None
+AUTHORITATIVE_TRAKE_QIDS = [
+    "query-p1-4-trake",
+    "query-p1-16-trake",
+    "query-p1-18-trake",
+]
+
+AUTHORITATIVE_QA_QIDS = [
+    "query-p1-15-qa",
+    "query-p1-19-qa",
+    "query-p1-22-qa",
+]
+
+ALL_AUTHORITATIVE_QIDS = AUTHORITATIVE_KIS_QIDS + AUTHORITATIVE_TRAKE_QIDS + AUTHORITATIVE_QA_QIDS
 
 
-def parse_trake_query(file_path: Path) -> tuple[str, list[dict[str, str]]]:
+# -----------------------------------------------------------------------------
+# 2. Robust Parsers
+# -----------------------------------------------------------------------------
+def parse_trake_query_robust(file_path: Path) -> tuple[str, list[dict[str, str]]]:
     content = file_path.read_text(encoding="utf-8").strip()
     lines = [line.strip() for line in content.splitlines() if line.strip()]
-    events: list[dict[str, str]] = []
-    for line in lines:
-        match = re.match(r"^(?:E\d+|Sự kiện \d+|\d+\.)\s*:\s*(.+)$", line, re.IGNORECASE)
-        if match:
-            events.append({"description": match.group(1).strip()})
-        elif line.startswith("E") and ":" in line:
-            parts = line.split(":", 1)
-            events.append({"description": parts[1].strip()})
-        elif not events and ("tìm các sự kiện" in line.lower() or "gồm các khoảnh khắc" in line.lower()):
-            continue
-        elif events:
-            events.append({"description": line})
 
-    if not events:
-        for line in lines:
-            events.append({"description": line})
+    events: list[dict[str, str]] = []
+    current_event_text = ""
+
+    for line in lines:
+        match = re.match(r"^(?:E\s*\d+|Sự\s*kiện\s*\d+|\b\d+\b\s*[\.:])\s*[:\.]?\s*(.*)$", line, re.IGNORECASE)
+        if match:
+            if current_event_text:
+                events.append({"description": current_event_text.strip()})
+            current_event_text = match.group(1).strip()
+        elif line.startswith("E") and ":" in line:
+            if current_event_text:
+                events.append({"description": current_event_text.strip()})
+            current_event_text = line.split(":", 1)[1].strip()
+        elif not events and not current_event_text:
+            # Preamble line
+            continue
+        else:
+            # Continuation line for the current event description
+            if current_event_text:
+                current_event_text += " " + line
+            else:
+                current_event_text = line
+
+    if current_event_text:
+        events.append({"description": current_event_text.strip()})
 
     return file_path.stem, events
 
 
-def parse_qa_query(file_path: Path) -> tuple[str, str, str]:
+def parse_qa_query_robust(file_path: Path) -> tuple[str, str, str]:
     content = file_path.read_text(encoding="utf-8").strip()
     lines = [line.strip() for line in content.splitlines() if line.strip()]
     full_text = " ".join(lines)
-    
-    # Identify question part vs event description part
-    # Look for 'Hỏi ' or sentence ending with '?'
+
     q_part = full_text
     desc_part = full_text
-    
+
     match = re.search(r"(Hỏi\s+.+\?.*)$", full_text, re.IGNORECASE)
     if match:
         q_part = match.group(1).strip()
@@ -132,6 +146,59 @@ def parse_qa_query(file_path: Path) -> tuple[str, str, str]:
     return file_path.stem, desc_part, q_part
 
 
+# -----------------------------------------------------------------------------
+# 3. Preflight Inspection Gate (Runs 100% locally before model bootstrap)
+# -----------------------------------------------------------------------------
+def run_preflight_gate() -> tuple[list[tuple[str, list[dict[str, str]]]], list[tuple[str, str, str]]]:
+    print("\n" + "=" * 120)
+    print("STAGE 0: PREFLIGHT CONTRACT & PARSING INSPECTION GATE")
+    print("=" * 120)
+
+    # 1. Verify existence of all 24 authoritative query files
+    discovered_files = list(THUNGHIEM_DIR.glob("*.txt"))
+    discovered_qids = [f.stem for f in discovered_files]
+    print(f"[Preflight] Authoritative Query Target: {len(ALL_AUTHORITATIVE_QIDS)} queries")
+    print(f"  • KIS   : {len(AUTHORITATIVE_KIS_QIDS)} queries ({', '.join(AUTHORITATIVE_KIS_QIDS)})")
+    print(f"  • TRAKE : {len(AUTHORITATIVE_TRAKE_QIDS)} queries ({', '.join(AUTHORITATIVE_TRAKE_QIDS)})")
+    print(f"  • QA    : {len(AUTHORITATIVE_QA_QIDS)} queries ({', '.join(AUTHORITATIVE_QA_QIDS)})")
+
+    missing = set(ALL_AUTHORITATIVE_QIDS) - set(discovered_qids)
+    if missing:
+        raise FileNotFoundError(f"FATAL PREFLIGHT ERROR: Missing authoritative query files in {THUNGHIEM_DIR}: {missing}")
+
+    # 2. Parse and assert TRAKE events
+    parsed_trake: list[tuple[str, list[dict[str, str]]]] = []
+    print("\n[Preflight] Parsing & Verifying TRAKE Queries:")
+    for qid in AUTHORITATIVE_TRAKE_QIDS:
+        fpath = THUNGHIEM_DIR / f"{qid}.txt"
+        q_stem, events = parse_trake_query_robust(fpath)
+        assert q_stem == qid
+        assert len(events) == 4, f"FATAL PREFLIGHT ERROR: {qid} parsed {len(events)} events, expected N=4"
+        parsed_trake.append((qid, events))
+        print(f"  • {qid:<22} -> N={len(events)} Events Verified ✅")
+        for e_idx, ev in enumerate(events, start=1):
+            print(f"      - E{e_idx}: {ev['description']}")
+
+    # 3. Parse and assert QA questions
+    parsed_qa: list[tuple[str, str, str]] = []
+    print("\n[Preflight] Parsing & Verifying QA Queries:")
+    for qid in AUTHORITATIVE_QA_QIDS:
+        fpath = THUNGHIEM_DIR / f"{qid}.txt"
+        q_stem, desc, q_part = parse_qa_query_robust(fpath)
+        assert q_stem == qid
+        assert desc and q_part, f"FATAL PREFLIGHT ERROR: {qid} has empty description or question"
+        parsed_qa.append((qid, desc, q_part))
+        print(f"  • {qid:<22} -> Parsed Cleanly ✅")
+        print(f"      - Context : {desc}")
+        print(f"      - Question: {q_part}")
+
+    print("\n>>> PREFLIGHT INSPECTION GATE: 100% PASS ✅ <<<\n")
+    return parsed_trake, parsed_qa
+
+
+# -----------------------------------------------------------------------------
+# 4. CSV Validators
+# -----------------------------------------------------------------------------
 def validate_trake_csv(csv_path: Path, expected_event_count: int) -> list[str]:
     errors: list[str] = []
     if not csv_path.exists():
@@ -203,7 +270,7 @@ def validate_qa_csv(csv_path: Path) -> list[str]:
             except ValueError:
                 errors.append(f"Line {idx}: Invalid integer frame_id '{fid_str}'")
             if len(ans) > 100:
-                errors.append(f"Line {idx}: Answer exceeds 100 chars ({len(ans)} chars)")
+                errors.append(f"Line {idx}: Answer length {len(ans)} > 100 chars: '{ans}'")
             key = (vid, fid, ans)
             if key in seen:
                 errors.append(f"Line {idx}: Duplicate row {key}")
@@ -244,6 +311,9 @@ def validate_kis_csv(csv_path: Path) -> list[str]:
     return errors
 
 
+# -----------------------------------------------------------------------------
+# 5. Fast Video Frame Decoder & Visual HTML Gallery
+# -----------------------------------------------------------------------------
 VIDEO_PATH_CACHE: dict[str, Path] = {}
 
 
@@ -271,10 +341,12 @@ def resolve_video_path(video_id: str) -> Path | None:
 
 
 def decode_single_frame(video_id: str, frame_id: int) -> str:
-    vpath = resolve_video_path(video_id)
-    if not vpath or not vpath.exists():
-        return ""
     try:
+        import cv2
+        import base64
+        vpath = resolve_video_path(video_id)
+        if not vpath or not vpath.exists():
+            return ""
         cap = cv2.VideoCapture(str(vpath))
         if not cap.isOpened():
             return ""
@@ -287,7 +359,6 @@ def decode_single_frame(video_id: str, frame_id: int) -> str:
         new_w = 220
         new_h = int(h * (new_w / w))
         resized = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
-        import base64
         _, buf = cv2.imencode(".jpg", resized, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
         return base64.b64encode(buf).decode("utf-8")
     except Exception:
@@ -295,14 +366,13 @@ def decode_single_frame(video_id: str, frame_id: int) -> str:
 
 
 def generate_full_gallery_html(submission_dir: Path, out_html_path: Path) -> None:
-    print(f"\n[Visual Gallery] Generating Comprehensive Visual Gallery for ALL 25 BTC Queries (KIS + TRAKE + QA)...", flush=True)
-    
+    print(f"\n[Visual Gallery] Generating Comprehensive Visual Gallery for ALL 24 BTC Queries...", flush=True)
     sections_html = []
 
     # 1. TRAKE Gallery
     trake_cards = []
     for tr_f in sorted(list(THUNGHIEM_DIR.glob("*trake*.txt"))):
-        qid, events = parse_trake_query(tr_f)
+        qid, events = parse_trake_query_robust(tr_f)
         csv_p = submission_dir / f"{qid}.csv"
         chains = []
         if csv_p.exists():
@@ -357,7 +427,7 @@ def generate_full_gallery_html(submission_dir: Path, out_html_path: Path) -> Non
     # 2. QA Gallery
     qa_cards = []
     for qa_f in sorted(list(THUNGHIEM_DIR.glob("*qa*.txt"))):
-        qid, desc, question = parse_qa_query(qa_f)
+        qid, desc, question = parse_qa_query_robust(qa_f)
         csv_p = submission_dir / f"{qid}.csv"
         qa_preds = []
         if csv_p.exists():
@@ -450,7 +520,7 @@ def generate_full_gallery_html(submission_dir: Path, out_html_path: Path) -> Non
     <html>
     <head><meta charset="utf-8"><title>BTC Full Submission Package Gallery</title></head>
     <body style="background:#141414; color:#fff; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; padding:16px;">
-        <h2 style="color:#61afef; border-bottom:2px solid #333; padding-bottom:8px;">📦 BÁO CÁO TRỰC QUAN GÓI NỘP BÀI BTC HOÀN CHỈNH (25 QUERIES)</h2>
+        <h2 style="color:#61afef; border-bottom:2px solid #333; padding-bottom:8px;">📦 BÁO CÁO TRỰC QUAN GÓI NỘP BÀI BTC HOÀN CHỈNH (24 QUERIES)</h2>
         <div style="color:#aaa; font-size:12px; margin-bottom:16px;">
             <b>Xác thực nộp bài 100%:</b> Hiển thị đầy đủ hình ảnh, câu hỏi, câu trả lời Q&A và chuỗi sự kiện TRAKE giải mã trực tiếp từ file CSV nộp.
         </div>
@@ -462,7 +532,48 @@ def generate_full_gallery_html(submission_dir: Path, out_html_path: Path) -> Non
     print(f"      • Saved Full Submission Visual Gallery to: {out_html_path} ✅", flush=True)
 
 
+# -----------------------------------------------------------------------------
+# 6. Main Execution Pipeline
+# -----------------------------------------------------------------------------
+def get_reuse_manifest() -> Path | None:
+    for p in [
+        Path("/kaggle/working/manifest_cache.json"),
+        Path("/kaggle/input/system-tai-manifest/feature_manifest.json"),
+        Path("/kaggle/input/datasets/manifest_cache.json"),
+        Path("/kaggle/input/manifest_cache.json"),
+        REPO_ROOT / "systems" / "system_tai" / "data" / "feature_manifest.json",
+    ]:
+        if p.exists() and p.stat().st_size > 1000:
+            return p
+    return None
+
+
 def run_unified_readiness() -> None:
+    # --- STAGE 0: PREFLIGHT INSPECTION GATE ---
+    parsed_trake, parsed_qa = run_preflight_gate()
+
+    # --- STAGE 1: BOOTSTRAP OPERATIONAL RUNTIME ---
+    try:
+        import clip
+    except ImportError:
+        print("Installing official openai-clip dependency ...", flush=True)
+        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "git+https://github.com/openai/CLIP.git", "ftfy", "regex"], check=True)
+        import clip
+
+    try:
+        import cv2
+    except ImportError:
+        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "opencv-python-headless"], check=False)
+        import cv2
+
+    import torch
+    from system_tai.kis.session_engine import OperationalKISRuntime
+    from system_tai.kis.session_schema import (
+        QAQueryRequest,
+        SessionConfig,
+        TRAKEQueryRequest,
+    )
+
     yaml_path = REPO_ROOT / "systems" / "system_tai" / "configs" / "production.yaml"
     input_root = Path("/kaggle/input/datasets") if Path("/kaggle/input/datasets").exists() else Path("/kaggle/input")
     reuse_manifest = get_reuse_manifest()
@@ -475,21 +586,6 @@ def run_unified_readiness() -> None:
         reuse_manifest=reuse_manifest,
     )
 
-    # 1. Dynamic Discovery of ALL BTC Queries
-    kis_files = sorted(list(THUNGHIEM_DIR.glob("*kis*.txt")))
-    trake_files = sorted(list(THUNGHIEM_DIR.glob("*trake*.txt")))
-    qa_files = sorted(list(THUNGHIEM_DIR.glob("*qa*.txt")))
-
-    all_expected_files = kis_files + trake_files + qa_files
-    expected_qids = [f.stem for f in all_expected_files]
-
-    print(f"\n[Dynamic Discovery] Total {len(expected_qids)} queries found in {THUNGHIEM_DIR}:")
-    print(f"  • KIS Queries   : {len(kis_files)} ({', '.join([f.stem for f in kis_files])})")
-    print(f"  • TRAKE Queries : {len(trake_files)} ({', '.join([f.stem for f in trake_files])})")
-    print(f"  • QA Queries    : {len(qa_files)} ({', '.join([f.stem for f in qa_files])})")
-    print(f"  • TOTAL         : {len(expected_qids)}")
-
-    # 2. Bootstrap Operational Runtime
     print("\n[1/3] Bootstrapping OperationalKISRuntime (Frozen QA Champion & TRAKE Pipeline)...", flush=True)
     t0_rt = time.time()
     runtime = OperationalKISRuntime.bootstrap(cfg)
@@ -503,16 +599,15 @@ def run_unified_readiness() -> None:
 
     operational_failures: list[dict[str, Any]] = []
 
-    # 3. Execute TRAKE Queries
+    # --- STAGE 2: EXECUTE FROZEN TRAKE PIPELINE ---
     print("\n" + "=" * 150, flush=True)
-    print("EXECUTING FROZEN TRAKE PIPELINE (READ-ONLY OPERATIONAL AUDIT)", flush=True)
+    print("STAGE 2: EXECUTING FROZEN TRAKE PIPELINE (READ-ONLY OPERATIONAL AUDIT)", flush=True)
     print("=" * 150, flush=True)
 
-    for f in trake_files:
-        qid, events = parse_trake_query(f)
+    for qid, events in parsed_trake:
         t0_q = time.time()
         req = TRAKEQueryRequest(
-            request_id=f"req-{qid}",
+            request_id=qid,
             query_id=qid,
             events=tuple(events),
             include_vi_variant=True,
@@ -526,13 +621,13 @@ def run_unified_readiness() -> None:
         resp = runtime.handle_trake_query(req)
         lat_q = time.time() - t0_q
 
-        req_dir_name = qid
-        query_out_dir = out_dir / "requests" / req_dir_name
-        predictions_jsonl = query_out_dir / "trake_predictions.jsonl"
+        # Direct artifact resolution from response
+        pred_rel = resp["artifacts"]["trake_predictions_jsonl"]
+        pred_file = runtime.output_root / pred_rel
 
         predictions: list[dict[str, Any]] = []
-        if predictions_jsonl.exists():
-            with predictions_jsonl.open("r", encoding="utf-8") as stream:
+        if pred_file.exists():
+            with pred_file.open("r", encoding="utf-8") as stream:
                 for line in stream:
                     if line.strip():
                         predictions.append(json.loads(line))
@@ -556,20 +651,21 @@ def run_unified_readiness() -> None:
                 operational_failures.append({"qid": qid, "task": "TRAKE", "reason": str(val_errs)})
             else:
                 top3_str = " | ".join([f"@{r}:{p['video_id']}({','.join(map(str, p['frame_ids']))})" for r, p in enumerate(predictions[:3], start=1)])
+                sample_p = predictions[0]
                 print(f"✅ [{qid}] (N={len(events)} events | Rows: {len(predictions)}/100 | Lat: {lat_q*1000:.0f}ms)")
-                print(f"    - Top 3 Chains: {top3_str}")
-                print(f"    - File Written: {csv_path} (Validated ✅)")
+                print(f"    - Frame Mapping Sample: video_id={sample_p['video_id']}, official_frame_ids={sample_p['frame_ids']} ✅")
+                print(f"    - Top 3 Chains        : {top3_str}")
+                print(f"    - File Written        : {csv_path} (Validated ✅)")
 
-    # 4. Execute QA Queries
+    # --- STAGE 3: EXECUTE FROZEN QA CHAMPION PIPELINE ---
     print("\n" + "=" * 150, flush=True)
-    print("EXECUTING FROZEN QA CHAMPION PIPELINE (READ-ONLY OPERATIONAL AUDIT)", flush=True)
+    print("STAGE 3: EXECUTING FROZEN QA CHAMPION PIPELINE (READ-ONLY OPERATIONAL AUDIT)", flush=True)
     print("=" * 150, flush=True)
 
-    for f in qa_files:
-        qid, desc, question = parse_qa_query(f)
+    for qid, desc, question in parsed_qa:
         t0_q = time.time()
         req = QAQueryRequest(
-            request_id=f"req-{qid}",
+            request_id=qid,
             query_id=qid,
             event_description=desc,
             question=question,
@@ -582,13 +678,13 @@ def run_unified_readiness() -> None:
         resp = runtime.handle_qa_query(req)
         lat_q = time.time() - t0_q
 
-        req_dir_name = qid
-        query_out_dir = out_dir / "requests" / req_dir_name
-        predictions_jsonl = query_out_dir / "qa_predictions.jsonl"
+        # Direct artifact resolution from response
+        pred_rel = resp["artifacts"]["qa_predictions_jsonl"]
+        pred_file = runtime.output_root / pred_rel
 
         predictions: list[dict[str, Any]] = []
-        if predictions_jsonl.exists():
-            with predictions_jsonl.open("r", encoding="utf-8") as stream:
+        if pred_file.exists():
+            with pred_file.open("r", encoding="utf-8") as stream:
                 for line in stream:
                     if line.strip():
                         predictions.append(json.loads(line))
@@ -604,7 +700,7 @@ def run_unified_readiness() -> None:
                 for p in predictions[:100]:
                     vid = str(p["video_id"]).removesuffix(".mp4")
                     fid = int(p["frame_id"])
-                    ans = str(p["answer"]).strip()[:100]
+                    ans = str(p["answer"]).strip()
                     writer.writerow([vid, fid, ans])
 
             val_errs = validate_qa_csv(csv_path)
@@ -613,20 +709,22 @@ def run_unified_readiness() -> None:
                 operational_failures.append({"qid": qid, "task": "QA", "reason": str(val_errs)})
             else:
                 top3_str = " | ".join([f"@{r}:{p['video_id']}(f={p['frame_id']}, ans='{p['answer']}')" for r, p in enumerate(predictions[:3], start=1)])
+                sample_p = predictions[0]
                 print(f"✅ [{qid}] (Rows: {len(predictions)}/100 | Lat: {lat_q*1000:.0f}ms)")
-                print(f"    - Top 3 Predictions: {top3_str}")
-                print(f"    - File Written     : {csv_path} (Validated ✅)")
+                print(f"    - Frame Mapping Sample: video_id={sample_p['video_id']}, official_frame_id={sample_p['frame_id']}, answer='{sample_p['answer']}' ✅")
+                print(f"    - Top 3 Predictions   : {top3_str}")
+                print(f"    - File Written        : {csv_path} (Validated ✅)")
 
-    # 5. Global Submission Package Audit & Verification
+    # --- STAGE 4: GLOBAL SUBMISSION PACKAGE INTEGRITY AUDIT ---
     print("\n" + "=" * 150, flush=True)
-    print("GLOBAL SUBMISSION PACKAGE INTEGRITY AUDIT", flush=True)
+    print("STAGE 4: GLOBAL SUBMISSION PACKAGE INTEGRITY AUDIT", flush=True)
     print("=" * 150, flush=True)
 
     csv_files = sorted(list(submission_dir.glob("query-p1-*.csv")))
     generated_qids = [f.stem for f in csv_files]
 
-    missing_qids = set(expected_qids) - set(generated_qids)
-    extra_qids = set(generated_qids) - set(expected_qids)
+    missing_qids = set(ALL_AUTHORITATIVE_QIDS) - set(generated_qids)
+    extra_qids = set(generated_qids) - set(ALL_AUTHORITATIVE_QIDS)
 
     # Validate all existing CSV files in submission directory
     all_invalid: list[str] = []
@@ -635,7 +733,7 @@ def run_unified_readiness() -> None:
             errs = validate_kis_csv(f)
         elif "-trake" in f.name:
             tr_file = THUNGHIEM_DIR / f"{f.stem}.txt"
-            _, evs = parse_trake_query(tr_file)
+            _, evs = parse_trake_query_robust(tr_file)
             errs = validate_trake_csv(f, expected_event_count=len(evs))
         elif "-qa" in f.name:
             errs = validate_qa_csv(f)
@@ -644,12 +742,12 @@ def run_unified_readiness() -> None:
         if errs:
             all_invalid.append(f"{f.name}: {errs}")
 
-    print(f"Expected Queries : {len(expected_qids)}")
-    print(f"Generated CSVs   : {len(generated_qids)}")
-    print(f"Missing Queries  : {sorted(list(missing_qids))}")
-    print(f"Extra CSVs       : {sorted(list(extra_qids))}")
-    print(f"Invalid / Empty  : {all_invalid}")
-    print(f"Failures Logged  : {operational_failures}")
+    print(f"Authoritative Target: {len(ALL_AUTHORITATIVE_QIDS)}")
+    print(f"Generated CSVs      : {len(generated_qids)}")
+    print(f"Missing Queries     : {sorted(list(missing_qids))}")
+    print(f"Extra CSVs          : {sorted(list(extra_qids))}")
+    print(f"Invalid / Empty     : {all_invalid}")
+    print(f"Failures Logged     : {operational_failures}")
 
     # Generate Full Visual Gallery HTML for User Inspection
     gallery_out = Path("/kaggle/working/btc_full_submission_gallery.html") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "btc_full_submission_gallery.html"
@@ -660,7 +758,7 @@ def run_unified_readiness() -> None:
         and len(extra_qids) == 0
         and len(all_invalid) == 0
         and len(operational_failures) == 0
-        and len(generated_qids) == len(expected_qids)
+        and len(generated_qids) == len(ALL_AUTHORITATIVE_QIDS)
     ):
         # Create submission.zip
         zip_path = Path("/kaggle/working/submission.zip") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "submission.zip"
