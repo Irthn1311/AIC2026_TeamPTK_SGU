@@ -509,10 +509,10 @@ def run_qa_recovery(runtime: OperationalKISRuntime, translator: VinAIB1Translato
         # RRF Fusion of VI + VinAI B1 EN
         fused = runtime.weighted_rrf.fuse_rankings(
             query_id=qid,
-            variants=[var_vi, var_en],
+            variants=(var_vi, var_en),
             rankings={"vi": cands_vi, "en": cands_en},
-            top_k=50,
-            rrf_k=60.0,
+            output_top_k=50,
+            rrf_constant=60.0,
         )
 
         # Apply Video Conditioned Refinement
