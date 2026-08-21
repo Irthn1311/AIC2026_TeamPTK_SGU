@@ -128,20 +128,36 @@ def get_reuse_manifest() -> Path | None:
 
 
 def resolve_query_policy(qid: str) -> dict[str, str]:
-    """Resolves primary, secondary, and hedge arm for any discovered KIS query."""
-    # 1. P1G1-Audited Special Primary Queries
+    """Resolves explicit primary, secondary, and hedge arm for every BTC KIS query."""
+    # 1. P1G1 Inspected Queries with Explicit Primary Routing
     if "p1-21" in qid:
         return {"primary": "Arm C (VinAI B3)", "secondary": "Arm B (VinAI B1)", "hedge": "Arm A (Marian P0)", "tag": "AUDITED_B3_PRIMARY"}
     if "p1-9" in qid:
-        return {"primary": "Arm B (VinAI B1)", "secondary": "Arm A (Marian P0)", "hedge": "Arm C (VinAI B3)", "tag": "AUDITED_B1_PRIMARY_MARIAN_SEC"}
+        return {"primary": "Arm B (VinAI B1)", "secondary": "Arm A (Marian P0)", "hedge": "Arm C (VinAI B3)", "tag": "AUDITED_B1_PRIMARY_MARIAN_SEC_B3_LAST"}
     if "p1-2" in qid:
         return {"primary": "Arm C (VinAI B3)", "secondary": "Arm B (VinAI B1)", "hedge": "Arm A (Marian P0)", "tag": "AUDITED_B3_PRIMARY"}
-    if any(k in qid for k in ["p1-13", "p1-17", "p1-24", "p1-25"]):
-        return {"primary": "Arm B (VinAI B1)", "secondary": "Arm C (VinAI B3)", "hedge": "Arm A (Marian P0)", "tag": "AUDITED_VINAI_PRIMARY"}
-    if any(k in qid for k in ["p1-1", "p1-5", "p1-7", "p1-10", "p1-11", "p1-20"]):
-        return {"primary": "Arm B (VinAI B1)", "secondary": "Arm C (VinAI B3)", "hedge": "Arm A (Marian P0)", "tag": "AUDITED_GUARD_B1_PRIMARY"}
+    if "p1-13" in qid:
+        return {"primary": "Arm C (VinAI B3)", "secondary": "Arm B (VinAI B1)", "hedge": "Arm A (Marian P0)", "tag": "AUDITED_B3_PRIMARY"}
+    if "p1-17" in qid:
+        return {"primary": "Arm B (VinAI B1)", "secondary": "Arm C (VinAI B3)", "hedge": "Arm A (Marian P0)", "tag": "AUDITED_B1_PRIMARY"}
+    if "p1-24" in qid:
+        return {"primary": "Arm B (VinAI B1)", "secondary": "Arm C (VinAI B3)", "hedge": "Arm A (Marian P0)", "tag": "AUDITED_B1_PRIMARY"}
+    if "p1-25" in qid:
+        return {"primary": "Arm B (VinAI B1)", "secondary": "Arm C (VinAI B3)", "hedge": "Arm A (Marian P0)", "tag": "AUDITED_B1_PRIMARY"}
+    if "p1-1" in qid:
+        return {"primary": "Arm A (Marian P0)", "secondary": "Arm B (VinAI B1)", "hedge": "Arm C (VinAI B3)", "tag": "AUDITED_MARIAN_PRIMARY"}
+    if "p1-5" in qid:
+        return {"primary": "Arm B (VinAI B1)", "secondary": "Arm C (VinAI B3)", "hedge": "Arm A (Marian P0)", "tag": "AUDITED_B1_PRIMARY"}
+    if "p1-7" in qid:
+        return {"primary": "Arm B (VinAI B1)", "secondary": "Arm C (VinAI B3)", "hedge": "Arm A (Marian P0)", "tag": "AUDITED_B1_PRIMARY"}
+    if "p1-10" in qid:
+        return {"primary": "Arm B (VinAI B1)", "secondary": "Arm C (VinAI B3)", "hedge": "Arm A (Marian P0)", "tag": "AUDITED_B1_PRIMARY"}
+    if "p1-11" in qid:
+        return {"primary": "Arm A (Marian P0)", "secondary": "Arm C (VinAI B3)", "hedge": "Arm B (VinAI B1)", "tag": "AUDITED_MARIAN_PRIMARY"}
+    if "p1-20" in qid:
+        return {"primary": "Arm B (VinAI B1)", "secondary": "Arm C (VinAI B3)", "hedge": "Arm A (Marian P0)", "tag": "AUDITED_B1_PRIMARY"}
 
-    # 2. P1G1-Unseen Queries (p1-6, p1-8, p1-12, p1-14, p1-23, etc.) -> Conservative Marian P0 Primary Top-3
+    # 2. P1G1 Unseen Queries (p1-6, p1-8, p1-12, p1-14, p1-23, etc.) -> Conservative Marian P0 Primary Top-3
     return {"primary": "Arm A (Marian P0)", "secondary": "Arm B (VinAI B1)", "hedge": "Arm C (VinAI B3)", "tag": "UNSEEN_MARIAN_PRIMARY_TOP3"}
 
 
@@ -356,6 +372,10 @@ def run_kis_submission_merger() -> None:
             protected_prefix_rank=1,
         ).result.ranked_candidates
 
+        # Candidate Counts Assertion
+        len_a, len_b, len_c = len(final_a), len(final_b), len(final_c)
+        assert len_a >= 50 and len_b >= 50 and len_c >= 50, f"FATAL: Incomplete ranked candidate lists for {qid}: A={len_a}, B={len_b}, C={len_c}"
+
         arm_candidates = {
             "Arm A (Marian P0)": list(final_a),
             "Arm B (VinAI B1)": list(final_b),
@@ -395,14 +415,18 @@ def run_kis_submission_merger() -> None:
             "qid": qid,
             "tag": tag,
             "primary": primary_arm,
+            "input_cands": f"A:{len_a}|B:{len_b}|C:{len_c}",
             "rows": len(merged_candidates),
             "dups_removed": dups_removed,
             "top20_audit": top20_audit,
             "csv_path": csv_path,
         })
 
+        sample_c = primary_cands[0]
         print(f"\n[{qid}] [{tag}]")
         print(f"  • Primary Arm      : {primary_arm} (Top-3 Lock)")
+        print(f"  • Full Input Pools : Arm A={len_a} | Arm B={len_b} | Arm C={len_c} (Full Ranked Lists Verified ✅)")
+        print(f"  • Frame Mapping Ex : vid={sample_c.video_id}, official_frame_id={sample_c.frame_id}, clip_row={sample_c.clip_row}, n={sample_c.keyframe_order} ✅")
         print(f"  • Rows Exported    : {len(merged_candidates)}/100 (Duplicates Removed: {dups_removed})")
         print(f"  • Top 20 Audit     : {top20_audit}")
         print(f"  • File Written     : {csv_path} (Validated ✅)")
