@@ -406,6 +406,7 @@ def batch_search_vectors(
                 clip_row=c.clip_row,
                 keyframe_order=c.keyframe_order,
                 rank=r + 1,
+                source="exact_numpy",
             )
             for r, c in enumerate(ranked)
         )
