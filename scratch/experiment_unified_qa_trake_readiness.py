@@ -244,6 +244,224 @@ def validate_kis_csv(csv_path: Path) -> list[str]:
     return errors
 
 
+VIDEO_PATH_CACHE: dict[str, Path] = {}
+
+
+def resolve_video_path(video_id: str) -> Path | None:
+    if video_id in VIDEO_PATH_CACHE:
+        return VIDEO_PATH_CACHE[video_id]
+    for base in [
+        Path("/kaggle/input/datasets/videos"),
+        Path("/kaggle/input/datasets"),
+        REPO_ROOT / "systems" / "system_tai" / "data" / "videos",
+        REPO_ROOT / "systems" / "system_tai" / "data",
+    ]:
+        p = base / f"{video_id}.mp4"
+        if p.exists():
+            VIDEO_PATH_CACHE[video_id] = p
+            return p
+    if Path("/kaggle/input").exists():
+        for sub in Path("/kaggle/input").iterdir():
+            if sub.is_dir():
+                for p in [sub / "videos" / f"{video_id}.mp4", sub / f"{video_id}.mp4"]:
+                    if p.exists():
+                        VIDEO_PATH_CACHE[video_id] = p
+                        return p
+    return None
+
+
+def decode_single_frame(video_id: str, frame_id: int) -> str:
+    vpath = resolve_video_path(video_id)
+    if not vpath or not vpath.exists():
+        return ""
+    try:
+        cap = cv2.VideoCapture(str(vpath))
+        if not cap.isOpened():
+            return ""
+        cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, frame_id))
+        ret, frame = cap.read()
+        cap.release()
+        if not ret or frame is None:
+            return ""
+        h, w = frame.shape[:2]
+        new_w = 220
+        new_h = int(h * (new_w / w))
+        resized = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        import base64
+        _, buf = cv2.imencode(".jpg", resized, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
+        return base64.b64encode(buf).decode("utf-8")
+    except Exception:
+        return ""
+
+
+def generate_full_gallery_html(submission_dir: Path, out_html_path: Path) -> None:
+    print(f"\n[Visual Gallery] Generating Comprehensive Visual Gallery for ALL 25 BTC Queries (KIS + TRAKE + QA)...", flush=True)
+    
+    sections_html = []
+
+    # 1. TRAKE Gallery
+    trake_cards = []
+    for tr_f in sorted(list(THUNGHIEM_DIR.glob("*trake*.txt"))):
+        qid, events = parse_trake_query(tr_f)
+        csv_p = submission_dir / f"{qid}.csv"
+        chains = []
+        if csv_p.exists():
+            with csv_p.open("r", encoding="utf-8") as stream:
+                reader = csv.reader(stream)
+                for r in reader:
+                    if r:
+                        chains.append((r[0].strip(), [int(x.strip()) for x in r[1:]]))
+                    if len(chains) >= 3:
+                        break
+
+        chain_rows = []
+        for rank_idx, (vid, fids) in enumerate(chains, start=1):
+            frames_html = []
+            for e_idx, fid in enumerate(fids, start=1):
+                img_b64 = decode_single_frame(vid, fid)
+                img_tag = f'<img src="data:image/jpeg;base64,{img_b64}" style="width:100%; border-radius:4px;" />' if img_b64 else '<div style="background:#333;color:#888;height:70px;display:flex;align-items:center;justify-content:center;border-radius:4px;font-size:10px;">No Frame</div>'
+                e_desc = events[e_idx - 1]["description"] if e_idx <= len(events) else f"Event {e_idx}"
+                frames_html.append(f"""
+                <div style="flex:1; margin:2px; padding:4px; background:#181818; border:1px solid #333; border-radius:4px; text-align:center;">
+                    <div style="font-size:9px; color:#e5c07b; font-weight:bold; margin-bottom:2px;">E{e_idx} (f={fid})</div>
+                    {img_tag}
+                    <div style="font-size:8px; color:#aaa; margin-top:2px; text-overflow:ellipsis; overflow:hidden; white-space:nowrap;" title="{e_desc}">{e_desc[:30]}...</div>
+                </div>
+                """)
+
+            chain_rows.append(f"""
+            <div style="background:#222; border:1px solid #333; border-radius:6px; padding:6px; margin-bottom:6px;">
+                <div style="font-size:11px; font-weight:bold; color:#61afef; margin-bottom:4px;">Rank @{rank_idx} — Video: <span style="color:#fff;">{vid}</span> ({len(fids)} Events Chained)</div>
+                <div style="display:flex; gap:2px;">{''.join(frames_html)}</div>
+            </div>
+            """)
+
+        event_bullets = "".join([f'<li style="margin-bottom:2px;"><b style="color:#e5c07b;">E{idx}:</b> {ev["description"]}</li>' for idx, ev in enumerate(events, start=1)])
+
+        trake_cards.append(f"""
+        <div style="background:#282828; border:1px solid #444; border-radius:8px; margin-bottom:16px; padding:12px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #383838; padding-bottom:6px; margin-bottom:8px;">
+                <span style="font-size:14px; font-weight:bold; color:#e5c07b;">{qid}.csv</span>
+                <span style="background:#ffc107; color:#111; font-size:10px; font-weight:bold; padding:2px 6px; border-radius:3px;">TRAKE (N={len(events)})</span>
+            </div>
+            <ul style="font-size:11px; color:#ddd; margin:0 0 10px 16px; padding:0;">{event_bullets}</ul>
+            {''.join(chain_rows)}
+        </div>
+        """)
+
+    sections_html.append(f"""
+    <h3 style="color:#e5c07b; border-bottom:1px solid #444; padding-bottom:4px; margin-top:20px;">⏱️ TRAKE TEMPORAL KEYFRAME CHAINS (3 QUERIES)</h3>
+    {''.join(trake_cards)}
+    """)
+
+    # 2. QA Gallery
+    qa_cards = []
+    for qa_f in sorted(list(THUNGHIEM_DIR.glob("*qa*.txt"))):
+        qid, desc, question = parse_qa_query(qa_f)
+        csv_p = submission_dir / f"{qid}.csv"
+        qa_preds = []
+        if csv_p.exists():
+            with csv_p.open("r", encoding="utf-8") as stream:
+                reader = csv.reader(stream)
+                for r in reader:
+                    if r and len(r) == 3:
+                        qa_preds.append((r[0].strip(), int(r[1].strip()), r[2].strip()))
+                    if len(qa_preds) >= 3:
+                        break
+
+        pred_items = []
+        for rank_idx, (vid, fid, ans) in enumerate(qa_preds, start=1):
+            img_b64 = decode_single_frame(vid, fid)
+            img_tag = f'<img src="data:image/jpeg;base64,{img_b64}" style="width:100%; border-radius:4px;" />' if img_b64 else '<div style="background:#333;color:#888;height:80px;display:flex;align-items:center;justify-content:center;border-radius:4px;font-size:10px;">No Frame</div>'
+            badge_color = "#28a745" if rank_idx == 1 else "#61afef"
+            pred_items.append(f"""
+            <div style="flex:1; margin:3px; padding:6px; background:#1c1c1c; border:1px solid #333; border-radius:6px; text-align:center;">
+                <div style="font-weight:bold; color:{badge_color}; font-size:11px; margin-bottom:3px;">Rank @{rank_idx}</div>
+                {img_tag}
+                <div style="color:#eee; font-weight:600; font-size:11px; margin-top:4px;">{vid} (f={fid})</div>
+                <div style="color:#98c379; font-weight:bold; font-size:11px; margin-top:4px; background:#222; padding:2px; border-radius:3px;">Ans: "{ans}"</div>
+            </div>
+            """)
+
+        qa_cards.append(f"""
+        <div style="background:#282828; border:1px solid #444; border-radius:8px; margin-bottom:16px; padding:12px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #383838; padding-bottom:6px; margin-bottom:8px;">
+                <span style="font-size:14px; font-weight:bold; color:#e06c75;">{qid}.csv</span>
+                <span style="background:#e06c75; color:#fff; font-size:10px; font-weight:bold; padding:2px 6px; border-radius:3px;">VISUAL Q&A</span>
+            </div>
+            <div style="font-size:11px; color:#ccc; margin-bottom:4px;"><b style="color:#aaa;">Bối cảnh:</b> {desc}</div>
+            <div style="font-size:12px; color:#fff; font-weight:600; margin-bottom:10px;"><b style="color:#e06c75;">Câu hỏi:</b> {question}</div>
+            <div style="display:flex; gap:4px;">{''.join(pred_items)}</div>
+        </div>
+        """)
+
+    sections_html.append(f"""
+    <h3 style="color:#e06c75; border-bottom:1px solid #444; padding-bottom:4px; margin-top:20px;">❓ VISUAL QUESTION ANSWERING (3 QUERIES)</h3>
+    {''.join(qa_cards)}
+    """)
+
+    # 3. KIS Gallery (Top 3)
+    kis_cards = []
+    for kis_f in sorted(list(THUNGHIEM_DIR.glob("*kis*.txt"))):
+        qid = kis_f.stem
+        q_vi = kis_f.read_text(encoding="utf-8").strip()
+        csv_p = submission_dir / f"{qid}.csv"
+        rows = []
+        if csv_p.exists():
+            with csv_p.open("r", encoding="utf-8") as stream:
+                reader = csv.reader(stream)
+                for r in reader:
+                    if r and len(r) == 2:
+                        rows.append((r[0].strip(), int(r[1].strip())))
+                    if len(rows) >= 3:
+                        break
+
+        items = []
+        for rank_idx, (vid, fid) in enumerate(rows, start=1):
+            img_b64 = decode_single_frame(vid, fid)
+            img_tag = f'<img src="data:image/jpeg;base64,{img_b64}" style="width:100%; border-radius:4px;" />' if img_b64 else '<div style="background:#333;color:#888;height:80px;display:flex;align-items:center;justify-content:center;border-radius:4px;font-size:10px;">No Frame</div>'
+            badge_color = "#28a745" if rank_idx == 1 else "#61afef"
+            items.append(f"""
+            <div style="flex:1; margin:3px; padding:6px; background:#1c1c1c; border:1px solid #333; border-radius:6px; text-align:center;">
+                <div style="font-weight:bold; color:{badge_color}; font-size:11px; margin-bottom:3px;">Rank @{rank_idx}</div>
+                {img_tag}
+                <div style="color:#eee; font-weight:600; font-size:11px; margin-top:4px;">{vid} (f={fid})</div>
+            </div>
+            """)
+
+        kis_cards.append(f"""
+        <div style="background:#282828; border:1px solid #444; border-radius:8px; margin-bottom:16px; padding:12px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #383838; padding-bottom:6px; margin-bottom:8px;">
+                <span style="font-size:14px; font-weight:bold; color:#61afef;">{qid}.csv</span>
+                <span style="background:#0d6efd; color:#fff; font-size:10px; font-weight:bold; padding:2px 6px; border-radius:3px;">TEXTUAL KIS (100 ROWS)</span>
+            </div>
+            <div style="font-size:11px; color:#ccc; margin-bottom:10px;"><b style="color:#98c379;">Câu hỏi VI:</b> {q_vi}</div>
+            <div style="display:flex; gap:4px;">{''.join(items)}</div>
+        </div>
+        """)
+
+    sections_html.append(f"""
+    <h3 style="color:#61afef; border-bottom:1px solid #444; padding-bottom:4px; margin-top:20px;">🎯 TEXTUAL KIS SUBMISSION (18 QUERIES × TOP 3)</h3>
+    {''.join(kis_cards)}
+    """)
+
+    full_html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head><meta charset="utf-8"><title>BTC Full Submission Package Gallery</title></head>
+    <body style="background:#141414; color:#fff; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; padding:16px;">
+        <h2 style="color:#61afef; border-bottom:2px solid #333; padding-bottom:8px;">📦 BÁO CÁO TRỰC QUAN GÓI NỘP BÀI BTC HOÀN CHỈNH (25 QUERIES)</h2>
+        <div style="color:#aaa; font-size:12px; margin-bottom:16px;">
+            <b>Xác thực nộp bài 100%:</b> Hiển thị đầy đủ hình ảnh, câu hỏi, câu trả lời Q&A và chuỗi sự kiện TRAKE giải mã trực tiếp từ file CSV nộp.
+        </div>
+        {''.join(sections_html)}
+    </body>
+    </html>
+    """
+    out_html_path.write_text(full_html, encoding="utf-8")
+    print(f"      • Saved Full Submission Visual Gallery to: {out_html_path} ✅", flush=True)
+
+
 def run_unified_readiness() -> None:
     yaml_path = REPO_ROOT / "systems" / "system_tai" / "configs" / "production.yaml"
     input_root = Path("/kaggle/input/datasets") if Path("/kaggle/input/datasets").exists() else Path("/kaggle/input")
@@ -324,7 +542,6 @@ def run_unified_readiness() -> None:
             zero_reason = resp.get("diagnostics", {}).get("zero_output_reason", "unknown_zero_output")
             print(f"❌ [TRAKE FAIL] {qid}: OPERATIONAL_FAIL_EMPTY_OUTPUT (zero_output_reason={zero_reason})", flush=True)
             operational_failures.append({"qid": qid, "task": "TRAKE", "reason": f"zero_output_reason={zero_reason}"})
-            # Do not create empty CSV
         else:
             with csv_path.open("w", encoding="utf-8", newline="") as stream:
                 writer = csv.writer(stream)
@@ -417,7 +634,6 @@ def run_unified_readiness() -> None:
         if "-kis" in f.name:
             errs = validate_kis_csv(f)
         elif "-trake" in f.name:
-            # find event count
             tr_file = THUNGHIEM_DIR / f"{f.stem}.txt"
             _, evs = parse_trake_query(tr_file)
             errs = validate_trake_csv(f, expected_event_count=len(evs))
@@ -434,6 +650,10 @@ def run_unified_readiness() -> None:
     print(f"Extra CSVs       : {sorted(list(extra_qids))}")
     print(f"Invalid / Empty  : {all_invalid}")
     print(f"Failures Logged  : {operational_failures}")
+
+    # Generate Full Visual Gallery HTML for User Inspection
+    gallery_out = Path("/kaggle/working/btc_full_submission_gallery.html") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "btc_full_submission_gallery.html"
+    generate_full_gallery_html(submission_dir, gallery_out)
 
     if (
         len(missing_qids) == 0
