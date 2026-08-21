@@ -417,12 +417,57 @@ def generate_qa_trake_audit_gallery(
     {''.join(trake_cards)}
     """)
 
+    # 3. KIS Merged Top-5 Gallery Section
+    kis_cards = []
+    for kis_f in sorted(list(THUNGHIEM_DIR.glob("*kis*.txt"))):
+        qid = kis_f.stem
+        q_vi = kis_f.read_text(encoding="utf-8").strip()
+        csv_p = SUBMISSION_DIR / f"{qid}.csv"
+        rows = []
+        if csv_p.exists():
+            with csv_p.open("r", encoding="utf-8") as stream:
+                reader = csv.reader(stream)
+                for r in reader:
+                    if r and len(r) == 2:
+                        rows.append((r[0].strip(), int(r[1].strip())))
+                    if len(rows) >= 5:
+                        break
+
+        items = []
+        for rank_idx, (vid, fid) in enumerate(rows, start=1):
+            _, b64_f, _ = decode_full_resolution_frame(vid, fid)
+            img_tag = f'<img src="data:image/jpeg;base64,{b64_f}" style="width:100%; border-radius:4px;" />' if b64_f else '<div style="background:#333;color:#888;height:80px;display:flex;align-items:center;justify-content:center;border-radius:4px;font-size:10px;">No Frame</div>'
+            badge_color = "#28a745" if rank_idx <= 3 else "#61afef"
+            items.append(f"""
+            <div style="flex:1; margin:3px; padding:6px; background:#1c1c1c; border:1px solid #333; border-radius:6px; text-align:center;">
+                <div style="font-weight:bold; color:{badge_color}; font-size:11px; margin-bottom:3px;">Rank @{rank_idx}</div>
+                {img_tag}
+                <div style="color:#eee; font-weight:600; font-size:11px; margin-top:4px;">{vid} (f={fid})</div>
+            </div>
+            """)
+
+        kis_cards.append(f"""
+        <div style="background:#262626; border:1px solid #444; border-radius:8px; margin-bottom:16px; padding:12px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #383838; padding-bottom:6px; margin-bottom:8px;">
+                <span style="font-size:14px; font-weight:bold; color:#61afef;">{qid}.csv</span>
+                <span style="background:#0d6efd; color:#fff; font-size:10px; font-weight:bold; padding:2px 6px; border-radius:3px;">100 ROWS (REORDER LOCKED)</span>
+            </div>
+            <div style="font-size:11px; color:#ccc; margin-bottom:10px;"><b style="color:#98c379;">Câu hỏi VI:</b> {q_vi}</div>
+            <div style="display:flex; gap:4px;">{''.join(items)}</div>
+        </div>
+        """)
+
+    sections.append(f"""
+    <h2 style="color:#61afef; border-bottom:2px solid #555; padding-bottom:6px; margin-top:24px;">🎯 TEXTUAL KIS FINAL SUBMISSION GALLERY (18 QUERIES × TOP 5)</h2>
+    {''.join(kis_cards)}
+    """)
+
     full_html = f"""
     <!DOCTYPE html>
     <html>
     <head><meta charset="utf-8"><title>QA Recovery & TRAKE Quality Audit</title></head>
     <body style="background:#121212; color:#fff; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; padding:16px;">
-        <h1 style="color:#61afef; border-bottom:2px solid #444; padding-bottom:10px;">📋 BÁO CÁO KIỂM TOÁN CHẤT LƯỢNG QA RECOVERY & TRAKE CHAINS</h1>
+        <h1 style="color:#61afef; border-bottom:2px solid #444; padding-bottom:10px;">📋 BÁO CÁO TOÀN DIỆN KIỂM TOÁN CHẤT LƯỢNG 24 CÂU (QA + TRAKE + KIS)</h1>
         {''.join(sections)}
     </body>
     </html>
