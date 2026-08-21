@@ -339,9 +339,7 @@ def bootstrap_runtime() -> OperationalKISRuntime:
         input_root=input_root,
         output_root=out_dir,
         reuse_manifest=manifest_cache if manifest_cache.exists() else None,
-        overrides={
-            "kis.enable_dynamic_translation": False,
-        },
+        enable_dynamic_translation=False,
     )
     t0 = time.time()
     runtime = OperationalKISRuntime.bootstrap(cfg)
