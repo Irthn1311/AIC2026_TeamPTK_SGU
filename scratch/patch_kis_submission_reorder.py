@@ -97,25 +97,32 @@ VIDEO_PATH_CACHE: dict[str, Path] = {}
 THUNGHIEM_DIR = REPO_ROOT / "systems" / "system_tai" / "THUNGHIEM_20-8"
 
 
-def populate_video_index_once() -> None:
-    if VIDEO_PATH_CACHE:
-        return
-    for search_root in [Path("/kaggle/input"), REPO_ROOT / "systems" / "system_tai" / "data"]:
-        if not search_root.exists():
-            continue
-        for root_dir, _, files in os.walk(str(search_root)):
-            for fname in files:
-                if fname.endswith(".mp4"):
-                    vid = fname[:-4]
-                    if vid not in VIDEO_PATH_CACHE:
-                        VIDEO_PATH_CACHE[vid] = Path(root_dir) / fname
-
-
 def resolve_video_path(video_id: str) -> Path | None:
     if video_id in VIDEO_PATH_CACHE:
         return VIDEO_PATH_CACHE[video_id]
-    populate_video_index_once()
-    return VIDEO_PATH_CACHE.get(video_id)
+    
+    # 1. Fast targeted lookups
+    for base in [
+        Path("/kaggle/input/datasets/videos"),
+        Path("/kaggle/input/datasets"),
+        REPO_ROOT / "systems" / "system_tai" / "data" / "videos",
+        REPO_ROOT / "systems" / "system_tai" / "data",
+    ]:
+        p = base / f"{video_id}.mp4"
+        if p.exists():
+            VIDEO_PATH_CACHE[video_id] = p
+            return p
+
+    # 2. Check direct dataset subfolders on Kaggle
+    if Path("/kaggle/input").exists():
+        for sub in Path("/kaggle/input").iterdir():
+            if sub.is_dir():
+                for p in [sub / "videos" / f"{video_id}.mp4", sub / f"{video_id}.mp4"]:
+                    if p.exists():
+                        VIDEO_PATH_CACHE[video_id] = p
+                        return p
+
+    return None
 
 
 def decode_thumbnails(rows: list[tuple[str, int]]) -> list[str]:
