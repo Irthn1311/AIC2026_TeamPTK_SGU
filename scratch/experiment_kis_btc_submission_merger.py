@@ -1,18 +1,24 @@
 #!/usr/bin/env python3
-"""KIS BTC Submission Merger & Official CSV Exporter.
+"""KIS BTC Submission Merger & Official CSV Exporter (Patched).
 
-Executes and merges 3-Arm retrieval (Marian P0, VinAI B1, VinAI B3) for all BTC KIS queries:
-  - Preserves primary arm Top ranks before inserting hedge candidates.
-  - Per-query primary prioritization:
-      • p1-21: Arm C (VinAI B3) primary.
-      • p1-9: Arm B (VinAI B1) / Arm A (Marian P0) primary (Arm C hedge).
-      • p1-2: Arm C (VinAI B3) primary (keeps 3-6 baby tigers + rare breed).
-      • p1-13, p1-17, p1-24, p1-25, p1-6: VinAI B1 / B3 primary, Marian hedge.
-      • Remaining queries: VinAI B1 primary, VinAI B3 secondary, Marian hedge.
-  - Deduplicates exact (video_id, frame_id) tuples.
+Executes and merges 3-Arm retrieval (Marian P0, VinAI B1, VinAI B3) for ALL BTC KIS queries:
+  - Dynamically discovers all KIS query files (*kis*.txt) in THUNGHIEM_20-8.
+  - Generates full 100-candidate ranked list for every arm (Translation -> TokenBudgetGuard -> CLIP -> Phase4).
+  - Primary arm Top-3 lock (primary_top_lock=3), followed by round-robin interleaving of Secondary & Hedge arms.
+  - Per-query primary policies:
+      • Inspected P1G1 probes:
+          - p1-21: Arm C (VinAI B3) primary.
+          - p1-9: Arm B (VinAI B1) primary, Arm A (Marian) secondary, Arm C (VinAI B3) last/hedge.
+          - p1-2: Arm C (VinAI B3) primary.
+          - p1-13, p1-17, p1-24, p1-25: Arm B (VinAI B1) primary, Arm C secondary, Arm A hedge.
+          - p1-1, p1-5, p1-7, p1-10, p1-11, p1-20: Arm B (VinAI B1) primary, Arm C secondary, Arm A hedge.
+      • Unseen P1G1 queries (p1-6, p1-8, p1-12, p1-14, p1-23, etc.):
+          - Arm A (Marian P0) as conservative primary Top-3, Arm B secondary, Arm C hedge.
+  - Strict deduplication of (video_id, frame_id) tuples.
   - Strictly caps at <= 100 rows per query.
-  - Exports headerless, UTF-8 CSVs matching BTC specification: video_id,frame_id
-  - Performs 100% strict schema and integrity validation.
+  - Exports headerless, UTF-8 CSVs: video_id,frame_id (frame_id >= 0, video_id without .mp4).
+  - Validates exact query set coverage: Expected == Generated.
+  - Emits KIS_BTC_SUBMISSION_READY upon 100% verification.
 """
 
 from __future__ import annotations
@@ -61,28 +67,6 @@ VINAI_MODEL_ID = "vinai/vinai-translate-vi2en-v2"
 MARIAN_MODEL_ID = "Helsinki-NLP/opus-mt-vi-en"
 
 THUNGHIEM_DIR = REPO_ROOT / "systems" / "system_tai" / "THUNGHIEM_20-8"
-
-# BTC KIS Query Registry with Primary Arm policy
-KIS_QUERY_POLICIES = {
-    "query-p1-21-kis": {"primary": "Arm C (VinAI B3)", "secondary": "Arm B (VinAI B1)", "hedge": "Arm A (Marian P0)", "desc": "Cơ chế bay bọ làm robot ở ĐH Lausanne"},
-    "query-p1-9-kis": {"primary": "Arm B (VinAI B1)", "secondary": "Arm A (Marian P0)", "hedge": "Arm C (VinAI B3)", "desc": "Thu hoạch dứa ở miền Tây"},
-    "query-p1-2-kis": {"primary": "Arm C (VinAI B3)", "secondary": "Arm B (VinAI B1)", "hedge": "Arm A (Marian P0)", "desc": "Đàn hổ 3-6 con hổ con"},
-    "query-p1-13-kis": {"primary": "Arm B (VinAI B1)", "secondary": "Arm C (VinAI B3)", "hedge": "Arm A (Marian P0)", "desc": "Vệ sinh máy ảnh, khăn tím hồng, tăm bông"},
-    "query-p1-17-kis": {"primary": "Arm B (VinAI B1)", "secondary": "Arm C (VinAI B3)", "hedge": "Arm A (Marian P0)", "desc": "Trao quà từ thiện bệnh viện Xuân 2024 COVID-19"},
-    "query-p1-24-kis": {"primary": "Arm B (VinAI B1)", "secondary": "Arm C (VinAI B3)", "hedge": "Arm A (Marian P0)", "desc": "Đua xe đạp góc quay trực diện từ trên cao"},
-    "query-p1-25-kis": {"primary": "Arm B (VinAI B1)", "secondary": "Arm C (VinAI B3)", "hedge": "Arm A (Marian P0)", "desc": "Đua xe đạp flycam trên cao áo xanh vượt 3"},
-    "query-p1-6-kis": {"primary": "Arm B (VinAI B1)", "secondary": "Arm C (VinAI B3)", "hedge": "Arm A (Marian P0)", "desc": "Gỏi cuốn chay bánh tráng tím vàng"},
-    "query-p1-1-kis": {"primary": "Arm B (VinAI B1)", "secondary": "Arm C (VinAI B3)", "hedge": "Arm A (Marian P0)", "desc": "Phóng tàu vũ trụ / 4 phi hành gia áo đen"},
-    "query-p1-5-kis": {"primary": "Arm B (VinAI B1)", "secondary": "Arm C (VinAI B3)", "hedge": "Arm A (Marian P0)", "desc": "Hai người phụ nữ cho dê ăn"},
-    "query-p1-7-kis": {"primary": "Arm B (VinAI B1)", "secondary": "Arm C (VinAI B3)", "hedge": "Arm A (Marian P0)", "desc": "Chú chim lông đen ánh xanh cổ"},
-    "query-p1-8-kis": {"primary": "Arm B (VinAI B1)", "secondary": "Arm C (VinAI B3)", "hedge": "Arm A (Marian P0)", "desc": "Hai mẹ con tập đi bộ trong phòng"},
-    "query-p1-10-kis": {"primary": "Arm B (VinAI B1)", "secondary": "Arm C (VinAI B3)", "hedge": "Arm A (Marian P0)", "desc": "Chơi nhạc cụ kim loại tròn (Handpan)"},
-    "query-p1-11-kis": {"primary": "Arm B (VinAI B1)", "secondary": "Arm C (VinAI B3)", "hedge": "Arm A (Marian P0)", "desc": "Đổ bóng tạo chân dung mặc vest"},
-    "query-p1-12-kis": {"primary": "Arm B (VinAI B1)", "secondary": "Arm C (VinAI B3)", "hedge": "Arm A (Marian P0)", "desc": "Chế biến nấm xào ngô cải thảo"},
-    "query-p1-14-kis": {"primary": "Arm B (VinAI B1)", "secondary": "Arm C (VinAI B3)", "hedge": "Arm A (Marian P0)", "desc": "Xe cứu thương trong đêm"},
-    "query-p1-20-kis": {"primary": "Arm B (VinAI B1)", "secondary": "Arm C (VinAI B3)", "hedge": "Arm A (Marian P0)", "desc": "Thêm 2 ly panna cotta, hoa ăn được"},
-    "query-p1-23-kis": {"primary": "Arm B (VinAI B1)", "secondary": "Arm C (VinAI B3)", "hedge": "Arm A (Marian P0)", "desc": "Người phụ nữ may vá máy khâu"},
-}
 
 
 class VinAIConfigurableTranslator:
@@ -143,26 +127,56 @@ def get_reuse_manifest() -> Path | None:
     return None
 
 
+def resolve_query_policy(qid: str) -> dict[str, str]:
+    """Resolves primary, secondary, and hedge arm for any discovered KIS query."""
+    # 1. P1G1-Audited Special Primary Queries
+    if "p1-21" in qid:
+        return {"primary": "Arm C (VinAI B3)", "secondary": "Arm B (VinAI B1)", "hedge": "Arm A (Marian P0)", "tag": "AUDITED_B3_PRIMARY"}
+    if "p1-9" in qid:
+        return {"primary": "Arm B (VinAI B1)", "secondary": "Arm A (Marian P0)", "hedge": "Arm C (VinAI B3)", "tag": "AUDITED_B1_PRIMARY_MARIAN_SEC"}
+    if "p1-2" in qid:
+        return {"primary": "Arm C (VinAI B3)", "secondary": "Arm B (VinAI B1)", "hedge": "Arm A (Marian P0)", "tag": "AUDITED_B3_PRIMARY"}
+    if any(k in qid for k in ["p1-13", "p1-17", "p1-24", "p1-25"]):
+        return {"primary": "Arm B (VinAI B1)", "secondary": "Arm C (VinAI B3)", "hedge": "Arm A (Marian P0)", "tag": "AUDITED_VINAI_PRIMARY"}
+    if any(k in qid for k in ["p1-1", "p1-5", "p1-7", "p1-10", "p1-11", "p1-20"]):
+        return {"primary": "Arm B (VinAI B1)", "secondary": "Arm C (VinAI B3)", "hedge": "Arm A (Marian P0)", "tag": "AUDITED_GUARD_B1_PRIMARY"}
+
+    # 2. P1G1-Unseen Queries (p1-6, p1-8, p1-12, p1-14, p1-23, etc.) -> Conservative Marian P0 Primary Top-3
+    return {"primary": "Arm A (Marian P0)", "secondary": "Arm B (VinAI B1)", "hedge": "Arm C (VinAI B3)", "tag": "UNSEEN_MARIAN_PRIMARY_TOP3"}
+
+
 def merge_and_deduplicate_candidates(
     primary_list: list[Any],
     secondary_list: list[Any],
     hedge_list: list[Any],
-    primary_top_lock: int = 15,
+    primary_arm_name: str,
+    secondary_arm_name: str,
+    hedge_arm_name: str,
+    primary_top_lock: int = 3,
     max_total: int = 100,
 ) -> tuple[list[tuple[str, int, str]], int]:
-    """Merges 3 ranked lists preserving primary arm's top ranks, then interleaving hedges."""
+    """Merges 3 full ranked lists preserving primary arm's Top-3 ranks, then interleaving hedges."""
     merged: list[tuple[str, int, str]] = []
     seen_keys: set[tuple[str, int]] = set()
     duplicates_removed = 0
 
-    # 1. Lock Primary Arm Top Ranks
+    def short_tag(name: str) -> str:
+        if "Marian" in name:
+            return "MARIAN"
+        if "B1" in name:
+            return "B1"
+        if "B3" in name:
+            return "B3"
+        return name
+
+    # 1. Lock Primary Arm Top-3 Ranks
     for c in primary_list[:primary_top_lock]:
         vid = str(c.video_id).removesuffix(".mp4")
         fid = int(c.frame_id)
         key = (vid, fid)
         if key not in seen_keys:
             seen_keys.add(key)
-            merged.append((vid, fid, "Primary_TopLock"))
+            merged.append((vid, fid, f"{short_tag(primary_arm_name)}@TopLock"))
         else:
             duplicates_removed += 1
 
@@ -179,7 +193,7 @@ def merge_and_deduplicate_candidates(
             key = (vid, fid)
             if key not in seen_keys:
                 seen_keys.add(key)
-                merged.append((vid, fid, "Primary_Interleaved"))
+                merged.append((vid, fid, f"{short_tag(primary_arm_name)}@R{c.rank}"))
                 if len(merged) >= max_total:
                     break
             else:
@@ -193,7 +207,7 @@ def merge_and_deduplicate_candidates(
             key = (vid, fid)
             if key not in seen_keys:
                 seen_keys.add(key)
-                merged.append((vid, fid, "Secondary_Interleaved"))
+                merged.append((vid, fid, f"{short_tag(secondary_arm_name)}@R{c.rank}"))
                 if len(merged) >= max_total:
                     break
             else:
@@ -207,7 +221,7 @@ def merge_and_deduplicate_candidates(
             key = (vid, fid)
             if key not in seen_keys:
                 seen_keys.add(key)
-                merged.append((vid, fid, "Hedge_Interleaved"))
+                merged.append((vid, fid, f"{short_tag(hedge_arm_name)}@R{c.rank}"))
                 if len(merged) >= max_total:
                     break
             else:
@@ -217,7 +231,7 @@ def merge_and_deduplicate_candidates(
 
 
 def validate_csv_file(csv_path: Path, expected_query_id: str) -> None:
-    """Strictly validates submission CSV compliance."""
+    """Strictly validates submission CSV compliance against official BTC specs."""
     if not csv_path.exists():
         raise FileNotFoundError(f"Missing submission CSV: {csv_path}")
     
@@ -265,7 +279,14 @@ def run_kis_submission_merger() -> None:
         reuse_manifest=reuse_manifest,
     )
 
-    # 1. Bootstrap Runtime
+    # 1. Discover all KIS Query Files from THUNGHIEM_20-8
+    discovered_kis_files = sorted(list(THUNGHIEM_DIR.glob("*kis*.txt")))
+    expected_kis_qids = [f.stem for f in discovered_kis_files]
+    print(f"\n[Dynamic Discovery] Found {len(expected_kis_qids)} KIS Query files in {THUNGHIEM_DIR}:")
+    for q in expected_kis_qids:
+        print(f"  • {q}")
+
+    # 2. Bootstrap Runtime
     print("\n[1/4] Bootstrapping OperationalKISRuntime...", flush=True)
     t0_rt = time.time()
     runtime = OperationalKISRuntime.bootstrap(cfg)
@@ -274,34 +295,32 @@ def run_kis_submission_merger() -> None:
         device = "cuda"
     print(f"      • Runtime Bootstrapped in {time.time() - t0_rt:.2f}s (device={device}) ✅", flush=True)
 
-    # 2. Initialize Translators
+    # 3. Initialize Translators
     print("\n[2/4] Initializing Multi-Arm Translators...", flush=True)
     translator_marian = runtime.translation_provider
     translator_vinai = VinAIConfigurableTranslator(device=device)
 
-    # 3. Output Directory for Submissions
+    # 4. Output Directory for Submissions
     submission_dir = Path("/kaggle/working/submission") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "submission"
     submission_dir.mkdir(parents=True, exist_ok=True)
 
     print("\n" + "=" * 150, flush=True)
-    print("EXECUTING MULTI-ARM RETRIEVAL & MERGING BTC KIS SUBMISSION CSVs", flush=True)
+    print("EXECUTING FULL MULTI-ARM RETRIEVAL & MERGING BTC KIS SUBMISSION CSVs (Top-3 Primary Lock)", flush=True)
     print("=" * 150, flush=True)
 
     summary_records: list[dict[str, Any]] = []
+    generated_qids: list[str] = []
 
-    for qid, policy in KIS_QUERY_POLICIES.items():
-        q_file = THUNGHIEM_DIR / f"{qid}.txt"
-        if not q_file.exists():
-            print(f"Warning: {q_file} not found, skipping.", flush=True)
-            continue
-
+    for q_file in discovered_kis_files:
+        qid = q_file.stem
         q_vi = q_file.read_text(encoding="utf-8").strip()
+        policy = resolve_query_policy(qid)
         primary_arm = policy["primary"]
         secondary_arm = policy["secondary"]
         hedge_arm = policy["hedge"]
-        desc = policy["desc"]
+        tag = policy["tag"]
 
-        # Run Arm A (Marian)
+        # Run Arm A (Marian P0) Full Retrieval
         raw_en_a = translator_marian.translate(q_vi).strip()
         eff_en_a, _, _ = runtime.token_budget_guard.guard_and_compact(raw_en_a)
         vec_a = runtime.shared_encoder.encode(eff_en_a)
@@ -313,7 +332,7 @@ def run_kis_submission_merger() -> None:
             protected_prefix_rank=1,
         ).result.ranked_candidates
 
-        # Run Arm B (VinAI B1)
+        # Run Arm B (VinAI B1) Full Retrieval
         raw_en_b = translator_vinai.translate(q_vi, VINAI_ARM_CONFIGS["Arm B (VinAI B1)"])
         eff_en_b, _, _ = runtime.token_budget_guard.guard_and_compact(raw_en_b)
         vec_b = runtime.shared_encoder.encode(eff_en_b)
@@ -325,7 +344,7 @@ def run_kis_submission_merger() -> None:
             protected_prefix_rank=1,
         ).result.ranked_candidates
 
-        # Run Arm C (VinAI B3)
+        # Run Arm C (VinAI B3) Full Retrieval
         raw_en_c = translator_vinai.translate(q_vi, VINAI_ARM_CONFIGS["Arm C (VinAI B3)"])
         eff_en_c, _, _ = runtime.token_budget_guard.guard_and_compact(raw_en_c)
         vec_c = runtime.shared_encoder.encode(eff_en_c)
@@ -343,7 +362,7 @@ def run_kis_submission_merger() -> None:
             "Arm C (VinAI B3)": list(final_c),
         }
 
-        # Merge with Policy
+        # Merge with Policy (Top-3 Primary Lock + Interleaving + Deduplication)
         primary_cands = arm_candidates[primary_arm]
         secondary_cands = arm_candidates[secondary_arm]
         hedge_cands = arm_candidates[hedge_arm]
@@ -352,11 +371,14 @@ def run_kis_submission_merger() -> None:
             primary_list=primary_cands,
             secondary_list=secondary_cands,
             hedge_list=hedge_cands,
-            primary_top_lock=15,
+            primary_arm_name=primary_arm,
+            secondary_arm_name=secondary_arm,
+            hedge_arm_name=hedge_arm,
+            primary_top_lock=3,
             max_total=100,
         )
 
-        # Write Official CSV
+        # Write Official CSV (Only video_id,frame_id)
         csv_path = submission_dir / f"{qid}.csv"
         with csv_path.open("w", encoding="utf-8", newline="") as f:
             writer = csv.writer(f)
@@ -365,34 +387,51 @@ def run_kis_submission_merger() -> None:
 
         # Validate CSV immediately
         validate_csv_file(csv_path, expected_query_id=qid)
+        generated_qids.append(qid)
 
-        top3_preview = ", ".join([f"@{r}:{vid}(f={fid})" for r, (vid, fid, _) in enumerate(merged_candidates[:3], start=1)])
+        top20_audit = " | ".join([f"@{r}:{vid}(f={fid})[{prov}]" for r, (vid, fid, prov) in enumerate(merged_candidates[:20], start=1)])
 
         summary_records.append({
             "qid": qid,
-            "desc": desc,
+            "tag": tag,
             "primary": primary_arm,
             "rows": len(merged_candidates),
             "dups_removed": dups_removed,
-            "top3": top3_preview,
+            "top20_audit": top20_audit,
             "csv_path": csv_path,
         })
 
-        print(f"\n[{qid}] ({desc})")
-        print(f"  • Primary Arm      : {primary_arm}")
+        print(f"\n[{qid}] [{tag}]")
+        print(f"  • Primary Arm      : {primary_arm} (Top-3 Lock)")
         print(f"  • Rows Exported    : {len(merged_candidates)}/100 (Duplicates Removed: {dups_removed})")
-        print(f"  • Merged Top 3     : [{top3_preview}]")
+        print(f"  • Top 20 Audit     : {top20_audit}")
         print(f"  • File Written     : {csv_path} (Validated ✅)")
 
-    # 4. Summary Audit Table
+    # 5. Exact Coverage & Integrity Verification
+    missing_ids = set(expected_kis_qids) - set(generated_qids)
+    extra_ids = set(generated_qids) - set(expected_kis_qids)
+    total_dups_across_all = sum(s["dups_removed"] for s in summary_records)
+
     print("\n" + "=" * 150, flush=True)
     print("BTC KIS SUBMISSION EXPORT SUMMARY AUDIT TABLE", flush=True)
     print("=" * 150, flush=True)
-    print(f"{'Query ID':<18} | {'Primary Arm':<22} | {'Rows':<5} | {'Dups Removed':<13} | {'Merged Top 3 Preview':<55} | {'Validation':<10}")
-    print("-" * 140)
+    print(f"{'Query ID':<18} | {'Policy Tag':<28} | {'Primary Arm':<22} | {'Rows':<5} | {'Dups Removed':<13} | {'Validation':<10}")
+    print("-" * 115)
     for s in summary_records:
-        print(f"{s['qid']:<18} | {s['primary']:<22} | {s['rows']:<5} | {s['dups_removed']:<13} | {s['top3']:<55} | {'VALID ✅':<10}")
+        print(f"{s['qid']:<18} | {s['tag']:<28} | {s['primary']:<22} | {s['rows']:<5} | {s['dups_removed']:<13} | {'VALID ✅':<10}")
     print("=" * 150, flush=True)
+
+    print(f"Expected KIS: {len(expected_kis_qids)}", flush=True)
+    print(f"Generated KIS: {len(generated_qids)}", flush=True)
+    print(f"Missing: {sorted(list(missing_ids))}", flush=True)
+    print(f"Extra: {sorted(list(extra_ids))}", flush=True)
+    print(f"Invalid CSV: []", flush=True)
+    print(f"Total Duplicate Rows Filtered: {total_dups_across_all}", flush=True)
+
+    assert len(missing_ids) == 0, f"FATAL: Missing KIS queries: {missing_ids}"
+    assert len(extra_ids) == 0, f"FATAL: Extra KIS queries: {extra_ids}"
+    assert len(expected_kis_qids) == len(generated_qids), "FATAL: Query count mismatch!"
+
     print("\n>>> DECLARATION: KIS_BTC_SUBMISSION_READY <<<\n", flush=True)
 
 
