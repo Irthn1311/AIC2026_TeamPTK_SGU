@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Unified QA Recovery (VinAI Translation + EasyOCR) & TRAKE Quality Audit (Single Runtime).
+"""QA Recovery (VinAI B1 Dual-Arm + EasyOCR Evidence) & TRAKE Quality Audit (Single Runtime).
 
-Guarantees:
-  1. Instant KIS Copy: 18 verified KIS CSVs loaded in 0.001s.
-  2. Single Bootstrap: Bootstraps OperationalKISRuntime exactly once.
-  3. Video Path Resolution: Queries runtime.raw_video_registry directly to guarantee 100% frame decoding.
-  4. VinAI Translation for QA: Uses vinai/vinai-translate-vi2en-v2 (accurate Vietnamese entity translation).
-  5. EasyOCR Sidecar: Uses EasyOCR with Vietnamese+English recognition on full-resolution frames.
-  6. Emits Focused Visual Inspection Gallery (qa_recovery_and_trake_audit_gallery.html).
+Operational Constraints:
+  1. KIS Skip: 18 verified KIS CSVs copied/loaded instantly (0s).
+  2. Single Bootstrap: OperationalKISRuntime bootstrapped once for the entire session.
+  3. Preflight Decode Test: Verifies OpenCV video path resolution & frame read on 1 QA + 1 TRAKE sample.
+  4. QA Dual-Arm Grounding: Uses Original VI + VinAI B1 English (num_beams=1), fused via RRF.
+  5. EasyOCR Evidence (CPU Safe): Runs on Top 10 frames/query (full-frame + upscaled crops) for human review.
+  6. TRAKE 100% Frozen: Inspects and renders strictly increasing candidate chains (p1-16 @3..@7, p1-4 @38.., p1-18 @25..).
+  7. Emits Focused Visual Inspection Gallery (qa_recovery_and_trake_audit_gallery.html).
 """
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 
 print("=" * 150, flush=True)
-print("QA RECOVERY (VinAI + EasyOCR) & TRAKE QUALITY AUDIT (SINGLE RUNTIME ENGINE)", flush=True)
+print("QA RECOVERY (VinAI B1 Dual-Arm + EasyOCR) & TRAKE QUALITY AUDIT (SINGLE RUNTIME)", flush=True)
 print("=" * 150, flush=True)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -161,7 +162,7 @@ def resolve_video_path(video_id: str, runtime: OperationalKISRuntime | None = No
             VIDEO_PATH_CACHE[video_id] = p
             return p
 
-    # 3. Dynamic glob fallback
+    # 3. Dynamic glob fallback across /kaggle/input
     if Path("/kaggle/input").exists():
         for found in Path("/kaggle/input").glob(f"**/{video_id}.mp4"):
             VIDEO_PATH_CACHE[video_id] = found
@@ -209,43 +210,89 @@ def get_easyocr_reader() -> Any:
     return EASYOCR_READER
 
 
-def run_easyocr_text(frame: Any) -> str:
-    """Extracts Vietnamese text from frame using EasyOCR."""
+def run_easyocr_evidence(frame: Any) -> str:
+    """Extracts Vietnamese text evidence from frame (full frame + center region)."""
     if frame is None:
-        return "[No Frame]"
+        return "[No Frame Decoded]"
     try:
         reader = get_easyocr_reader()
-        results = reader.readtext(frame, detail=0)
-        text = " | ".join([t.strip() for t in results if t.strip()])
-        return text if text else "[No text detected]"
+        # 1. Full frame scan
+        results_full = reader.readtext(frame, detail=0)
+        # 2. High-res crop scan (center/text region)
+        h, w = frame.shape[:2]
+        crop = frame[int(h * 0.15): int(h * 0.85), int(w * 0.1): int(w * 0.9)]
+        results_crop = reader.readtext(crop, detail=0)
+
+        # Merge unique text lines
+        seen = set()
+        merged = []
+        for line in results_full + results_crop:
+            clean = " ".join(line.strip().split())
+            if clean and clean not in seen and len(clean) >= 2:
+                seen.add(clean)
+                merged.append(clean)
+
+        return " | ".join(merged) if merged else "[No text detected in frame]"
     except Exception as exc:
         return f"[OCR Error: {exc}]"
 
 
 # -----------------------------------------------------------------------------
-# 3. VinAI Translation Provider
+# 3. Preflight Frame Decode Test (Sanity Gate)
 # -----------------------------------------------------------------------------
-class VinAITranslator:
+def preflight_decode_sanity_test(runtime: OperationalKISRuntime) -> None:
+    print("=" * 120)
+    print("[PREFLIGHT DECODE TEST] Verifying Real Video Path Resolution & OpenCV Read")
+    print("=" * 120)
+
+    test_samples = [
+        ("QA Sample", "L30_V072", 1384),
+        ("TRAKE Sample", "L25_V007", 5363),
+    ]
+
+    for label, vid, fid in test_samples:
+        vpath = resolve_video_path(vid, runtime)
+        print(f"  • {label:<15} : Video={vid:<10} Frame={fid:<6}")
+        print(f"      - Resolved Path : {vpath}")
+        if not vpath or not vpath.exists():
+            print(f"      - File Exists   : ❌ NOT FOUND on disk!")
+            continue
+        cap = cv2.VideoCapture(str(vpath))
+        is_opened = cap.isOpened()
+        cap.set(cv2.CAP_PROP_POS_FRAMES, fid)
+        ret, frame = cap.read()
+        cap.release()
+        shape = frame.shape if frame is not None else None
+        print(f"      - OpenCV Opened : {is_opened} | Read Success: {ret} | Shape: {shape} ✅" if ret else f"      - OpenCV Read Fail ❌")
+
+    print("\n" + "-" * 120 + "\n", flush=True)
+
+
+# -----------------------------------------------------------------------------
+# 4. VinAI B1 Translation Provider (Scratch QA Recovery Only)
+# -----------------------------------------------------------------------------
+class VinAIB1Translator:
     def __init__(self, device: str = "cpu") -> None:
         self.device = device
         self.model_id = "vinai/vinai-translate-vi2en-v2"
-        print(f"\n[Loading VinAI Translator '{self.model_id}' on {device}...]", flush=True)
+        print(f"[VinAI B1 Translator] Loading '{self.model_id}' on {device} (Greedy / Beam=1 Baseline) ...", flush=True)
         t0 = time.time()
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_id, src_lang="vi_VN", use_fast=False)
         self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_id).to(device)
         self.model.eval()
-        print(f"      • Loaded VinAI in {time.time() - t0:.2f}s ✅\n", flush=True)
+        print(f"      • Loaded VinAI B1 in {time.time() - t0:.2f}s ✅\n", flush=True)
 
-    def translate(self, text: str) -> str:
+    def translate_b1(self, text: str) -> str:
         clean = " ".join(text.strip().split())
         inputs = self.tokenizer(clean, return_tensors="pt", padding=True, truncation=True, max_length=256).to(self.device)
         with torch.no_grad():
-            outputs = self.model.generate(**inputs, max_length=256, num_beams=3, early_stopping=True)
+            # VinAI B1 explicit: num_beams=1 (greedy deterministic)
+            outputs = self.model.generate(**inputs, max_length=256, num_beams=1, early_stopping=True)
         return self.tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
 
 
 # -----------------------------------------------------------------------------
-# 4. Single Runtime Bootstrap with Watchdog
+# 5. Single Runtime Bootstrap with Watchdog
 # -----------------------------------------------------------------------------
 def get_reuse_manifest() -> Path | None:
     for p in [
@@ -291,7 +338,7 @@ def bootstrap_runtime_once() -> OperationalKISRuntime:
 
 
 # -----------------------------------------------------------------------------
-# 5. TRAKE Generation & Quality Audit
+# 6. TRAKE Generation & Quality Audit (100% Frozen Model)
 # -----------------------------------------------------------------------------
 def parse_trake_query(file_path: Path) -> tuple[str, list[dict[str, str]]]:
     content = file_path.read_text(encoding="utf-8")
@@ -309,7 +356,7 @@ def parse_trake_query(file_path: Path) -> tuple[str, list[dict[str, str]]]:
 
 def ensure_and_audit_trake(runtime: OperationalKISRuntime) -> list[dict[str, Any]]:
     print("=" * 120)
-    print("[STAGE 3] TRAKE Execution & Strictly Increasing Chain Audit")
+    print("[STAGE 3] TRAKE Execution & Strictly Increasing Chain Audit (Frozen Planner)")
     print("=" * 120)
 
     t0_tr = time.time()
@@ -386,11 +433,11 @@ def ensure_and_audit_trake(runtime: OperationalKISRuntime) -> list[dict[str, Any
 
 
 # -----------------------------------------------------------------------------
-# 6. QA Pre-Provider Visual Grounding (VinAI Translation + EasyOCR)
+# 7. QA Pre-Provider Dual-Arm Grounding (Original VI + VinAI B1 EN)
 # -----------------------------------------------------------------------------
-def run_qa_recovery(runtime: OperationalKISRuntime, translator: VinAITranslator) -> list[dict[str, Any]]:
+def run_qa_recovery(runtime: OperationalKISRuntime, translator: VinAIB1Translator) -> list[dict[str, Any]]:
     print("=" * 120)
-    print("[STAGE 4] QA Visual Grounding (VinAI Translation + EasyOCR Sidecar)")
+    print("[STAGE 4] QA Dual-Arm Grounding (Original VI + VinAI B1 EN) & EasyOCR Evidence")
     print("=" * 120)
 
     t0_qa = time.time()
@@ -403,40 +450,56 @@ def run_qa_recovery(runtime: OperationalKISRuntime, translator: VinAITranslator)
     recovery_results: list[dict[str, Any]] = []
 
     for qid, desc, q_part in qa_queries:
-        print(f"\n--- [QA Localization] {qid} ---")
+        print(f"\n--- [QA Dual-Arm Localization] {qid} ---")
         t0_q = time.time()
 
-        # 1. Translate Query to English with VinAI
-        trans_en = translator.translate(f"{desc} {q_part}").strip()
-        eff_en, _, _ = runtime.token_budget_guard.guard_and_compact(trans_en)
-        print(f"  • VI Query   : {desc} {q_part}")
-        print(f"  • VinAI EN   : {eff_en}")
+        # Arm 1: Original Vietnamese Query
+        vi_full = f"{desc} {q_part}"
+        eff_vi, _, _ = runtime.token_budget_guard.guard_and_compact(vi_full)
 
-        # 2. Multi-Query Retrieval (VinAI EN vector)
+        # Arm 2: VinAI B1 English Query
+        trans_en = translator.translate_b1(vi_full)
+        eff_en, _, _ = runtime.token_budget_guard.guard_and_compact(trans_en)
+
+        print(f"  • Arm 1 (Raw VI)  : {eff_vi}")
+        print(f"  • Arm 2 (VinAI B1): {eff_en}")
+
+        # Multi-Query Vector Retrieval
+        vec_vi = runtime.shared_encoder.encode(eff_vi)
         vec_en = runtime.shared_encoder.encode(eff_en)
-        coarse_candidates = runtime.exact_retriever.search_vector(
-            query_id=f"rec-{qid}",
-            query_vector=vec_en,
+
+        cands_vi = runtime.exact_retriever.search_vector(query_id=f"{qid}-vi", query_vector=vec_vi, top_k=50)
+        cands_en = runtime.exact_retriever.search_vector(query_id=f"{qid}-en", query_vector=vec_en, top_k=50)
+
+        # RRF Fusion of VI + VinAI B1 EN
+        fused = runtime.weighted_rrf.fuse_rankings(
+            query_id=qid,
+            variants=[
+                type("Var", (), {"variant_id": "vi", "weight": 1.0})(),
+                type("Var", (), {"variant_id": "en", "weight": 1.0})(),
+            ],
+            rankings={"vi": cands_vi, "en": cands_en},
             top_k=50,
+            rrf_k=60.0,
         )
 
-        # 3. Apply Video Conditioned Refinement
+        # Apply Video Conditioned Refinement
         conditioned = runtime.video_conditioner.condition(
-            global_result=coarse_candidates,
+            global_result=fused,
             query_vector=vec_en,
             config=runtime.config.video_conditioned_keyframe_config,
             protected_prefix_rank=1,
         ).result.ranked_candidates
 
-        print(f"  • Extracted {len(conditioned)} Visual Grounding Candidates in {time.time() - t0_q:.2f}s ✅")
+        print(f"  • Extracted {len(conditioned)} Grounding Candidates in {time.time() - t0_q:.2f}s ✅")
 
-        # 4. Decode Top 25 Frames & Run EasyOCR
+        # Decode Top 10 Frames & Run EasyOCR Evidence
         frame_records: list[dict[str, Any]] = []
-        for rank_idx, c in enumerate(conditioned[:25], start=1):
+        for rank_idx, c in enumerate(conditioned[:10], start=1):
             vid = str(c.video_id).removesuffix(".mp4")
             fid = int(c.frame_id)
             frame_mat, b64_full, b64_crop = decode_full_resolution_frame(vid, fid, runtime)
-            ocr_text = run_easyocr_text(frame_mat)
+            ocr_text = run_easyocr_evidence(frame_mat)
             frame_records.append({
                 "rank": rank_idx,
                 "video_id": vid,
@@ -446,8 +509,7 @@ def run_qa_recovery(runtime: OperationalKISRuntime, translator: VinAITranslator)
                 "b64_crop": b64_crop,
                 "ocr_text": ocr_text,
             })
-            if rank_idx <= 5:
-                print(f"    @{rank_idx:<2}: Video={vid:<10} Frame={fid:<6} EasyOCR='{ocr_text[:40]}'")
+            print(f"    @{rank_idx:<2}: Video={vid:<10} Frame={fid:<6} EasyOCR='{ocr_text[:60]}'")
 
         recovery_results.append({
             "qid": qid,
@@ -462,7 +524,7 @@ def run_qa_recovery(runtime: OperationalKISRuntime, translator: VinAITranslator)
 
 
 # -----------------------------------------------------------------------------
-# 7. Build Focused HTML Visual Gallery (QA Full-Res + TRAKE Chains)
+# 8. Build Focused HTML Visual Gallery (QA Full-Res + TRAKE Chains)
 # -----------------------------------------------------------------------------
 def generate_focused_gallery(
     trake_results: list[dict[str, Any]],
@@ -483,7 +545,7 @@ def generate_focused_gallery(
         trans = q["trans_en"]
 
         grid_items = []
-        for r in q["frames"][:20]:
+        for r in q["frames"][:10]:
             rank = r["rank"]
             vid = r["video_id"]
             fid = r["frame_id"]
@@ -495,34 +557,41 @@ def generate_focused_gallery(
             img_crop_tag = f'<img src="data:image/jpeg;base64,{b64_crop}" style="width:100%; border-radius:4px; border:1px solid #e5c07b;" />' if b64_crop else ''
 
             grid_items.append(f"""
-            <div style="flex:0 0 calc(25% - 8px); margin:4px; padding:8px; background:#1e1e1e; border:1px solid #333; border-radius:6px; box-sizing:border-box;">
-                <div style="display:flex; justify-content:space-between; font-size:11px; margin-bottom:4px;">
-                    <span style="font-weight:bold; color:#61afef;">Rank @{rank}</span>
-                    <span style="color:#aaa;">{vid} (f={fid})</span>
+            <div style="flex:0 0 calc(50% - 12px); margin:6px; padding:10px; background:#1e1e1e; border:1px solid #333; border-radius:6px; box-sizing:border-box;">
+                <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:6px;">
+                    <span style="font-weight:bold; color:#61afef;">Candidate Rank @{rank}</span>
+                    <span style="color:#aaa;"><b>Video:</b> {vid} | <b>Frame:</b> {fid}</span>
                 </div>
-                {img_full_tag}
-                <div style="font-size:10px; color:#e5c07b; margin:2px 0;"><b>Center Crop 2x:</b></div>
-                {img_crop_tag}
-                <div style="background:#111; padding:4px; border-radius:3px; margin-top:4px; font-size:10px; color:#98c379; font-family:monospace; min-height:28px; word-break:break-all;">
-                    <b>EasyOCR:</b> {ocr}
+                <div style="display:flex; gap:6px;">
+                    <div style="flex:1;">
+                        <div style="font-size:10px; color:#aaa; margin-bottom:2px;">Full-Resolution Frame:</div>
+                        {img_full_tag}
+                    </div>
+                    <div style="flex:1;">
+                        <div style="font-size:10px; color:#e5c07b; margin-bottom:2px;">2x Enlarged Center Region:</div>
+                        {img_crop_tag}
+                    </div>
+                </div>
+                <div style="background:#111; padding:8px; border-radius:4px; margin-top:8px; font-size:11px; color:#98c379; font-family:monospace; min-height:36px; word-break:break-word;">
+                    <b style="color:#e5c07b;">EasyOCR Evidence:</b> {ocr}
                 </div>
             </div>
             """)
 
         qa_cards.append(f"""
         <div style="background:#262626; border:1px solid #444; border-radius:8px; margin-bottom:24px; padding:16px;">
-            <div style="font-size:16px; font-weight:bold; color:#e06c75; margin-bottom:6px;">{qid} — Visual Grounding (VinAI EN + EasyOCR)</div>
-            <div style="font-size:12px; color:#ddd; margin-bottom:4px;"><b>Bối cảnh:</b> {desc}</div>
-            <div style="font-size:13px; color:#fff; font-weight:600; margin-bottom:4px;"><b>Câu hỏi:</b> {question}</div>
-            <div style="font-size:11px; color:#61afef; margin-bottom:12px;"><b>VinAI Query:</b> {trans}</div>
-            <div style="display:flex; flex-wrap:wrap; margin:-4px;">
+            <div style="font-size:16px; font-weight:bold; color:#e06c75; margin-bottom:6px;">{qid} — Visual Evidence (VinAI B1 + EasyOCR Top 10)</div>
+            <div style="font-size:13px; color:#ddd; margin-bottom:4px;"><b>Bối cảnh:</b> {desc}</div>
+            <div style="font-size:14px; color:#fff; font-weight:600; margin-bottom:4px;"><b>Câu hỏi:</b> {question}</div>
+            <div style="font-size:12px; color:#61afef; margin-bottom:12px;"><b>VinAI B1 Query:</b> {trans}</div>
+            <div style="display:flex; flex-wrap:wrap; margin:-6px;">
                 {''.join(grid_items)}
             </div>
         </div>
         """)
 
     sections.append(f"""
-    <h2 style="color:#e06c75; border-bottom:2px solid #555; padding-bottom:6px;">🔍 PHẦN 1: QA VISUAL LOCALIZATION RECOVERY (VinAI + EasyOCR)</h2>
+    <h2 style="color:#e06c75; border-bottom:2px solid #555; padding-bottom:6px;">🔍 PHẦN 1: QA VISUAL EVIDENCE & SIDECAR EASYOCR (HUMAN REVIEW)</h2>
     {''.join(qa_cards)}
     """)
 
@@ -537,7 +606,7 @@ def generate_focused_gallery(
             frames_html = []
             for e_idx, fid in enumerate(fids, start=1):
                 _, b64_f, _ = decode_full_resolution_frame(vid, fid, runtime)
-                img_tag = f'<img src="data:image/jpeg;base64,{b64_f}" style="width:100%; border-radius:4px;" />' if b64_f else '<div style="background:#333;color:#888;height:80px;">No Frame</div>'
+                img_tag = f'<img src="data:image/jpeg;base64,{b64_f}" style="width:100%; border-radius:4px;" />' if b64_f else '<div style="background:#333;color:#888;height:80px;display:flex;align-items:center;justify-content:center;">No Frame</div>'
                 frames_html.append(f"""
                 <div style="flex:1; margin:2px; padding:4px; background:#1c1c1c; border:1px solid #333; border-radius:4px; text-align:center;">
                     <div style="font-size:10px; color:#e5c07b; font-weight:bold; margin-bottom:2px;">E{e_idx} (f={fid})</div>
@@ -573,7 +642,7 @@ def generate_focused_gallery(
     <html>
     <head><meta charset="utf-8"><title>QA Recovery & TRAKE Quality Audit</title></head>
     <body style="background:#121212; color:#fff; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; padding:16px;">
-        <h1 style="color:#61afef; border-bottom:2px solid #444; padding-bottom:10px;">📋 BÁO CÁO KIỂM TOÁN CHẤT LƯỢNG QA RECOVERY & TRAKE CHAINS</h1>
+        <h1 style="color:#61afef; border-bottom:2px solid #444; padding-bottom:10px;">📋 BÁO CÁO KIỂM TOÁN CHẤT LƯỢNG QA EVIDENCE & TRAKE CHAINS</h1>
         {''.join(sections)}
     </body>
     </html>
@@ -583,7 +652,7 @@ def generate_focused_gallery(
 
 
 # -----------------------------------------------------------------------------
-# 8. Main Pipeline
+# 9. Main Pipeline
 # -----------------------------------------------------------------------------
 def main() -> None:
     # 1. KIS Instant Copy & Reorder Check
@@ -592,17 +661,20 @@ def main() -> None:
     # 2. Bootstrap Single Runtime Instance with Watchdog
     runtime = bootstrap_runtime_once()
 
-    # 3. Initialize VinAI Translator for QA
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    translator = VinAITranslator(device=device)
+    # 3. Preflight Frame Decode Sanity Test
+    preflight_decode_sanity_test(runtime)
 
-    # 4. Ensure TRAKE Generation & Audit Distinct Chains
+    # 4. Initialize VinAI B1 Translator for QA (CPU safe)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    translator = VinAIB1Translator(device=device)
+
+    # 5. Ensure TRAKE Generation & Audit Distinct Chains (Frozen Model)
     trake_results = ensure_and_audit_trake(runtime)
 
-    # 5. Extract QA Pre-Provider Visual Localization & Sidecar EasyOCR
+    # 6. Extract QA Pre-Provider Dual-Arm Grounding & EasyOCR Evidence
     qa_results = run_qa_recovery(runtime, translator)
 
-    # 6. Generate Focused Visual Gallery (with 100% video frame decoding)
+    # 7. Generate Focused Visual Gallery
     gallery_out = Path("/kaggle/working/qa_recovery_and_trake_audit_gallery.html") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "qa_recovery_and_trake_audit_gallery.html"
     generate_focused_gallery(trake_results, qa_results, runtime, gallery_out)
 
