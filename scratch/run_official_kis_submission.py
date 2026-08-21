@@ -4,7 +4,7 @@
 Architectural Highlights:
   1. Multi-Clause Scene Decomposition: Deconstructs each query into full distilled visual prompt + scene sub-clauses (<40 tokens).
   2. Domain-Accurate Visual Terminology: Fixes all translation traps (camera pan, lion dance, grape bunch with blue string, etc.).
-  3. Weighted RRF Rank Fusion: Fuses multiple semantic visual perspectives per query before conditioning.
+  3. Weighted RRF Rank Fusion: Fuses multiple semantic visual perspectives per query before conditioning via runtime.weighted_rrf.
   4. VideoConditionedKeyframeDiversity (Q3.1): Bounded keyframe diversity across candidate videos.
   5. Exact 20-Query Target Verification: Strict validation, packaging into submission_kis_20q.zip, and visual inspection gallery.
 """
@@ -78,17 +78,17 @@ OFFICIAL_KIS_BENCHMARK = [
         "vi_text": "Cảnh quay một nhóm hơn 5 người xếp thành hàng tập thể dục, cùng thực hiện động tác hai tay chạm mũi chân. Trong nhóm chỉ có một người đeo kính và ba người đội nón có màu đỏ.",
         "variants": [
             ("full", "group of over 5 people in a line doing exercise touching toes with both hands, one person wearing glasses, three people wearing red hats", 1.0),
-            ("scene_a", "group of people exercising in a line touching their toes with both hands", 0.7),
-            ("scene_b", "one person wearing glasses and three people wearing red hats exercising", 0.6),
+            ("scene_a", "group of people exercising in a line touching their toes with both hands", 0.8),
+            ("scene_b", "one person wearing glasses and three people wearing red hats exercising", 0.7),
         ],
     },
     {
         "query_id": "query-p1-2-kis",
         "vi_text": "Đoạn phim bắt đầu bằng một bản đồ, trên đó một loại công trình thủy lợi lần lượt xuất hiện bốn lần. Sau đó chuyển sang cảnh một con đập được quay từ trên cao, tiếp đến là cảnh cận con đập dưới trời mưa.",
         "variants": [
-            ("full", "irrigation project map appearing four times, aerial view of a dam, close-up of the dam in the rain", 1.0),
-            ("scene_a", "map with water irrigation construction project appearing four times", 0.7),
-            ("scene_b", "aerial high angle view of water dam, close-up of dam under rain", 0.8),
+            ("full", "map showing irrigation water project appearing 4 times, aerial view of hydroelectric water dam reservoir, close-up of dam in rain", 1.0),
+            ("scene_a", "geographic map with water irrigation construction icons appearing four times", 0.8),
+            ("scene_b", "aerial drone view of water dam spillway, close-up of concrete dam under heavy rain", 0.8),
         ],
     },
     {
@@ -97,7 +97,7 @@ OFFICIAL_KIS_BENCHMARK = [
         "variants": [
             ("full", "pride of lions resting and climbing on wooden platforms in enclosure with London Zoo sign, two zookeepers in green weighing an animal", 1.0),
             ("scene_a", "lions on wooden platforms in enclosure, London Zoo information sign board", 0.8),
-            ("scene_b", "two zoo keepers in green shirts weighing and recording data of an animal in zoo", 0.7),
+            ("scene_b", "two zoo keepers in green shirts weighing and recording data of an animal in zoo", 0.8),
         ],
     },
     {
@@ -106,7 +106,7 @@ OFFICIAL_KIS_BENCHMARK = [
         "variants": [
             ("full", "peas added to squid stir-frying in a pan, plate of sliced onions and red chili, slow motion tossing pan over flame stove", 1.0),
             ("scene_a", "green peas added to squid stir-frying in cooking pan with sliced onion and red chili", 0.8),
-            ("scene_b", "slow motion chef tossing stir-fry pan over stove fire flame", 0.7),
+            ("scene_b", "slow motion chef tossing stir-fry pan over stove fire flame", 0.8),
         ],
     },
     {
@@ -122,9 +122,9 @@ OFFICIAL_KIS_BENCHMARK = [
         "query_id": "query-p1-7-kis",
         "vi_text": "Đoạn clip bắt đầu bằng cảnh cà rốt cắt hình ngôi sao đang được luộc trong nồi nước sôi, đặt trong rổ lưới kim loại và được đảo bằng đôi đũa gỗ. Đoạn clip kết thúc bằng hình ảnh đĩa rau củ luộc và đồ chiên được trình bày đẹp mắt, gồm đậu bắp, súp lơ, cà rốt hình ngôi sao, bí xanh, chén nước chấm màu hồng ở giữa và đôi đũa màu hồng nhạt đặt bên phải",
         "variants": [
-            ("full", "star-shaped cut carrots boiling in water pot with metal mesh basket stirred with wooden chopsticks, plate of boiled vegetables with star carrots broccoli okra pink dip and pink chopsticks", 1.0),
-            ("scene_a", "star cut carrots boiling in pot with wire mesh basket stirred with wooden chopsticks", 0.8),
-            ("scene_b", "plate of boiled vegetables with star-shaped carrots, broccoli, okra, pink dipping sauce bowl in middle and pink chopsticks on right", 0.8),
+            ("full", "star-shaped carrots boiling in pot with metal wire basket stirred with wooden chopsticks, plate of boiled vegetables with star carrots broccoli okra and pink dipping sauce", 1.0),
+            ("scene_a", "star-shaped sliced carrots boiling in water inside metal strainer basket stirred with wooden chopsticks", 0.8),
+            ("scene_b", "platter of boiled vegetables with star carrots, broccoli, okra, pink sauce bowl in center and pink chopsticks on right", 0.8),
         ],
     },
     {
@@ -141,17 +141,17 @@ OFFICIAL_KIS_BENCHMARK = [
         "vi_text": "Hành động cắt chùm nho bằng kéo từ giàn nho bằng một chiếc kéo màu đen. Có thể thấy có một sợi dây màu xanh dương được buộc vào cuống của chùm nho này trước khi nó được cắt.",
         "variants": [
             ("full", "cutting grape bunch with black scissors from vineyard trellis, blue string tied to stem of grape bunch before cutting", 1.0),
-            ("scene_a", "cutting bunch of grapes with black scissors from grapevine trellis", 0.8),
-            ("scene_b", "blue string tied to the stem of grape bunch before being cut with scissors", 0.7),
+            ("scene_a", "close up cutting ripe grape bunch with black scissors from vine trellis", 0.8),
+            ("scene_b", "blue string ribbon tied around stem of grape cluster before being harvested with scissors", 0.8),
         ],
     },
     {
         "query_id": "query-p1-11-kis",
         "vi_text": "Cảnh quay chậm tại vị trí vạch đích của cuộc đua xe đạp. Góc máy sát mặt đường bắt trọn khoảnh khắc về đích theo thứ tự nhất, nhì, ba lần lượt là 1 tay đua áo vàng quần đen, 1 tay đua áo xanh dương quần đen và 1 tay đua áo xanh dương quần đỏ",
         "variants": [
-            ("full", "slow motion finish line of cycling bicycle race ground level camera angle, first yellow jersey black shorts, second blue jersey black shorts, third blue jersey red shorts", 1.0),
-            ("scene_a", "slow motion ground level camera angle at finish line of bicycle road race", 0.8),
-            ("scene_b", "cyclists finishing race in order: yellow jersey black shorts, blue jersey black shorts, blue jersey red shorts", 0.8),
+            ("full", "slow motion ground-level camera at finish line of bicycle race: 1st yellow jersey black shorts, 2nd blue jersey black shorts, 3rd blue jersey red shorts", 1.0),
+            ("scene_a", "low angle ground camera slow motion cycling road race sprint finish line", 0.8),
+            ("scene_b", "three cyclists crossing finish line: yellow jersey, blue jersey black shorts, blue jersey red shorts", 0.8),
         ],
     },
     {
@@ -160,7 +160,7 @@ OFFICIAL_KIS_BENCHMARK = [
         "variants": [
             ("full", "petrol gas station with 4 motorbike ride-hailing drivers, three waiting and one driving left to right, closing motorcycle fuel cap, mazut oil fuel price display", 1.0),
             ("scene_a", "person closing motorcycle petrol gas fuel tank cap, mazut fuel oil price info on display", 0.8),
-            ("scene_b", "four ride-hailing motorbike delivery drivers at gas station, three standing waiting, one driving left to right", 0.8),
+            ("scene_b", "four ride-hailing motorbike delivery drivers in green jackets at petrol station, three standing waiting, one driving left to right", 0.8),
         ],
     },
     {
@@ -168,8 +168,8 @@ OFFICIAL_KIS_BENCHMARK = [
         "vi_text": "Một người đứng dưới nước và rọi đèn. Tiếp theo là cảnh người này kéo lưới cá lúc bình minh, sau đó được một nhóm người khác tiến đến dùng máy quay ghi hình.",
         "variants": [
             ("full", "person standing in water shining flashlight, pulling fishing net at sunrise dawn, group of people approaching with video camera filming", 1.0),
-            ("scene_a", "man standing in water shining flashlight lamp, pulling fish net at sunrise", 0.8),
-            ("scene_b", "group of people approaching with video camera recording filming the fisherman", 0.7),
+            ("scene_a", "man standing in water shining flashlight lamp, pulling fish net at sunrise dawn", 0.8),
+            ("scene_b", "group of people approaching with video camera recording filming the fisherman", 0.8),
         ],
     },
     {
@@ -185,9 +185,9 @@ OFFICIAL_KIS_BENCHMARK = [
         "query_id": "query-p1-18-kis",
         "vi_text": "Cảnh quay cho thấy hành động trình bày món ăn sau khi hoàn thành giai đoạn chế biến. Bún được cho đầu tiên vào một chén rỗng, sau đó đầu bếp lần lượt cho từng vá nước dùng cùng các nguyên liệu như thịt gà, cà rốt, sả, nấm mèo vào chén bún, và kết thúc bằng việc thả một cọng ngò lên trên cùng. Cảnh quay tiếp theo là cảnh zoom xa dần chén bún, ta thấy bên cạnh chén bún còn có 1 chén nước chấm nhỏ với 2 miếng ớt.",
         "variants": [
-            ("full", "plating food in bowl: rice vermicelli noodles first, ladle chicken broth with chicken meat, carrots, lemongrass, wood ear fungus, cilantro on top, zoom out showing bowl with small chili dipping sauce", 1.0),
-            ("scene_a", "chef assembling noodle soup bowl: vermicelli noodles, ladle broth with chicken, carrots, lemongrass, black fungus, cilantro on top", 0.8),
-            ("scene_b", "camera zooming out from noodle bowl showing small dipping sauce bowl with two chili slices next to it", 0.8),
+            ("full", "plating noodle soup bowl: rice vermicelli, ladling broth with chicken meat, carrots, lemongrass, wood ear mushrooms, cilantro garnish, zoom out showing bowl with chili dipping sauce", 1.0),
+            ("scene_a", "chef placing rice vermicelli in bowl, ladling soup broth with chicken, carrot, lemongrass and mushroom, placing cilantro herb on top", 0.8),
+            ("scene_b", "camera zooming out from noodle soup bowl showing small sauce bowl with two red chili slices", 0.8),
         ],
     },
     {
@@ -195,8 +195,9 @@ OFFICIAL_KIS_BENCHMARK = [
         "vi_text": "Con lân do hai người điều khiển đang đứng thẳng và xoay vòng trên đỉnh cột. Sau vài giây nghỉ, con lân bất ngờ nhảy qua hai chiếc cột kế bên, chúi đầu xuống ngoạm lấy quả bí đỏ kèm bông hoa màu vàng. Cảnh quay kết thúc khi con lân tiếp tục nhảy sang các cột tiếp theo.",
         "variants": [
             ("full", "lion dance on high poles standing upright and spinning, lion jumping across two poles diving head down biting yellow pumpkin and yellow flower, jumping to next poles", 1.0),
-            ("scene_a", "lion dance performance two performers standing upright and spinning on top of high poles", 0.8),
-            ("scene_b", "lion jumping across poles diving head down biting pumpkin with yellow flower, leaping to next poles", 0.8),
+            ("scene_a", "two person lion dance performance standing upright and spinning on top of high poles", 0.8),
+            ("scene_b", "lion dance jumping across high poles catching pumpkin and yellow flower with mouth", 0.8),
+            ("scene_c", "traditional vietnamese chinese lion dragon dance leaping on tall poles", 0.7),
         ],
     },
     {
@@ -205,25 +206,25 @@ OFFICIAL_KIS_BENCHMARK = [
         "variants": [
             ("full", "three people walking down a slope in rain with two umbrellas, rear person wearing raincoat with bear print on back, people walking towards house on dirt path beside pond", 1.0),
             ("scene_a", "three people walking down a slope in the rain with umbrellas, rear person wearing raincoat with bear picture on back", 0.8),
-            ("scene_b", "people walking together towards a house along a dirt path next to a pond", 0.7),
+            ("scene_b", "people walking together towards a house along a dirt path next to a pond", 0.8),
         ],
     },
     {
         "query_id": "query-p1-21-kis",
         "vi_text": "Cảnh quay bắt đầu bằng cảnh những con tôm đã được lột vỏ và nấu chín đang nằm trên dĩa, phía sau là người đầu bếp đang đặt 3 ổ bánh mì lên bàn. Sau đó là cảnh quay các đầu bếp, có người thì trang trí món ăn, có người thì chế biến món ăn. Những con tôm được cắt làm đôi và được nướng trên bếp.",
         "variants": [
-            ("full", "peeled cooked shrimp on plate, chef placing 3 baguettes on table, chefs decorating and cooking food, halved shrimp grilling on stove", 1.0),
-            ("scene_a", "peeled cooked shrimp on plate, chef placing three baguette breads on table", 0.8),
-            ("scene_b", "chefs preparing and decorating dishes, halved shrimp grilling on barbecue stove", 0.8),
+            ("full", "peeled cooked prawns shrimps on plate, chef placing 3 baguettes breads on table, halved shrimps grilling on stove grill", 1.0),
+            ("scene_a", "cooked peeled red shrimps on plate, chef putting three loaves of bread baguettes on wooden table", 0.8),
+            ("scene_b", "chefs decorating food plates, halved shrimps grilling on hot barbecue stove", 0.8),
         ],
     },
     {
         "query_id": "query-p1-22-kis",
         "vi_text": "Người phụ nữ mặc áo dài màu hồng, đeo kính đang giảng giải về các trường hợp sử dụng khác nhau của động từ 'remember' dựa trên mốc thời gian của hành động được nhắc tới.",
         "variants": [
-            ("full", "woman in pink ao dai wearing glasses teaching English grammar explaining usage of verb 'remember' based on timeline", 1.0),
-            ("scene_a", "woman wearing pink traditional ao dai dress and glasses teaching lecture on stage or whiteboard", 0.8),
-            ("scene_b", "English grammar lesson explaining different uses of verb 'remember' with timeline", 0.7),
+            ("full", "female teacher in pink ao dai wearing glasses teaching English grammar explaining usage of verb 'remember' on whiteboard", 1.0),
+            ("scene_a", "woman wearing pink ao dai traditional dress and glasses teaching English in classroom", 0.8),
+            ("scene_b", "teacher explaining grammar rules of verb remember to V and remember V-ing timeline", 0.8),
         ],
     },
     {
@@ -370,8 +371,8 @@ def process_multi_variant_kis_queries(runtime: OperationalKISRuntime) -> list[di
             rankings[var_id] = cands
             print(f"      - Variant [{var_id:<7}] (weight={var_weight}): '{var_text[:65]}...'")
 
-        # 2. Weighted RRF Fusion
-        fused_result = runtime.multi_query_fuser.fuse_rankings(
+        # 2. Weighted RRF Fusion via runtime.weighted_rrf
+        fused_result = runtime.weighted_rrf.fuse_rankings(
             query_id=qid,
             variants=tuple(variant_objs),
             rankings=rankings,
@@ -532,8 +533,8 @@ def render_kis_gallery(results: list[dict[str, Any]]) -> None:
 def main() -> None:
     t0 = time.time()
     
-    # 0. Clean submission directory before running
-    for old_f in SUBMISSION_DIR.glob("*.csv"):
+    # 0. Clean ONLY KIS submission files before running (preserves any QA/TRAKE files)
+    for old_f in SUBMISSION_DIR.glob("query-p1-*-kis.csv"):
         try:
             old_f.unlink()
         except Exception:
