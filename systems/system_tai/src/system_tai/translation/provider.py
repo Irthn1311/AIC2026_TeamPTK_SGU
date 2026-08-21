@@ -1,11 +1,11 @@
-"""Production-grade offline translation provider using Helsinki-NLP/opus-mt-vi-en."""
+"""Offline translation providers and lossless CLIP query segmentation."""
 
 from __future__ import annotations
 
 import hashlib
 import logging
 import os
-import sys
+import re
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -28,15 +28,19 @@ class TranslationProvider(Protocol):
     def translate(self, text: str) -> str: ...
 
 
-class MarianOfflineTranslator:
-    """Offline translation provider backed by Helsinki-NLP/opus-mt-vi-en.
+class VinAITranslateProvider:
+    """Vietnamese-to-English provider backed by VinAI Translate v2.
 
-    Uses direct AutoTokenizer + AutoModelForSeq2SeqLM for deterministic
-    offline execution (compatible with modern transformers releases).
+    The implementation follows VinAI's public mBART inference contract:
+    ``src_lang='vi_VN'`` and ``decoder_start_token_id`` for ``en_XX``.
+    Model download is opt-in; a missing local checkpoint fails clearly when
+    ``allow_model_download`` is false.
     """
 
-    DEFAULT_MODEL_NAME = "Helsinki-NLP/opus-mt-vi-en"
-    DEFAULT_PINNED_REVISION = "5611f34634b72de0608b1238a4e02845ca285f3e"
+    DEFAULT_MODEL_NAME = "vinai/vinai-translate-vi2en-v2"
+    DEFAULT_PINNED_REVISION = "ae7baa85da07dbe8e23ac26a9f5ef560c17e2138"
+    SOURCE_LANGUAGE = "vi_VN"
+    TARGET_LANGUAGE = "en_XX"
 
     def __init__(
         self,
@@ -44,23 +48,24 @@ class MarianOfflineTranslator:
         model_name_or_path: str | Path | None = None,
         device: str = "auto",
         cache_dir: Path | None = None,
-        local_files_only: bool = False,
+        allow_model_download: bool = False,
         revision: str | None = None,
-        max_length: int = 128,
-        num_beams: int = 4,
+        max_length: int = 1024,
+        num_beams: int = 5,
     ) -> None:
         try:
             import torch
             from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
         except ImportError as exc:
             raise TranslationError(
-                f"transformers and torch must be installed to use MarianOfflineTranslator: {exc}"
+                "transformers and torch must be installed to use "
+                f"VinAITranslateProvider: {exc}"
             ) from exc
 
         self.model_name = str(model_name_or_path or self.DEFAULT_MODEL_NAME)
         self.max_length = max_length
         self.num_beams = num_beams
-        self.local_files_only = local_files_only
+        self.allow_model_download = allow_model_download
         self.revision = revision or self.DEFAULT_PINNED_REVISION
 
         # Resolve device
@@ -74,75 +79,58 @@ class MarianOfflineTranslator:
             raise ValueError(f"Unsupported device '{device}', must be 'auto', 'cuda', or 'cpu'")
 
         logger.info(
-            "Loading Marian MT model '%s' on %s (cache_dir=%s, local_files_only=%s, revision=%s)...",
+            "Loading VinAI Translate model '%s' on %s "
+            "(cache_dir=%s, allow_model_download=%s, revision=%s)...",
             self.model_name,
             self._device,
             cache_dir,
-            local_files_only,
+            allow_model_download,
             self.revision,
         )
 
         resolved_cache = str(cache_dir) if cache_dir else None
+        load_kwargs = {
+            "cache_dir": resolved_cache,
+            "local_files_only": not allow_model_download,
+            "revision": self.revision,
+        }
         try:
             self.tokenizer = AutoTokenizer.from_pretrained(
                 self.model_name,
-                cache_dir=resolved_cache,
-                local_files_only=local_files_only,
-                revision=self.revision,
+                src_lang=self.SOURCE_LANGUAGE,
+                **load_kwargs,
             )
             self.model = AutoModelForSeq2SeqLM.from_pretrained(
                 self.model_name,
-                cache_dir=resolved_cache,
-                local_files_only=local_files_only,
-                revision=self.revision,
+                **load_kwargs,
             ).to(self._device)
             self.model.eval()
         except Exception as exc:
-            if local_files_only:
-                try:
-                    # 1. Try local cache without revision pin
-                    self.tokenizer = AutoTokenizer.from_pretrained(
-                        self.model_name,
-                        cache_dir=resolved_cache,
-                        local_files_only=True,
-                    )
-                    self.model = AutoModelForSeq2SeqLM.from_pretrained(
-                        self.model_name,
-                        cache_dir=resolved_cache,
-                        local_files_only=True,
-                    ).to(self._device)
-                    self.model.eval()
-                except Exception:
-                    try:
-                        # 2. If fresh container has empty cache, provision once from Hub
-                        logger.info("Fresh container cache miss; provisioning model '%s' from Hugging Face hub...", self.model_name)
-                        self.tokenizer = AutoTokenizer.from_pretrained(
-                            self.model_name,
-                            cache_dir=resolved_cache,
-                            local_files_only=False,
-                            revision=self.revision,
-                        )
-                        self.model = AutoModelForSeq2SeqLM.from_pretrained(
-                            self.model_name,
-                            cache_dir=resolved_cache,
-                            local_files_only=False,
-                            revision=self.revision,
-                        ).to(self._device)
-                        self.model.eval()
-                    except Exception as dl_exc:
-                        raise TranslationError(
-                            f"Failed to load/provision Marian MT model from '{self.model_name}' (revision={self.revision}): {dl_exc}"
-                        ) from dl_exc
-            else:
-                raise TranslationError(
-                    f"Failed to load Marian MT model from '{self.model_name}' (revision={self.revision}): {exc}"
-                ) from exc
+            download_hint = (
+                " Enable translation_allow_model_download explicitly to provision it."
+                if not allow_model_download
+                else ""
+            )
+            raise TranslationError(
+                "Failed to load VinAI Translate model "
+                f"'{self.model_name}' (revision={self.revision}): {exc}.{download_hint}"
+            ) from exc
+
+        language_ids = getattr(self.tokenizer, "lang_code_to_id", None) or {}
+        target_language_id = language_ids.get(self.TARGET_LANGUAGE)
+        if target_language_id is None and hasattr(self.tokenizer, "convert_tokens_to_ids"):
+            target_language_id = self.tokenizer.convert_tokens_to_ids(self.TARGET_LANGUAGE)
+        if not isinstance(target_language_id, int) or target_language_id < 0:
+            raise TranslationError(
+                f"VinAI tokenizer does not expose target language token {self.TARGET_LANGUAGE!r}"
+            )
+        self.target_language_id = target_language_id
 
         self._torch = torch
 
     @property
     def provider_name(self) -> str:
-        return f"marian-mt:{self.model_name}@{self.revision[:8]}"
+        return f"vinai-translate:{self.model_name}@{self.revision[:8]}"
 
     @property
     def device(self) -> str:
@@ -150,7 +138,6 @@ class MarianOfflineTranslator:
 
     def get_artifact_fingerprint(self) -> dict[str, Any]:
         """Compute artifact provenance and SHA256 fingerprint strictly from local disk."""
-        import hashlib
         info: dict[str, Any] = {
             "model_name": self.model_name,
             "pinned_revision": self.revision,
@@ -173,7 +160,8 @@ class MarianOfflineTranslator:
                     if self.revision and (snaps / self.revision).is_dir():
                         snapshot_dir = snaps / self.revision
                         break
-                    # 2. Fallback to existing snapshot directory if revision was cached under default branch
+                    # Fall back to an existing snapshot if the revision was
+                    # cached under the repository's default branch.
                     for snap in snaps.iterdir():
                         if snap.is_dir():
                             snapshot_dir = snap
@@ -189,7 +177,11 @@ class MarianOfflineTranslator:
             )
 
             # Determine primary weight artifact
-            primary_weights = "model.safetensors" if (snapshot_dir / "model.safetensors").exists() else "pytorch_model.bin"
+            primary_weights = (
+                "model.safetensors"
+                if (snapshot_dir / "model.safetensors").exists()
+                else "pytorch_model.bin"
+            )
             info["primary_weight_artifact"] = primary_weights
 
             # Scan all files in snapshot_dir as well as any component artifacts in repo cache
@@ -198,12 +190,20 @@ class MarianOfflineTranslator:
                 if fpath.is_file():
                     scanned_files[fpath.name] = fpath
 
-            # Also check parent repo snapshots for tokenizer artifacts if stored in parallel snapshot
+            # Check parent snapshots for tokenizer artifacts stored elsewhere.
             repo_root_dir = snapshot_dir.parent.parent
             if repo_root_dir.exists():
                 for fpath in repo_root_dir.rglob("*"):
                     if fpath.is_file() and fpath.name not in scanned_files:
-                        if any(ext in fpath.name for ext in ["spm", "json", "safetensors", "bin", "model", "txt"]):
+                        artifact_markers = (
+                            "spm",
+                            "json",
+                            "safetensors",
+                            "bin",
+                            "model",
+                            "txt",
+                        )
+                        if any(ext in fpath.name for ext in artifact_markers):
                             scanned_files[fpath.name] = fpath
 
             for fname, fpath in sorted(scanned_files.items()):
@@ -217,29 +217,25 @@ class MarianOfflineTranslator:
                 except Exception as exc:
                     info[f"{fname}_hash_error"] = str(exc)
         else:
-            info["fingerprint_warning"] = "Local snapshot directory not found in standard cache locations."
+            info["fingerprint_warning"] = (
+                "Local snapshot directory not found in standard cache locations."
+            )
 
         return info
 
     def translate(self, text: str) -> str:
-        """Translate Vietnamese text to English.
+        """Translate one Vietnamese string to English."""
+        return self.translate_many((text,))[0]
 
-        Args:
-            text: Raw Vietnamese input text.
-
-        Returns:
-            Translated English string.
-
-        Raises:
-            TranslationError: if input is empty or generation fails.
-        """
-        cleaned = text.strip()
-        if not cleaned:
-            raise TranslationError("Cannot translate empty or whitespace-only text")
+    def translate_many(self, texts: tuple[str, ...] | list[str]) -> tuple[str, ...]:
+        """Translate a batch while loading and reusing the model only once."""
+        cleaned = tuple(text.strip() for text in texts)
+        if not cleaned or any(not text for text in cleaned):
+            raise TranslationError("Cannot translate an empty batch or whitespace-only text")
 
         try:
             inputs = self.tokenizer(
-                cleaned,
+                list(cleaned),
                 return_tensors="pt",
                 padding=True,
                 truncation=True,
@@ -249,24 +245,32 @@ class MarianOfflineTranslator:
             with self._torch.no_grad():
                 generated_tokens = self.model.generate(
                     **inputs,
+                    decoder_start_token_id=self.target_language_id,
                     max_length=self.max_length,
+                    num_return_sequences=1,
                     num_beams=self.num_beams,
                     early_stopping=True,
                 )
 
-            translated = self.tokenizer.decode(
-                generated_tokens[0],
-                skip_special_tokens=True,
-            ).strip()
-
-            if not translated:
-                raise TranslationError(f"Translation produced empty output for input: {cleaned!r}")
-
+            translated = tuple(
+                value.strip()
+                for value in self.tokenizer.batch_decode(
+                    generated_tokens,
+                    skip_special_tokens=True,
+                )
+            )
+            if len(translated) != len(cleaned):
+                raise TranslationError(
+                    "VinAI translation returned "
+                    f"{len(translated)} rows for {len(cleaned)} inputs"
+                )
+            if any(not value for value in translated):
+                raise TranslationError("VinAI translation produced an empty output")
             return translated
         except Exception as exc:
             if isinstance(exc, TranslationError):
                 raise
-            raise TranslationError(f"Marian translation generation failed: {exc}") from exc
+            raise TranslationError(f"VinAI translation generation failed: {exc}") from exc
 
 
 class NLLBOfflineTranslator:
@@ -380,21 +384,19 @@ class NLLBOfflineTranslator:
 
 
 class TokenBudgetGuard:
-    """Validates and enforces that translated English queries fit within CLIP's context budget.
+    """Split translated English into lossless CLIP-sized query segments.
 
     OpenAI CLIP ViT-B/32 has a maximum context window of 77 tokens (including <start_of_text>
     and <end_of_text>). Usable content tokens must be <= 75.
     """
 
     SAFE_CLIP_TOKEN_LIMIT = 75
+    _BOUNDARY_RE = re.compile(r"(?<=[.!?;:,])\s+")
 
-    def __init__(self, max_tokens: int = SAFE_CLIP_TOKEN_LIMIT, packing_policy: str = "prefix_77") -> None:
+    def __init__(self, max_tokens: int = SAFE_CLIP_TOKEN_LIMIT) -> None:
         if max_tokens <= 0 or max_tokens > 75:
             raise ValueError(f"max_tokens must be in range 1..75, got {max_tokens}")
-        if packing_policy not in {"prefix_77", "head_tail_77"}:
-            raise ValueError(f"packing_policy must be 'prefix_77' or 'head_tail_77', got {packing_policy}")
         self.max_tokens = max_tokens
-        self.packing_policy = packing_policy
         self._clip_tokenizer: Any = None
 
     def _get_tokenizer(self) -> Any:
@@ -402,14 +404,10 @@ class TokenBudgetGuard:
             try:
                 import clip
                 self._clip_tokenizer = clip.simple_tokenizer.SimpleTokenizer()
-            except ImportError:
-                import subprocess
-                subprocess.run(
-                    [sys.executable, "-m", "pip", "install", "-q", "openai-clip", "ftfy", "regex"],
-                    check=False,
-                )
-                import clip
-                self._clip_tokenizer = clip.simple_tokenizer.SimpleTokenizer()
+            except ImportError as exc:
+                raise TranslationError(
+                    "OpenAI CLIP must be installed before segmenting translated queries"
+                ) from exc
         return self._clip_tokenizer
 
     def count_tokens(self, text: str) -> int:
@@ -422,49 +420,40 @@ class TokenBudgetGuard:
         """Alias for count_tokens."""
         return self.count_tokens(text)
 
-    def guard_and_compact(self, text: str, packing_policy: str | None = None) -> tuple[str, int, bool]:
-        """Guard text against CLIP token budget.
+    def split_for_clip(self, text: str) -> tuple[str, ...]:
+        """Return CLIP-sized segments without dropping translated words."""
+        cleaned = " ".join(text.split())
+        if not cleaned:
+            raise TranslationError("Cannot segment empty translated text")
+        if self.count_tokens(cleaned) <= self.max_tokens + 2:
+            return (cleaned,)
 
-        If text fits within safe budget (<= 75 tokens), returns (text, token_count, False).
-        If text exceeds safe budget (> 75 tokens), compacts to boundary without exceeding budget
-        and returns (compacted_text, new_token_count, True).
-        """
-        policy = packing_policy or self.packing_policy
-        tokenizer = self._get_tokenizer()
-        bpe_tokens = tokenizer.encode(text)
-        raw_count = len(bpe_tokens) + 2
-
-        if raw_count <= (self.max_tokens + 2):
-            return text, raw_count, False
-
-        if policy == "head_tail_77":
-            # Head + Tail bifurcated packing
-            head_budget = int(self.max_tokens * 0.48)  # 36 tokens
-            tail_budget = self.max_tokens - head_budget  # 39 tokens
-            head_tokens = bpe_tokens[:head_budget]
-            tail_tokens = bpe_tokens[-tail_budget:]
-            head_text = tokenizer.decode(head_tokens).strip().rstrip(".,; ")
-            tail_text = tokenizer.decode(tail_tokens).strip().lstrip(".,; ")
-            combined = f"{head_text}, {tail_text}"
-            comb_tokens = tokenizer.encode(combined)
-            if len(comb_tokens) > self.max_tokens:
-                trimmed = comb_tokens[: self.max_tokens]
-                compacted = tokenizer.decode(trimmed).strip()
-                new_count = len(trimmed) + 2
-            else:
-                compacted = combined
-                new_count = len(comb_tokens) + 2
-        else:
-            # Default prefix_77: strict BPE prefix truncation
-            kept_tokens = bpe_tokens[: self.max_tokens]
-            compacted = tokenizer.decode(kept_tokens).strip()
-            new_count = len(kept_tokens) + 2
-
-        logger.warning(
-            "Query exceeded token budget (%d > %d, policy=%s). Compacted text: %r",
-            raw_count,
-            self.max_tokens + 2,
-            policy,
-            compacted,
+        clauses = tuple(
+            clause.strip()
+            for clause in self._BOUNDARY_RE.split(cleaned)
+            if clause.strip()
         )
-        return compacted, new_count, True
+        segments: list[str] = []
+        for clause in clauses:
+            current: list[str] = []
+            for word in clause.split():
+                proposed = " ".join((*current, word))
+                if current and self.count_tokens(proposed) > self.max_tokens + 2:
+                    segments.append(" ".join(current))
+                    current = [word]
+                else:
+                    current.append(word)
+                if self.count_tokens(" ".join(current)) > self.max_tokens + 2:
+                    raise TranslationError(
+                        "A single translated token cannot fit within the CLIP context budget"
+                    )
+            if current:
+                segments.append(" ".join(current))
+
+        if not segments or any(
+            self.count_tokens(segment) > self.max_tokens + 2 for segment in segments
+        ):
+            raise TranslationError("Failed to segment translation within CLIP token budget")
+        if " ".join(segments).split() != cleaned.split():
+            raise TranslationError("Lossless query segmentation invariant failed")
+        return tuple(segments)

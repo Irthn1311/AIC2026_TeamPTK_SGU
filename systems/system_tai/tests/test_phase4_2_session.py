@@ -710,3 +710,92 @@ def test_51_52_refinement_response_metrics_regression(tmp_path: Path) -> None:
         runtime.refiner.refine_query = original_refine_query
         system_tai.kis.session_engine._write_refined_csv = original_write_csv
         system_tai.kis.session_engine._write_json = original_write_json
+
+
+def test_dynamic_vinai_translation_uses_all_lossless_segments(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import system_tai.translation.provider as translation_module
+
+    translated_source = "first translated scene. second translated scene."
+    encoded_texts: list[str] = []
+
+    class FakeVinAIProvider:
+        provider_name = "vinai-translate:test@revision"
+
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+        def translate(self, text: str) -> str:
+            assert text == "truy vấn tiếng Việt nguyên bản"
+            return translated_source
+
+    class FakeLosslessGuard:
+        def __init__(self, *, max_tokens: int) -> None:
+            assert max_tokens == 75
+
+        @staticmethod
+        def split_for_clip(text: str) -> tuple[str, ...]:
+            assert text == translated_source
+            return ("first translated scene.", "second translated scene.")
+
+        @staticmethod
+        def count_tokens(_text: str) -> int:
+            return 6
+
+    class RecordingEncoder(MockSharedEncoder):
+        def encode_texts(self, texts: list[str]) -> np.ndarray:
+            encoded_texts.extend(texts)
+            return super().encode_texts(texts)
+
+    monkeypatch.setattr(
+        translation_module,
+        "VinAITranslateProvider",
+        FakeVinAIProvider,
+    )
+    monkeypatch.setattr(translation_module, "TokenBudgetGuard", FakeLosslessGuard)
+
+    manifest_path, _, counts = make_test_corpus(tmp_path)
+    config = SessionConfig(
+        input_root=tmp_path,
+        reuse_manifest=manifest_path,
+        output_root=tmp_path / "vinai_session",
+        device="cpu",
+        enable_dynamic_translation=True,
+    )
+    runtime = OperationalKISRuntime.bootstrap(
+        config,
+        registry_loader=lambda path: FeatureStoreRegistry.from_manifest(
+            path,
+            expected_dimension=2,
+        ),
+        encoder_factory=lambda **_kwargs: RecordingEncoder(counts),
+        decoder_factory=lambda: MockDecoder(counts),
+    )
+
+    response = runtime.handle_query(
+        QueryRequest(
+            "vinai-request",
+            "Q-VINAI",
+            "truy vấn tiếng Việt nguyên bản",
+            refine_top_n=0,
+        )
+    )
+
+    assert response["status"] == "SUCCESS"
+    assert encoded_texts == ["first translated scene.", "second translated scene."]
+    candidates_path = runtime.output_root / response["artifacts"]["candidates_json"]
+    candidates_payload = json.loads(candidates_path.read_text(encoding="utf-8"))
+    assert candidates_payload["translation"] == {
+        "dynamic_translation_enabled": True,
+        "provider": "vinai-translate:test@revision",
+        "source_vietnamese": "truy vấn tiếng Việt nguyên bản",
+        "raw_english": translated_source,
+        "english_segments": ["first translated scene.", "second translated scene."],
+        "clip_token_counts": [6, 6],
+        "segment_count": 2,
+        "lossless_segmentation": True,
+        "was_truncated": False,
+        "translation_seconds": pytest.approx(0.0, abs=0.1),
+    }

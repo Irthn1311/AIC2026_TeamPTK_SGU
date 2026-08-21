@@ -71,7 +71,7 @@ from system_tai.refinement.q3_anchor import (
 )
 from system_tai.refinement.runner import _write_json, _write_refined_csv
 from system_tai.refinement.video import OpenCVVideoDecoder, RawVideoRegistry
-from system_tai.retrieval.multi_query import QueryVariantType, WeightedRRFRetriever
+from system_tai.retrieval.multi_query import WeightedRRFRetriever
 from system_tai.retrieval.vector_search import ExactNumpyRetriever
 from system_tai.retrieval.video_evidence import VideoRestrictedFeatureSearcher
 from system_tai.retrieval.video_restricted import (
@@ -256,18 +256,20 @@ class OperationalKISRuntime:
         self.token_budget_guard: Any | None = None
         if config.enable_dynamic_translation:
             from system_tai.translation.provider import (
-                MarianOfflineTranslator,
                 TokenBudgetGuard,
+                VinAITranslateProvider,
             )
 
-            self.translation_provider = MarianOfflineTranslator(
+            self.translation_provider = VinAITranslateProvider(
                 model_name_or_path=config.translation_model_name,
                 device=config.translation_device,
                 cache_dir=config.translation_cache_dir,
-                local_files_only=config.translation_local_files_only,
+                allow_model_download=config.translation_allow_model_download,
                 revision=config.translation_revision,
             )
-            self.token_budget_guard = TokenBudgetGuard(packing_policy=config.translation_packing_policy)
+            self.token_budget_guard = TokenBudgetGuard(
+                max_tokens=config.translation_max_clip_tokens
+            )
 
         self.session_id = config.session_id or f"session-{uuid.uuid4().hex[:8]}"
         self.start_time_utc = datetime.now(UTC).isoformat()
@@ -449,26 +451,35 @@ class OperationalKISRuntime:
         if self.config.enable_dynamic_translation and self.translation_provider is not None:
             t_trans = self.clock()
             raw_en = self.translation_provider.translate(request.query_vi)
-            final_en, tok_count, was_compacted = self.token_budget_guard.guard_and_compact(raw_en)
+            english_segments = self.token_budget_guard.split_for_clip(raw_en)
+            clip_token_counts = tuple(
+                self.token_budget_guard.count_tokens(segment)
+                for segment in english_segments
+            )
             translation_seconds = self.clock() - t_trans
             translation_metadata = {
                 "dynamic_translation_enabled": True,
                 "provider": self.translation_provider.provider_name,
+                "source_vietnamese": request.query_vi,
                 "raw_english": raw_en,
-                "final_english": final_en,
-                "clip_token_count": tok_count,
-                "was_compacted": was_compacted,
+                "english_segments": list(english_segments),
+                "clip_token_counts": list(clip_token_counts),
+                "segment_count": len(english_segments),
+                "lossless_segmentation": True,
+                "was_truncated": False,
                 "translation_seconds": translation_seconds,
             }
-            # EN_ONLY variant (Never fuse Vietnamese)
-            variants = (
+            # EN_ONLY variants. Long translations are losslessly segmented,
+            # then fused at ranking level; Vietnamese is not mixed into CLIP.
+            variants = tuple(
                 QueryVariant(
-                    variant_id=f"{request.query_id}::marian_en",
-                    text=final_en,
+                    variant_id=f"{request.query_id}::vinai_en_{index:02d}",
+                    text=segment,
                     language=QueryLanguage.ENGLISH,
                     variant_type=QueryVariantType.ENGLISH_TRANSLATION,
                     weight=1.0,
-                ),
+                )
+                for index, segment in enumerate(english_segments, start=1)
             )
         else:
             variants = request.variants()
@@ -569,6 +580,7 @@ class OperationalKISRuntime:
         candidates_data = {
             "query_id": request.query_id,
             "request_id": request.request_id,
+            "translation": translation_metadata,
             "records": [
                 {
                     "query_id": conditioned_result.query_id,

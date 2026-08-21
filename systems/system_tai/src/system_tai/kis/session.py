@@ -52,6 +52,23 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
     parser.add_argument("--allow-model-download", action="store_true")
     parser.add_argument("--clip-cache-dir", type=Path)
+    parser.add_argument("--enable-dynamic-translation", action="store_true")
+    parser.add_argument(
+        "--translation-model-name",
+        default="vinai/vinai-translate-vi2en-v2",
+    )
+    parser.add_argument("--translation-cache-dir", type=Path)
+    parser.add_argument(
+        "--translation-device",
+        choices=("auto", "cpu", "cuda"),
+        default="auto",
+    )
+    parser.add_argument("--translation-allow-model-download", action="store_true")
+    parser.add_argument(
+        "--translation-revision",
+        default="ae7baa85da07dbe8e23ac26a9f5ef560c17e2138",
+    )
+    parser.add_argument("--translation-max-clip-tokens", type=int, default=75)
     parser.add_argument("--rrf-constant", type=float, default=60.0)
     parser.add_argument("--chunk-size", type=int, default=4096)
     parser.add_argument("--default-top-k-per-variant", type=int, default=100)
@@ -128,6 +145,29 @@ def session_config_from_args(args: argparse.Namespace) -> SessionConfig:
         device=args.device,
         allow_model_download=args.allow_model_download,
         clip_cache_dir=args.clip_cache_dir,
+        enable_dynamic_translation=getattr(args, "enable_dynamic_translation", False),
+        translation_model_name=getattr(
+            args,
+            "translation_model_name",
+            "vinai/vinai-translate-vi2en-v2",
+        ),
+        translation_cache_dir=getattr(args, "translation_cache_dir", None),
+        translation_device=getattr(args, "translation_device", "auto"),
+        translation_allow_model_download=getattr(
+            args,
+            "translation_allow_model_download",
+            False,
+        ),
+        translation_revision=getattr(
+            args,
+            "translation_revision",
+            "ae7baa85da07dbe8e23ac26a9f5ef560c17e2138",
+        ),
+        translation_max_clip_tokens=getattr(
+            args,
+            "translation_max_clip_tokens",
+            75,
+        ),
         rrf_constant=args.rrf_constant,
         chunk_size=args.chunk_size,
         default_top_k_per_variant=args.default_top_k_per_variant,

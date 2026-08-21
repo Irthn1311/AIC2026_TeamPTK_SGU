@@ -33,9 +33,10 @@ retrieval:
 kis:
   status: "PROVEN_WINNER"
   enable_dynamic_translation: true
-  translation_model_name: "Helsinki-NLP/opus-mt-vi-en"
-  translation_revision: "5611f34634b72de0608b1238a4e02845ca285f3e"
-  translation_local_files_only: true
+  translation_model_name: "vinai/vinai-translate-vi2en-v2"
+  translation_revision: "ae7baa85da07dbe8e23ac26a9f5ef560c17e2138"
+  translation_allow_model_download: true
+  translation_max_clip_tokens: 75
   language_policy: "en_only"
   top_k_candidates: 100
   coarse_to_fine_refinement: true

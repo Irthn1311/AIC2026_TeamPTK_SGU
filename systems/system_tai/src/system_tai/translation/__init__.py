@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 from .provider import (
-    MarianOfflineTranslator,
     TokenBudgetGuard,
     TranslationError,
     TranslationProvider,
+    VinAITranslateProvider,
 )
 
 __all__ = [
-    "MarianOfflineTranslator",
     "TokenBudgetGuard",
     "TranslationError",
     "TranslationProvider",
+    "VinAITranslateProvider",
 ]

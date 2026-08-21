@@ -97,16 +97,18 @@ class SessionConfig:
     )
     qa_unsupported_provider_fallback: bool = False
     enable_dynamic_translation: bool = False
-    translation_model_name: str = "Helsinki-NLP/opus-mt-vi-en"
+    translation_model_name: str = "vinai/vinai-translate-vi2en-v2"
     translation_cache_dir: Path | None = None
     translation_device: str = "auto"
-    translation_local_files_only: bool = False
-    translation_revision: str | None = None
-    translation_packing_policy: str = "prefix_77"
+    translation_allow_model_download: bool = False
+    translation_revision: str | None = (
+        "ae7baa85da07dbe8e23ac26a9f5ef560c17e2138"
+    )
+    translation_max_clip_tokens: int = 75
 
     def __post_init__(self) -> None:
-        if self.translation_packing_policy not in {"prefix_77", "head_tail_77"}:
-            raise ValueError(f"translation_packing_policy must be 'prefix_77' or 'head_tail_77', got {self.translation_packing_policy}")
+        if not 1 <= self.translation_max_clip_tokens <= 75:
+            raise ValueError("translation_max_clip_tokens must be between 1 and 75")
         if self.reuse_manifest is not None and self.manifest_cache is not None:
             raise ValueError("reuse_manifest and manifest_cache are mutually exclusive")
         if self.device not in {"auto", "cpu", "cuda"}:
@@ -207,7 +209,9 @@ class SessionConfig:
         try:
             import yaml
         except ImportError:
-            import subprocess, sys
+            import subprocess
+            import sys
+
             subprocess.run([sys.executable, "-m", "pip", "install", "-q", "pyyaml"], check=False)
             import yaml
 
@@ -228,9 +232,22 @@ class SessionConfig:
             "default_output_top_k": kis_cfg.get("top_k_candidates", 100),
             "default_refine_top_n": kis_cfg.get("refine_top_n_anchors", 3),
             "enable_dynamic_translation": kis_cfg.get("enable_dynamic_translation", False),
-            "translation_model_name": kis_cfg.get("translation_model_name", "Helsinki-NLP/opus-mt-vi-en"),
-            "translation_revision": kis_cfg.get("translation_revision", None),
-            "translation_local_files_only": kis_cfg.get("translation_local_files_only", False),
+            "translation_model_name": kis_cfg.get(
+                "translation_model_name",
+                "vinai/vinai-translate-vi2en-v2",
+            ),
+            "translation_revision": kis_cfg.get(
+                "translation_revision",
+                "ae7baa85da07dbe8e23ac26a9f5ef560c17e2138",
+            ),
+            "translation_allow_model_download": kis_cfg.get(
+                "translation_allow_model_download",
+                False,
+            ),
+            "translation_max_clip_tokens": kis_cfg.get(
+                "translation_max_clip_tokens",
+                75,
+            ),
         }
         kwargs.update(overrides)
         return cls(**kwargs)
