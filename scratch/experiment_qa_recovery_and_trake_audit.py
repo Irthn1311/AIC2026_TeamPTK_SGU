@@ -464,6 +464,27 @@ def run_qa_recovery(runtime: OperationalKISRuntime, translator: VinAIB1Translato
         print(f"  • Arm 1 (Raw VI)  : {eff_vi}")
         print(f"  • Arm 2 (VinAI B1): {eff_en}")
 
+        from system_tai.retrieval.multi_query import (
+            QueryLanguage,
+            QueryVariant,
+            QueryVariantType,
+        )
+
+        var_vi = QueryVariant(
+            variant_id="vi",
+            text=eff_vi,
+            language=QueryLanguage.VIETNAMESE,
+            variant_type=QueryVariantType.VIETNAMESE_DIRECT,
+            weight=1.0,
+        )
+        var_en = QueryVariant(
+            variant_id="en",
+            text=eff_en,
+            language=QueryLanguage.ENGLISH,
+            variant_type=QueryVariantType.ENGLISH_TRANSLATION,
+            weight=1.0,
+        )
+
         # Multi-Query Vector Retrieval
         vec_vi = runtime.shared_encoder.encode(eff_vi)
         vec_en = runtime.shared_encoder.encode(eff_en)
@@ -474,10 +495,7 @@ def run_qa_recovery(runtime: OperationalKISRuntime, translator: VinAIB1Translato
         # RRF Fusion of VI + VinAI B1 EN
         fused = runtime.weighted_rrf.fuse_rankings(
             query_id=qid,
-            variants=[
-                type("Var", (), {"variant_id": "vi", "weight": 1.0})(),
-                type("Var", (), {"variant_id": "en", "weight": 1.0})(),
-            ],
+            variants=[var_vi, var_en],
             rankings={"vi": cands_vi, "en": cands_en},
             top_k=50,
             rrf_k=60.0,
