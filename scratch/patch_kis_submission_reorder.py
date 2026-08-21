@@ -226,8 +226,14 @@ def main() -> None:
     print("APPLYING POST-EXPORT KIS ROUTING CORRECTIONS (p1-23 Marian Top3, p1-10 VinAI Top3)")
     print("=" * 120)
 
-    # Patch p1-23
     p1_23_path = SUBMISSION_DIR / "query-p1-23-kis.csv"
+    if not p1_23_path.exists():
+        print(f"[Notice] {p1_23_path} not found. Running KIS Submission Merger first...", flush=True)
+        sys.path.insert(0, str(REPO_ROOT / "scratch"))
+        from experiment_kis_btc_submission_merger import run_kis_submission_merger
+        run_kis_submission_merger()
+
+    # Patch p1-23
     p1_23_top3 = [("L28_V006", 14483), ("L28_V006", 23895), ("L28_V006", 14444)]
     reordered_23 = reorder_csv(p1_23_path, p1_23_top3, "query-p1-23-kis")
     print(f"\n[query-p1-23-kis] Patched (Marian Top3 Promoted):")

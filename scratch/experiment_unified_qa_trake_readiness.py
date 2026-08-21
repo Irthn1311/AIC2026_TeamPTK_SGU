@@ -597,6 +597,14 @@ def run_unified_readiness() -> None:
     submission_dir = Path("/kaggle/working/submission") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "submission"
     submission_dir.mkdir(parents=True, exist_ok=True)
 
+    # Auto-generate KIS CSVs if missing
+    missing_kis = [qid for qid in AUTHORITATIVE_KIS_QIDS if not (submission_dir / f"{qid}.csv").exists()]
+    if missing_kis:
+        print(f"\n[Auto-Gen] {len(missing_kis)} KIS CSV files missing in {submission_dir} -> Running KIS Submission Merger...", flush=True)
+        sys.path.insert(0, str(REPO_ROOT / "scratch"))
+        from experiment_kis_btc_submission_merger import run_kis_submission_merger
+        run_kis_submission_merger()
+
     operational_failures: list[dict[str, Any]] = []
 
     # --- STAGE 2: EXECUTE FROZEN TRAKE PIPELINE ---
