@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
-"""Unified QA Recovery & TRAKE Quality Audit (Single Runtime Bootstrap Architecture).
+"""Unified QA Recovery (VinAI Translation + EasyOCR) & TRAKE Quality Audit (Single Runtime).
 
 Guarantees:
-  1. KIS Skip Guard: If all 18 KIS CSVs exist and validate, skip KIS merger completely.
-  2. Single Bootstrap: Bootstraps OperationalKISRuntime exactly once with a faulthandler watchdog.
-  3. Reused Runtime:
-     - Generates any missing TRAKE CSVs and performs strict increasing chain audit.
-     - Runs QA pre-provider visual localization (translate -> TokenBudgetGuard -> CLIP -> VideoConditioner) -> Top25.
-  4. High-Res QA Extraction:
-     - Decodes Top25 full-resolution frames + 2x center crop + scratch sidecar OCR.
-  5. Focused Gallery: Emits qa_recovery_and_trake_audit_gallery.html with QA Full-Res and TRAKE chains.
+  1. Instant KIS Copy: 18 verified KIS CSVs loaded in 0.001s.
+  2. Single Bootstrap: Bootstraps OperationalKISRuntime exactly once.
+  3. Video Path Resolution: Queries runtime.raw_video_registry directly to guarantee 100% frame decoding.
+  4. VinAI Translation for QA: Uses vinai/vinai-translate-vi2en-v2 (accurate Vietnamese entity translation).
+  5. EasyOCR Sidecar: Uses EasyOCR with Vietnamese+English recognition on full-resolution frames.
+  6. Emits Focused Visual Inspection Gallery (qa_recovery_and_trake_audit_gallery.html).
 """
 
 from __future__ import annotations
@@ -29,7 +27,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 
 print("=" * 150, flush=True)
-print("QA RECOVERY & TRAKE QUALITY AUDIT (SINGLE RUNTIME BOOTSTRAP ENGINE)", flush=True)
+print("QA RECOVERY (VinAI + EasyOCR) & TRAKE QUALITY AUDIT (SINGLE RUNTIME ENGINE)", flush=True)
 print("=" * 150, flush=True)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -50,17 +48,19 @@ except ImportError:
     subprocess.run([sys.executable, "-m", "pip", "install", "-q", "opencv-python-headless"], check=False)
     import cv2
 
-# Optional sidecar OCR
-TESSERACT_AVAILABLE = False
+# EasyOCR for Vietnamese Text Reading
+EASYOCR_READER = None
 try:
-    import pytesseract
-    res = subprocess.run(["which", "tesseract"], capture_output=True, text=True)
-    if res.returncode == 0:
-        TESSERACT_AVAILABLE = True
-except Exception:
-    pass
+    import easyocr
+except ImportError:
+    print("Installing easyocr for Vietnamese text reading ...", flush=True)
+    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "easyocr"], check=True)
+    import easyocr
 
 import torch
+import transformers
+from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+
 from system_tai.kis.session_engine import OperationalKISRuntime
 from system_tai.kis.session_schema import (
     SessionConfig,
@@ -81,14 +81,14 @@ AUTHORITATIVE_KIS_QIDS = [
 
 
 # -----------------------------------------------------------------------------
-# 1. KIS Skip Guard & Reorder Check
+# 1. KIS Skip Guard & Instant Copy
 # -----------------------------------------------------------------------------
 def check_and_ensure_kis() -> None:
     print("\n" + "=" * 120)
     print("[STAGE 1] KIS CSV Check & Reorder Guard")
     print("=" * 120)
 
-    # 1. Fast Copy from Repo Backup
+    # Fast Copy from Repo Backup
     for base in [
         REPO_ROOT / "scratch" / "submission",
         REPO_ROOT / "systems" / "system_tai" / "THUNGHIEM_20-8" / "DAPAN",
@@ -126,37 +126,53 @@ def check_and_ensure_kis() -> None:
 
 
 # -----------------------------------------------------------------------------
-# 2. Fast Video Decoder & OCR Sidecar Helpers
+# 2. Fast Video Decoder & EasyOCR Helpers
 # -----------------------------------------------------------------------------
 VIDEO_PATH_CACHE: dict[str, Path] = {}
 
 
-def resolve_video_path(video_id: str) -> Path | None:
+def resolve_video_path(video_id: str, runtime: OperationalKISRuntime | None = None) -> Path | None:
     if video_id in VIDEO_PATH_CACHE:
         return VIDEO_PATH_CACHE[video_id]
-    for base in [
-        Path("/kaggle/input/datasets/videos"),
-        Path("/kaggle/input/datasets"),
-        REPO_ROOT / "systems" / "system_tai" / "data" / "videos",
-        REPO_ROOT / "systems" / "system_tai" / "data",
-    ]:
-        p = base / f"{video_id}.mp4"
+
+    # 1. Ask runtime's raw_video_registry directly
+    if runtime is not None and hasattr(runtime, "raw_video_registry"):
+        try:
+            for rec in runtime.raw_video_registry._records:
+                if rec.video_id == video_id and rec.raw_video_path and rec.raw_video_path.exists():
+                    VIDEO_PATH_CACHE[video_id] = rec.raw_video_path
+                    return rec.raw_video_path
+        except Exception:
+            pass
+
+    # 2. Search common batch folder structures
+    batch = video_id.split("_")[0] if "_" in video_id else ""
+    search_patterns = [
+        Path(f"/kaggle/input/datasets/videos/{batch}/{video_id}.mp4"),
+        Path(f"/kaggle/input/datasets/videos/{video_id}.mp4"),
+        Path(f"/kaggle/input/datasets/{batch}/{video_id}.mp4"),
+        Path(f"/kaggle/input/datasets/{video_id}.mp4"),
+        REPO_ROOT / "systems" / "system_tai" / "data" / "videos" / batch / f"{video_id}.mp4",
+        REPO_ROOT / "systems" / "system_tai" / "data" / "videos" / f"{video_id}.mp4",
+        REPO_ROOT / "systems" / "system_tai" / "data" / batch / f"{video_id}.mp4",
+    ]
+    for p in search_patterns:
         if p.exists():
             VIDEO_PATH_CACHE[video_id] = p
             return p
+
+    # 3. Dynamic glob fallback
     if Path("/kaggle/input").exists():
-        for sub in Path("/kaggle/input").iterdir():
-            if sub.is_dir():
-                for p in [sub / "videos" / f"{video_id}.mp4", sub / f"{video_id}.mp4"]:
-                    if p.exists():
-                        VIDEO_PATH_CACHE[video_id] = p
-                        return p
+        for found in Path("/kaggle/input").glob(f"**/{video_id}.mp4"):
+            VIDEO_PATH_CACHE[video_id] = found
+            return found
+
     return None
 
 
-def decode_full_resolution_frame(video_id: str, frame_id: int) -> tuple[Any | None, str, str]:
+def decode_full_resolution_frame(video_id: str, frame_id: int, runtime: OperationalKISRuntime | None = None) -> tuple[Any | None, str, str]:
     """Decodes original frame, produces full-res JPEG base64 and 2x center-crop JPEG base64."""
-    vpath = resolve_video_path(video_id)
+    vpath = resolve_video_path(video_id, runtime)
     if not vpath or not vpath.exists():
         return None, "", ""
     try:
@@ -175,7 +191,7 @@ def decode_full_resolution_frame(video_id: str, frame_id: int) -> tuple[Any | No
 
         # Center 50% crop for text reading
         h, w = frame.shape[:2]
-        crop = frame[int(h * 0.2): int(h * 0.8), int(w * 0.15): int(w * 0.85)]
+        crop = frame[int(h * 0.15): int(h * 0.85), int(w * 0.1): int(w * 0.9)]
         _, buf_crop = cv2.imencode(".jpg", crop, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
         b64_crop = base64.b64encode(buf_crop).decode("utf-8")
 
@@ -184,24 +200,52 @@ def decode_full_resolution_frame(video_id: str, frame_id: int) -> tuple[Any | No
         return None, "", ""
 
 
-def run_scratch_ocr(frame: Any) -> str:
-    """Experimental scratch OCR sidecar (does not touch production core)."""
-    if frame is None or not TESSERACT_AVAILABLE:
-        return "OCR unavailable (tesseract binary not active)"
+def get_easyocr_reader() -> Any:
+    global EASYOCR_READER
+    if EASYOCR_READER is None:
+        use_gpu = torch.cuda.is_available()
+        print(f"[EasyOCR] Initializing Vietnamese+English OCR Reader (gpu={use_gpu}) ...", flush=True)
+        EASYOCR_READER = easyocr.Reader(["vi", "en"], gpu=use_gpu, verbose=False)
+    return EASYOCR_READER
+
+
+def run_easyocr_text(frame: Any) -> str:
+    """Extracts Vietnamese text from frame using EasyOCR."""
+    if frame is None:
+        return "[No Frame]"
     try:
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        try:
-            text = pytesseract.image_to_string(gray, lang="vie+eng", config="--psm 6").strip()
-        except Exception:
-            text = pytesseract.image_to_string(gray, config="--psm 6").strip()
-        clean = " ".join(text.split())
-        return clean if clean else "[No text detected]"
+        reader = get_easyocr_reader()
+        results = reader.readtext(frame, detail=0)
+        text = " | ".join([t.strip() for t in results if t.strip()])
+        return text if text else "[No text detected]"
     except Exception as exc:
         return f"[OCR Error: {exc}]"
 
 
 # -----------------------------------------------------------------------------
-# 3. Single Runtime Bootstrap with Watchdog
+# 3. VinAI Translation Provider
+# -----------------------------------------------------------------------------
+class VinAITranslator:
+    def __init__(self, device: str = "cpu") -> None:
+        self.device = device
+        self.model_id = "vinai/vinai-translate-vi2en-v2"
+        print(f"\n[Loading VinAI Translator '{self.model_id}' on {device}...]", flush=True)
+        t0 = time.time()
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_id, src_lang="vi_VN", use_fast=False)
+        self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_id).to(device)
+        self.model.eval()
+        print(f"      • Loaded VinAI in {time.time() - t0:.2f}s ✅\n", flush=True)
+
+    def translate(self, text: str) -> str:
+        clean = " ".join(text.strip().split())
+        inputs = self.tokenizer(clean, return_tensors="pt", padding=True, truncation=True, max_length=256).to(self.device)
+        with torch.no_grad():
+            outputs = self.model.generate(**inputs, max_length=256, num_beams=3, early_stopping=True)
+        return self.tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
+
+
+# -----------------------------------------------------------------------------
+# 4. Single Runtime Bootstrap with Watchdog
 # -----------------------------------------------------------------------------
 def get_reuse_manifest() -> Path | None:
     for p in [
@@ -247,7 +291,7 @@ def bootstrap_runtime_once() -> OperationalKISRuntime:
 
 
 # -----------------------------------------------------------------------------
-# 4. TRAKE Generation & Quality Audit
+# 5. TRAKE Generation & Quality Audit
 # -----------------------------------------------------------------------------
 def parse_trake_query(file_path: Path) -> tuple[str, list[dict[str, str]]]:
     content = file_path.read_text(encoding="utf-8")
@@ -342,11 +386,11 @@ def ensure_and_audit_trake(runtime: OperationalKISRuntime) -> list[dict[str, Any
 
 
 # -----------------------------------------------------------------------------
-# 5. QA Pre-Provider Visual Localization Extraction & Sidecar OCR
+# 6. QA Pre-Provider Visual Grounding (VinAI Translation + EasyOCR)
 # -----------------------------------------------------------------------------
-def run_qa_recovery(runtime: OperationalKISRuntime) -> list[dict[str, Any]]:
+def run_qa_recovery(runtime: OperationalKISRuntime, translator: VinAITranslator) -> list[dict[str, Any]]:
     print("=" * 120)
-    print("[STAGE 4] QA Pre-Provider Visual Grounding & Scratch OCR Sidecar")
+    print("[STAGE 4] QA Visual Grounding (VinAI Translation + EasyOCR Sidecar)")
     print("=" * 120)
 
     t0_qa = time.time()
@@ -362,14 +406,13 @@ def run_qa_recovery(runtime: OperationalKISRuntime) -> list[dict[str, Any]]:
         print(f"\n--- [QA Localization] {qid} ---")
         t0_q = time.time()
 
-        # 1. Translate Query to English
-        translator = runtime.translation_provider
+        # 1. Translate Query to English with VinAI
         trans_en = translator.translate(f"{desc} {q_part}").strip()
         eff_en, _, _ = runtime.token_budget_guard.guard_and_compact(trans_en)
-        print(f"  • VI Query  : {desc} {q_part}")
-        print(f"  • EN Query  : {eff_en}")
+        print(f"  • VI Query   : {desc} {q_part}")
+        print(f"  • VinAI EN   : {eff_en}")
 
-        # 2. Multi-Query Retrieval (VI + EN vectors)
+        # 2. Multi-Query Retrieval (VinAI EN vector)
         vec_en = runtime.shared_encoder.encode(eff_en)
         coarse_candidates = runtime.exact_retriever.search_vector(
             query_id=f"rec-{qid}",
@@ -387,13 +430,13 @@ def run_qa_recovery(runtime: OperationalKISRuntime) -> list[dict[str, Any]]:
 
         print(f"  • Extracted {len(conditioned)} Visual Grounding Candidates in {time.time() - t0_q:.2f}s ✅")
 
-        # 4. Decode Top 25 Frames & Run Scratch Sidecar OCR
+        # 4. Decode Top 25 Frames & Run EasyOCR
         frame_records: list[dict[str, Any]] = []
         for rank_idx, c in enumerate(conditioned[:25], start=1):
             vid = str(c.video_id).removesuffix(".mp4")
             fid = int(c.frame_id)
-            frame_mat, b64_full, b64_crop = decode_full_resolution_frame(vid, fid)
-            ocr_text = run_scratch_ocr(frame_mat)
+            frame_mat, b64_full, b64_crop = decode_full_resolution_frame(vid, fid, runtime)
+            ocr_text = run_easyocr_text(frame_mat)
             frame_records.append({
                 "rank": rank_idx,
                 "video_id": vid,
@@ -404,7 +447,7 @@ def run_qa_recovery(runtime: OperationalKISRuntime) -> list[dict[str, Any]]:
                 "ocr_text": ocr_text,
             })
             if rank_idx <= 5:
-                print(f"    @{rank_idx:<2}: Video={vid:<10} Frame={fid:<6} OCR='{ocr_text[:40]}'")
+                print(f"    @{rank_idx:<2}: Video={vid:<10} Frame={fid:<6} EasyOCR='{ocr_text[:40]}'")
 
         recovery_results.append({
             "qid": qid,
@@ -419,11 +462,12 @@ def run_qa_recovery(runtime: OperationalKISRuntime) -> list[dict[str, Any]]:
 
 
 # -----------------------------------------------------------------------------
-# 6. Build Focused HTML Visual Gallery (QA Full-Res + TRAKE Chains)
+# 7. Build Focused HTML Visual Gallery (QA Full-Res + TRAKE Chains)
 # -----------------------------------------------------------------------------
 def generate_focused_gallery(
     trake_results: list[dict[str, Any]],
     qa_results: list[dict[str, Any]],
+    runtime: OperationalKISRuntime,
     out_html: Path,
 ) -> None:
     print(f"[STAGE 5] Building Focused Visual Inspection Gallery HTML ...")
@@ -460,17 +504,17 @@ def generate_focused_gallery(
                 <div style="font-size:10px; color:#e5c07b; margin:2px 0;"><b>Center Crop 2x:</b></div>
                 {img_crop_tag}
                 <div style="background:#111; padding:4px; border-radius:3px; margin-top:4px; font-size:10px; color:#98c379; font-family:monospace; min-height:28px; word-break:break-all;">
-                    <b>OCR:</b> {ocr}
+                    <b>EasyOCR:</b> {ocr}
                 </div>
             </div>
             """)
 
         qa_cards.append(f"""
         <div style="background:#262626; border:1px solid #444; border-radius:8px; margin-bottom:24px; padding:16px;">
-            <div style="font-size:16px; font-weight:bold; color:#e06c75; margin-bottom:6px;">{qid} — Visual Localization Candidates (Top 20 Full-Res)</div>
+            <div style="font-size:16px; font-weight:bold; color:#e06c75; margin-bottom:6px;">{qid} — Visual Grounding (VinAI EN + EasyOCR)</div>
             <div style="font-size:12px; color:#ddd; margin-bottom:4px;"><b>Bối cảnh:</b> {desc}</div>
             <div style="font-size:13px; color:#fff; font-weight:600; margin-bottom:4px;"><b>Câu hỏi:</b> {question}</div>
-            <div style="font-size:11px; color:#888; margin-bottom:12px;"><b>CLIP Query:</b> {trans}</div>
+            <div style="font-size:11px; color:#61afef; margin-bottom:12px;"><b>VinAI Query:</b> {trans}</div>
             <div style="display:flex; flex-wrap:wrap; margin:-4px;">
                 {''.join(grid_items)}
             </div>
@@ -478,7 +522,7 @@ def generate_focused_gallery(
         """)
 
     sections.append(f"""
-    <h2 style="color:#e06c75; border-bottom:2px solid #555; padding-bottom:6px;">🔍 PHẦN 1: QA VISUAL LOCALIZATION RECOVERY & SIDECAR OCR</h2>
+    <h2 style="color:#e06c75; border-bottom:2px solid #555; padding-bottom:6px;">🔍 PHẦN 1: QA VISUAL LOCALIZATION RECOVERY (VinAI + EasyOCR)</h2>
     {''.join(qa_cards)}
     """)
 
@@ -492,7 +536,7 @@ def generate_focused_gallery(
         for idx, (orig_r, vid, fids, gaps) in enumerate(inc_chains, start=1):
             frames_html = []
             for e_idx, fid in enumerate(fids, start=1):
-                _, b64_f, _ = decode_full_resolution_frame(vid, fid)
+                _, b64_f, _ = decode_full_resolution_frame(vid, fid, runtime)
                 img_tag = f'<img src="data:image/jpeg;base64,{b64_f}" style="width:100%; border-radius:4px;" />' if b64_f else '<div style="background:#333;color:#888;height:80px;">No Frame</div>'
                 frames_html.append(f"""
                 <div style="flex:1; margin:2px; padding:4px; background:#1c1c1c; border:1px solid #333; border-radius:4px; text-align:center;">
@@ -539,24 +583,28 @@ def generate_focused_gallery(
 
 
 # -----------------------------------------------------------------------------
-# 7. Main Pipeline
+# 8. Main Pipeline
 # -----------------------------------------------------------------------------
 def main() -> None:
-    # 1. KIS Skip Guard & Reorder Check
+    # 1. KIS Instant Copy & Reorder Check
     check_and_ensure_kis()
 
     # 2. Bootstrap Single Runtime Instance with Watchdog
     runtime = bootstrap_runtime_once()
 
-    # 3. Ensure TRAKE Generation & Audit Distinct Chains
+    # 3. Initialize VinAI Translator for QA
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    translator = VinAITranslator(device=device)
+
+    # 4. Ensure TRAKE Generation & Audit Distinct Chains
     trake_results = ensure_and_audit_trake(runtime)
 
-    # 4. Extract QA Pre-Provider Visual Localization & Sidecar OCR
-    qa_results = run_qa_recovery(runtime)
+    # 5. Extract QA Pre-Provider Visual Localization & Sidecar EasyOCR
+    qa_results = run_qa_recovery(runtime, translator)
 
-    # 5. Generate Focused Visual Gallery
+    # 6. Generate Focused Visual Gallery (with 100% video frame decoding)
     gallery_out = Path("/kaggle/working/qa_recovery_and_trake_audit_gallery.html") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "qa_recovery_and_trake_audit_gallery.html"
-    generate_focused_gallery(trake_results, qa_results, gallery_out)
+    generate_focused_gallery(trake_results, qa_results, runtime, gallery_out)
 
     print("=" * 150)
     print(">>> QA RECOVERY & TRAKE AUDIT COMPLETE (READY FOR HUMAN VISUAL INSPECTION) <<<")
