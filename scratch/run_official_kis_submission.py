@@ -58,9 +58,20 @@ from system_tai.kis.session_schema import (
     QueryVariantType,
     SessionConfig,
 )
+from system_tai.retrieval.video_restricted import VideoConditionedKeyframeConfig
 
 SUBMISSION_DIR = Path("/kaggle/working/submission") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "submission"
 SUBMISSION_DIR.mkdir(parents=True, exist_ok=True)
+
+# Explicitly enable VideoConditionedKeyframeDiversity (Q3.1)
+DIVERSITY_CONFIG = VideoConditionedKeyframeConfig(
+    enabled=True,
+    selected_video_global_rank_cap=50,
+    max_selected_videos=50,
+    max_anchors_per_video=3,
+    minimum_anchor_gap_seconds=5.0,
+    preserve_first_video_occurrence=True,
+)
 
 # -----------------------------------------------------------------------------
 # 1. 20 Official Preliminary Round KIS Queries
@@ -277,11 +288,11 @@ def process_all_kis_queries(runtime: OperationalKISRuntime, translator: VinAIB1T
             top_k=100,
         )
         
-        # Apply VideoConditionedKeyframeDiversity
+        # Apply VideoConditionedKeyframeDiversity (Q3.1 Enabled)
         conditioned = runtime.video_conditioner.condition(
             global_result=cands,
             query_vector=q_vec,
-            config=runtime.config.video_conditioned_keyframe_config,
+            config=DIVERSITY_CONFIG,
             protected_prefix_rank=3,
         ).result.ranked_candidates
 
@@ -318,18 +329,19 @@ def process_all_kis_queries(runtime: OperationalKISRuntime, translator: VinAIB1T
 # -----------------------------------------------------------------------------
 # 6. Validate All 20 CSV Files
 # -----------------------------------------------------------------------------
+TARGET_QIDS = [q["query_id"] for q in OFFICIAL_KIS_QUERIES]
+
 def validate_all_csvs() -> None:
     print("\n" + "=" * 100)
     print("🔍 STRUCTURAL VALIDATION OF ALL 20 KIS CSV SUBMISSION FILES")
     print("=" * 100)
     
-    csv_files = sorted(list(SUBMISSION_DIR.glob("query-p1-*-kis.csv")))
-    print(f"  • Total KIS CSV files found in {SUBMISSION_DIR}: {len(csv_files)} / 20")
-    
-    if len(csv_files) < 20:
-        raise ValueError(f"Expected 20 KIS CSV files, found {len(csv_files)}!")
+    csv_files = [SUBMISSION_DIR / f"{qid}.csv" for qid in TARGET_QIDS]
+    print(f"  • Verifying exactly {len(csv_files)} target KIS CSV files in {SUBMISSION_DIR} ...")
 
     for f in csv_files:
+        if not f.exists():
+            raise FileNotFoundError(f"Missing target KIS file: {f.name}!")
         lines = [l.strip() for l in f.read_text(encoding="utf-8").splitlines() if l.strip()]
         if len(lines) != 100:
             raise ValueError(f"File {f.name} has {len(lines)} rows, expected exactly 100!")
@@ -356,18 +368,18 @@ def validate_all_csvs() -> None:
 # -----------------------------------------------------------------------------
 def package_submission_zip() -> Path:
     print("=" * 100)
-    print("📦 PACKAGING 20 KIS SUBMISSION CSVs INTO ZIP")
+    print("📦 PACKAGING EXACT 20 KIS SUBMISSION CSVs INTO ZIP")
     print("=" * 100)
     
     zip_path = Path("/kaggle/working/submission_kis_20q.zip") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "submission_kis_20q.zip"
-    csv_files = sorted(list(SUBMISSION_DIR.glob("query-p1-*-kis.csv")))
+    csv_files = [SUBMISSION_DIR / f"{qid}.csv" for qid in TARGET_QIDS]
     
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
         for f in csv_files:
             zipf.write(f, arcname=f.name)
             print(f"  • Added: {f.name} ({f.stat().st_size} bytes)")
             
-    print(f"\n🎉 CREATED TOURNAMENT ARCHIVE: {zip_path} ({zip_path.stat().st_size} bytes) ✅\n")
+    print(f"\n🎉 CREATED TOURNAMENT ARCHIVE (EXACT 20 FILES): {zip_path} ({zip_path.stat().st_size} bytes) ✅\n")
     return zip_path
 
 # -----------------------------------------------------------------------------
@@ -428,6 +440,13 @@ def main() -> None:
     t0 = time.time()
     device = "cuda" if torch.cuda.is_available() else "cpu"
     
+    # 0. Clean submission directory before running
+    for old_f in SUBMISSION_DIR.glob("*.csv"):
+        try:
+            old_f.unlink()
+        except Exception:
+            pass
+            
     # 1. Bootstrap Runtime & Translator
     runtime = bootstrap_runtime()
     translator = VinAIB1Translator(device=device)
