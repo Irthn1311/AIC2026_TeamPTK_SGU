@@ -317,11 +317,18 @@ def bootstrap_runtime_once() -> OperationalKISRuntime:
     reuse_manifest = get_reuse_manifest()
     out_dir = Path("/kaggle/working/output/unified_session") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "unified_session"
 
+    manifest_cache_file = Path("/kaggle/working/manifest_cache.json")
+    if not manifest_cache_file.exists() and out_dir.exists():
+        existing_m = out_dir / "feature_manifest.json"
+        if existing_m.exists() and existing_m.stat().st_size > 1000:
+            import shutil
+            shutil.copyfile(existing_m, manifest_cache_file)
+
     cfg = SessionConfig.from_yaml(
         yaml_path,
         input_root=input_root,
         output_root=out_dir,
-        reuse_manifest=reuse_manifest,
+        reuse_manifest=reuse_manifest or (manifest_cache_file if manifest_cache_file.exists() else None),
     )
 
     print("\n[BOOTSTRAP_START] Initializing Single OperationalKISRuntime Instance (watchdog active: 120s dump) ...", flush=True)
@@ -331,6 +338,13 @@ def bootstrap_runtime_once() -> OperationalKISRuntime:
         runtime = OperationalKISRuntime.bootstrap(cfg)
     finally:
         faulthandler.cancel_dump_traceback_later()
+
+    try:
+        if hasattr(runtime, "manifest") and not manifest_cache_file.exists():
+            runtime.manifest.write(manifest_cache_file, portable=False)
+            print("      • Cached manifest to /kaggle/working/manifest_cache.json for instant future bootstraps ✅", flush=True)
+    except Exception:
+        pass
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"[BOOTSTRAP_DONE] seconds={time.time() - t0_boot:.2f} (device={device}) ✅\n", flush=True)
