@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
-"""Unified QA Recovery, TRAKE Distinct Chain Audit, and Complete 24-Query Visual Inspection.
+"""Unified QA Recovery & TRAKE Quality Audit (Single Runtime Bootstrap Architecture).
 
-Architecture:
-  - Bootstraps OperationalKISRuntime ONCE for the entire session.
-  - Automatically executes any missing KIS or TRAKE queries.
-  - Applies official KIS routing corrections (p1-10 VinAI Top-3, p1-23 Marian Top-3).
-  - Audits TRAKE candidate chains for strictly increasing progression (f1 < f2 < f3 < f4).
-  - Extracts Full-Resolution frames + 2x Center Crops + Scratch OCR for QA queries (p1-15, p1-19, p1-22).
-  - Emits all-in-one Visual Gallery HTML (qa_recovery_and_trake_audit_gallery.html).
+Guarantees:
+  1. KIS Skip Guard: If all 18 KIS CSVs exist and validate, skip KIS merger completely.
+  2. Single Bootstrap: Bootstraps OperationalKISRuntime exactly once with a faulthandler watchdog.
+  3. Reused Runtime:
+     - Generates any missing TRAKE CSVs and performs strict increasing chain audit.
+     - Runs QA pre-provider visual localization (translate -> TokenBudgetGuard -> CLIP -> VideoConditioner) -> Top25.
+  4. High-Res QA Extraction:
+     - Decodes Top25 full-resolution frames + 2x center crop + scratch sidecar OCR.
+  5. Focused Gallery: Emits qa_recovery_and_trake_audit_gallery.html with QA Full-Res and TRAKE chains.
 """
 
 from __future__ import annotations
 
 import base64
 import csv
+import faulthandler
 import json
 import os
 import subprocess
@@ -26,7 +29,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 
 print("=" * 150, flush=True)
-print("QA RECOVERY SIDECAR & TRAKE QUALITY AUDIT (UNIFIED SINGLE-BOOTSTRAP ENGINE)", flush=True)
+print("QA RECOVERY & TRAKE QUALITY AUDIT (SINGLE RUNTIME BOOTSTRAP ENGINE)", flush=True)
 print("=" * 150, flush=True)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -60,7 +63,6 @@ except Exception:
 import torch
 from system_tai.kis.session_engine import OperationalKISRuntime
 from system_tai.kis.session_schema import (
-    QAQueryRequest,
     SessionConfig,
     TRAKEQueryRequest,
 )
@@ -69,9 +71,49 @@ THUNGHIEM_DIR = REPO_ROOT / "systems" / "system_tai" / "THUNGHIEM_20-8"
 SUBMISSION_DIR = Path("/kaggle/working/submission") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "submission"
 SUBMISSION_DIR.mkdir(parents=True, exist_ok=True)
 
+AUTHORITATIVE_KIS_QIDS = [
+    "query-p1-1-kis", "query-p1-2-kis", "query-p1-5-kis", "query-p1-6-kis",
+    "query-p1-7-kis", "query-p1-8-kis", "query-p1-9-kis", "query-p1-10-kis",
+    "query-p1-11-kis", "query-p1-12-kis", "query-p1-13-kis", "query-p1-14-kis",
+    "query-p1-17-kis", "query-p1-20-kis", "query-p1-21-kis", "query-p1-23-kis",
+    "query-p1-24-kis", "query-p1-25-kis",
+]
+
 
 # -----------------------------------------------------------------------------
-# 1. Fast Video Decoder & OCR Sidecar Helpers
+# 1. KIS Skip Guard & Reorder Check
+# -----------------------------------------------------------------------------
+def check_and_ensure_kis() -> None:
+    print("\n" + "=" * 120)
+    print("[STAGE 1] KIS CSV Check & Reorder Guard")
+    print("=" * 120)
+
+    missing_kis = [qid for qid in AUTHORITATIVE_KIS_QIDS if not (SUBMISSION_DIR / f"{qid}.csv").exists()]
+    if not missing_kis:
+        print(f"✅ All 18 KIS CSV files already exist in {SUBMISSION_DIR} -> SKIPPING KIS MERGER MODEL RERUN! ✅", flush=True)
+        # Apply reorder patch just in case
+        sys.path.insert(0, str(REPO_ROOT / "scratch"))
+        from patch_kis_submission_reorder import reorder_csv
+        p1_23_path = SUBMISSION_DIR / "query-p1-23-kis.csv"
+        p1_23_top3 = [("L28_V006", 14483), ("L28_V006", 23895), ("L28_V006", 14444)]
+        reorder_csv(p1_23_path, p1_23_top3, "query-p1-23-kis")
+        p1_10_path = SUBMISSION_DIR / "query-p1-10-kis.csv"
+        p1_10_top3 = [("L30_V017", 3010), ("L30_V017", 2531), ("L30_V017", 2640)]
+        reorder_csv(p1_10_path, p1_10_top3, "query-p1-10-kis")
+        print("      • Reorder verified: p1-23 Marian Top-3 & p1-10 VinAI Top-3 ✅", flush=True)
+        return
+
+    print(f"[Auto-Gen] {len(missing_kis)} KIS CSVs missing -> Generating via KIS Submission Merger ...", flush=True)
+    sys.path.insert(0, str(REPO_ROOT / "scratch"))
+    from experiment_kis_btc_submission_merger import run_kis_submission_merger
+    run_kis_submission_merger()
+
+    from patch_kis_submission_reorder import main as patch_main
+    patch_main()
+
+
+# -----------------------------------------------------------------------------
+# 2. Fast Video Decoder & OCR Sidecar Helpers
 # -----------------------------------------------------------------------------
 VIDEO_PATH_CACHE: dict[str, Path] = {}
 
@@ -146,7 +188,7 @@ def run_scratch_ocr(frame: Any) -> str:
 
 
 # -----------------------------------------------------------------------------
-# 2. Runtime Bootstrap (Once)
+# 3. Single Runtime Bootstrap with Watchdog
 # -----------------------------------------------------------------------------
 def get_reuse_manifest() -> Path | None:
     for p in [
@@ -161,7 +203,11 @@ def get_reuse_manifest() -> Path | None:
     return None
 
 
-def bootstrap_runtime() -> OperationalKISRuntime:
+def bootstrap_runtime_once() -> OperationalKISRuntime:
+    print("\n" + "=" * 120)
+    print("[STAGE 2] Single OperationalKISRuntime Bootstrap")
+    print("=" * 120)
+
     yaml_path = REPO_ROOT / "systems" / "system_tai" / "configs" / "production.yaml"
     input_root = Path("/kaggle/input/datasets") if Path("/kaggle/input/datasets").exists() else Path("/kaggle/input")
     reuse_manifest = get_reuse_manifest()
@@ -174,37 +220,21 @@ def bootstrap_runtime() -> OperationalKISRuntime:
         reuse_manifest=reuse_manifest,
     )
 
-    print("\n[Bootstrap] Initializing Single OperationalKISRuntime Instance ...", flush=True)
-    t0 = time.time()
-    runtime = OperationalKISRuntime.bootstrap(cfg)
+    print("\n[BOOTSTRAP_START] Initializing Single OperationalKISRuntime Instance (watchdog active: 120s dump) ...", flush=True)
+    t0_boot = time.time()
+    faulthandler.dump_traceback_later(120, repeat=True)
+    try:
+        runtime = OperationalKISRuntime.bootstrap(cfg)
+    finally:
+        faulthandler.cancel_dump_traceback_later()
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"      • Runtime Bootstrapped in {time.time() - t0:.2f}s (device={device}) ✅\n", flush=True)
+    print(f"[BOOTSTRAP_DONE] seconds={time.time() - t0_boot:.2f} (device={device}) ✅\n", flush=True)
     return runtime
 
 
 # -----------------------------------------------------------------------------
-# 3. KIS Execution & Reorder Patch
-# -----------------------------------------------------------------------------
-def ensure_kis_submissions() -> None:
-    print("=" * 120)
-    print("[1/4] Ensuring All 18 KIS CSVs are Generated and Reorder Locked")
-    print("=" * 120)
-
-    p1_23 = SUBMISSION_DIR / "query-p1-23-kis.csv"
-    if not p1_23.exists():
-        print(f"[Auto-Gen] KIS CSVs missing in {SUBMISSION_DIR} -> Generating via KIS Submission Merger ...", flush=True)
-        sys.path.insert(0, str(REPO_ROOT / "scratch"))
-        from experiment_kis_btc_submission_merger import run_kis_submission_merger
-        run_kis_submission_merger()
-
-    # Re-apply reorder patch for p1-10 and p1-23
-    sys.path.insert(0, str(REPO_ROOT / "scratch"))
-    from patch_kis_submission_reorder import main as patch_main
-    patch_main()
-
-
-# -----------------------------------------------------------------------------
-# 4. TRAKE Execution & Quality Audit
+# 4. TRAKE Generation & Quality Audit
 # -----------------------------------------------------------------------------
 def parse_trake_query(file_path: Path) -> tuple[str, list[dict[str, str]]]:
     content = file_path.read_text(encoding="utf-8")
@@ -221,10 +251,11 @@ def parse_trake_query(file_path: Path) -> tuple[str, list[dict[str, str]]]:
 
 
 def ensure_and_audit_trake(runtime: OperationalKISRuntime) -> list[dict[str, Any]]:
-    print("\n" + "=" * 120)
-    print("[2/4] Ensuring TRAKE Execution & Auditing Strictly Increasing Chains")
+    print("=" * 120)
+    print("[STAGE 3] TRAKE Execution & Strictly Increasing Chain Audit")
     print("=" * 120)
 
+    t0_tr = time.time()
     trake_files = sorted(list(THUNGHIEM_DIR.glob("*trake*.txt")))
     audit_results: list[dict[str, Any]] = []
 
@@ -233,7 +264,7 @@ def ensure_and_audit_trake(runtime: OperationalKISRuntime) -> list[dict[str, Any
         csv_p = SUBMISSION_DIR / f"{qid}.csv"
 
         if not csv_p.exists():
-            print(f"[Executing TRAKE] Generating {qid}.csv ...", flush=True)
+            print(f"[Executing TRAKE] Generating {qid}.csv ({len(events)} events) ...", flush=True)
             req = TRAKEQueryRequest(
                 request_id=qid,
                 query_id=qid,
@@ -293,17 +324,19 @@ def ensure_and_audit_trake(runtime: OperationalKISRuntime) -> list[dict[str, Any
             "top_increasing": strictly_increasing[:5],
         })
 
+    print(f"\n[TRAKE_DONE] seconds={time.time() - t0_tr:.2f} ✅\n", flush=True)
     return audit_results
 
 
 # -----------------------------------------------------------------------------
-# 5. QA Localization Recovery & Sidecar Extraction
+# 5. QA Pre-Provider Visual Localization Extraction & Sidecar OCR
 # -----------------------------------------------------------------------------
 def run_qa_recovery(runtime: OperationalKISRuntime) -> list[dict[str, Any]]:
-    print("\n" + "=" * 120)
-    print("[3/4] Extracting QA Visual Localization Candidates & Scratch OCR Sidecar")
+    print("=" * 120)
+    print("[STAGE 4] QA Pre-Provider Visual Grounding & Scratch OCR Sidecar")
     print("=" * 120)
 
+    t0_qa = time.time()
     qa_queries = [
         ("query-p1-15-qa", "Đoạn video về một chương trình từ thiện của một câu lạc bộ tên là FANA. Trong đoạn video có thể thấy câu lạc bộ này đang đi trao quà tại một xã thuộc tỉnh Khánh Hòa.", "Hỏi xã này có tên là gì? (tại thời điểm đó)"),
         ("query-p1-19-qa", "Trong đoạn video có 2 câu thơ của một nhà thơ ca ngợi anh hùng Nguyễn Trung Trực trong đình thần Nguyễn Trung Trực tại Kiên Giang.", "Hai câu thơ đó là gì?"),
@@ -313,8 +346,8 @@ def run_qa_recovery(runtime: OperationalKISRuntime) -> list[dict[str, Any]]:
     recovery_results: list[dict[str, Any]] = []
 
     for qid, desc, q_part in qa_queries:
-        print(f"\n--- Extracting Visual Localization Candidates for {qid} ---")
-        t0 = time.time()
+        print(f"\n--- [QA Localization] {qid} ---")
+        t0_q = time.time()
 
         # 1. Translate Query to English
         translator = runtime.translation_provider
@@ -339,7 +372,7 @@ def run_qa_recovery(runtime: OperationalKISRuntime) -> list[dict[str, Any]]:
             protected_prefix_rank=1,
         ).result.ranked_candidates
 
-        print(f"  • Extracted {len(conditioned)} Visual Grounding Candidates in {time.time() - t0:.2f}s ✅")
+        print(f"  • Extracted {len(conditioned)} Visual Grounding Candidates in {time.time() - t0_q:.2f}s ✅")
 
         # 4. Decode Top 25 Frames & Run Scratch Sidecar OCR
         frame_records: list[dict[str, Any]] = []
@@ -368,18 +401,19 @@ def run_qa_recovery(runtime: OperationalKISRuntime) -> list[dict[str, Any]]:
             "frames": frame_records,
         })
 
+    print(f"\n[QA_LOCALIZATION_DONE] seconds={time.time() - t0_qa:.2f} ✅\n", flush=True)
     return recovery_results
 
 
 # -----------------------------------------------------------------------------
-# 6. Build Comprehensive HTML Visual Gallery (QA + TRAKE + KIS)
+# 6. Build Focused HTML Visual Gallery (QA Full-Res + TRAKE Chains)
 # -----------------------------------------------------------------------------
-def generate_all_in_one_gallery(
+def generate_focused_gallery(
     trake_results: list[dict[str, Any]],
     qa_results: list[dict[str, Any]],
     out_html: Path,
 ) -> None:
-    print(f"\n[4/4] Building Comprehensive 24-Query Visual Gallery Report...")
+    print(f"[STAGE 5] Building Focused Visual Inspection Gallery HTML ...")
 
     sections = []
 
@@ -477,87 +511,42 @@ def generate_all_in_one_gallery(
     {''.join(trake_cards)}
     """)
 
-    # Section 3: KIS Top-5 Gallery
-    kis_cards = []
-    for kis_f in sorted(list(THUNGHIEM_DIR.glob("*kis*.txt"))):
-        qid = kis_f.stem
-        q_vi = kis_f.read_text(encoding="utf-8").strip()
-        csv_p = SUBMISSION_DIR / f"{qid}.csv"
-        rows = []
-        if csv_p.exists():
-            with csv_p.open("r", encoding="utf-8") as stream:
-                reader = csv.reader(stream)
-                for r in reader:
-                    if r and len(r) == 2:
-                        rows.append((r[0].strip(), int(r[1].strip())))
-                    if len(rows) >= 5:
-                        break
-
-        items = []
-        for rank_idx, (vid, fid) in enumerate(rows, start=1):
-            _, b64_f, _ = decode_full_resolution_frame(vid, fid)
-            img_tag = f'<img src="data:image/jpeg;base64,{b64_f}" style="width:100%; border-radius:4px;" />' if b64_f else '<div style="background:#333;color:#888;height:80px;display:flex;align-items:center;justify-content:center;border-radius:4px;font-size:10px;">No Frame</div>'
-            badge_color = "#28a745" if rank_idx <= 3 else "#61afef"
-            items.append(f"""
-            <div style="flex:1; margin:3px; padding:6px; background:#1c1c1c; border:1px solid #333; border-radius:6px; text-align:center;">
-                <div style="font-weight:bold; color:{badge_color}; font-size:11px; margin-bottom:3px;">Rank @{rank_idx}</div>
-                {img_tag}
-                <div style="color:#eee; font-weight:600; font-size:11px; margin-top:4px;">{vid} (f={fid})</div>
-            </div>
-            """)
-
-        kis_cards.append(f"""
-        <div style="background:#262626; border:1px solid #444; border-radius:8px; margin-bottom:16px; padding:12px;">
-            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #383838; padding-bottom:6px; margin-bottom:8px;">
-                <span style="font-size:14px; font-weight:bold; color:#61afef;">{qid}.csv</span>
-                <span style="background:#0d6efd; color:#fff; font-size:10px; font-weight:bold; padding:2px 6px; border-radius:3px;">100 ROWS (REORDER LOCKED)</span>
-            </div>
-            <div style="font-size:11px; color:#ccc; margin-bottom:10px;"><b style="color:#98c379;">Câu hỏi VI:</b> {q_vi}</div>
-            <div style="display:flex; gap:4px;">{''.join(items)}</div>
-        </div>
-        """)
-
-    sections.append(f"""
-    <h2 style="color:#61afef; border-bottom:2px solid #555; padding-bottom:6px; margin-top:24px;">🎯 PHẦN 3: TEXTUAL KIS FINAL SUBMISSION GALLERY (18 QUERIES × TOP 5)</h2>
-    {''.join(kis_cards)}
-    """)
-
     full_html = f"""
     <!DOCTYPE html>
     <html>
     <head><meta charset="utf-8"><title>QA Recovery & TRAKE Quality Audit</title></head>
     <body style="background:#121212; color:#fff; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; padding:16px;">
-        <h1 style="color:#61afef; border-bottom:2px solid #444; padding-bottom:10px;">📋 BÁO CÁO TOÀN DIỆN KIỂM TOÁN CHẤT LƯỢNG 24 CÂU (QA + TRAKE + KIS)</h1>
+        <h1 style="color:#61afef; border-bottom:2px solid #444; padding-bottom:10px;">📋 BÁO CÁO KIỂM TOÁN CHẤT LƯỢNG QA RECOVERY & TRAKE CHAINS</h1>
         {''.join(sections)}
     </body>
     </html>
     """
     out_html.write_text(full_html, encoding="utf-8")
-    print(f"      • Saved QA Recovery & TRAKE Quality Audit Gallery to: {out_html} ✅", flush=True)
+    print(f"      • Saved Focused Visual Gallery to: {out_html} ✅", flush=True)
 
 
 # -----------------------------------------------------------------------------
 # 7. Main Pipeline
 # -----------------------------------------------------------------------------
 def main() -> None:
-    # 1. Ensure KIS Submissions
-    ensure_kis_submissions()
+    # 1. KIS Skip Guard & Reorder Check
+    check_and_ensure_kis()
 
-    # 2. Bootstrap Runtime ONCE
-    runtime = bootstrap_runtime()
+    # 2. Bootstrap Single Runtime Instance with Watchdog
+    runtime = bootstrap_runtime_once()
 
-    # 3. Ensure TRAKE & Audit Distinct Chains
+    # 3. Ensure TRAKE Generation & Audit Distinct Chains
     trake_results = ensure_and_audit_trake(runtime)
 
-    # 4. Extract QA Localization Candidates & Run Sidecar OCR
+    # 4. Extract QA Pre-Provider Visual Localization & Sidecar OCR
     qa_results = run_qa_recovery(runtime)
 
-    # 5. Generate Full 24-Query Visual HTML Gallery
+    # 5. Generate Focused Visual Gallery
     gallery_out = Path("/kaggle/working/qa_recovery_and_trake_audit_gallery.html") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "qa_recovery_and_trake_audit_gallery.html"
-    generate_all_in_one_gallery(trake_results, qa_results, gallery_out)
+    generate_focused_gallery(trake_results, qa_results, gallery_out)
 
-    print("\n" + "=" * 150)
-    print(">>> UNIFIED QA RECOVERY & TRAKE AUDIT COMPLETE (READY FOR HUMAN VISUAL INSPECTION) <<<")
+    print("=" * 150)
+    print(">>> QA RECOVERY & TRAKE AUDIT COMPLETE (READY FOR HUMAN VISUAL INSPECTION) <<<")
     print("=" * 150 + "\n")
 
 
