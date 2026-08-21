@@ -1,19 +1,13 @@
 #!/usr/bin/env python3
-"""QA Recovery & TRAKE Quality Audit (Zero Core Algorithm Changes).
+"""Unified QA Recovery, TRAKE Distinct Chain Audit, and Complete 24-Query Visual Inspection.
 
-Objectives:
-  1. KIS Reorder Reaffirmation:
-     - Applies final reorder patch (p1-10 Handpan Top-3, p1-23 Marian Top-3) to submission/ CSVs.
-  2. TRAKE Quality & Distinct Chain Audit:
-     - Inspects the existing 100 chains per query for p1-4, p1-16, p1-18.
-     - Identifies all chains with 4 unique frame IDs and strictly increasing order (f1 < f2 < f3 < f4).
-     - Reports their original ranks, temporal gaps, and generates high-res visual comparison.
-  3. QA Visual Localization Recovery & Scratch OCR Sidecar:
-     - Traces exact code path (UNSUPPORTED_NO_PROVIDER in QARuntimePipeline).
-     - Extracts Top 30 visual localization candidate frames (CLIP + RRF) BEFORE provider gating.
-     - Decodes full-resolution video frames (with high-res crops).
-     - Executes experimental scratch OCR sidecar (pytesseract vie+eng if available).
-     - Emits QA Recovery & TRAKE Audit Visual Gallery (qa_recovery_and_trake_audit_gallery.html).
+Architecture:
+  - Bootstraps OperationalKISRuntime ONCE for the entire session.
+  - Automatically executes any missing KIS or TRAKE queries.
+  - Applies official KIS routing corrections (p1-10 VinAI Top-3, p1-23 Marian Top-3).
+  - Audits TRAKE candidate chains for strictly increasing progression (f1 < f2 < f3 < f4).
+  - Extracts Full-Resolution frames + 2x Center Crops + Scratch OCR for QA queries (p1-15, p1-19, p1-22).
+  - Emits all-in-one Visual Gallery HTML (qa_recovery_and_trake_audit_gallery.html).
 """
 
 from __future__ import annotations
@@ -32,7 +26,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 
 print("=" * 150, flush=True)
-print("QA RECOVERY SIDECAR & TRAKE QUALITY AUDIT (NO PRODUCTION ALGORITHM CHANGES)", flush=True)
+print("QA RECOVERY SIDECAR & TRAKE QUALITY AUDIT (UNIFIED SINGLE-BOOTSTRAP ENGINE)", flush=True)
 print("=" * 150, flush=True)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -57,7 +51,6 @@ except ImportError:
 TESSERACT_AVAILABLE = False
 try:
     import pytesseract
-    # Check if tesseract binary exists
     res = subprocess.run(["which", "tesseract"], capture_output=True, text=True)
     if res.returncode == 0:
         TESSERACT_AVAILABLE = True
@@ -74,22 +67,11 @@ from system_tai.kis.session_schema import (
 
 THUNGHIEM_DIR = REPO_ROOT / "systems" / "system_tai" / "THUNGHIEM_20-8"
 SUBMISSION_DIR = Path("/kaggle/working/submission") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "submission"
+SUBMISSION_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # -----------------------------------------------------------------------------
-# 1. KIS Reorder Reaffirmation
-# -----------------------------------------------------------------------------
-def apply_kis_reorder_patch() -> None:
-    print("\n" + "=" * 120)
-    print("[1/3] Re-applying Final KIS Routing Patch to submission/ CSVs")
-    print("=" * 120)
-    sys.path.insert(0, str(REPO_ROOT / "scratch"))
-    from patch_kis_submission_reorder import main as patch_main
-    patch_main()
-
-
-# -----------------------------------------------------------------------------
-# 2. Fast Video Decoder & OCR Sidecar Helpers
+# 1. Fast Video Decoder & OCR Sidecar Helpers
 # -----------------------------------------------------------------------------
 VIDEO_PATH_CACHE: dict[str, Path] = {}
 
@@ -153,7 +135,6 @@ def run_scratch_ocr(frame: Any) -> str:
         return "OCR unavailable (tesseract binary not active)"
     try:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        # Try vie+eng then eng
         try:
             text = pytesseract.image_to_string(gray, lang="vie+eng", config="--psm 6").strip()
         except Exception:
@@ -165,66 +146,7 @@ def run_scratch_ocr(frame: Any) -> str:
 
 
 # -----------------------------------------------------------------------------
-# 3. TRAKE Quality & Distinct Chains Audit
-# -----------------------------------------------------------------------------
-def audit_trake_quality() -> list[dict[str, Any]]:
-    print("\n" + "=" * 120)
-    print("[2/3] Auditing TRAKE Candidate Chains Quality (Distinct & Strictly Increasing)")
-    print("=" * 120)
-
-    trake_qids = ["query-p1-4-trake", "query-p1-16-trake", "query-p1-18-trake"]
-    audit_results: list[dict[str, Any]] = []
-
-    for qid in trake_qids:
-        csv_p = SUBMISSION_DIR / f"{qid}.csv"
-        if not csv_p.exists():
-            print(f"❌ {qid}.csv missing in {SUBMISSION_DIR}")
-            continue
-
-        chains: list[tuple[int, str, list[int]]] = []
-        with csv_p.open("r", encoding="utf-8") as f:
-            reader = csv.reader(f)
-            for r_idx, r in enumerate(reader, start=1):
-                if r and len(r) >= 5:
-                    vid = r[0].strip()
-                    fids = [int(x.strip()) for x in r[1:5]]
-                    chains.append((r_idx, vid, fids))
-
-        unique_4_chains = []
-        strictly_increasing = []
-
-        for orig_rank, vid, fids in chains:
-            if len(set(fids)) == 4:
-                unique_4_chains.append((orig_rank, vid, fids))
-            if fids[0] < fids[1] < fids[2] < fids[3]:
-                gaps = [fids[i+1] - fids[i] for i in range(3)]
-                strictly_increasing.append((orig_rank, vid, fids, gaps))
-
-        print(f"\n[{qid}] Total Chains: {len(chains)}")
-        print(f"  • Chains with 4 Unique Frame IDs     : {len(unique_4_chains)}/100")
-        print(f"  • Chains with Strictly Increasing Ranks: {len(strictly_increasing)}/100")
-
-        print(f"\n  Top 10 Strictly Increasing Chains for {qid}:")
-        if strictly_increasing:
-            for idx, (orig_r, vid, fids, gaps) in enumerate(strictly_increasing[:10], start=1):
-                print(f"    #{idx:<2} (Original Rank @{orig_r:<3}): Video={vid:<10} Frames={fids} Gaps={gaps}")
-        else:
-            print("    [None found with strict f1 < f2 < f3 < f4 in current top 100]")
-
-        audit_results.append({
-            "qid": qid,
-            "total": len(chains),
-            "unique_count": len(unique_4_chains),
-            "increasing_count": len(strictly_increasing),
-            "top_increasing": strictly_increasing[:5],
-            "top_unique": unique_4_chains[:5],
-        })
-
-    return audit_results
-
-
-# -----------------------------------------------------------------------------
-# 4. QA Visual Localization Recovery & Sidecar Extraction
+# 2. Runtime Bootstrap (Once)
 # -----------------------------------------------------------------------------
 def get_reuse_manifest() -> Path | None:
     for p in [
@@ -239,39 +161,147 @@ def get_reuse_manifest() -> Path | None:
     return None
 
 
-def find_grounding_candidates_fast(qid: str) -> list[tuple[str, int, float]] | None:
-    """Tries to find already computed grounding candidates from qa_evidence.json."""
-    for search_dir in [
-        Path("/kaggle/working/output/unified_readiness_session/requests"),
-        Path("/kaggle/working/output/trake_readiness_session/requests"),
-        Path("/kaggle/working/output/kis_submission_session/requests"),
-        REPO_ROOT / "scratch" / "unified_readiness_session" / "requests",
-    ]:
-        if not search_dir.exists():
-            continue
-        for req_dir in search_dir.glob(f"*{qid}*"):
-            ev_file = req_dir / "qa_evidence.json"
-            if ev_file.exists():
-                try:
-                    data = json.loads(ev_file.read_text(encoding="utf-8"))
-                    cands = data.get("grounding_candidates") or data.get("keyframe_evidence_candidates") or data.get("generic_evidence_bank_candidates")
-                    if cands:
-                        results = []
-                        for c in cands:
-                            vid = str(c.get("video_id", "")).removesuffix(".mp4")
-                            fid = int(c.get("frame_id", 0))
-                            score = float(c.get("localization_score", 0.0) or 0.0)
-                            results.append((vid, fid, score))
-                        if results:
-                            return results
-                except Exception:
-                    pass
-    return None
+def bootstrap_runtime() -> OperationalKISRuntime:
+    yaml_path = REPO_ROOT / "systems" / "system_tai" / "configs" / "production.yaml"
+    input_root = Path("/kaggle/input/datasets") if Path("/kaggle/input/datasets").exists() else Path("/kaggle/input")
+    reuse_manifest = get_reuse_manifest()
+    out_dir = Path("/kaggle/working/output/unified_session") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "unified_session"
+
+    cfg = SessionConfig.from_yaml(
+        yaml_path,
+        input_root=input_root,
+        output_root=out_dir,
+        reuse_manifest=reuse_manifest,
+    )
+
+    print("\n[Bootstrap] Initializing Single OperationalKISRuntime Instance ...", flush=True)
+    t0 = time.time()
+    runtime = OperationalKISRuntime.bootstrap(cfg)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"      • Runtime Bootstrapped in {time.time() - t0:.2f}s (device={device}) ✅\n", flush=True)
+    return runtime
 
 
-def run_qa_recovery(runtime: OperationalKISRuntime | None = None) -> list[dict[str, Any]]:
+# -----------------------------------------------------------------------------
+# 3. KIS Execution & Reorder Patch
+# -----------------------------------------------------------------------------
+def ensure_kis_submissions() -> None:
+    print("=" * 120)
+    print("[1/4] Ensuring All 18 KIS CSVs are Generated and Reorder Locked")
+    print("=" * 120)
+
+    p1_23 = SUBMISSION_DIR / "query-p1-23-kis.csv"
+    if not p1_23.exists():
+        print(f"[Auto-Gen] KIS CSVs missing in {SUBMISSION_DIR} -> Generating via KIS Submission Merger ...", flush=True)
+        sys.path.insert(0, str(REPO_ROOT / "scratch"))
+        from experiment_kis_btc_submission_merger import run_kis_submission_merger
+        run_kis_submission_merger()
+
+    # Re-apply reorder patch for p1-10 and p1-23
+    sys.path.insert(0, str(REPO_ROOT / "scratch"))
+    from patch_kis_submission_reorder import main as patch_main
+    patch_main()
+
+
+# -----------------------------------------------------------------------------
+# 4. TRAKE Execution & Quality Audit
+# -----------------------------------------------------------------------------
+def parse_trake_query(file_path: Path) -> tuple[str, list[dict[str, str]]]:
+    content = file_path.read_text(encoding="utf-8")
+    lines = [l.strip() for l in content.splitlines() if l.strip()]
+    events = []
+    for line in lines:
+        for idx in range(1, 10):
+            prefix = f"E{idx}:"
+            if line.startswith(prefix):
+                desc = line[len(prefix):].strip()
+                events.append({"event_id": f"E{idx}", "description": desc})
+                break
+    return file_path.stem, events
+
+
+def ensure_and_audit_trake(runtime: OperationalKISRuntime) -> list[dict[str, Any]]:
     print("\n" + "=" * 120)
-    print("[3/3] Executing QA Visual Localization Extraction & Scratch OCR Sidecar")
+    print("[2/4] Ensuring TRAKE Execution & Auditing Strictly Increasing Chains")
+    print("=" * 120)
+
+    trake_files = sorted(list(THUNGHIEM_DIR.glob("*trake*.txt")))
+    audit_results: list[dict[str, Any]] = []
+
+    for tr_f in trake_files:
+        qid, events = parse_trake_query(tr_f)
+        csv_p = SUBMISSION_DIR / f"{qid}.csv"
+
+        if not csv_p.exists():
+            print(f"[Executing TRAKE] Generating {qid}.csv ...", flush=True)
+            req = TRAKEQueryRequest(
+                request_id=qid,
+                query_id=qid,
+                events=tuple(events),
+                include_vi_variant=True,
+                top_k_per_variant=100,
+                event_candidate_top_k=100,
+                output_top_k=100,
+                beam_width=100,
+                refine_top_n=3,
+            )
+            resp = runtime.handle_trake_query(req)
+            pred_rel = (resp.get("artifacts") or {}).get("trake_predictions_jsonl")
+            if pred_rel:
+                pred_f = runtime.output_root / pred_rel
+                if pred_f.exists():
+                    with pred_f.open("r", encoding="utf-8") as inf, csv_p.open("w", encoding="utf-8", newline="") as outf:
+                        writer = csv.writer(outf)
+                        for line in inf:
+                            if line.strip():
+                                rec = json.loads(line)
+                                writer.writerow([str(rec["video_id"]).removesuffix(".mp4"), *rec["frame_ids"]])
+
+        chains: list[tuple[int, str, list[int]]] = []
+        if csv_p.exists():
+            with csv_p.open("r", encoding="utf-8") as f:
+                reader = csv.reader(f)
+                for r_idx, r in enumerate(reader, start=1):
+                    if r and len(r) >= 5:
+                        vid = r[0].strip()
+                        fids = [int(x.strip()) for x in r[1:5]]
+                        chains.append((r_idx, vid, fids))
+
+        unique_4_chains = []
+        strictly_increasing = []
+
+        for orig_rank, vid, fids in chains:
+            if len(set(fids)) == 4:
+                unique_4_chains.append((orig_rank, vid, fids))
+            if fids[0] < fids[1] < fids[2] < fids[3]:
+                gaps = [fids[i+1] - fids[i] for i in range(3)]
+                strictly_increasing.append((orig_rank, vid, fids, gaps))
+
+        print(f"\n[{qid}] Total Chains: {len(chains)}")
+        print(f"  • Chains with 4 Unique Frame IDs       : {len(unique_4_chains)}/100")
+        print(f"  • Chains with Strictly Increasing Frames: {len(strictly_increasing)}/100")
+
+        if strictly_increasing:
+            for idx, (orig_r, vid, fids, gaps) in enumerate(strictly_increasing[:5], start=1):
+                print(f"    Candidate #{idx} (Original Rank @{orig_r:<3}): Video={vid:<10} Frames={fids} Gaps={gaps}")
+
+        audit_results.append({
+            "qid": qid,
+            "total": len(chains),
+            "unique_count": len(unique_4_chains),
+            "increasing_count": len(strictly_increasing),
+            "top_increasing": strictly_increasing[:5],
+        })
+
+    return audit_results
+
+
+# -----------------------------------------------------------------------------
+# 5. QA Localization Recovery & Sidecar Extraction
+# -----------------------------------------------------------------------------
+def run_qa_recovery(runtime: OperationalKISRuntime) -> list[dict[str, Any]]:
+    print("\n" + "=" * 120)
+    print("[3/4] Extracting QA Visual Localization Candidates & Scratch OCR Sidecar")
     print("=" * 120)
 
     qa_queries = [
@@ -286,52 +316,43 @@ def run_qa_recovery(runtime: OperationalKISRuntime | None = None) -> list[dict[s
         print(f"\n--- Extracting Visual Localization Candidates for {qid} ---")
         t0 = time.time()
 
-        fast_cands = find_grounding_candidates_fast(qid)
-        conditioned_list: list[tuple[str, int, float]] = []
+        # 1. Translate Query to English
+        translator = runtime.translation_provider
+        trans_en = translator.translate(f"{desc} {q_part}").strip()
+        eff_en, _, _ = runtime.token_budget_guard.guard_and_compact(trans_en)
+        print(f"  • VI Query  : {desc} {q_part}")
+        print(f"  • EN Query  : {eff_en}")
 
-        if fast_cands:
-            print(f"  • Fast-Loaded {len(fast_cands)} Grounding Candidates from existing qa_evidence.json in 0.01s ✅")
-            conditioned_list = fast_cands
-            eff_en = "Fast-Loaded from Grounding Evidence Bank"
-        elif runtime is not None:
-            # 1. Translate Query to English
-            translator = runtime.translation_provider
-            trans_en = translator.translate(f"{desc} {q_part}").strip()
-            eff_en, _, _ = runtime.token_budget_guard.guard_and_compact(trans_en)
-            print(f"  • VI Query  : {desc} {q_part}")
-            print(f"  • EN Query  : {eff_en}")
+        # 2. Multi-Query Retrieval (VI + EN vectors)
+        vec_en = runtime.shared_encoder.encode(eff_en)
+        coarse_candidates = runtime.exact_retriever.search_vector(
+            query_id=f"rec-{qid}",
+            query_vector=vec_en,
+            top_k=50,
+        )
 
-            # 2. Multi-Query Retrieval (VI + EN vectors)
-            vec_en = runtime.shared_encoder.encode(eff_en)
-            coarse_candidates = runtime.exact_retriever.search_vector(
-                query_id=f"rec-{qid}",
-                query_vector=vec_en,
-                top_k=50,
-            )
+        # 3. Apply Video Conditioned Refinement
+        conditioned = runtime.video_conditioner.condition(
+            global_result=coarse_candidates,
+            query_vector=vec_en,
+            config=runtime.config.video_conditioned_keyframe_config,
+            protected_prefix_rank=1,
+        ).result.ranked_candidates
 
-            # 3. Apply Video Conditioned Refinement
-            conditioned = runtime.video_conditioner.condition(
-                global_result=coarse_candidates,
-                query_vector=vec_en,
-                config=runtime.config.video_conditioned_keyframe_config,
-                protected_prefix_rank=1,
-            ).result.ranked_candidates
-            conditioned_list = [(str(c.video_id).removesuffix(".mp4"), int(c.frame_id), float(c.score)) for c in conditioned]
-            print(f"  • Extracted {len(conditioned_list)} Visual Grounding Candidates in {time.time() - t0:.2f}s ✅")
-        else:
-            print(f"  ❌ No candidates found and runtime not provided.")
-            continue
+        print(f"  • Extracted {len(conditioned)} Visual Grounding Candidates in {time.time() - t0:.2f}s ✅")
 
         # 4. Decode Top 25 Frames & Run Scratch Sidecar OCR
         frame_records: list[dict[str, Any]] = []
-        for rank_idx, (vid, fid, score) in enumerate(conditioned_list[:25], start=1):
+        for rank_idx, c in enumerate(conditioned[:25], start=1):
+            vid = str(c.video_id).removesuffix(".mp4")
+            fid = int(c.frame_id)
             frame_mat, b64_full, b64_crop = decode_full_resolution_frame(vid, fid)
             ocr_text = run_scratch_ocr(frame_mat)
             frame_records.append({
                 "rank": rank_idx,
                 "video_id": vid,
                 "frame_id": fid,
-                "score": score,
+                "score": float(c.score),
                 "b64_full": b64_full,
                 "b64_crop": b64_crop,
                 "ocr_text": ocr_text,
@@ -351,18 +372,18 @@ def run_qa_recovery(runtime: OperationalKISRuntime | None = None) -> list[dict[s
 
 
 # -----------------------------------------------------------------------------
-# 5. Build Unified QA Recovery & TRAKE Quality Visual HTML Gallery
+# 6. Build Comprehensive HTML Visual Gallery (QA + TRAKE + KIS)
 # -----------------------------------------------------------------------------
-def generate_qa_trake_audit_gallery(
+def generate_all_in_one_gallery(
     trake_results: list[dict[str, Any]],
     qa_results: list[dict[str, Any]],
     out_html: Path,
 ) -> None:
-    print(f"\n[Visual Report] Building QA Recovery & TRAKE Quality Audit HTML Report...")
+    print(f"\n[4/4] Building Comprehensive 24-Query Visual Gallery Report...")
 
     sections = []
 
-    # QA Recovery Section (High-Res & OCR)
+    # Section 1: QA Recovery (Full-Res + Crop + OCR)
     qa_cards = []
     for q in qa_results:
         qid = q["qid"]
@@ -389,7 +410,7 @@ def generate_qa_trake_audit_gallery(
                     <span style="color:#aaa;">{vid} (f={fid})</span>
                 </div>
                 {img_full_tag}
-                <div style="font-size:10px; color:#e5c07b; margin:2px 0;"><b>Center Crop:</b></div>
+                <div style="font-size:10px; color:#e5c07b; margin:2px 0;"><b>Center Crop 2x:</b></div>
                 {img_crop_tag}
                 <div style="background:#111; padding:4px; border-radius:3px; margin-top:4px; font-size:10px; color:#98c379; font-family:monospace; min-height:28px; word-break:break-all;">
                     <b>OCR:</b> {ocr}
@@ -410,11 +431,11 @@ def generate_qa_trake_audit_gallery(
         """)
 
     sections.append(f"""
-    <h2 style="color:#e06c75; border-bottom:2px solid #555; padding-bottom:6px;">🔍 QA VISUAL LOCALIZATION RECOVERY & SIDECAR OCR AUDIT</h2>
+    <h2 style="color:#e06c75; border-bottom:2px solid #555; padding-bottom:6px;">🔍 PHẦN 1: QA VISUAL LOCALIZATION RECOVERY & SIDECAR OCR</h2>
     {''.join(qa_cards)}
     """)
 
-    # TRAKE Quality Section (Top Increasing Chains)
+    # Section 2: TRAKE Quality Audit
     trake_cards = []
     for t in trake_results:
         qid = t["qid"]
@@ -452,11 +473,11 @@ def generate_qa_trake_audit_gallery(
         """)
 
     sections.append(f"""
-    <h2 style="color:#e5c07b; border-bottom:2px solid #555; padding-bottom:6px; margin-top:24px;">⏱️ TRAKE QUALITY & STRICTLY-INCREASING CHAINS AUDIT</h2>
+    <h2 style="color:#e5c07b; border-bottom:2px solid #555; padding-bottom:6px; margin-top:24px;">⏱️ PHẦN 2: TRAKE QUALITY & STRICTLY-INCREASING CHAINS AUDIT</h2>
     {''.join(trake_cards)}
     """)
 
-    # 3. KIS Merged Top-5 Gallery Section
+    # Section 3: KIS Top-5 Gallery
     kis_cards = []
     for kis_f in sorted(list(THUNGHIEM_DIR.glob("*kis*.txt"))):
         qid = kis_f.stem
@@ -497,7 +518,7 @@ def generate_qa_trake_audit_gallery(
         """)
 
     sections.append(f"""
-    <h2 style="color:#61afef; border-bottom:2px solid #555; padding-bottom:6px; margin-top:24px;">🎯 TEXTUAL KIS FINAL SUBMISSION GALLERY (18 QUERIES × TOP 5)</h2>
+    <h2 style="color:#61afef; border-bottom:2px solid #555; padding-bottom:6px; margin-top:24px;">🎯 PHẦN 3: TEXTUAL KIS FINAL SUBMISSION GALLERY (18 QUERIES × TOP 5)</h2>
     {''.join(kis_cards)}
     """)
 
@@ -516,51 +537,27 @@ def generate_qa_trake_audit_gallery(
 
 
 # -----------------------------------------------------------------------------
-# 6. Main Execution Pipeline
+# 7. Main Pipeline
 # -----------------------------------------------------------------------------
 def main() -> None:
-    # 1. Re-apply KIS Reorder Patch
-    apply_kis_reorder_patch()
+    # 1. Ensure KIS Submissions
+    ensure_kis_submissions()
 
-    # 2. Audit TRAKE Quality on existing CSVs
-    trake_results = audit_trake_quality()
+    # 2. Bootstrap Runtime ONCE
+    runtime = bootstrap_runtime()
 
-    # 3. Check if fast grounding candidates exist from previous run
-    needs_bootstrap = False
-    for qid in ["query-p1-15-qa", "query-p1-19-qa", "query-p1-22-qa"]:
-        if not find_grounding_candidates_fast(qid):
-            needs_bootstrap = True
-            break
-
-    runtime = None
-    if needs_bootstrap:
-        print("\n" + "=" * 120)
-        print("Bootstrapping OperationalKISRuntime for QA Localization Recovery...")
-        print("=" * 120)
-        yaml_path = REPO_ROOT / "systems" / "system_tai" / "configs" / "production.yaml"
-        input_root = Path("/kaggle/input/datasets") if Path("/kaggle/input/datasets").exists() else Path("/kaggle/input")
-        reuse_manifest = get_reuse_manifest()
-        out_dir = Path("/kaggle/working/output/qa_recovery_session") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "qa_recovery_session"
-
-        cfg = SessionConfig.from_yaml(
-            yaml_path,
-            input_root=input_root,
-            output_root=out_dir,
-            reuse_manifest=reuse_manifest,
-        )
-        runtime = OperationalKISRuntime.bootstrap(cfg)
-    else:
-        print("\n[Fast-Path] Found existing QA grounding evidence artifacts -> Skipping 9-minute runtime bootstrap! ✅", flush=True)
+    # 3. Ensure TRAKE & Audit Distinct Chains
+    trake_results = ensure_and_audit_trake(runtime)
 
     # 4. Extract QA Localization Candidates & Run Sidecar OCR
     qa_results = run_qa_recovery(runtime)
 
-    # 5. Build Comprehensive Visual Inspection Gallery
+    # 5. Generate Full 24-Query Visual HTML Gallery
     gallery_out = Path("/kaggle/working/qa_recovery_and_trake_audit_gallery.html") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "qa_recovery_and_trake_audit_gallery.html"
-    generate_qa_trake_audit_gallery(trake_results, qa_results, gallery_out)
+    generate_all_in_one_gallery(trake_results, qa_results, gallery_out)
 
     print("\n" + "=" * 150)
-    print(">>> QA RECOVERY & TRAKE AUDIT COMPLETE (READY FOR HUMAN VISUAL INSPECTION) <<<")
+    print(">>> UNIFIED QA RECOVERY & TRAKE AUDIT COMPLETE (READY FOR HUMAN VISUAL INSPECTION) <<<")
     print("=" * 150 + "\n")
 
 
