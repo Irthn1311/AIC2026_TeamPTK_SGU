@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
-"""Official Preliminary Round KIS Execution Engine (20 KIS Queries).
+"""Official Preliminary Round KIS Execution Engine (20 KIS Queries - CPU Fast-Path).
 
-Runs the canonical System Tai KIS Pipeline on all 20 preliminary round queries:
-  - Query Translation (Production Marian Vi->En with TokenBudgetGuard)
-  - Vector Retrieval across 598 AIC videos / 500k+ keyframes with ViT-B/32
-  - VideoConditionedKeyframeDiversity Refinement
-  - Strict Top-100 Headerless CSV Export (video_id,frame_id)
-  - Structural Validation & Automatic submission_kis_20q.zip creation
-  - Interactive HTML Visual Gallery for Kaggle Notebook Inspection
+Guarantees:
+  1. Zero Extra Downloads: Reuses runtime.translation_provider and TokenBudgetGuard loaded during bootstrap.
+  2. VideoConditionedKeyframeDiversity (Q3.1) enabled.
+  3. Exact 20 Target KIS Queries processed and exported.
+  4. Automatic Stale Output Cleanup & Full Structural Validation.
+  5. Produces submission_kis_20q.zip and interactive HTML Visual Gallery.
 """
 
 from __future__ import annotations
@@ -27,7 +26,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 
 print("=" * 150, flush=True)
-print("AIC 2026 PRELIMINARY ROUND - 20 KIS QUERIES EXECUTION ENGINE", flush=True)
+print("AIC 2026 PRELIMINARY ROUND - 20 KIS QUERIES EXECUTION ENGINE (FAST-PATH)", flush=True)
 print("=" * 150, flush=True)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -48,8 +47,6 @@ except ImportError:
     import cv2
 
 import torch
-from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
-
 from system_tai.kis.session_engine import OperationalKISRuntime
 from system_tai.kis.session_schema import (
     QueryLanguage,
@@ -159,37 +156,27 @@ OFFICIAL_KIS_QUERIES = [
     },
 ]
 
+TARGET_QIDS = [q["query_id"] for q in OFFICIAL_KIS_QUERIES]
+
 # -----------------------------------------------------------------------------
-# 2. Production VinAI B1 Vi->En Translator (Historical B1 Decoding)
+# 2. Runtime Translator Adapter (Reuses Preloaded Marian + TokenBudgetGuard)
 # -----------------------------------------------------------------------------
-class VinAIB1Translator:
-    def __init__(self, device: str = "cpu") -> None:
-        self.device = device
-        self.model_name = "vinai/vinai-translate-vi2en-v2"
-        print(f"[Translator] Loading VinAI B1 (vi2en-v2) on {device} ...", flush=True)
-        t0 = time.time()
-        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name, src_lang="vi_VN", use_fast=False)
-        self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_name).to(device)
-        self.model.eval()
-        self.en_bos_id = self.tokenizer.lang_code_to_id.get("en_XX", None)
-        print(f"      • Loaded VinAI B1 in {time.time() - t0:.2f}s ✅", flush=True)
+class RuntimeMarianAdapter:
+    """CPU-safe adapter reusing the translator already loaded by the runtime."""
+    def __init__(self, runtime: OperationalKISRuntime) -> None:
+        if runtime.translation_provider is None:
+            raise RuntimeError("Runtime Marian translation provider is unavailable")
+        self.provider = runtime.translation_provider
+        self.guard = getattr(runtime, "token_budget_guard", None)
+        print("[Translator] Reusing preloaded Marian translator on CPU (0s network latency) ✅", flush=True)
 
     def translate(self, text: str) -> str:
-        clean = " ".join(text.strip().split())
-        inputs = self.tokenizer(clean, return_tensors="pt", padding=True, truncation=True, max_length=128).to(self.device)
-        gen_kwargs = {
-            "max_length": 128,
-            "num_beams": 3,
-            "no_repeat_ngram_size": 3,
-            "repetition_penalty": 1.15,
-            "early_stopping": True,
-        }
-        if self.en_bos_id is not None:
-            gen_kwargs["forced_bos_token_id"] = self.en_bos_id
-            
-        with torch.no_grad():
-            outputs = self.model.generate(**inputs, **gen_kwargs)
-        return self.tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
+        raw_english = self.provider.translate(text)
+        if self.guard is not None:
+            final_english, token_count, compacted = self.guard.guard_and_compact(raw_english)
+            print(f"    • CLIP tokens={token_count}, compacted={compacted}", flush=True)
+            return final_english
+        return raw_english
 
 # -----------------------------------------------------------------------------
 # 3. Fast Video Path Resolution & Frame Decoder (0.001s)
@@ -262,7 +249,7 @@ def bootstrap_runtime() -> OperationalKISRuntime:
 # -----------------------------------------------------------------------------
 # 5. Process All 20 KIS Queries
 # -----------------------------------------------------------------------------
-def process_all_kis_queries(runtime: OperationalKISRuntime, translator: VinAIB1Translator) -> list[dict[str, Any]]:
+def process_all_kis_queries(runtime: OperationalKISRuntime, translator: RuntimeMarianAdapter) -> list[dict[str, Any]]:
     print("=" * 120)
     print(f"🚀 PROCESSING {len(OFFICIAL_KIS_QUERIES)} KIS QUERIES THROUGH PRODUCTION PIPELINE")
     print("=" * 120)
@@ -329,8 +316,6 @@ def process_all_kis_queries(runtime: OperationalKISRuntime, translator: VinAIB1T
 # -----------------------------------------------------------------------------
 # 6. Validate All 20 CSV Files
 # -----------------------------------------------------------------------------
-TARGET_QIDS = [q["query_id"] for q in OFFICIAL_KIS_QUERIES]
-
 def validate_all_csvs() -> None:
     print("\n" + "=" * 100)
     print("🔍 STRUCTURAL VALIDATION OF ALL 20 KIS CSV SUBMISSION FILES")
@@ -438,7 +423,6 @@ def render_kis_gallery(results: list[dict[str, Any]]) -> None:
 # -----------------------------------------------------------------------------
 def main() -> None:
     t0 = time.time()
-    device = "cuda" if torch.cuda.is_available() else "cpu"
     
     # 0. Clean submission directory before running
     for old_f in SUBMISSION_DIR.glob("*.csv"):
@@ -447,9 +431,9 @@ def main() -> None:
         except Exception:
             pass
             
-    # 1. Bootstrap Runtime & Translator
+    # 1. Bootstrap Runtime & Reusable Marian Translator
     runtime = bootstrap_runtime()
-    translator = VinAIB1Translator(device=device)
+    translator = RuntimeMarianAdapter(runtime)
     
     # 2. Process All 20 KIS Queries
     results = process_all_kis_queries(runtime, translator)
