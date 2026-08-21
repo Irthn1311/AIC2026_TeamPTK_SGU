@@ -1,15 +1,26 @@
 #!/usr/bin/env python3
-"""Forensic Two-Stage QA Deep Scanner with Geometry Adjacency, Exact Extraction, and Strict Semantics.
+"""Forensic Two-Stage QA Deep Scanner with Per-Query Budgets, Group-Gated Poems, and Stopword Commune Extraction.
 
-Operational Guarantees:
-  1. No Hard-Coded Answers: p1-19, p1-15, and p1-22 answer candidates are derived 100% from OCR/ROI evidence.
-  2. Spatial Geometry BBox Adjacency: 200g and meat terms must overlap vertically or be within 120px line distance.
-  3. Strict Pattern Extraction:
-     - p1-22: Extracts clean dish name only (excludes NGUYÊN LIỆU, MÓN NGON MỖI NGÀY, AJINOMOTO, etc.).
-     - p1-15: Extracts specific commune name only (e.g. 'xã <TÊN>', rejecting 'xã hội', 'các xã').
-     - p1-19: Derives poem candidate purely from OCR lines; partial fragments remain PARTIAL_EVIDENCE.
-  4. Wall-Clock 12-Minute Deadline & Per-Query Budget: Prevents query starvation and runaway execution.
-  5. Exact Status Semantics: Prints VIDEO_CONTEXT_STATUS, ANSWER_STATUS, ANSWER_CANDIDATE, ANSWER_EVIDENCE_VIDEO, ANSWER_EVIDENCE_FRAME, ANSWER_EVIDENCE_OCR.
+Operational Invariants:
+  1. Per-Query Budget Control:
+     - p1-22: 220 calls (CPU)
+     - p1-19: 180 calls (CPU)
+     - p1-15: 150 calls (CPU)
+     - Global 12-Minute Wall-Clock Guard prevents runaway execution.
+  2. p1-19 Group-Gated Verification:
+     - Group A: Hỏa hồng | Nhật Tảo | oanh thiên địa
+     - Group B: Kiếm bạt | Kiên Giang | khấp quỷ thần
+     - VERIFIED_HIGH_CONFIDENCE requires distinct OCR evidence for BOTH Group A and Group B.
+     - Purely OCR-derived (no hard-coded text).
+  3. p1-15 Stopword-Capped Commune Extraction:
+     - Extracts 1-4 tokens after 'xã / UBND xã / tại xã' and stops immediately before:
+       huyện, tỉnh, thôn, ấp, thuộc, tại, trao, tổ chức, UBND, hội, phường, TP, vv.
+  4. p1-22 Safe Dish-Title Gate:
+     - Excludes unsafe short substrings (bo, ga, ca, cha).
+     - Gated on safe prefixes (canh, thịt, xào, kho, chiên, lẩu, cuốn, hấp, gỏi).
+     - Requires title repetition across >=2 frames for VERIFIED_HIGH_CONFIDENCE; single weak title = PARTIAL_EVIDENCE.
+  5. Explicit Failure Taxonomy:
+     - UNRESOLVED_EXHAUSTIVE vs BUDGET_EXHAUSTED vs DEADLINE_EXHAUSTED.
 """
 
 from __future__ import annotations
@@ -31,7 +42,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 
 print("=" * 150, flush=True)
-print("QA FORENSIC TEMPORAL SCANNER (GEOMETRIC ADJACENCY & EXACT TEXT EXTRACTION)", flush=True)
+print("QA FORENSIC TEMPORAL SCANNER (PER-QUERY BUDGETS, GROUP-GATED POEMS, CAPPED COMMUNE EXTRACTION)", flush=True)
 print("=" * 150, flush=True)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -62,14 +73,29 @@ except Exception as exc:
 START_TIME = time.time()
 DEADLINE_TIME = START_TIME + (12 * 60)  # 12 minutes hard wall-clock deadline
 GLOBAL_OCR_CALLS = 0
-MAX_GLOBAL_OCR_LIMIT = 1200 if USE_GPU else 550
 COARSE_STRIDE = 500
+
+# Per-Query OCR Budgets (CPU: 220 / 180 / 150; GPU: 450 / 380 / 320)
+BUDGETS = {
+    "query-p1-22-qa": 450 if USE_GPU else 220,
+    "query-p1-19-qa": 380 if USE_GPU else 180,
+    "query-p1-15-qa": 320 if USE_GPU else 150,
+}
+
+CURRENT_QUERY_ID = ""
+CURRENT_QUERY_CALLS = 0
 
 VIDEO_CACHE: dict[str, Path] = {}
 VIDEO_FRAME_COUNTS: dict[str, int] = {}
 
-def is_time_exhausted() -> bool:
-    return time.time() >= DEADLINE_TIME or GLOBAL_OCR_CALLS >= MAX_GLOBAL_OCR_LIMIT
+def check_execution_state() -> str | None:
+    """Returns 'DEADLINE_EXHAUSTED', 'BUDGET_EXHAUSTED', or None."""
+    if time.time() >= DEADLINE_TIME:
+        return "DEADLINE_EXHAUSTED"
+    q_budget = BUDGETS.get(CURRENT_QUERY_ID, 200)
+    if CURRENT_QUERY_CALLS >= q_budget:
+        return "BUDGET_EXHAUSTED"
+    return None
 
 def strip_accents(text: str) -> str:
     text = unicodedata.normalize("NFKD", text)
@@ -111,11 +137,12 @@ def get_video_frame_count(video_id: str) -> int:
     return cnt
 
 def ocr_full_frame(frame: Any) -> tuple[str, list[dict[str, Any]]]:
-    global GLOBAL_OCR_CALLS
-    if frame is None or READER is None or is_time_exhausted():
+    global GLOBAL_OCR_CALLS, CURRENT_QUERY_CALLS
+    if frame is None or READER is None or check_execution_state() is not None:
         return "", []
     try:
         GLOBAL_OCR_CALLS += 1
+        CURRENT_QUERY_CALLS += 1
         results = READER.readtext(frame, detail=1)
         items = []
         text_lines = []
@@ -129,11 +156,12 @@ def ocr_full_frame(frame: Any) -> tuple[str, list[dict[str, Any]]]:
         return "", []
 
 def ocr_roi_upscaled_3x(frame: Any, bbox: Any) -> str:
-    global GLOBAL_OCR_CALLS
-    if frame is None or READER is None or not bbox or is_time_exhausted():
+    global GLOBAL_OCR_CALLS, CURRENT_QUERY_CALLS
+    if frame is None or READER is None or not bbox or check_execution_state() is not None:
         return ""
     try:
         GLOBAL_OCR_CALLS += 1
+        CURRENT_QUERY_CALLS += 1
         h, w = frame.shape[:2]
         pts = bbox
         x_min = max(0, int(min(p[0] for p in pts)) - 10)
@@ -161,7 +189,7 @@ def extract_b64(img: Any, quality: int = 85) -> str:
         return ""
 
 # -----------------------------------------------------------------------------
-# 1. True Geometric Bounding Box Adjacency (Same Line or Spatial Neighbor)
+# 1. Geometric Spatial Adjacency
 # -----------------------------------------------------------------------------
 def get_bbox_rect(bbox: list) -> tuple[int, int, int, int]:
     xs = [p[0] for p in bbox]
@@ -171,20 +199,16 @@ def get_bbox_rect(bbox: list) -> tuple[int, int, int, int]:
 def are_bboxes_spatially_adjacent(b1: list, b2: list) -> bool:
     x1_min, y1_min, x1_max, y1_max = get_bbox_rect(b1)
     x2_min, y2_min, x2_max, y2_max = get_bbox_rect(b2)
-    
     h1 = max(1, y1_max - y1_min)
     h2 = max(1, y2_max - y2_min)
     min_h = min(h1, h2)
     
-    # 1. Vertical overlap (same line / row)
     overlap_y = max(0, min(y1_max, y2_max) - max(y1_min, y2_min))
     if overlap_y >= 0.35 * min_h:
-        # Horizontal gap on the same line <= 150px
         horiz_gap = max(0, max(x1_min, x2_min) - min(x1_max, x2_max))
         if horiz_gap <= 150:
             return True
             
-    # 2. Consecutive lines (adjacent row with horizontal overlap)
     vert_gap = max(0, max(y1_min, y2_min) - min(y1_max, y2_max))
     if vert_gap <= 40:
         overlap_x = max(0, min(x1_max, x2_max) - max(x1_min, x2_min))
@@ -202,23 +226,12 @@ PRIORITY_P15 = ["L30_V066", "L30_V072", "L30_V081", "L30_V091", "L30_V031", "L30
 
 def verify_actual_ocr_budget() -> None:
     print("\n" + "=" * 100)
-    print(f"📊 METADATA & OCR BUDGET GUARD (gpu={USE_GPU}, limit={MAX_GLOBAL_OCR_LIMIT}):")
-    print("=" * 100)
-    total_coarse_planned = 0
-    for group_name, vlist in [("p1-22", PRIORITY_P22), ("p1-19", PRIORITY_P19), ("p1-15", PRIORITY_P15)]:
-        group_calls = 0
-        for vid in vlist:
-            fcnt = get_video_frame_count(vid)
-            calls = math.ceil(fcnt / COARSE_STRIDE) if fcnt > 0 else 0
-            group_calls += calls
-        total_coarse_planned += group_calls
-        print(f"  • Planned coarse calls for {group_name}: {group_calls}")
-    print("-" * 100)
-    print(f"  🏁 TOTAL PLANNED COARSE CALLS: {total_coarse_planned} (Limit: 800)")
-    print(f"  🛑 GLOBAL RUNTIME HARD LIMIT : {MAX_GLOBAL_OCR_LIMIT} calls | 12-Minute Deadline Guard")
-    print("-" * 100 + "\n", flush=True)
-    if total_coarse_planned > 800:
-        raise RuntimeError(f"FATAL: Planned coarse calls ({total_coarse_planned}) > 800!")
+    print(f"📊 PER-QUERY BUDGETS & EXECUTION GUARDS (gpu={USE_GPU}):")
+    print(f"  • p1-22 Budget : {BUDGETS['query-p1-22-qa']} calls")
+    print(f"  • p1-19 Budget : {BUDGETS['query-p1-19-qa']} calls")
+    print(f"  • p1-15 Budget : {BUDGETS['query-p1-15-qa']} calls")
+    print(f"  • Total Planned Limit : {sum(BUDGETS.values())} calls | 12-Minute Hard Wall-Clock")
+    print("=" * 100 + "\n", flush=True)
 
 ALL_ACCUMULATED_RECORDS: list[dict[str, Any]] = []
 
@@ -234,21 +247,20 @@ def flush_incremental_evidence() -> None:
     json_out.write_text(json.dumps(clean_json, ensure_ascii=False, indent=2), encoding="utf-8")
 
 # -----------------------------------------------------------------------------
-# 3. p1-22: 200g Thịt Nạc Xay -> Exact Dish Title
+# 3. p1-22: 200g Thịt Nạc Xay -> Dish Title Gate (Excluding short substrings)
 # -----------------------------------------------------------------------------
 RE_200G = re.compile(r"\b(200\s*(g|gr|gram|g\b|9|oog)|200g|2009|2oog)\b", re.IGNORECASE)
 MEAT_TERMS = ["thịt", "nạc", "xay", "thit", "nac", "pork", "heo"]
 EXCLUDED_TITLE_TERMS = ["nguyên liệu", "nguyen lieu", "món ngon mỗi ngày", "mon ngon moi ngay", "ajinomoto", "htv", "online", "thực hiện", "thuc hien", "gia vị", "gia vi", "200g", "400g", "500g", "100g", "trang web", "quét mã"]
+SAFE_DISH_PREFIXES = ["canh ", "thịt ", "thit ", "món ", "mon ", "xào ", "xao ", "kho ", "chiên ", "chien ", "lẩu ", "lau ", "cuốn ", "cuon ", "hấp ", "hap ", "gỏi ", "goi ", "chả ", "cha "]
 
 def match_spatial_200g_and_meat(bboxes: list[dict[str, Any]]) -> tuple[bool, str]:
     for i, b1 in enumerate(bboxes):
         t1 = b1["text"]
         t1_asc = strip_accents(t1)
         if RE_200G.search(t1) or RE_200G.search(t1_asc):
-            # Same bbox check
             if any(m in t1_asc for m in MEAT_TERMS):
                 return True, t1
-            # Geometric spatial adjacency check with other bboxes
             for j, b2 in enumerate(bboxes):
                 if i != j:
                     t2_asc = strip_accents(b2["text"])
@@ -257,33 +269,36 @@ def match_spatial_200g_and_meat(bboxes: list[dict[str, Any]]) -> tuple[bool, str
                             return True, f"{t1} | {b2['text']}"
     return False, ""
 
-def extract_clean_dish_title(bboxes: list[dict[str, Any]]) -> str:
+def extract_safe_dish_title(bboxes: list[dict[str, Any]]) -> str:
     for b in bboxes:
         txt = b["text"]
-        txt_asc = strip_accents(txt)
+        txt_asc = strip_accents(txt) + " "
         if any(ex in txt_asc for ex in EXCLUDED_TITLE_TERMS):
             continue
-        # Plausible dish name terms
-        if any(k in txt_asc for k in ["canh", "thit", "xao", "kho", "chien", "lau", "cuon", "hap", "cha", "goi", "bo", "ga", "tom", "ca "]):
-            if 5 <= len(txt) <= 50 and not bool(re.search(r"\d+g", txt_asc)):
+        # Check safe multi-character prefixes
+        if any(txt_asc.startswith(p) or f" {p}" in txt_asc for p in SAFE_DISH_PREFIXES):
+            if 6 <= len(txt) <= 50 and not bool(re.search(r"\d+g", txt_asc)):
                 return txt
     return ""
 
 def run_two_stage_p1_22() -> dict[str, Any]:
+    global CURRENT_QUERY_ID, CURRENT_QUERY_CALLS
+    CURRENT_QUERY_ID = "query-p1-22-qa"
+    CURRENT_QUERY_CALLS = 0
+    
     print("=" * 120)
-    print("🍳 [p1-22] TWO-STAGE SCAN: 200g Thịt Nạc Xay -> Exact Dish Title")
+    print(f"🍳 [p1-22] TWO-STAGE SCAN: 200g Thịt Nạc Xay -> Dish Title (Budget: {BUDGETS[CURRENT_QUERY_ID]} calls)")
     print("=" * 120)
     
     locked_video = None
     locked_hit_frame = None
     evidence_records = []
-    dish_title_candidate = ""
-    title_frame = None
+    title_occurrences: dict[str, list[int]] = {}
     
-    # Stage A: Coarse Discovery with Geometric BBox Adjacency
+    # Stage A: Coarse Discovery
     print("\n--- [p1-22 Stage A] Coarse Discovery (Stride 500) ---")
     for vid in PRIORITY_P22:
-        if is_time_exhausted():
+        if check_execution_state() is not None:
             break
         vpath = find_video_path(vid)
         if not vpath:
@@ -294,7 +309,7 @@ def run_two_stage_p1_22() -> dict[str, Any]:
         print(f"  • Coarse scanning {vid} ({total_frames} frames) ...", flush=True)
         
         for fid in range(0, total_frames, COARSE_STRIDE):
-            if is_time_exhausted():
+            if check_execution_state() is not None:
                 break
             cap.set(cv2.CAP_PROP_POS_FRAMES, fid)
             ret, frame = cap.read()
@@ -303,7 +318,7 @@ def run_two_stage_p1_22() -> dict[str, Any]:
             txt_raw, bboxes = ocr_full_frame(frame)
             matched, snippet = match_spatial_200g_and_meat(bboxes)
             if matched:
-                print(f"\n      🌟 [GEOMETRIC 200G + MEAT HIT!] {vid} Frame {fid} ({fid/fps:.1f}s): '{snippet}'", flush=True)
+                print(f"\n      🌟 [SPATIAL 200G + MEAT HIT!] {vid} Frame {fid} ({fid/fps:.1f}s): '{snippet}'", flush=True)
                 locked_video = vid
                 locked_hit_frame = fid
                 break
@@ -311,21 +326,23 @@ def run_two_stage_p1_22() -> dict[str, Any]:
         if locked_video:
             break
             
+    exec_state = check_execution_state()
     if not locked_video:
-        print("\n  ❌ P1_22_UNRESOLVED: No spatial 200g + meat hit found in priority videos.\n", flush=True)
+        fail_status = exec_state if exec_state else "UNRESOLVED_EXHAUSTIVE"
+        print(f"\n  ❌ P1_22 STATUS: {fail_status} (No spatial 200g + meat hit found).\n", flush=True)
         return {
             "query_id": "query-p1-22-qa",
-            "video_context_status": "UNRESOLVED",
-            "answer_status": "UNRESOLVED",
+            "video_context_status": fail_status,
+            "answer_status": fail_status,
             "answer_candidate": "",
             "evidence_video": "N/A",
             "evidence_frame": "N/A",
-            "evidence_ocr": "No verified ingredient card found",
+            "evidence_ocr": f"Terminated with {fail_status}",
             "records": [],
         }
         
-    # Stage B: Dense Verification on Locked Video
-    print(f"\n--- [p1-22 Stage B] Dense Scan & Title Card Extraction on LOCKED VIDEO: {locked_video} ---")
+    # Stage B: Dense Verification & Title Extraction on Locked Video
+    print(f"\n--- [p1-22 Stage B] Dense Scan & Title Extraction on LOCKED VIDEO: {locked_video} ---")
     vpath = find_video_path(locked_video)
     if vpath:
         cap = cv2.VideoCapture(str(vpath))
@@ -337,7 +354,7 @@ def run_two_stage_p1_22() -> dict[str, Any]:
         end_f = min(total_frames, locked_hit_frame + 1000)
         
         for fid in range(start_f, end_f, 30):
-            if is_time_exhausted():
+            if check_execution_state() is not None:
                 break
             cap.set(cv2.CAP_PROP_POS_FRAMES, fid)
             ret, frame = cap.read()
@@ -369,20 +386,20 @@ def run_two_stage_p1_22() -> dict[str, Any]:
                     "b64_crop": b64_c,
                 })
                 
-        # 2. Dense scan frames 0 to 500 for Clean Dish Title
-        print(f"  • Scanning beginning of {locked_video} (Frames 0-500) for Recipe Title ...")
+        # 2. Dense scan frames 0 to 500 for Safe Dish Title
+        print(f"  • Scanning beginning of {locked_video} (Frames 0-500) for Safe Dish Title ...")
         for fid in range(0, min(500, total_frames), 20):
-            if is_time_exhausted():
+            if check_execution_state() is not None:
                 break
             cap.set(cv2.CAP_PROP_POS_FRAMES, fid)
             ret, frame = cap.read()
             if not ret or frame is None:
                 continue
             txt_raw, bboxes = ocr_full_frame(frame)
-            cand_title = extract_clean_dish_title(bboxes)
-            if cand_title and not dish_title_candidate:
-                dish_title_candidate = cand_title
-                title_frame = fid
+            cand_title = extract_safe_dish_title(bboxes)
+            if cand_title:
+                norm_cand = normalize_text(cand_title)
+                title_occurrences.setdefault(norm_cand, []).append(fid)
                 b64_f = extract_b64(frame)
                 h, w = frame.shape[:2]
                 b64_c = extract_b64(frame[int(h*0.15):int(h*0.85), int(w*0.1):int(w*0.9)])
@@ -402,16 +419,27 @@ def run_two_stage_p1_22() -> dict[str, Any]:
     ALL_ACCUMULATED_RECORDS.extend(evidence_records)
     flush_incremental_evidence()
     
-    ctx_status = "VERIFIED_CONTEXT"
-    ans_status = "VERIFIED_HIGH_CONFIDENCE" if dish_title_candidate else "UNRESOLVED"
-    ev_frame = title_frame if title_frame is not None else locked_hit_frame
-    best_ocr = dish_title_candidate if dish_title_candidate else (evidence_records[0]["ocr_text"] if evidence_records else "N/A")
+    # Title selection logic: require >=2 frame occurrences for VERIFIED_HIGH_CONFIDENCE
+    best_title = ""
+    best_title_frame = None
+    if title_occurrences:
+        # Sort by occurrence count descending
+        sorted_titles = sorted(title_occurrences.items(), key=lambda item: len(item[1]), reverse=True)
+        best_title, f_list = sorted_titles[0]
+        best_title_frame = f_list[0]
+        is_repeated = len(f_list) >= 2
+        ans_status = "VERIFIED_HIGH_CONFIDENCE" if is_repeated else "PARTIAL_EVIDENCE"
+    else:
+        ans_status = "PARTIAL_EVIDENCE" if evidence_records else "UNRESOLVED"
+        
+    ev_frame = best_title_frame if best_title_frame is not None else locked_hit_frame
+    best_ocr = best_title if best_title else (evidence_records[0]["ocr_text"] if evidence_records else "N/A")
     
     return {
         "query_id": "query-p1-22-qa",
-        "video_context_status": ctx_status,
+        "video_context_status": "VERIFIED_CONTEXT",
         "answer_status": ans_status,
-        "answer_candidate": dish_title_candidate,
+        "answer_candidate": best_title,
         "evidence_video": locked_video,
         "evidence_frame": ev_frame,
         "evidence_ocr": best_ocr,
@@ -419,27 +447,37 @@ def run_two_stage_p1_22() -> dict[str, Any]:
     }
 
 # -----------------------------------------------------------------------------
-# 4. p1-19: Nguyễn Trung Trực Couplet Poetry (Derived 100% from OCR)
+# 4. p1-19: Nguyễn Trung Trực Couplet Poetry (Group A & Group B Gated)
 # -----------------------------------------------------------------------------
-DISTINCTIVE_POEM_RAW = ["hỏa hồng", "nhật tảo", "oanh thiên địa", "kiếm bạt", "khấp quỷ thần"]
-DISTINCTIVE_POEM_ASCII = ["hoa hong", "nhat tao", "oanh thien dia", "kiem bat", "khap quy than"]
+GROUP_A_KEYS_RAW = ["hỏa hồng", "nhật tảo", "oanh thiên địa"]
+GROUP_A_KEYS_ASC = ["hoa hong", "nhat tao", "oanh thien dia"]
+
+GROUP_B_KEYS_RAW = ["kiếm bạt", "kiên giang", "khấp quỷ thần"]
+GROUP_B_KEYS_ASC = ["kiem bat", "kien giang", "khap quy than"]
 
 def run_two_stage_p1_19() -> dict[str, Any]:
+    global CURRENT_QUERY_ID, CURRENT_QUERY_CALLS
+    CURRENT_QUERY_ID = "query-p1-19-qa"
+    CURRENT_QUERY_CALLS = 0
+    
     print("=" * 120)
-    print("📜 [p1-19] TWO-STAGE SCAN: Nguyễn Trung Trực Couplet Poetry (Kiên Giang)")
+    print(f"📜 [p1-19] TWO-STAGE SCAN: Group-Gated Couplet Poetry (Budget: {BUDGETS[CURRENT_QUERY_ID]} calls)")
     print("=" * 120)
     
     locked_video = None
     locked_hit_frame = None
     context_only_video = None
     evidence_records = []
-    extracted_poem_lines = []
-    best_poem_frame = None
+    
+    best_line_a = ""
+    best_line_b = ""
+    best_frame_a = None
+    best_frame_b = None
     
     # Stage A: Coarse Discovery
     print("\n--- [p1-19 Stage A] Coarse Discovery (Stride 500) ---")
     for vid in PRIORITY_P19:
-        if is_time_exhausted():
+        if check_execution_state() is not None:
             break
         vpath = find_video_path(vid)
         if not vpath:
@@ -450,7 +488,7 @@ def run_two_stage_p1_19() -> dict[str, Any]:
         print(f"  • Coarse scanning {vid} ({total_frames} frames) ...", flush=True)
         
         for fid in range(0, total_frames, COARSE_STRIDE):
-            if is_time_exhausted():
+            if check_execution_state() is not None:
                 break
             cap.set(cv2.CAP_PROP_POS_FRAMES, fid)
             ret, frame = cap.read()
@@ -459,11 +497,12 @@ def run_two_stage_p1_19() -> dict[str, Any]:
             txt_raw, bboxes = ocr_full_frame(frame)
             txt_asc = strip_accents(txt_raw)
             
-            has_poem = any(k in txt_raw.lower() for k in DISTINCTIVE_POEM_RAW) or any(k in txt_asc for k in DISTINCTIVE_POEM_ASCII)
+            has_grp_a = any(k in txt_raw.lower() for k in GROUP_A_KEYS_RAW) or any(k in txt_asc for k in GROUP_A_KEYS_ASC)
+            has_grp_b = any(k in txt_raw.lower() for k in GROUP_B_KEYS_RAW) or any(k in txt_asc for k in GROUP_B_KEYS_ASC)
             has_ntt = ("nguyễn trung trực" in txt_raw.lower()) or ("nguyen trung truc" in txt_asc)
             
-            if has_poem:
-                print(f"\n      🌟 [DISTINCTIVE POEM HIT!] {vid} Frame {fid} ({fid/fps:.1f}s): '{txt_raw}'", flush=True)
+            if has_grp_a or has_grp_b:
+                print(f"\n      🌟 [POEM ANCHOR HIT!] {vid} Frame {fid} ({fid/fps:.1f}s): '{txt_raw}'", flush=True)
                 locked_video = vid
                 locked_hit_frame = fid
                 break
@@ -475,16 +514,18 @@ def run_two_stage_p1_19() -> dict[str, Any]:
             break
             
     chosen_vid = locked_video if locked_video else context_only_video
+    exec_state = check_execution_state()
     if not chosen_vid:
-        print("\n  ❌ P1_19_UNRESOLVED: No poem or Nguyễn Trung Trực evidence found.\n", flush=True)
+        fail_status = exec_state if exec_state else "UNRESOLVED_EXHAUSTIVE"
+        print(f"\n  ❌ P1_19 STATUS: {fail_status} (No poem or memorial evidence found).\n", flush=True)
         return {
             "query_id": "query-p1-19-qa",
-            "video_context_status": "UNRESOLVED",
-            "answer_status": "UNRESOLVED",
+            "video_context_status": fail_status,
+            "answer_status": fail_status,
             "answer_candidate": "",
             "evidence_video": "N/A",
             "evidence_frame": "N/A",
-            "evidence_ocr": "No evidence found",
+            "evidence_ocr": f"Terminated with {fail_status}",
             "records": [],
         }
         
@@ -500,7 +541,7 @@ def run_two_stage_p1_19() -> dict[str, Any]:
         end_f = min(total_frames, locked_hit_frame + 1000)
         
         for fid in range(start_f, end_f, 35):
-            if is_time_exhausted():
+            if check_execution_state() is not None:
                 break
             cap.set(cv2.CAP_PROP_POS_FRAMES, fid)
             ret, frame = cap.read()
@@ -509,28 +550,32 @@ def run_two_stage_p1_19() -> dict[str, Any]:
             txt_raw, bboxes = ocr_full_frame(frame)
             txt_asc = strip_accents(txt_raw)
             
-            has_poem = any(k in txt_raw.lower() for k in DISTINCTIVE_POEM_RAW) or any(k in txt_asc for k in DISTINCTIVE_POEM_ASCII)
+            has_grp_a = any(k in txt_raw.lower() for k in GROUP_A_KEYS_RAW) or any(k in txt_asc for k in GROUP_A_KEYS_ASC)
+            has_grp_b = any(k in txt_raw.lower() for k in GROUP_B_KEYS_RAW) or any(k in txt_asc for k in GROUP_B_KEYS_ASC)
             has_ntt = any(k in txt_asc for k in ["nguyen trung truc", "dinh", "than", "den tho", "hon chong"])
             
-            if has_poem or has_ntt:
+            if has_grp_a or has_grp_b or has_ntt:
                 roi_texts = []
                 for b in bboxes:
                     b_asc = strip_accents(b["text"])
-                    if any(k in b_asc for k in DISTINCTIVE_POEM_ASCII) or ("nguyen trung truc" in b_asc):
+                    if any(k in b_asc for k in GROUP_A_KEYS_ASC) or any(k in b_asc for k in GROUP_B_KEYS_ASC) or ("nguyen trung truc" in b_asc):
                         roi_t = ocr_roi_upscaled_3x(frame, b["bbox"])
                         if roi_t:
                             roi_texts.append(roi_t)
-                            if any(k in strip_accents(roi_t) for k in DISTINCTIVE_POEM_ASCII):
-                                if roi_t not in extracted_poem_lines:
-                                    extracted_poem_lines.append(roi_t)
-                                    best_poem_frame = fid
-                                    
+                            roi_asc = strip_accents(roi_t)
+                            if any(k in roi_asc for k in GROUP_A_KEYS_ASC) and not best_line_a:
+                                best_line_a = roi_t
+                                best_frame_a = fid
+                            if any(k in roi_asc for k in GROUP_B_KEYS_ASC) and not best_line_b:
+                                best_line_b = roi_t
+                                best_frame_b = fid
+                                
                 enhanced = " | ".join(roi_texts) if roi_texts else txt_raw
                 b64_f = extract_b64(frame)
                 h, w = frame.shape[:2]
                 b64_c = extract_b64(frame[int(h*0.1):int(h*0.9), int(w*0.05):int(w*0.95)])
-                score = 10.0 if has_poem else 5.0
-                matched = "Poem Verse" if has_poem else "Nguyễn Trung Trực Memorial/Temple"
+                score = 10.0 if (has_grp_a or has_grp_b) else 5.0
+                matched = "Poem Verse" if (has_grp_a or has_grp_b) else "Nguyễn Trung Trực Memorial/Temple"
                 evidence_records.append({
                     "query_id": "query-p1-19-qa",
                     "video_id": chosen_vid,
@@ -547,11 +592,21 @@ def run_two_stage_p1_19() -> dict[str, Any]:
     ALL_ACCUMULATED_RECORDS.extend(evidence_records)
     flush_incremental_evidence()
     
-    # Pure OCR derived answer (no hardcoded fallback)
-    poem_candidate = " / ".join(extracted_poem_lines) if extracted_poem_lines else ""
+    # Strictly require distinct evidence for BOTH Group A and Group B for VERIFIED_HIGH_CONFIDENCE
+    if best_line_a and best_line_b:
+        poem_candidate = f"{best_line_a} / {best_line_b}"
+        ans_status = "VERIFIED_HIGH_CONFIDENCE"
+        ev_frame = best_frame_a or best_frame_b or locked_hit_frame
+    elif best_line_a or best_line_b:
+        poem_candidate = best_line_a or best_line_b
+        ans_status = "PARTIAL_EVIDENCE"
+        ev_frame = best_frame_a or best_frame_b or locked_hit_frame
+    else:
+        poem_candidate = ""
+        ans_status = "CONTEXT_ONLY" if chosen_vid else "UNRESOLVED"
+        ev_frame = locked_hit_frame
+        
     ctx_status = "VERIFIED_CONTEXT" if chosen_vid else "UNRESOLVED"
-    ans_status = "VERIFIED_HIGH_CONFIDENCE" if len(extracted_poem_lines) >= 2 else ("PARTIAL_EVIDENCE" if extracted_poem_lines else "UNRESOLVED")
-    ev_frame = best_poem_frame if best_poem_frame is not None else locked_hit_frame
     best_ocr = poem_candidate if poem_candidate else (evidence_records[0]["ocr_text"] if evidence_records else "N/A")
     
     return {
@@ -566,38 +621,53 @@ def run_two_stage_p1_19() -> dict[str, Any]:
     }
 
 # -----------------------------------------------------------------------------
-# 5. p1-15: CLB FANA & Specific Commune Name Extraction
+# 5. p1-15: CLB FANA & Stopword-Capped Commune Extraction
 # -----------------------------------------------------------------------------
-RE_COMMUNE = re.compile(r"\b(xã|xa|ubnd xã|ubnd xa|tai xa|tại xã)\s+([A-ZÀ-Ỵ][a-zà-ỹ]+(?:\s+[A-ZÀ-Ỵ][a-zà-ỹ]+)*)", re.IGNORECASE)
-REJECTED_COMMUNE_WORDS = ["hội", "hoi", "phường", "phuong", "các", "cac", "văn hóa", "van hoa", "nông dân", "nong dan", "việt nam", "viet nam"]
+RE_COMMUNE_PREFIX = re.compile(r"\b(xã|xa|ubnd xã|ubnd xa|tai xa|tại xã)\s+([^\n,\.\-–—]+)", re.IGNORECASE)
+COMMUNE_STOPWORDS = ["huyen", "huyện", "tinh", "tỉnh", "thon", "thôn", "ap", "ấp", "thuoc", "thuộc", "tai", "tại", "trao", "to chuc", "tổ chức", "ubnd", "hoi", "hội", "phuong", "phường", "tp", "thanh pho", "thành phố", "-", ","]
 
-def extract_specific_commune_name(text: str) -> str:
+def extract_capped_commune_name(text: str) -> str:
     clean = normalize_text(text)
-    match = RE_COMMUNE.search(clean)
-    if match:
-        c_name = match.group(2).strip()
-        c_asc = strip_accents(c_name)
-        if any(rej in c_asc for rej in REJECTED_COMMUNE_WORDS):
-            return ""
-        if len(c_name) >= 3:
-            return c_name
+    match = RE_COMMUNE_PREFIX.search(clean)
+    if not match:
+        return ""
+    raw_tail = match.group(2).strip()
+    tokens = raw_tail.split()
+    
+    valid_tokens = []
+    for tok in tokens[:4]:  # Max 4 tokens for commune name
+        tok_clean = tok.strip(".,;:()[]-–—").lower()
+        tok_asc = strip_accents(tok_clean)
+        if tok_asc in COMMUNE_STOPWORDS:
+            break
+        valid_tokens.append(tok.strip(".,;:()[]-–—"))
+        
+    if 1 <= len(valid_tokens) <= 4:
+        cand_name = " ".join(valid_tokens).strip()
+        # Reject generic strings like 'hội' or single letters
+        if len(cand_name) >= 3 and not any(strip_accents(cand_name) == rej for rej in ["hoi", "phuong", "cac xa"]):
+            return cand_name
     return ""
 
 def run_two_stage_p1_15() -> dict[str, Any]:
+    global CURRENT_QUERY_ID, CURRENT_QUERY_CALLS
+    CURRENT_QUERY_ID = "query-p1-15-qa"
+    CURRENT_QUERY_CALLS = 0
+    
     print("=" * 120)
-    print("🤝 [p1-15] TWO-STAGE SCAN: CLB FANA & Specific Commune Name")
+    print(f"🤝 [p1-15] TWO-STAGE SCAN: Stopword-Capped Commune (Budget: {BUDGETS[CURRENT_QUERY_ID]} calls)")
     print("=" * 120)
     
     locked_video = None
     locked_hit_frame = None
+    fana_found = False
     evidence_records = []
-    commune_name_candidate = ""
-    commune_frame = None
+    commune_occurrences: dict[str, list[int]] = {}
     
     # Stage A: Coarse Discovery
     print("\n--- [p1-15 Stage A] Coarse Discovery (Stride 500) ---")
     for vid in PRIORITY_P15:
-        if is_time_exhausted():
+        if check_execution_state() is not None:
             break
         vpath = find_video_path(vid)
         if not vpath:
@@ -608,7 +678,7 @@ def run_two_stage_p1_15() -> dict[str, Any]:
         print(f"  • Coarse scanning {vid} ({total_frames} frames) ...", flush=True)
         
         for fid in range(0, total_frames, COARSE_STRIDE):
-            if is_time_exhausted():
+            if check_execution_state() is not None:
                 break
             cap.set(cv2.CAP_PROP_POS_FRAMES, fid)
             ret, frame = cap.read()
@@ -625,21 +695,24 @@ def run_two_stage_p1_15() -> dict[str, Any]:
                 print(f"\n      🌟 [VERIFIED FANA HIT!] {vid} Frame {fid} ({fid/fps:.1f}s): '{txt_raw}'", flush=True)
                 locked_video = vid
                 locked_hit_frame = fid
+                fana_found = True
                 break
         cap.release()
         if locked_video:
             break
             
+    exec_state = check_execution_state()
     if not locked_video:
-        print("\n  ❌ P1_15_UNRESOLVED: No verified FANA charity video found.\n", flush=True)
+        fail_status = exec_state if exec_state else "UNRESOLVED_EXHAUSTIVE"
+        print(f"\n  ❌ P1_15 STATUS: {fail_status} (No verified FANA video found).\n", flush=True)
         return {
             "query_id": "query-p1-15-qa",
-            "video_context_status": "UNRESOLVED",
-            "answer_status": "UNRESOLVED",
+            "video_context_status": fail_status,
+            "answer_status": fail_status,
             "answer_candidate": "",
             "evidence_video": "N/A",
             "evidence_frame": "N/A",
-            "evidence_ocr": "No verified FANA video found",
+            "evidence_ocr": f"Terminated with {fail_status}",
             "records": [],
         }
         
@@ -655,7 +728,7 @@ def run_two_stage_p1_15() -> dict[str, Any]:
         end_f = min(total_frames, locked_hit_frame + 1000)
         
         for fid in range(start_f, end_f, 35):
-            if is_time_exhausted():
+            if check_execution_state() is not None:
                 break
             cap.set(cv2.CAP_PROP_POS_FRAMES, fid)
             ret, frame = cap.read()
@@ -680,11 +753,11 @@ def run_two_stage_p1_15() -> dict[str, Any]:
                 h, w = frame.shape[:2]
                 b64_c = extract_b64(frame[int(h*0.1):int(h*0.9), int(w*0.05):int(w*0.95)])
                 
-                # Check for explicit commune name extraction
-                c_cand = extract_specific_commune_name(enhanced) or extract_specific_commune_name(txt_raw)
-                if c_cand and not commune_name_candidate:
-                    commune_name_candidate = c_cand
-                    commune_frame = fid
+                # Check capped commune extraction
+                c_cand = extract_capped_commune_name(enhanced) or extract_capped_commune_name(txt_raw)
+                if c_cand:
+                    norm_c = normalize_text(c_cand)
+                    commune_occurrences.setdefault(norm_c, []).append(fid)
                     
                 score = 10.0 if has_fana else 5.0
                 matched = "FANA Club Banner" if has_fana else "Commune Sign"
@@ -704,16 +777,24 @@ def run_two_stage_p1_15() -> dict[str, Any]:
     ALL_ACCUMULATED_RECORDS.extend(evidence_records)
     flush_incremental_evidence()
     
-    ctx_status = "VERIFIED_CONTEXT"
-    ans_status = "VERIFIED_HIGH_CONFIDENCE" if commune_name_candidate else "UNRESOLVED"
-    ev_frame = commune_frame if commune_frame is not None else locked_hit_frame
-    best_ocr = commune_name_candidate if commune_name_candidate else (evidence_records[0]["ocr_text"] if evidence_records else "N/A")
+    best_commune = ""
+    best_commune_frame = None
+    if commune_occurrences:
+        sorted_communes = sorted(commune_occurrences.items(), key=lambda item: len(item[1]), reverse=True)
+        best_commune, f_list = sorted_communes[0]
+        best_commune_frame = f_list[0]
+        ans_status = "VERIFIED_HIGH_CONFIDENCE"
+    else:
+        ans_status = "PARTIAL_EVIDENCE" if evidence_records else "UNRESOLVED"
+        
+    ev_frame = best_commune_frame if best_commune_frame is not None else locked_hit_frame
+    best_ocr = best_commune if best_commune else (evidence_records[0]["ocr_text"] if evidence_records else "N/A")
     
     return {
         "query_id": "query-p1-15-qa",
-        "video_context_status": ctx_status,
+        "video_context_status": "VERIFIED_CONTEXT",
         "answer_status": ans_status,
-        "answer_candidate": commune_name_candidate,
+        "answer_candidate": best_commune,
         "evidence_video": locked_video,
         "evidence_frame": ev_frame,
         "evidence_ocr": best_ocr,
@@ -775,7 +856,7 @@ def render_ranked_gallery(outcomes: list[dict[str, Any]]) -> None:
             </div>
             """)
             
-        badge_color = "#98c379" if ans_stat == "VERIFIED_HIGH_CONFIDENCE" else ("#e5c07b" if ctx_stat == "VERIFIED_CONTEXT" else "#e06c75")
+        badge_color = "#98c379" if ans_stat == "VERIFIED_HIGH_CONFIDENCE" else ("#e5c07b" if "PARTIAL" in ans_stat or "VERIFIED" in ctx_stat else "#e06c75")
         sections.append(f"""
         <div style="background:#242424; border:1px solid #444; border-radius:10px; padding:16px; margin-bottom:28px;">
             <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #555; padding-bottom:6px; margin-bottom:8px;">
@@ -808,21 +889,15 @@ def render_ranked_gallery(outcomes: list[dict[str, Any]]) -> None:
 # -----------------------------------------------------------------------------
 def main() -> None:
     t0 = time.time()
-    
-    # 1. Budget Verification Guard
     verify_actual_ocr_budget()
     
-    # 2. Run Targeted Scans in Priority Order (p1-22 -> p1-19 -> p1-15)
     out_22 = run_two_stage_p1_22()
     out_19 = run_two_stage_p1_19()
     out_15 = run_two_stage_p1_15()
     
     outcomes = [out_22, out_19, out_15]
-    
-    # 3. Render Ranked Gallery
     render_ranked_gallery(outcomes)
     
-    # 4. Print Structured Terminal Summary
     print("=" * 120)
     print("📋 BẢNG TỔNG HỢP FORENSIC QA EVIDENCE & EXACT ANSWER STATUS")
     print("=" * 120)
@@ -836,7 +911,7 @@ def main() -> None:
         print(f"  ANSWER_EVIDENCE_OCR   = '{out['evidence_ocr'][:80]}'")
         print(f"  Evidence Frames Count = {len(out['records'])}")
     print("=" * 120)
-    print(f"\n🎉 FORENSIC SCAN FINISHED IN {time.time() - t0:.2f}s (Total OCR Calls: {GLOBAL_OCR_CALLS}/{MAX_GLOBAL_OCR_LIMIT}) ✅\n")
+    print(f"\n🎉 FORENSIC SCAN FINISHED IN {time.time() - t0:.2f}s (Total OCR Calls: {GLOBAL_OCR_CALLS}/{sum(BUDGETS.values())}) ✅\n")
 
 if __name__ == "__main__":
     main()
