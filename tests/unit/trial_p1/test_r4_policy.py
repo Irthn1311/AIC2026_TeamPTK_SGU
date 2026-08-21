@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import zipfile
 from pathlib import Path
 
@@ -364,3 +365,10 @@ def test_r4_writer_emits_official_submission_zips_only_after_all_gates(tmp_path:
         with zipfile.ZipFile(item["path"]) as archive:
             assert len(archive.namelist()) == 24
             assert all(name.startswith("submission/") for name in archive.namelist())
+
+
+def test_notebook_41_local_ocr_uses_decoded_frame_contract() -> None:
+    notebook = Path(__file__).parents[3] / "notebooks/41_trial_p1_multimodal_dryrun.ipynb"
+    source = notebook.read_text(encoding="utf-8")
+    assert "item.actual_frame_idx" in source
+    assert re.search(r"item\.actual_frame_id\b", source) is None
