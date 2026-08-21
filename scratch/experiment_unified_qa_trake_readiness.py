@@ -621,20 +621,21 @@ def run_unified_readiness() -> None:
         resp = runtime.handle_trake_query(req)
         lat_q = time.time() - t0_q
 
-        # Direct artifact resolution from response
-        pred_rel = resp["artifacts"]["trake_predictions_jsonl"]
-        pred_file = runtime.output_root / pred_rel
-
+        # Zero-output-safe artifact resolution
+        artifacts = resp.get("artifacts") or {}
+        pred_rel = artifacts.get("trake_predictions_jsonl")
         predictions: list[dict[str, Any]] = []
-        if pred_file.exists():
-            with pred_file.open("r", encoding="utf-8") as stream:
-                for line in stream:
-                    if line.strip():
-                        predictions.append(json.loads(line))
+        if pred_rel:
+            pred_file = runtime.output_root / pred_rel
+            if pred_file.exists():
+                with pred_file.open("r", encoding="utf-8") as stream:
+                    for line in stream:
+                        if line.strip():
+                            predictions.append(json.loads(line))
 
         csv_path = submission_dir / f"{qid}.csv"
         if len(predictions) == 0:
-            zero_reason = resp.get("diagnostics", {}).get("zero_output_reason", "unknown_zero_output")
+            zero_reason = resp.get("diagnostics", {}).get("zero_output_reason") or resp.get("unsupported_reason", "empty_predictions_jsonl")
             print(f"❌ [TRAKE FAIL] {qid}: OPERATIONAL_FAIL_EMPTY_OUTPUT (zero_output_reason={zero_reason})", flush=True)
             operational_failures.append({"qid": qid, "task": "TRAKE", "reason": f"zero_output_reason={zero_reason}"})
         else:
@@ -678,20 +679,21 @@ def run_unified_readiness() -> None:
         resp = runtime.handle_qa_query(req)
         lat_q = time.time() - t0_q
 
-        # Direct artifact resolution from response
-        pred_rel = resp["artifacts"]["qa_predictions_jsonl"]
-        pred_file = runtime.output_root / pred_rel
-
+        # Zero-output-safe artifact resolution
+        artifacts = resp.get("artifacts") or {}
+        pred_rel = artifacts.get("qa_predictions_jsonl")
         predictions: list[dict[str, Any]] = []
-        if pred_file.exists():
-            with pred_file.open("r", encoding="utf-8") as stream:
-                for line in stream:
-                    if line.strip():
-                        predictions.append(json.loads(line))
+        if pred_rel:
+            pred_file = runtime.output_root / pred_rel
+            if pred_file.exists():
+                with pred_file.open("r", encoding="utf-8") as stream:
+                    for line in stream:
+                        if line.strip():
+                            predictions.append(json.loads(line))
 
         csv_path = submission_dir / f"{qid}.csv"
         if len(predictions) == 0:
-            unsupported_reason = resp.get("unsupported_reason") or resp.get("diagnostics", {}).get("zero_output_reason", "unknown_unsupported")
+            unsupported_reason = resp.get("unsupported_reason") or resp.get("diagnostics", {}).get("zero_output_reason", "empty_predictions_jsonl")
             print(f"❌ [QA FAIL] {qid}: OPERATIONAL_FAIL_EMPTY_OUTPUT (unsupported_reason={unsupported_reason})", flush=True)
             operational_failures.append({"qid": qid, "task": "QA", "reason": f"unsupported_reason={unsupported_reason}"})
         else:
@@ -749,10 +751,6 @@ def run_unified_readiness() -> None:
     print(f"Invalid / Empty     : {all_invalid}")
     print(f"Failures Logged     : {operational_failures}")
 
-    # Generate Full Visual Gallery HTML for User Inspection
-    gallery_out = Path("/kaggle/working/btc_full_submission_gallery.html") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "btc_full_submission_gallery.html"
-    generate_full_gallery_html(submission_dir, gallery_out)
-
     if (
         len(missing_qids) == 0
         and len(extra_qids) == 0
@@ -760,6 +758,10 @@ def run_unified_readiness() -> None:
         and len(operational_failures) == 0
         and len(generated_qids) == len(ALL_AUTHORITATIVE_QIDS)
     ):
+        # Generate Full Visual Gallery HTML only on 100% Success
+        gallery_out = Path("/kaggle/working/btc_full_submission_gallery.html") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "btc_full_submission_gallery.html"
+        generate_full_gallery_html(submission_dir, gallery_out)
+
         # Create submission.zip
         zip_path = Path("/kaggle/working/submission.zip") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "submission.zip"
         print(f"\n[Packaging] Creating final submission.zip at {zip_path} ...", flush=True)
@@ -774,6 +776,7 @@ def run_unified_readiness() -> None:
     else:
         print("\n" + "=" * 150, flush=True)
         print(">>> DECLARATION: BTC_P1_SUBMISSION_NOT_READY <<<", flush=True)
+        print(f"Operational Failures: {operational_failures}")
         print("=" * 150, flush=True)
 
 
