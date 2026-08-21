@@ -1,0 +1,55 @@
+experiment: TRIAGE_PRELIM_R5_FINAL_SPRINT
+version: "0.1"
+scope: PRELIM_FINAL_DIAGNOSTIC_AND_POLICY_SELECTION
+live_evidence:
+  true_bcf1_trial_score: 3.6
+  safe_r4_live_winner_trial_score: 4.4
+  m0_r4_negative_control_trial_score: 3.4
+arms:
+  - TRUE_BCF1
+  - SAFE_R4_LIVE_WINNER
+  - SAFE_R5_QE
+  - SAFE_R5_GATED
+benchmarks:
+  primary: DEV_CROSS_60
+  regression: DEV_L21_150
+  merge_forbidden: true
+query_views:
+  - ORIGINAL_VI
+  - TRANSLATED_EN
+  - ENTITY_DISTINCTIVE
+  - ACTION_OBJECT
+  - CONTEXT_ANCHORS
+policy:
+  rrf_k: 60
+  max_predictions: 100
+  safe_r5_qe_protected_prefix: 5
+  safe_r5_gated_protected_prefix: 3
+  safe_r5_gated_insert_rank: 5
+  gated_max_head_overrides: 1
+  rank1_mutation_forbidden: true
+  strong_asr_max_rank: 20
+  raw_score_fusion: false
+  model_weighting: false
+  parameter_sweep: false
+qa:
+  mode: DETERMINISTIC_EVIDENCE_FIRST
+  qwen_primary: false
+  exact_bcf1_fallback: true
+decision:
+  cross_material_delta: 0.005
+  cross_flat_tolerance: 0.002
+  l21_catastrophic_delta: -0.02
+  gated_meaningful_delta: 0.005
+  gated_min_query_wins: 3
+  automatic_deployment: false
+isolation:
+  all_arm_hashes_before_gt: true
+  gt_open_once_after_hashes: true
+  corpus_preprocessing: false
+  corpus_embedding_rebuild: false
+  whisper_run: false
+  new_model_download: false
+  submission_upload: false
+  post_gt_tuning: false
+fallback: PRODUCTION_SAFE_R4_LIVE_WINNER
