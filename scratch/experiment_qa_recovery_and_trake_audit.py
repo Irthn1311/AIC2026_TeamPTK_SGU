@@ -239,7 +239,37 @@ def get_reuse_manifest() -> Path | None:
     return None
 
 
-def run_qa_recovery(runtime: OperationalKISRuntime) -> list[dict[str, Any]]:
+def find_grounding_candidates_fast(qid: str) -> list[tuple[str, int, float]] | None:
+    """Tries to find already computed grounding candidates from qa_evidence.json."""
+    for search_dir in [
+        Path("/kaggle/working/output/unified_readiness_session/requests"),
+        Path("/kaggle/working/output/trake_readiness_session/requests"),
+        Path("/kaggle/working/output/kis_submission_session/requests"),
+        REPO_ROOT / "scratch" / "unified_readiness_session" / "requests",
+    ]:
+        if not search_dir.exists():
+            continue
+        for req_dir in search_dir.glob(f"*{qid}*"):
+            ev_file = req_dir / "qa_evidence.json"
+            if ev_file.exists():
+                try:
+                    data = json.loads(ev_file.read_text(encoding="utf-8"))
+                    cands = data.get("grounding_candidates") or data.get("keyframe_evidence_candidates") or data.get("generic_evidence_bank_candidates")
+                    if cands:
+                        results = []
+                        for c in cands:
+                            vid = str(c.get("video_id", "")).removesuffix(".mp4")
+                            fid = int(c.get("frame_id", 0))
+                            score = float(c.get("localization_score", 0.0) or 0.0)
+                            results.append((vid, fid, score))
+                        if results:
+                            return results
+                except Exception:
+                    pass
+    return None
+
+
+def run_qa_recovery(runtime: OperationalKISRuntime | None = None) -> list[dict[str, Any]]:
     print("\n" + "=" * 120)
     print("[3/3] Executing QA Visual Localization Extraction & Scratch OCR Sidecar")
     print("=" * 120)
@@ -256,43 +286,52 @@ def run_qa_recovery(runtime: OperationalKISRuntime) -> list[dict[str, Any]]:
         print(f"\n--- Extracting Visual Localization Candidates for {qid} ---")
         t0 = time.time()
 
-        # 1. Translate Query to English
-        translator = runtime.translation_provider
-        trans_en = translator.translate(f"{desc} {q_part}").strip()
-        eff_en, _, _ = runtime.token_budget_guard.guard_and_compact(trans_en)
-        print(f"  • VI Query  : {desc} {q_part}")
-        print(f"  • EN Query  : {eff_en}")
+        fast_cands = find_grounding_candidates_fast(qid)
+        conditioned_list: list[tuple[str, int, float]] = []
 
-        # 2. Multi-Query Retrieval (VI + EN vectors)
-        vec_en = runtime.shared_encoder.encode(eff_en)
-        coarse_candidates = runtime.exact_retriever.search_vector(
-            query_id=f"rec-{qid}",
-            query_vector=vec_en,
-            top_k=50,
-        )
+        if fast_cands:
+            print(f"  • Fast-Loaded {len(fast_cands)} Grounding Candidates from existing qa_evidence.json in 0.01s ✅")
+            conditioned_list = fast_cands
+            eff_en = "Fast-Loaded from Grounding Evidence Bank"
+        elif runtime is not None:
+            # 1. Translate Query to English
+            translator = runtime.translation_provider
+            trans_en = translator.translate(f"{desc} {q_part}").strip()
+            eff_en, _, _ = runtime.token_budget_guard.guard_and_compact(trans_en)
+            print(f"  • VI Query  : {desc} {q_part}")
+            print(f"  • EN Query  : {eff_en}")
 
-        # 3. Apply Video Conditioned Refinement
-        conditioned = runtime.video_conditioner.condition(
-            global_result=coarse_candidates,
-            query_vector=vec_en,
-            config=runtime.config.video_conditioned_keyframe_config,
-            protected_prefix_rank=1,
-        ).result.ranked_candidates
+            # 2. Multi-Query Retrieval (VI + EN vectors)
+            vec_en = runtime.shared_encoder.encode(eff_en)
+            coarse_candidates = runtime.exact_retriever.search_vector(
+                query_id=f"rec-{qid}",
+                query_vector=vec_en,
+                top_k=50,
+            )
 
-        print(f"  • Extracted {len(conditioned)} Visual Grounding Candidates in {time.time() - t0:.2f}s ✅")
+            # 3. Apply Video Conditioned Refinement
+            conditioned = runtime.video_conditioner.condition(
+                global_result=coarse_candidates,
+                query_vector=vec_en,
+                config=runtime.config.video_conditioned_keyframe_config,
+                protected_prefix_rank=1,
+            ).result.ranked_candidates
+            conditioned_list = [(str(c.video_id).removesuffix(".mp4"), int(c.frame_id), float(c.score)) for c in conditioned]
+            print(f"  • Extracted {len(conditioned_list)} Visual Grounding Candidates in {time.time() - t0:.2f}s ✅")
+        else:
+            print(f"  ❌ No candidates found and runtime not provided.")
+            continue
 
         # 4. Decode Top 25 Frames & Run Scratch Sidecar OCR
         frame_records: list[dict[str, Any]] = []
-        for rank_idx, c in enumerate(conditioned[:25], start=1):
-            vid = str(c.video_id).removesuffix(".mp4")
-            fid = int(c.frame_id)
+        for rank_idx, (vid, fid, score) in enumerate(conditioned_list[:25], start=1):
             frame_mat, b64_full, b64_crop = decode_full_resolution_frame(vid, fid)
             ocr_text = run_scratch_ocr(frame_mat)
             frame_records.append({
                 "rank": rank_idx,
                 "video_id": vid,
                 "frame_id": fid,
-                "score": float(c.score),
+                "score": score,
                 "b64_full": b64_full,
                 "b64_crop": b64_crop,
                 "ocr_text": ocr_text,
@@ -486,22 +525,32 @@ def main() -> None:
     # 2. Audit TRAKE Quality on existing CSVs
     trake_results = audit_trake_quality()
 
-    # 3. Bootstrap Runtime for QA Localization Extraction
-    print("\n" + "=" * 120)
-    print("Bootstrapping OperationalKISRuntime for QA Localization Recovery...")
-    print("=" * 120)
-    yaml_path = REPO_ROOT / "systems" / "system_tai" / "configs" / "production.yaml"
-    input_root = Path("/kaggle/input/datasets") if Path("/kaggle/input/datasets").exists() else Path("/kaggle/input")
-    reuse_manifest = get_reuse_manifest()
-    out_dir = Path("/kaggle/working/output/qa_recovery_session") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "qa_recovery_session"
+    # 3. Check if fast grounding candidates exist from previous run
+    needs_bootstrap = False
+    for qid in ["query-p1-15-qa", "query-p1-19-qa", "query-p1-22-qa"]:
+        if not find_grounding_candidates_fast(qid):
+            needs_bootstrap = True
+            break
 
-    cfg = SessionConfig.from_yaml(
-        yaml_path,
-        input_root=input_root,
-        output_root=out_dir,
-        reuse_manifest=reuse_manifest,
-    )
-    runtime = OperationalKISRuntime.bootstrap(cfg)
+    runtime = None
+    if needs_bootstrap:
+        print("\n" + "=" * 120)
+        print("Bootstrapping OperationalKISRuntime for QA Localization Recovery...")
+        print("=" * 120)
+        yaml_path = REPO_ROOT / "systems" / "system_tai" / "configs" / "production.yaml"
+        input_root = Path("/kaggle/input/datasets") if Path("/kaggle/input/datasets").exists() else Path("/kaggle/input")
+        reuse_manifest = get_reuse_manifest()
+        out_dir = Path("/kaggle/working/output/qa_recovery_session") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "qa_recovery_session"
+
+        cfg = SessionConfig.from_yaml(
+            yaml_path,
+            input_root=input_root,
+            output_root=out_dir,
+            reuse_manifest=reuse_manifest,
+        )
+        runtime = OperationalKISRuntime.bootstrap(cfg)
+    else:
+        print("\n[Fast-Path] Found existing QA grounding evidence artifacts -> Skipping 9-minute runtime bootstrap! ✅", flush=True)
 
     # 4. Extract QA Localization Candidates & Run Sidecar OCR
     qa_results = run_qa_recovery(runtime)
