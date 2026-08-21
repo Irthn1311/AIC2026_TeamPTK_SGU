@@ -48,7 +48,7 @@ except ImportError:
     import cv2
 
 import torch
-from transformers import MarianMTModel, MarianTokenizer
+from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
 from system_tai.kis.session_engine import OperationalKISRuntime
 from system_tai.kis.session_schema import (
@@ -149,23 +149,35 @@ OFFICIAL_KIS_QUERIES = [
 ]
 
 # -----------------------------------------------------------------------------
-# 2. Fast Marian Vi->En Translator
+# 2. Production VinAI B1 Vi->En Translator (Historical B1 Decoding)
 # -----------------------------------------------------------------------------
-class MarianTranslator:
+class VinAIB1Translator:
     def __init__(self, device: str = "cpu") -> None:
         self.device = device
-        self.model_name = "Helsinki-NLP/opus-mt-vi-en"
-        print(f"[Translator] Loading Marian Vi->En on {device} ...", flush=True)
-        self.tokenizer = MarianTokenizer.from_pretrained(self.model_name)
-        self.model = MarianMTModel.from_pretrained(self.model_name).to(device)
+        self.model_name = "vinai/vinai-translate-vi2en-v2"
+        print(f"[Translator] Loading VinAI B1 (vi2en-v2) on {device} ...", flush=True)
+        t0 = time.time()
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name, src_lang="vi_VN", use_fast=False)
+        self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_name).to(device)
         self.model.eval()
-        print("      • Loaded Marian Translator ✅", flush=True)
+        self.en_bos_id = self.tokenizer.lang_code_to_id.get("en_XX", None)
+        print(f"      • Loaded VinAI B1 in {time.time() - t0:.2f}s ✅", flush=True)
 
     def translate(self, text: str) -> str:
         clean = " ".join(text.strip().split())
         inputs = self.tokenizer(clean, return_tensors="pt", padding=True, truncation=True, max_length=128).to(self.device)
+        gen_kwargs = {
+            "max_length": 128,
+            "num_beams": 3,
+            "no_repeat_ngram_size": 3,
+            "repetition_penalty": 1.15,
+            "early_stopping": True,
+        }
+        if self.en_bos_id is not None:
+            gen_kwargs["forced_bos_token_id"] = self.en_bos_id
+            
         with torch.no_grad():
-            outputs = self.model.generate(**inputs, max_length=128, num_beams=4, early_stopping=True)
+            outputs = self.model.generate(**inputs, **gen_kwargs)
         return self.tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
 
 # -----------------------------------------------------------------------------
@@ -239,7 +251,7 @@ def bootstrap_runtime() -> OperationalKISRuntime:
 # -----------------------------------------------------------------------------
 # 5. Process All 20 KIS Queries
 # -----------------------------------------------------------------------------
-def process_all_kis_queries(runtime: OperationalKISRuntime, translator: MarianTranslator) -> list[dict[str, Any]]:
+def process_all_kis_queries(runtime: OperationalKISRuntime, translator: VinAIB1Translator) -> list[dict[str, Any]]:
     print("=" * 120)
     print(f"🚀 PROCESSING {len(OFFICIAL_KIS_QUERIES)} KIS QUERIES THROUGH PRODUCTION PIPELINE")
     print("=" * 120)
@@ -418,7 +430,7 @@ def main() -> None:
     
     # 1. Bootstrap Runtime & Translator
     runtime = bootstrap_runtime()
-    translator = MarianTranslator(device=device)
+    translator = VinAIB1Translator(device=device)
     
     # 2. Process All 20 KIS Queries
     results = process_all_kis_queries(runtime, translator)
