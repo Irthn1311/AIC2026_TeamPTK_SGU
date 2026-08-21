@@ -157,7 +157,12 @@ class QwenEvidenceAdapter:
         answer_type: str,
         answer_policy: str,
     ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
-        """R2 extraction only; deterministic verification is deliberately external."""
+        """Bounded extraction only; deterministic verification is deliberately external.
+
+        The compiler owns ``answer_type``.  Keeping that field out of the generated
+        schema makes the model response smaller and prevents a model-emitted label
+        from being mistaken for a deterministic contract decision.
+        """
 
         if self.model is None or self.processor is None:
             raise RuntimeError("QWEN_ADAPTER_NOT_LOADED")
@@ -175,8 +180,8 @@ class QwenEvidenceAdapter:
         ]
         prompt = (
             "Extract an answer only from the supplied frame and bounded evidence catalog. "
-            "Return one JSON object with exactly: answer (string <=100 chars), answer_type "
-            "(string), supporting_source_ids (list of catalog source_id strings), "
+            "Return one JSON object with exactly four fields: answer (string <=100 chars), "
+            "supporting_source_ids (list of catalog source_id strings), "
             "supporting_spans (list of copied or near-verbatim catalog spans), and "
             "evidence_sufficient (boolean). Do not explain, invent IDs, return metadata MIDs, "
             "or cite evidence outside this catalog. Use at most 3 supporting_source_ids and "
@@ -206,13 +211,29 @@ class QwenEvidenceAdapter:
         parse_reason = None
         try:
             value = _first_complete_json_object(raw)
+            required = {
+                "answer",
+                "supporting_source_ids",
+                "supporting_spans",
+                "evidence_sufficient",
+            }
+            if not required.issubset(value):
+                raise ValueError("QWEN_R4_EXTRACTION_REQUIRED_FIELD_MISSING")
+            unknown_nested = {
+                key
+                for key, item in value.items()
+                if key not in required and isinstance(item, dict | list)
+            }
+            if unknown_nested:
+                raise ValueError("QWEN_R4_EXTRACTION_UNKNOWN_NESTED_FIELD")
+            if not isinstance(value["answer"], str):
+                raise ValueError("QWEN_R4_EXTRACTION_ANSWER_NOT_STRING")
             answer = normalize_answer_text(value["answer"])
             sources = value["supporting_source_ids"]
             spans = value["supporting_spans"]
             sufficient = value["evidence_sufficient"]
             if (
                 len(answer) > 100
-                or str(value["answer_type"]).upper() != str(answer_type).upper()
                 or not isinstance(sources, list)
                 or not all(isinstance(item, str) for item in sources)
                 or len(sources) > 3
@@ -255,6 +276,14 @@ class QwenEvidenceAdapter:
             "raw_output": raw,
             "extraction": parsed,
             "parse_reason": parse_reason,
+            "qwen_parse_pass": parsed is not None,
+            "generated_schema_fields": [
+                "answer",
+                "supporting_source_ids",
+                "supporting_spans",
+                "evidence_sufficient",
+            ],
+            "compiled_answer_type_attached_after_parse": True,
             "final_evidence_sufficient_assigned_here": False,
         }
         return parsed, audit
