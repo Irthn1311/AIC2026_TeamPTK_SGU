@@ -47,6 +47,13 @@ if str(SYSTEM_TAI_SRC) not in sys.path:
     sys.path.insert(0, str(SYSTEM_TAI_SRC))
 
 try:
+    import clip
+except ImportError:
+    print("Installing official openai-clip dependency for runtime text encoder ...", flush=True)
+    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "git+https://github.com/openai/CLIP.git", "ftfy", "regex"], check=True)
+    import clip
+
+try:
     import cv2
     from PIL import Image
 except ImportError:
