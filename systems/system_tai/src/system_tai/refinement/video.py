@@ -173,6 +173,30 @@ class DecodeRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class SparseDecodeRequest:
+    """Bounded exact sparse seeks that may span an entire raw-video timeline."""
+
+    probe: VideoProbe
+    frame_ids: tuple[int, ...]
+    max_decoded_frames: int
+
+    def __post_init__(self) -> None:
+        if not self.frame_ids:
+            raise ValueError("sparse decode request requires at least one frame ID")
+        if tuple(sorted(set(self.frame_ids))) != self.frame_ids:
+            raise ValueError("sparse decode frame IDs must be sorted and unique")
+        if self.frame_ids[0] < 0 or self.frame_ids[-1] >= self.probe.total_frame_count:
+            raise ValueError("sparse decode frame IDs are outside raw-video bounds")
+        if self.max_decoded_frames <= 0:
+            raise ValueError("max_decoded_frames must be positive")
+        if len(self.frame_ids) > self.max_decoded_frames:
+            raise RawVideoError(
+                "sparse decode request exceeds max_decoded_frames: "
+                f"requested={len(self.frame_ids)}, limit={self.max_decoded_frames}"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class DecodeResult:
     frames: tuple[DecodedFrame, ...]
     decoded_frame_count: int
@@ -296,7 +320,10 @@ class OpenCVVideoDecoder:
         )
 
     def decode_sparse_verified(
-        self, request: DecodeRequest, *, fallback_to_sequential: bool = True
+        self,
+        request: DecodeRequest | SparseDecodeRequest,
+        *,
+        fallback_to_sequential: bool = True,
     ) -> DecodeResult:
         open_start = self._clock()
         capture = self._cv2.VideoCapture(str(request.probe.raw_video_path))
@@ -352,7 +379,7 @@ class OpenCVVideoDecoder:
             if not failed:
                 fail_reason = "decoder did not return every requested absolute frame"
 
-            if fallback_to_sequential:
+            if fallback_to_sequential and isinstance(request, DecodeRequest):
                 res = self.decode(request)
                 # Keep the same decoded_frame_count signature but add warning
                 warnings = res.warnings + (

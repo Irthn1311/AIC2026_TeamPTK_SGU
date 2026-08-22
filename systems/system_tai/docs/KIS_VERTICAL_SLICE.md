@@ -689,6 +689,32 @@ boundary remains unique `(video_id, frame_id)` candidates with `frame_id` copied
 from mapping CSV `frame_idx`. Synthetic tests prove mechanics, determinism, Q3/refinement
 connectivity, and schema safety; private-corpus quality remains unverified.
 
+### Selected-video full-timeline scout (experimental opt-in)
+
+- **Input:** ranked video IDs produced by semantic video-first nomination, existing
+  same-video Top-100 rank slots, raw-video registry, semantic variants, and their shared
+  CLIP text embeddings. Callers cannot provide a target video, timestamp, or frame.
+- **Output:** automatically scored temporal-region anchors assigned to existing
+  same-video slots, followed by the existing bounded coarse-to-fine exact-frame refiner.
+  Rank order and video order are preserved; exported `frame_id` remains an absolute
+  original-video frame index.
+- **Algorithm:** probe FPS/frame count, uniformly sample from frame zero through the
+  probed final frame under a per-video cap, verified sparse-decode only those absolute
+  frames, score every semantic variant separately, fuse local ranks with weighted RRF,
+  apply temporal NMS between new regions, then refine densely around each winner.
+- **Dependencies:** the existing raw-video registry, OpenCV verified sparse decoder, and
+  the single shared official OpenAI CLIP ViT-B/32 encoder. It does not load another model.
+- **Status:** implemented behind `--enable-kis-selected-video-timeline-scout`; default/off
+  behavior is unchanged. Trace and timing artifacts contain selected video IDs and frame
+  coordinates but no images or embeddings.
+- **Tests/acceptance:** synthetic tests require full endpoint coverage, bounded sample
+  count, system-nomination-only selection, automatic discovery of a late synthetic region,
+  absolute-frame preservation, deterministic output, and no ground-truth access.
+
+This stage repairs temporal coverage after video nomination; it is not evidence that CLIP
+can verify exact people/hat/glasses counts or other multi-attribute conjunctions. Private
+Kaggle visual acceptance remains required.
+
 ## Phase 4.3C0 — Refinement Stage Timings
 - **Status**: [IMPLEMENTED] locally; Phase 4.3C0: instrumentation for stage-level Kaggle profiling.
 - **Decision**: No optimization claim. PRIVATE KAGGLE STAGE PROFILE PENDING.

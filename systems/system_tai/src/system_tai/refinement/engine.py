@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
@@ -21,6 +22,7 @@ from system_tai.refinement.models import (
     RefinementConfig,
     RefinementQuery,
     RefinementStatus,
+    SelectedVideoTimelineScoutConfig,
 )
 from system_tai.refinement.video import (
     DecodedFrame,
@@ -28,6 +30,7 @@ from system_tai.refinement.video import (
     RawVideoError,
     RawVideoRecord,
     RawVideoRegistry,
+    SparseDecodeRequest,
     VideoDecoder,
     VideoProbe,
 )
@@ -113,6 +116,16 @@ class SelectedRefinementOutcome:
 
 
 @dataclass(frozen=True, slots=True)
+class TimelineScoutOutcome:
+    """Automatically discovered raw-video anchors and bounded audit telemetry."""
+
+    candidates: tuple[Phase3Candidate, ...]
+    warnings: tuple[str, ...]
+    trace: Mapping[str, Any]
+    timings: Mapping[str, float | int]
+
+
+@dataclass(frozen=True, slots=True)
 class SharedRefinementGroup:
     """One semantic scoring group inside a shared raw-decode query batch."""
 
@@ -177,6 +190,59 @@ def coarse_frame_ids(
     sampled = set(range(start_frame, end_frame + 1, stride))
     sampled.add(candidate_frame_id)
     return tuple(sorted(sampled))
+
+
+def timeline_sparse_frame_ids(
+    probe: VideoProbe,
+    *,
+    sample_stride_seconds: float,
+    max_samples: int,
+) -> tuple[int, ...]:
+    """Uniformly cover the probed full timeline, including both endpoints."""
+    if not math.isfinite(sample_stride_seconds) or sample_stride_seconds <= 0:
+        raise ValueError("sample_stride_seconds must be finite and positive")
+    if type(max_samples) is not int or max_samples < 2:
+        raise ValueError("max_samples must be at least two")
+    if probe.total_frame_count == 1:
+        return (0,)
+    stride = max(1, int(round(sample_stride_seconds * probe.fps)))
+    sampled = tuple(range(0, probe.total_frame_count, stride))
+    if sampled[-1] != probe.total_frame_count - 1:
+        sampled = (*sampled, probe.total_frame_count - 1)
+    if len(sampled) <= max_samples:
+        return sampled
+    last = probe.total_frame_count - 1
+    # Integer interpolation is deterministic, bounded, and guarantees tail coverage.
+    return tuple((index * last) // (max_samples - 1) for index in range(max_samples))
+
+
+def select_timeline_regions(
+    ranked: Sequence[LocalFrameFusion],
+    *,
+    fps: float,
+    max_regions: int,
+    minimum_gap_seconds: float,
+) -> tuple[LocalFrameFusion, ...]:
+    """Temporal NMS over automatically scored timeline samples."""
+    if not math.isfinite(fps) or fps <= 0:
+        raise ValueError("fps must be finite and positive")
+    if type(max_regions) is not int or max_regions <= 0:
+        raise ValueError("max_regions must be a positive integer")
+    if not math.isfinite(minimum_gap_seconds) or minimum_gap_seconds <= 0:
+        raise ValueError("minimum_gap_seconds must be finite and positive")
+    minimum_gap_frames = max(1, int(round(minimum_gap_seconds * fps)))
+    selected: list[LocalFrameFusion] = []
+    for candidate in ranked:
+        if any(
+            abs(candidate.absolute_frame_id - prior.absolute_frame_id)
+            < minimum_gap_frames
+            for prior in selected
+        ):
+            continue
+        selected.append(candidate)
+        if len(selected) >= max_regions:
+            break
+    return tuple(selected)
 
 
 def fine_frame_ids(
@@ -541,6 +607,203 @@ class ExactFrameRefiner:
             candidates=ordered_records,
             warnings=tuple(sorted(set(warnings))),
             timings=metrics,
+        )
+
+    def scout_selected_video_timelines(
+        self,
+        *,
+        query_id: str,
+        variants: tuple[QueryVariant, ...],
+        ranked_video_ids: tuple[str, ...],
+        rank_slots: tuple[Phase3Candidate, ...],
+        config: SelectedVideoTimelineScoutConfig,
+        refinement_config: RefinementConfig,
+        precomputed_text_embeddings: NDArray[np.float32],
+        frame_embedding_cache: FrameEmbeddingCache,
+    ) -> TimelineScoutOutcome:
+        """Find semantic regions across complete system-nominated video timelines.
+
+        This stage consumes only the retrieval-produced video order and probed raw
+        video metadata. It does not accept target frames, timestamps, or labels.
+        Returned anchors inherit existing same-video rank slots so downstream
+        refinement cannot change the canonical video/rank sequence.
+        """
+        started = self.clock()
+        if not config.enabled:
+            return TimelineScoutOutcome(
+                candidates=(),
+                warnings=(),
+                trace={"enabled": False},
+                timings={
+                    "timeline_scout_seconds": 0.0,
+                    "timeline_video_count": 0,
+                    "timeline_sample_count": 0,
+                    "timeline_decoded_frame_count": 0,
+                    "timeline_encoded_image_count": 0,
+                    "timeline_region_count": 0,
+                },
+            )
+        if not query_id.strip() or not variants:
+            raise ValueError("timeline scout requires query_id and variants")
+        if precomputed_text_embeddings.shape != (
+            len(variants),
+            self.encoder.dimension,
+        ):
+            raise ValueError("timeline scout text embedding shape mismatch")
+        if not np.isfinite(precomputed_text_embeddings).all() or np.any(
+            np.linalg.norm(precomputed_text_embeddings, axis=1) <= 0
+        ):
+            raise ValueError("timeline scout text embeddings must be finite and non-zero")
+
+        unique_ranked_videos = tuple(dict.fromkeys(ranked_video_ids))
+        slots_by_video: dict[str, list[Phase3Candidate]] = {}
+        for slot in sorted(rank_slots, key=lambda item: item.rank):
+            if slot.query_id != query_id:
+                raise ValueError("timeline scout rank-slot query_id mismatch")
+            slots_by_video.setdefault(slot.video_id, []).append(slot)
+        selected_videos = tuple(
+            video_id
+            for video_id in unique_ranked_videos
+            if video_id in slots_by_video
+        )[: config.max_videos]
+
+        anchors: list[Phase3Candidate] = []
+        warnings: list[str] = []
+        video_traces: list[dict[str, Any]] = []
+        sample_count = 0
+        decoded_count = 0
+        encoded_count = 0
+        for nomination_rank, video_id in enumerate(selected_videos, start=1):
+            try:
+                raw_record = self.raw_videos.get(video_id)
+                if raw_record.raw_video_path is None:
+                    warnings.append(f"timeline scout raw video missing for {video_id}")
+                    continue
+                probe = self._probe_cache.get(video_id)
+                if probe is None:
+                    probe = self.decoder.probe(raw_record)
+                    self._probe_cache[video_id] = probe
+                frame_ids = timeline_sparse_frame_ids(
+                    probe,
+                    sample_stride_seconds=config.sample_stride_seconds,
+                    max_samples=config.max_samples_per_video,
+                )
+                if not hasattr(self.decoder, "decode_sparse_verified"):
+                    raise RawVideoError(
+                        "timeline scout requires verified sparse absolute-frame decoding"
+                    )
+                request = SparseDecodeRequest(
+                    probe=probe,
+                    frame_ids=frame_ids,
+                    max_decoded_frames=config.max_samples_per_video,
+                )
+                decoded = self.decoder.decode_sparse_verified(
+                    request,
+                    fallback_to_sequential=False,
+                )
+                cache_hits = sum(
+                    (video_id, frame.absolute_frame_id) in frame_embedding_cache
+                    for frame in decoded.frames
+                )
+                embeddings = _encode_frames_with_cache(
+                    video_id=video_id,
+                    frames=decoded.frames,
+                    encoder=self.encoder,
+                    batch_size=refinement_config.image_batch_size,
+                    frame_embedding_cache=frame_embedding_cache,
+                )
+                fused = fuse_local_frame_rankings(
+                    frame_ids,
+                    embeddings,
+                    variants,
+                    precomputed_text_embeddings,
+                    rrf_constant=refinement_config.rrf_constant,
+                )
+                regions = select_timeline_regions(
+                    fused,
+                    fps=probe.fps,
+                    max_regions=config.max_regions_per_video,
+                    minimum_gap_seconds=config.minimum_region_gap_seconds,
+                )
+                available_slots = slots_by_video[video_id]
+                assigned = tuple(zip(available_slots, regions, strict=False))
+                for slot, region in assigned:
+                    anchors.append(
+                        Phase3Candidate(
+                            query_id=query_id,
+                            rank=slot.rank,
+                            video_id=video_id,
+                            frame_id=region.absolute_frame_id,
+                            retrieval_score=region.fusion_score,
+                            retrieval_provenance={
+                                **dict(slot.retrieval_provenance),
+                                "timeline_scout": True,
+                                "timeline_nomination_rank": nomination_rank,
+                                "timeline_original_slot_frame_id": slot.frame_id,
+                                "timeline_sample_count": len(frame_ids),
+                                "timeline_region_fusion_score": region.fusion_score,
+                                "timeline_variant_hit_count": region.variant_hit_count,
+                                "timeline_best_individual_rank": (
+                                    region.best_individual_rank
+                                ),
+                                "timeline_per_variant_provenance": (
+                                    region.per_variant_provenance
+                                ),
+                            },
+                        )
+                    )
+                sample_count += len(frame_ids)
+                decoded_count += decoded.decoded_frame_count
+                encoded_count += len(decoded.frames) - cache_hits
+                video_traces.append(
+                    {
+                        "video_id": video_id,
+                        "nomination_rank": nomination_rank,
+                        "fps": probe.fps,
+                        "total_frame_count": probe.total_frame_count,
+                        "sample_count": len(frame_ids),
+                        "first_sample_frame_id": frame_ids[0],
+                        "last_sample_frame_id": frame_ids[-1],
+                        "selected_region_frame_ids": [
+                            item.absolute_frame_id for item in regions
+                        ],
+                        "assigned_rank_slots": [slot.rank for slot, _ in assigned],
+                        "decoder_backend": decoded.decoder_backend,
+                        "warnings": decoded.warnings,
+                    }
+                )
+            except Exception as exc:
+                warnings.append(f"timeline scout failed for {video_id}: {exc}")
+
+        ordered_anchors = tuple(sorted(anchors, key=lambda item: item.rank))
+        timings: dict[str, float | int] = {
+            "timeline_scout_seconds": self.clock() - started,
+            "timeline_video_count": len(video_traces),
+            "timeline_sample_count": sample_count,
+            "timeline_decoded_frame_count": decoded_count,
+            "timeline_encoded_image_count": encoded_count,
+            "timeline_region_count": len(ordered_anchors),
+        }
+        return TimelineScoutOutcome(
+            candidates=ordered_anchors,
+            warnings=tuple(sorted(set(warnings))),
+            trace={
+                "enabled": True,
+                "selection_source": "system_video_first_nomination",
+                "hard_coded_target": False,
+                "ranked_video_ids_considered": list(selected_videos),
+                "videos": video_traces,
+                "selected_anchors": [
+                    {
+                        "rank": item.rank,
+                        "video_id": item.video_id,
+                        "frame_id": item.frame_id,
+                    }
+                    for item in ordered_anchors
+                ],
+                "warnings": tuple(sorted(set(warnings))),
+            },
+            timings=timings,
         )
 
     def refine_shared_candidate_groups(

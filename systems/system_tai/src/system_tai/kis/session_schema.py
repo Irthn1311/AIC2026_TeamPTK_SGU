@@ -16,6 +16,7 @@ from system_tai.qa.visual_ontology import VisualOntologyConfig
 from system_tai.refinement.models import (
     Q3AnchorRefinementConfig,
     RefinementConfig,
+    SelectedVideoTimelineScoutConfig,
     SharedRawRegionRefinementConfig,
 )
 from system_tai.retrieval.multi_query import (
@@ -80,6 +81,9 @@ class SessionConfig:
     )
     q3_anchor_refinement_config: Q3AnchorRefinementConfig = field(
         default_factory=Q3AnchorRefinementConfig
+    )
+    selected_video_timeline_scout_config: SelectedVideoTimelineScoutConfig = field(
+        default_factory=SelectedVideoTimelineScoutConfig
     )
     trake_video_first_config: TRAKEVideoFirstConfig = field(
         default_factory=TRAKEVideoFirstConfig
@@ -160,6 +164,19 @@ class SessionConfig:
             raise ValueError(
                 "q3_anchor_refinement_config must be Q3AnchorRefinementConfig"
             )
+        if not isinstance(
+            self.selected_video_timeline_scout_config,
+            SelectedVideoTimelineScoutConfig,
+        ):
+            raise ValueError(
+                "selected_video_timeline_scout_config must be "
+                "SelectedVideoTimelineScoutConfig"
+            )
+        if (
+            self.selected_video_timeline_scout_config.enabled
+            and not self.kis_video_first_config.enabled
+        ):
+            raise ValueError("timeline scout requires KIS semantic video-first retrieval")
         if (
             self.q3_anchor_refinement_config.enabled
             and not self.video_conditioned_keyframe_config.enabled

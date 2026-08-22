@@ -105,6 +105,44 @@ class Q3AnchorRefinementConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class SelectedVideoTimelineScoutConfig:
+    """Opt-in bounded full-timeline scouting for system-nominated KIS videos.
+
+    The scout never accepts a target video, timestamp, or frame from callers. It
+    receives the ranked video nomination produced by retrieval, samples each raw
+    video uniformly from frame zero through its probed final frame, and promotes
+    only automatically scored temporal regions into the existing rank slots.
+    """
+
+    enabled: bool = False
+    max_videos: int = 3
+    sample_stride_seconds: float = 1.0
+    max_samples_per_video: int = 300
+    max_regions_per_video: int = 3
+    minimum_region_gap_seconds: float = 5.0
+
+    def __post_init__(self) -> None:
+        if type(self.enabled) is not bool:
+            raise ValueError("enabled must be a boolean")
+        for field_name, value, upper_bound in (
+            ("max_videos", self.max_videos, 32),
+            ("max_samples_per_video", self.max_samples_per_video, 2000),
+            ("max_regions_per_video", self.max_regions_per_video, 20),
+        ):
+            lower_bound = 2 if field_name == "max_samples_per_video" else 1
+            if type(value) is not int or not lower_bound <= value <= upper_bound:
+                raise ValueError(
+                    f"{field_name} must be in [{lower_bound}, {upper_bound}]"
+                )
+        for field_name, value in (
+            ("sample_stride_seconds", self.sample_stride_seconds),
+            ("minimum_region_gap_seconds", self.minimum_region_gap_seconds),
+        ):
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError(f"{field_name} must be finite and positive")
+
+
+@dataclass(frozen=True, slots=True)
 class SharedRawRegionRefinementConfig:
     """Opt-in query-scoped decode sharing for TRAKE raw refinement."""
 

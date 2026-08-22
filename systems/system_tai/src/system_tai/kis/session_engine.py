@@ -548,6 +548,7 @@ class OperationalKISRuntime:
         video_first_full_corpus_store_scan_count = 0
         video_first_restricted_rows_scored = 0
         video_first_restricted_store_scan_count = 0
+        selected_videos = ()
         if video_first_enabled:
             assert compiled_semantic_query is not None
             maxima_started = self.clock()
@@ -822,10 +823,25 @@ class OperationalKISRuntime:
         frame_embedding_cache_miss_count = 0
         merged_temporal_region_count = 0
         q3_anchor_trace_json: Path | None = None
+        timeline_config = self.config.selected_video_timeline_scout_config
+        timeline_enabled = timeline_config.enabled
+        timeline_scout_seconds = 0.0
+        timeline_video_count = 0
+        timeline_sample_count = 0
+        timeline_decoded_frame_count = 0
+        timeline_encoded_image_count = 0
+        timeline_region_count = 0
+        timeline_refined_count = 0
+        timeline_kept_original_count = 0
+        timeline_collision_skip_count = 0
+        timeline_failure_count = 0
+        timeline_trace_json: Path | None = None
         frame_embedding_cache: FrameEmbeddingCache = {}
 
         if q3_anchor_enabled and not refinement_requested:
             raise ValueError("Q3 anchor refinement requires refine_top_n > 0")
+        if timeline_enabled and not refinement_requested:
+            raise ValueError("selected-video timeline scout requires refine_top_n > 0")
 
         if refinement_requested:
             ref_start = self.clock()
@@ -967,6 +983,67 @@ class OperationalKISRuntime:
                     },
                 )
 
+            if timeline_enabled:
+                timeline_outcome = self.refiner.scout_selected_video_timelines(
+                    query_id=request.query_id,
+                    variants=variants,
+                    ranked_video_ids=tuple(item.video_id for item in selected_videos),
+                    rank_slots=phase3_candidates,
+                    config=timeline_config,
+                    refinement_config=exec_ref_config,
+                    precomputed_text_embeddings=variant_embeddings,
+                    frame_embedding_cache=frame_embedding_cache,
+                )
+                timeline_selected_outcome = self.refiner.refine_selected_candidates(
+                    query_id=request.query_id,
+                    variants=variants,
+                    candidates=timeline_outcome.candidates,
+                    config=exec_ref_config,
+                    precomputed_text_embeddings=variant_embeddings,
+                    frame_embedding_cache=frame_embedding_cache,
+                )
+                timeline_integration = integrate_q3_anchor_refinements(
+                    final_kis_result,
+                    timeline_selected_outcome.candidates,
+                )
+                final_kis_result = timeline_integration.result
+                timeline_scout_seconds = float(
+                    timeline_outcome.timings["timeline_scout_seconds"]
+                )
+                timeline_video_count = int(
+                    timeline_outcome.timings["timeline_video_count"]
+                )
+                timeline_sample_count = int(
+                    timeline_outcome.timings["timeline_sample_count"]
+                )
+                timeline_decoded_frame_count = int(
+                    timeline_outcome.timings["timeline_decoded_frame_count"]
+                )
+                timeline_encoded_image_count = int(
+                    timeline_outcome.timings["timeline_encoded_image_count"]
+                )
+                timeline_region_count = int(
+                    timeline_outcome.timings["timeline_region_count"]
+                )
+                timeline_refined_count = timeline_integration.refined_count
+                timeline_kept_original_count = timeline_integration.kept_original_count
+                timeline_collision_skip_count = timeline_integration.collision_skip_count
+                timeline_failure_count = timeline_integration.failure_count
+                timeline_trace_json = _write_json(
+                    query_dir / "selected_video_timeline_scout_trace.json",
+                    {
+                        "query_id": request.query_id,
+                        "config": dataclasses.asdict(timeline_config),
+                        "scout": timeline_outcome.trace,
+                        "scout_timings": timeline_outcome.timings,
+                        "scout_warnings": timeline_outcome.warnings,
+                        "refinement_records": timeline_selected_outcome.candidates,
+                        "refinement_warnings": timeline_selected_outcome.warnings,
+                        "refinement_timings": timeline_selected_outcome.timings,
+                        "integration": timeline_integration,
+                    },
+                )
+
             ref_export_start = self.clock()
             refined_jsonl = query_dir / "refined_top100.jsonl"
             self.exporter.export(final_kis_result, refined_jsonl)
@@ -1042,6 +1119,10 @@ class OperationalKISRuntime:
                 artifacts_dict["q3_anchor_refinement_trace_json"] = str(
                     q3_anchor_trace_json.relative_to(self.output_root)
                 ).replace("\\", "/")
+            if timeline_trace_json is not None:
+                artifacts_dict["selected_video_timeline_scout_trace_json"] = str(
+                    timeline_trace_json.relative_to(self.output_root)
+                ).replace("\\", "/")
 
         canonical_kis_query = kis_result_to_top100_query(final_kis_result)
         audit_runtime_top100_artifact(
@@ -1076,6 +1157,9 @@ class OperationalKISRuntime:
             ),
             "q3_config": dataclasses.asdict(q3_config),
             "q3_anchor_refinement_config": dataclasses.asdict(q3_anchor_config),
+            "selected_video_timeline_scout_config": dataclasses.asdict(
+                timeline_config
+            ),
             "retrieval_valid": validation.valid,
             "refinement_requested": refinement_requested,
             "refinement_valid": refinement_valid,
@@ -1133,6 +1217,17 @@ class OperationalKISRuntime:
             "frame_embedding_cache_hit_count": frame_embedding_cache_hit_count,
             "frame_embedding_cache_miss_count": frame_embedding_cache_miss_count,
             "merged_temporal_region_count": merged_temporal_region_count,
+            "selected_video_timeline_scout_enabled": timeline_enabled,
+            "timeline_scout_seconds": timeline_scout_seconds,
+            "timeline_video_count": timeline_video_count,
+            "timeline_sample_count": timeline_sample_count,
+            "timeline_decoded_frame_count": timeline_decoded_frame_count,
+            "timeline_encoded_image_count": timeline_encoded_image_count,
+            "timeline_region_count": timeline_region_count,
+            "timeline_refined_count": timeline_refined_count,
+            "timeline_kept_original_count": timeline_kept_original_count,
+            "timeline_collision_skip_count": timeline_collision_skip_count,
+            "timeline_failure_count": timeline_failure_count,
             "refinement_seconds": refinement_seconds,
             "refinement_export_seconds": refinement_export_seconds,
             "refinement_validation_seconds": refinement_val_seconds,
@@ -1169,6 +1264,7 @@ class OperationalKISRuntime:
             f"- Q3 enabled: `{q3_enabled}`",
             f"- KIS semantic video-first enabled: `{video_first_enabled}`",
             f"- Q3 anchor refinement enabled: `{q3_anchor_enabled}`",
+            f"- Selected-video timeline scout enabled: `{timeline_enabled}`",
             f"- Result count: {len(conditioned_result.ranked_candidates)}",
             f"- Total seconds: {total_seconds:.6f}s",
             "",

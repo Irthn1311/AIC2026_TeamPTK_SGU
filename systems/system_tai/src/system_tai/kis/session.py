@@ -31,6 +31,7 @@ from system_tai.refinement.models import (
     MissingRawVideoPolicy,
     Q3AnchorRefinementConfig,
     RefinementConfig,
+    SelectedVideoTimelineScoutConfig,
 )
 from system_tai.refinement.video import CoarseDecodeStrategy
 from system_tai.retrieval.video_restricted import VideoConditionedKeyframeConfig
@@ -103,6 +104,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--kis-anchors-per-video", type=int, default=6)
     parser.add_argument("--kis-anchor-min-gap-seconds", type=float, default=2.0)
     parser.add_argument("--kis-max-extra-raw-anchors", type=int, default=12)
+    parser.add_argument(
+        "--enable-kis-selected-video-timeline-scout",
+        action="store_true",
+        help=(
+            "Uniformly scout complete raw timelines of system-nominated videos, "
+            "then apply bounded exact-frame refinement to discovered regions."
+        ),
+    )
+    parser.add_argument("--kis-timeline-max-videos", type=int, default=3)
+    parser.add_argument("--kis-timeline-sample-stride-seconds", type=float, default=1.0)
+    parser.add_argument("--kis-timeline-max-samples-per-video", type=int, default=300)
+    parser.add_argument("--kis-timeline-max-regions-per-video", type=int, default=3)
+    parser.add_argument("--kis-timeline-min-region-gap-seconds", type=float, default=5.0)
     parser.add_argument("--rrf-constant", type=float, default=60.0)
     parser.add_argument("--chunk-size", type=int, default=4096)
     parser.add_argument("--default-top-k-per-variant", type=int, default=100)
@@ -165,6 +179,21 @@ def session_config_from_args(args: argparse.Namespace) -> SessionConfig:
     if multi_anchor_enabled and args.default_refine_top_n <= 0:
         raise ValueError(
             "--enable-kis-multi-anchor-refinement requires "
+            "--default-refine-top-n greater than zero"
+        )
+    timeline_scout_enabled = getattr(
+        args, "enable_kis_selected_video_timeline_scout", False
+    )
+    if timeline_scout_enabled and not getattr(
+        args, "enable_kis_semantic_video_first", False
+    ):
+        raise ValueError(
+            "--enable-kis-selected-video-timeline-scout requires "
+            "--enable-kis-semantic-video-first"
+        )
+    if timeline_scout_enabled and args.default_refine_top_n <= 0:
+        raise ValueError(
+            "--enable-kis-selected-video-timeline-scout requires "
             "--default-refine-top-n greater than zero"
         )
     # RefinementConfig describes an executable refinement pass and therefore
@@ -260,6 +289,22 @@ def session_config_from_args(args: argparse.Namespace) -> SessionConfig:
             enabled=multi_anchor_enabled,
             max_extra_q3_anchors=getattr(
                 args, "kis_max_extra_raw_anchors", 12
+            ),
+        ),
+        selected_video_timeline_scout_config=SelectedVideoTimelineScoutConfig(
+            enabled=timeline_scout_enabled,
+            max_videos=getattr(args, "kis_timeline_max_videos", 3),
+            sample_stride_seconds=getattr(
+                args, "kis_timeline_sample_stride_seconds", 1.0
+            ),
+            max_samples_per_video=getattr(
+                args, "kis_timeline_max_samples_per_video", 300
+            ),
+            max_regions_per_video=getattr(
+                args, "kis_timeline_max_regions_per_video", 3
+            ),
+            minimum_region_gap_seconds=getattr(
+                args, "kis_timeline_min_region_gap_seconds", 5.0
             ),
         ),
         rrf_constant=args.rrf_constant,
