@@ -659,6 +659,14 @@ class OperationalKISRuntime:
                 query_vector=variant_embeddings[0],
                 config=q3_config,
                 protected_prefix_rank=request.refine_top_n,
+                semantic_variants=(
+                    variants if q3_config.semantic_variant_coverage else ()
+                ),
+                semantic_query_vectors=(
+                    variant_embeddings
+                    if q3_config.semantic_variant_coverage
+                    else None
+                ),
             )
             conditioned_result = q3_outcome.result
             q3_trace = q3_outcome.trace
@@ -846,6 +854,12 @@ class OperationalKISRuntime:
                         "q3_restricted_rank": (c.diagnostic_metadata or {}).get(
                             "restricted_rank"
                         ),
+                        "q3_semantic_anchor_score": (
+                            c.diagnostic_metadata or {}
+                        ).get("semantic_anchor_score"),
+                        "q3_semantic_variant_ids": (
+                            c.diagnostic_metadata or {}
+                        ).get("semantic_variant_ids"),
                         "candidate_source": c.source,
                     },
                 )

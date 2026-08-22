@@ -33,6 +33,16 @@ def _restricted_cosine(candidate: Phase3Candidate) -> float | None:
     return resolved if math.isfinite(resolved) else None
 
 
+def _anchor_priority(candidate: Phase3Candidate) -> float:
+    value = candidate.retrieval_provenance.get("q3_semantic_anchor_score")
+    if type(value) in {int, float}:
+        resolved = float(value)
+        if math.isfinite(resolved):
+            return resolved
+    cosine = _restricted_cosine(candidate)
+    return float(cosine if cosine is not None else float("-inf"))
+
+
 def _is_authoritative_q3_anchor(
     candidate: Phase3Candidate,
     *,
@@ -73,7 +83,7 @@ def select_q3_anchor_candidates(
                 )
             ),
             key=lambda candidate: (
-                -float(_restricted_cosine(candidate)),
+                -_anchor_priority(candidate),
                 candidate.rank,
                 candidate.video_id,
                 candidate.frame_id,

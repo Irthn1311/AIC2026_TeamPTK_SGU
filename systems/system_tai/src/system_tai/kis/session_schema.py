@@ -139,6 +139,13 @@ class SessionConfig:
             )
         if not isinstance(self.kis_video_first_config, KISVideoFirstConfig):
             raise ValueError("kis_video_first_config must be KISVideoFirstConfig")
+        if (
+            self.video_conditioned_keyframe_config.semantic_variant_coverage
+            and not self.kis_video_first_config.enabled
+        ):
+            raise ValueError(
+                "semantic variant anchor coverage requires KIS semantic video-first retrieval"
+            )
         if self.kis_video_first_config.enabled:
             if not self.enable_dynamic_translation:
                 raise ValueError(

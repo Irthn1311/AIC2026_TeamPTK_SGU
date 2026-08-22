@@ -29,9 +29,11 @@ from system_tai.kis.video_first import KISVideoFirstConfig
 from system_tai.refinement.models import (
     CandidateFailurePolicy,
     MissingRawVideoPolicy,
+    Q3AnchorRefinementConfig,
     RefinementConfig,
 )
 from system_tai.refinement.video import CoarseDecodeStrategy
+from system_tai.retrieval.video_restricted import VideoConditionedKeyframeConfig
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -88,6 +90,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--kis-full-query-weight", type=float, default=1.0)
     parser.add_argument("--kis-primary-scene-weight", type=float, default=1.0)
     parser.add_argument("--kis-supporting-attribute-weight", type=float, default=0.35)
+    parser.add_argument(
+        "--enable-kis-multi-anchor-refinement",
+        action="store_true",
+        help=(
+            "Opt in to semantic-unit keyframe anchors plus bounded Q3 raw-video "
+            "refinement. Retrieval and output schema remain unchanged."
+        ),
+    )
+    parser.add_argument("--kis-anchor-video-rank-cap", type=int, default=20)
+    parser.add_argument("--kis-anchor-max-videos", type=int, default=5)
+    parser.add_argument("--kis-anchors-per-video", type=int, default=6)
+    parser.add_argument("--kis-anchor-min-gap-seconds", type=float, default=2.0)
+    parser.add_argument("--kis-max-extra-raw-anchors", type=int, default=12)
     parser.add_argument("--rrf-constant", type=float, default=60.0)
     parser.add_argument("--chunk-size", type=int, default=4096)
     parser.add_argument("--default-top-k-per-variant", type=int, default=100)
@@ -139,6 +154,19 @@ def build_parser() -> argparse.ArgumentParser:
 
 def session_config_from_args(args: argparse.Namespace) -> SessionConfig:
     resolved_device = resolve_device(args.device)
+    multi_anchor_enabled = getattr(args, "enable_kis_multi_anchor_refinement", False)
+    if multi_anchor_enabled and not getattr(
+        args, "enable_kis_semantic_video_first", False
+    ):
+        raise ValueError(
+            "--enable-kis-multi-anchor-refinement requires "
+            "--enable-kis-semantic-video-first"
+        )
+    if multi_anchor_enabled and args.default_refine_top_n <= 0:
+        raise ValueError(
+            "--enable-kis-multi-anchor-refinement requires "
+            "--default-refine-top-n greater than zero"
+        )
     # RefinementConfig describes an executable refinement pass and therefore
     # requires at least one candidate.  The session-level value zero is still
     # the supported switch that disables refinement for every default request;
@@ -214,6 +242,24 @@ def session_config_from_args(args: argparse.Namespace) -> SessionConfig:
                 args,
                 "kis_supporting_attribute_weight",
                 0.35,
+            ),
+        ),
+        video_conditioned_keyframe_config=VideoConditionedKeyframeConfig(
+            enabled=multi_anchor_enabled,
+            selected_video_global_rank_cap=getattr(
+                args, "kis_anchor_video_rank_cap", 20
+            ),
+            max_selected_videos=getattr(args, "kis_anchor_max_videos", 5),
+            max_anchors_per_video=getattr(args, "kis_anchors_per_video", 6),
+            minimum_anchor_gap_seconds=getattr(
+                args, "kis_anchor_min_gap_seconds", 2.0
+            ),
+            semantic_variant_coverage=multi_anchor_enabled,
+        ),
+        q3_anchor_refinement_config=Q3AnchorRefinementConfig(
+            enabled=multi_anchor_enabled,
+            max_extra_q3_anchors=getattr(
+                args, "kis_max_extra_raw_anchors", 12
             ),
         ),
         rrf_constant=args.rrf_constant,

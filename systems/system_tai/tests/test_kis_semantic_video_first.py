@@ -334,6 +334,51 @@ def test_cli_refine_top_n_zero_keeps_refinement_disabled_with_valid_template() -
     assert config.refinement_config.top_candidates_to_refine == 1
 
 
+def test_cli_wires_opt_in_semantic_multi_anchor_raw_refinement() -> None:
+    args = build_parser().parse_args(
+        [
+            "--enable-kis-semantic-video-first",
+            "--enable-kis-multi-anchor-refinement",
+            "--default-refine-top-n",
+            "5",
+            "--kis-anchor-max-videos",
+            "3",
+            "--kis-anchors-per-video",
+            "6",
+            "--kis-max-extra-raw-anchors",
+            "9",
+        ]
+    )
+
+    config = session_config_from_args(args)
+
+    assert config.video_conditioned_keyframe_config.enabled is True
+    assert config.video_conditioned_keyframe_config.semantic_variant_coverage is True
+    assert config.video_conditioned_keyframe_config.max_selected_videos == 3
+    assert config.video_conditioned_keyframe_config.max_anchors_per_video == 6
+    assert config.q3_anchor_refinement_config.enabled is True
+    assert config.q3_anchor_refinement_config.max_extra_q3_anchors == 9
+
+
+def test_cli_rejects_multi_anchor_without_video_first_or_raw_prefix() -> None:
+    parser = build_parser()
+    with pytest.raises(ValueError, match="requires --enable-kis-semantic-video-first"):
+        session_config_from_args(
+            parser.parse_args(["--enable-kis-multi-anchor-refinement"])
+        )
+    with pytest.raises(ValueError, match="default-refine-top-n greater than zero"):
+        session_config_from_args(
+            parser.parse_args(
+                [
+                    "--enable-kis-semantic-video-first",
+                    "--enable-kis-multi-anchor-refinement",
+                    "--default-refine-top-n",
+                    "0",
+                ]
+            )
+        )
+
+
 class _Encoder:
     dimension = 2
     identifiers = {"model": "ViT-B/32", "device": "cpu"}

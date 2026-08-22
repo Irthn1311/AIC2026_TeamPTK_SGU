@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pytest
 
 from system_tai.common.schemas import (
     CandidateFrame,
@@ -18,6 +19,11 @@ from system_tai.kis.session_engine import OperationalKISRuntime
 from system_tai.kis.session_schema import QueryRequest, SessionConfig
 from system_tai.refinement.models import Q3AnchorRefinementConfig, RefinementConfig
 from system_tai.refinement.video import DecodedFrame, DecodeResult, VideoProbe
+from system_tai.retrieval.multi_query import (
+    QueryLanguage,
+    QueryVariant,
+    QueryVariantType,
+)
 from system_tai.retrieval.video_restricted import (
     VIDEO_CONDITIONED_KEYFRAME_DIVERSITY,
     VideoConditionedKeyframeConfig,
@@ -87,6 +93,9 @@ def test_disabled_path_and_default_bounds_are_unchanged() -> None:
     assert outcome.result is original
     assert outcome.trace["enabled"] is False
     assert outcome.restricted_keyframe_rows_scored == 0
+
+    with pytest.raises(ValueError, match="requires enabled=true"):
+        VideoConditionedKeyframeConfig(semantic_variant_coverage=True)
 
 
 def test_selection_uses_first_occurrence_rank_50_and_respects_video_cap() -> None:
@@ -191,6 +200,75 @@ def test_restricted_ranking_nms_and_slot_substitution_are_deterministic() -> Non
         anchor["frame_id"] for anchor in video_trace["anchors"]
     )
     assert video_trace["uninserted_anchor_count"] == 1
+
+
+def test_semantic_variant_coverage_preserves_distinct_action_and_attribute_anchors() -> None:
+    registry = FeatureStoreRegistry(
+        [
+            _store(
+                "A",
+                [
+                    (0, 0.0, (0.7, 0.7)),
+                    (10, 1.0, (0.6, 0.6)),
+                    (20, 2.0, (0.5, 0.5)),
+                    (100, 10.0, (1.0, 0.0)),
+                    (110, 11.0, (0.99, 0.01)),
+                    (200, 20.0, (0.0, 1.0)),
+                    (210, 21.0, (0.01, 0.99)),
+                ],
+            )
+        ]
+    )
+    original = KISResult(
+        "q",
+        (
+            _candidate("A", 0, 0, 1),
+            _candidate("A", 10, 1, 2),
+            _candidate("A", 20, 2, 3),
+        ),
+    )
+    variants = (
+        QueryVariant(
+            "action",
+            "people touching toes",
+            QueryLanguage.ENGLISH,
+            QueryVariantType.ENGLISH_TRANSLATION,
+            1.0,
+        ),
+        QueryVariant(
+            "attributes",
+            "glasses and red hats",
+            QueryLanguage.ENGLISH,
+            QueryVariantType.ENGLISH_TRANSLATION,
+            0.35,
+        ),
+    )
+
+    outcome = VideoConditionedKeyframeDiversity(registry).condition(
+        global_result=original,
+        query_vector=np.asarray([1.0, 0.0], dtype=np.float32),
+        config=VideoConditionedKeyframeConfig(
+            enabled=True,
+            max_selected_videos=1,
+            max_anchors_per_video=2,
+            minimum_anchor_gap_seconds=5.0,
+            semantic_variant_coverage=True,
+        ),
+        semantic_variants=variants,
+        semantic_query_vectors=np.asarray(
+            [[1.0, 0.0], [0.0, 1.0]], dtype=np.float32
+        ),
+    )
+
+    assert outcome.trace["anchor_query_policy"] == "SEMANTIC_VARIANT_COVERAGE"
+    assert outcome.result.ranked_candidates[0] == original.ranked_candidates[0]
+    assert [item.frame_id for item in outcome.result.ranked_candidates] == [0, 100, 200]
+    anchors = outcome.trace["videos"][0]["anchors"]
+    assert [item["semantic_variant_ids"] for item in anchors] == [
+        ["action"],
+        ["attributes"],
+    ]
+    assert len({(item.video_id, item.frame_id) for item in outcome.result.ranked_candidates}) == 3
 
 
 def test_refinement_prefix_protects_top3_but_allows_rank4_substitution() -> None:
