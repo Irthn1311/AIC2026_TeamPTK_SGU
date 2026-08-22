@@ -25,6 +25,7 @@ from system_tai.kis.session_schema import (
     format_json_response,
     parse_session_request,
 )
+from system_tai.kis.video_first import KISVideoFirstConfig
 from system_tai.refinement.models import (
     CandidateFailurePolicy,
     MissingRawVideoPolicy,
@@ -69,6 +70,24 @@ def build_parser() -> argparse.ArgumentParser:
         default="ae7baa85da07dbe8e23ac26a9f5ef560c17e2138",
     )
     parser.add_argument("--translation-max-clip-tokens", type=int, default=75)
+    parser.add_argument(
+        "--enable-kis-semantic-video-first",
+        action="store_true",
+        help=(
+            "Use VinAI semantic clauses, exact video-level RRF nomination, and "
+            "restricted full-keyframe search for KIS requests."
+        ),
+    )
+    parser.add_argument("--kis-selected-video-cap", type=int, default=32)
+    parser.add_argument("--kis-video-nomination-depth", type=int, default=100)
+    parser.add_argument(
+        "--kis-restricted-frames-per-video-per-variant",
+        type=int,
+        default=10,
+    )
+    parser.add_argument("--kis-full-query-weight", type=float, default=1.0)
+    parser.add_argument("--kis-primary-scene-weight", type=float, default=1.0)
+    parser.add_argument("--kis-supporting-attribute-weight", type=float, default=0.35)
     parser.add_argument("--rrf-constant", type=float, default=60.0)
     parser.add_argument("--chunk-size", type=int, default=4096)
     parser.add_argument("--default-top-k-per-variant", type=int, default=100)
@@ -145,7 +164,10 @@ def session_config_from_args(args: argparse.Namespace) -> SessionConfig:
         device=args.device,
         allow_model_download=args.allow_model_download,
         clip_cache_dir=args.clip_cache_dir,
-        enable_dynamic_translation=getattr(args, "enable_dynamic_translation", False),
+        enable_dynamic_translation=(
+            getattr(args, "enable_dynamic_translation", False)
+            or getattr(args, "enable_kis_semantic_video_first", False)
+        ),
         translation_model_name=getattr(
             args,
             "translation_model_name",
@@ -167,6 +189,27 @@ def session_config_from_args(args: argparse.Namespace) -> SessionConfig:
             args,
             "translation_max_clip_tokens",
             75,
+        ),
+        kis_video_first_config=KISVideoFirstConfig(
+            enabled=getattr(args, "enable_kis_semantic_video_first", False),
+            selected_video_cap=getattr(args, "kis_selected_video_cap", 32),
+            video_nomination_depth=getattr(
+                args,
+                "kis_video_nomination_depth",
+                100,
+            ),
+            restricted_frames_per_video_per_variant=getattr(
+                args,
+                "kis_restricted_frames_per_video_per_variant",
+                10,
+            ),
+            full_query_weight=getattr(args, "kis_full_query_weight", 1.0),
+            primary_scene_weight=getattr(args, "kis_primary_scene_weight", 1.0),
+            supporting_attribute_weight=getattr(
+                args,
+                "kis_supporting_attribute_weight",
+                0.35,
+            ),
         ),
         rrf_constant=args.rrf_constant,
         chunk_size=args.chunk_size,

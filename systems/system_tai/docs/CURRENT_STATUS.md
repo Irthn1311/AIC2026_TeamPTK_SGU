@@ -290,6 +290,26 @@ SPARSE_VERIFIED remains experimental opt-in only.
 
 Phase 4.3B proved that fewer physical frame reads do not necessarily mean lower latency because repeated H.264/OpenCV seeks can be expensive.
 
+## KIS semantic video-first optimization — local experimental status
+
+- **Status:** implemented locally behind `KISVideoFirstConfig.enabled`; private Kaggle
+  and verified ground-truth evaluation are pending.
+- **Input policy:** Vietnamese source only. The pinned VinAI v2 provider translates the
+  full query and deterministic semantic clauses in one batch. Caller-supplied English is
+  rejected in this mode and there is no Marian production path under `system_tai`.
+- **Retrieval:** canonical OpenAI CLIP ViT-B/32 plus exact NumPy. One full-corpus store
+  traversal scores all variants; rank-only weighted RRF selects videos; one restricted
+  traversal per selected video scores all variants and produces deterministic frame-level
+  RRF candidates.
+- **Evidence weights:** action/scene clauses remain primary; counts, colors, clothing,
+  and accessories are supporting evidence by default and do not dominate the action.
+- **Compatibility:** feature disabled preserves the existing KIS path. Existing Q3
+  keyframe conditioning and raw-video exact-frame refinement are accepted downstream;
+  core JSONL and `frame_id = mapping frame_idx` remain unchanged.
+- **Current claim boundary:** synthetic mechanics and regression safety only. The observed
+  `query-p1-1-kis` gallery motivated the change but is not ground truth and does not prove
+  Recall@K improvement.
+
 ## Phase 4.3C0 — Refinement Stage Timings
 - **Status**: [IMPLEMENTED] locally; Phase 4.3C0: instrumentation for stage-level Kaggle profiling.
 - **Decision**: No optimization claim. PRIVATE KAGGLE STAGE PROFILE PENDING.

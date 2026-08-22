@@ -44,6 +44,11 @@ from system_tai.kis.session_schema import (
     ShutdownRequest,
     TRAKEQueryRequest,
 )
+from system_tai.kis.video_first import (
+    KIS_SEMANTIC_VIDEO_FIRST,
+    build_kis_video_first_outcome,
+    fuse_video_maxima,
+)
 from system_tai.preliminary.runtime_bridge import (
     audit_runtime_top100_artifact,
     kis_result_to_top100_query,
@@ -72,6 +77,10 @@ from system_tai.refinement.q3_anchor import (
 from system_tai.refinement.runner import _write_json, _write_refined_csv
 from system_tai.refinement.video import OpenCVVideoDecoder, RawVideoRegistry
 from system_tai.retrieval.multi_query import WeightedRRFRetriever
+from system_tai.retrieval.semantic_query import (
+    SemanticQueryConfig,
+    compile_vietnamese_semantic_query,
+)
 from system_tai.retrieval.vector_search import ExactNumpyRetriever
 from system_tai.retrieval.video_evidence import VideoRestrictedFeatureSearcher
 from system_tai.retrieval.video_restricted import (
@@ -447,8 +456,39 @@ class OperationalKISRuntime:
         validation_start = self.clock()
         translation_seconds = 0.0
         translation_metadata: dict[str, Any] = {"dynamic_translation_enabled": False}
+        video_first_enabled = self.config.kis_video_first_config.enabled
+        compiled_semantic_query = None
 
-        if self.config.enable_dynamic_translation and self.translation_provider is not None:
+        if video_first_enabled:
+            if self.translation_provider is None or self.token_budget_guard is None:
+                raise ValueError(
+                    "KIS semantic video-first retrieval requires the VinAI provider"
+                )
+            if request.query_en or request.query_en_expansion:
+                raise ValueError(
+                    "KIS semantic video-first retrieval accepts Vietnamese input only; "
+                    "manual English variants are not allowed"
+                )
+            t_trans = self.clock()
+            video_first_config = self.config.kis_video_first_config
+            compiled_semantic_query = compile_vietnamese_semantic_query(
+                query_id=request.query_id,
+                query_vi=request.query_vi,
+                provider=self.translation_provider,
+                token_budget_guard=self.token_budget_guard,
+                config=SemanticQueryConfig(
+                    full_query_weight=video_first_config.full_query_weight,
+                    primary_scene_weight=video_first_config.primary_scene_weight,
+                    supporting_attribute_weight=(
+                        video_first_config.supporting_attribute_weight
+                    ),
+                ),
+            )
+            variants = compiled_semantic_query.query_variants
+            translation_seconds = self.clock() - t_trans
+            translation_metadata = compiled_semantic_query.to_metadata()
+            translation_metadata["translation_seconds"] = translation_seconds
+        elif self.config.enable_dynamic_translation and self.translation_provider is not None:
             t_trans = self.clock()
             raw_en = self.translation_provider.translate(request.query_vi)
             english_segments = self.token_budget_guard.split_for_clip(raw_en)
@@ -493,25 +533,101 @@ class OperationalKISRuntime:
                 "Batch text encode returned "
                 f"{variant_embeddings.shape[0]} rows for {len(variants)} variants"
             )
-        rankings: dict[str, KISResult] = {}
-        for variant, vector in zip(variants, variant_embeddings):
-            rankings[variant.variant_id] = self.exact_retriever.search_vector(
-                query_id=f"{request.query_id}::{variant.variant_id}",
-                query_vector=vector,
-                top_k=request.top_k_per_variant,
-            )
         text_encode_seconds = self.clock() - text_encode_start
 
         retrieval_start = self.clock()
-        fusion_start = self.clock()
-        fused_result = self.weighted_rrf.fuse_rankings(
-            query_id=request.query_id,
-            variants=variants,
-            rankings=rankings,
-            output_top_k=request.output_top_k,
-            rrf_constant=self.config.rrf_constant,
-        )
-        fusion_seconds = self.clock() - fusion_start
+        video_first_trace: Mapping[str, Any] = {
+            "policy": KIS_SEMANTIC_VIDEO_FIRST,
+            "enabled": False,
+        }
+        full_corpus_video_search_seconds = 0.0
+        video_fusion_seconds = 0.0
+        restricted_frame_search_seconds = 0.0
+        restricted_frame_fusion_seconds = 0.0
+        video_first_full_corpus_rows_scored = 0
+        video_first_full_corpus_store_scan_count = 0
+        video_first_restricted_rows_scored = 0
+        video_first_restricted_store_scan_count = 0
+        if video_first_enabled:
+            assert compiled_semantic_query is not None
+            maxima_started = self.clock()
+            maxima = self.video_restricted_searcher.search_video_maxima(
+                query_ids=tuple(variant.variant_id for variant in variants),
+                query_vectors=variant_embeddings,
+            )
+            full_corpus_video_search_seconds = self.clock() - maxima_started
+
+            video_fusion_started = self.clock()
+            selected_videos = fuse_video_maxima(
+                variants=variants,
+                maxima=maxima,
+                primary_variant_ids=compiled_semantic_query.primary_variant_ids,
+                rrf_constant=self.config.rrf_constant,
+                nomination_depth=(
+                    self.config.kis_video_first_config.video_nomination_depth
+                ),
+                selected_video_cap=(
+                    self.config.kis_video_first_config.selected_video_cap
+                ),
+            )
+            video_fusion_seconds = self.clock() - video_fusion_started
+
+            restricted_started = self.clock()
+            restricted = self.video_restricted_searcher.search_selected_videos(
+                video_ids=tuple(item.video_id for item in selected_videos),
+                query_ids=tuple(variant.variant_id for variant in variants),
+                query_vectors=variant_embeddings,
+                per_query_result_cap=(
+                    self.config.kis_video_first_config
+                    .restricted_frames_per_video_per_variant
+                ),
+            )
+            restricted_frame_search_seconds = self.clock() - restricted_started
+
+            frame_fusion_started = self.clock()
+            video_first_outcome = build_kis_video_first_outcome(
+                query_id=request.query_id,
+                variants=variants,
+                maxima=maxima,
+                restricted=restricted,
+                selected_videos=selected_videos,
+                weighted_rrf=self.weighted_rrf,
+                output_top_k=request.output_top_k,
+                rrf_constant=self.config.rrf_constant,
+            )
+            restricted_frame_fusion_seconds = self.clock() - frame_fusion_started
+            fused_result = video_first_outcome.result
+            video_first_trace = video_first_outcome.to_trace()
+            video_first_full_corpus_rows_scored = (
+                video_first_outcome.full_corpus_rows_scored
+            )
+            video_first_full_corpus_store_scan_count = (
+                video_first_outcome.full_corpus_store_scan_count
+            )
+            video_first_restricted_rows_scored = (
+                video_first_outcome.restricted_rows_scored
+            )
+            video_first_restricted_store_scan_count = (
+                video_first_outcome.restricted_store_scan_count
+            )
+            fusion_seconds = video_fusion_seconds + restricted_frame_fusion_seconds
+        else:
+            rankings: dict[str, KISResult] = {}
+            for variant, vector in zip(variants, variant_embeddings, strict=True):
+                rankings[variant.variant_id] = self.exact_retriever.search_vector(
+                    query_id=f"{request.query_id}::{variant.variant_id}",
+                    query_vector=vector,
+                    top_k=request.top_k_per_variant,
+                )
+            fusion_start = self.clock()
+            fused_result = self.weighted_rrf.fuse_rankings(
+                query_id=request.query_id,
+                variants=variants,
+                rankings=rankings,
+                output_top_k=request.output_top_k,
+                rrf_constant=self.config.rrf_constant,
+            )
+            fusion_seconds = self.clock() - fusion_start
         retrieval_seconds = self.clock() - retrieval_start
 
         conditioned_result = fused_result
@@ -530,7 +646,7 @@ class OperationalKISRuntime:
         restricted_search_seconds = 0.0
         conditioning_seconds = 0.0
         if q3_enabled:
-            if (
+            if not video_first_enabled and (
                 len(variants) != 1
                 or variants[0].variant_type is not QueryVariantType.ENGLISH_TRANSLATION
             ):
@@ -568,6 +684,12 @@ class OperationalKISRuntime:
 
         global_top100_jsonl: Path | None = None
         q3_trace_json: Path | None = None
+        video_first_trace_json: Path | None = None
+        if video_first_enabled:
+            video_first_trace_json = _write_json(
+                query_dir / "kis_video_first_trace.json",
+                video_first_trace,
+            )
         if q3_enabled:
             global_top100_jsonl = query_dir / "global_top100.jsonl"
             self.exporter.export(fused_result, global_top100_jsonl)
@@ -581,6 +703,7 @@ class OperationalKISRuntime:
             "query_id": request.query_id,
             "request_id": request.request_id,
             "translation": translation_metadata,
+            "video_first": video_first_trace,
             "records": [
                 {
                     "query_id": conditioned_result.query_id,
@@ -644,6 +767,10 @@ class OperationalKISRuntime:
                     ).replace("\\", "/"),
                 }
             )
+        if video_first_trace_json is not None:
+            artifacts_dict["kis_video_first_trace_json"] = str(
+                video_first_trace_json.relative_to(self.output_root)
+            ).replace("\\", "/")
 
         refinement_requested = request.refine_top_n > 0
         refinement_valid: bool | None = None
@@ -925,6 +1052,10 @@ class OperationalKISRuntime:
             "top_k_per_variant": request.top_k_per_variant,
             "output_top_k": request.output_top_k,
             "refine_top_n": request.refine_top_n,
+            "kis_video_first_enabled": video_first_enabled,
+            "kis_video_first_config": dataclasses.asdict(
+                self.config.kis_video_first_config
+            ),
             "q3_enabled": q3_enabled,
             "q3_temporal_policy": (
                 VIDEO_CONDITIONED_KEYFRAME_DIVERSITY if q3_enabled else None
@@ -940,9 +1071,27 @@ class OperationalKISRuntime:
 
         timings_payload = {
             "validation_seconds": validation_seconds,
+            "translation_seconds": translation_seconds,
             "text_encode_seconds": text_encode_seconds,
             "retrieval_seconds": retrieval_seconds,
             "fusion_seconds": fusion_seconds,
+            "kis_video_first_enabled": video_first_enabled,
+            "full_corpus_video_search_seconds": full_corpus_video_search_seconds,
+            "video_fusion_seconds": video_fusion_seconds,
+            "restricted_frame_search_seconds": restricted_frame_search_seconds,
+            "restricted_frame_fusion_seconds": restricted_frame_fusion_seconds,
+            "video_first_full_corpus_rows_scored": (
+                video_first_full_corpus_rows_scored
+            ),
+            "video_first_full_corpus_store_scan_count": (
+                video_first_full_corpus_store_scan_count
+            ),
+            "video_first_restricted_rows_scored": (
+                video_first_restricted_rows_scored
+            ),
+            "video_first_restricted_store_scan_count": (
+                video_first_restricted_store_scan_count
+            ),
             "retrieval_export_seconds": retrieval_export_seconds,
             "retrieval_validation_seconds": retrieval_val_seconds,
             "q3_enabled": q3_enabled,
@@ -1004,6 +1153,7 @@ class OperationalKISRuntime:
             f"- Refinement requested: `{refinement_requested}`",
             f"- Refinement valid: `{refinement_valid}`",
             f"- Q3 enabled: `{q3_enabled}`",
+            f"- KIS semantic video-first enabled: `{video_first_enabled}`",
             f"- Q3 anchor refinement enabled: `{q3_anchor_enabled}`",
             f"- Result count: {len(conditioned_result.ranked_candidates)}",
             f"- Total seconds: {total_seconds:.6f}s",

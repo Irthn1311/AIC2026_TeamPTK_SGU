@@ -670,6 +670,25 @@ SPARSE_VERIFIED remains experimental opt-in only.
 
 Phase 4.3B proved that fewer physical frame reads do not necessarily mean lower latency because repeated H.264/OpenCV seeks can be expensive.
 
+## Opt-in semantic video-first extension
+
+For multi-scene Vietnamese KIS descriptions, the vertical slice can now use:
+
+`Vietnamese query -> deterministic semantic units -> pinned VinAI batch translation ->`
+`lossless CLIP segments -> exact per-video maxima -> video-level weighted RRF ->`
+`selected-video full-keyframe exact search -> frame-level weighted RRF -> optional Q3/raw refinement`.
+
+The full query, primary scenes, and supporting attributes have separate typed roles and
+weights. Segment weights sum to the originating unit weight, so a long query does not gain
+extra influence merely because CLIP needs more than one segment. Raw cosine is used only
+inside one variant's exact ranking and is never added between language/scene variants.
+
+The feature is disabled by default in the generic session schema and enabled explicitly by
+`--enable-kis-semantic-video-first` (the production YAML profile enables it). Its output
+boundary remains unique `(video_id, frame_id)` candidates with `frame_id` copied exactly
+from mapping CSV `frame_idx`. Synthetic tests prove mechanics, determinism, Q3/refinement
+connectivity, and schema safety; private-corpus quality remains unverified.
+
 ## Phase 4.3C0 — Refinement Stage Timings
 - **Status**: [IMPLEMENTED] locally; Phase 4.3C0: instrumentation for stage-level Kaggle profiling.
 - **Decision**: No optimization claim. PRIVATE KAGGLE STAGE PROFILE PENDING.

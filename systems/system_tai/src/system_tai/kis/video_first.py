@@ -1,0 +1,327 @@
+"""Opt-in KIS video-level RRF nomination and restricted exact frame search."""
+
+from __future__ import annotations
+
+import math
+from collections.abc import Sequence
+from dataclasses import dataclass
+
+from system_tai.common.schemas import CandidateFrame, KISResult
+from system_tai.retrieval.multi_query import QueryVariant, WeightedRRFRetriever
+from system_tai.retrieval.video_evidence import (
+    FullCorpusVideoMaximaOutcome,
+    VideoRestrictedSearchOutcome,
+)
+
+KIS_SEMANTIC_VIDEO_FIRST = "KIS_SEMANTIC_VIDEO_FIRST"
+
+
+@dataclass(frozen=True, slots=True)
+class KISVideoFirstConfig:
+    enabled: bool = False
+    selected_video_cap: int = 32
+    video_nomination_depth: int = 100
+    restricted_frames_per_video_per_variant: int = 10
+    full_query_weight: float = 1.0
+    primary_scene_weight: float = 1.0
+    supporting_attribute_weight: float = 0.35
+
+    def __post_init__(self) -> None:
+        if type(self.enabled) is not bool:
+            raise ValueError("enabled must be a boolean")
+        if type(self.selected_video_cap) is not int or not (
+            1 <= self.selected_video_cap <= 1000
+        ):
+            raise ValueError("selected_video_cap must be an integer in [1, 1000]")
+        if type(self.video_nomination_depth) is not int or self.video_nomination_depth <= 0:
+            raise ValueError("video_nomination_depth must be a positive integer")
+        if (
+            type(self.restricted_frames_per_video_per_variant) is not int
+            or self.restricted_frames_per_video_per_variant <= 0
+        ):
+            raise ValueError(
+                "restricted_frames_per_video_per_variant must be a positive integer"
+            )
+        for name, value in (
+            ("full_query_weight", self.full_query_weight),
+            ("primary_scene_weight", self.primary_scene_weight),
+            ("supporting_attribute_weight", self.supporting_attribute_weight),
+        ):
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError(f"{name} must be finite and positive")
+
+
+@dataclass(frozen=True, slots=True)
+class VariantVideoEvidence:
+    variant_id: str
+    weight: float
+    video_rank: int
+    maximum_frame_id: int
+    maximum_clip_row: int
+    maximum_cosine_score: float
+
+
+@dataclass(frozen=True, slots=True)
+class FusedVideoEvidence:
+    video_id: str
+    rank: int
+    fusion_score: float
+    variant_hit_count: int
+    primary_coverage_count: int
+    best_individual_rank: int
+    per_variant: tuple[VariantVideoEvidence, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class KISVideoFirstOutcome:
+    result: KISResult
+    selected_videos: tuple[FusedVideoEvidence, ...]
+    full_corpus_rows_scored: int
+    full_corpus_store_scan_count: int
+    restricted_rows_scored: int
+    restricted_store_scan_count: int
+
+    def to_trace(self) -> dict[str, object]:
+        return {
+            "policy": KIS_SEMANTIC_VIDEO_FIRST,
+            "enabled": True,
+            "full_corpus_rows_scored": self.full_corpus_rows_scored,
+            "full_corpus_store_scan_count": self.full_corpus_store_scan_count,
+            "restricted_rows_scored": self.restricted_rows_scored,
+            "restricted_store_scan_count": self.restricted_store_scan_count,
+            "selected_video_count": len(self.selected_videos),
+            "selected_videos": [
+                {
+                    "rank": item.rank,
+                    "video_id": item.video_id,
+                    "fusion_score": item.fusion_score,
+                    "variant_hit_count": item.variant_hit_count,
+                    "primary_coverage_count": item.primary_coverage_count,
+                    "best_individual_rank": item.best_individual_rank,
+                    "per_variant": [
+                        {
+                            "variant_id": hit.variant_id,
+                            "weight": hit.weight,
+                            "video_rank": hit.video_rank,
+                            "maximum_frame_id": hit.maximum_frame_id,
+                            "maximum_clip_row_diagnostic": hit.maximum_clip_row,
+                            "maximum_cosine_score_diagnostic": hit.maximum_cosine_score,
+                        }
+                        for hit in item.per_variant
+                    ],
+                }
+                for item in self.selected_videos
+            ],
+        }
+
+
+def fuse_video_maxima(
+    *,
+    variants: Sequence[QueryVariant],
+    maxima: FullCorpusVideoMaximaOutcome,
+    primary_variant_ids: frozenset[str],
+    rrf_constant: float,
+    nomination_depth: int,
+    selected_video_cap: int,
+) -> tuple[FusedVideoEvidence, ...]:
+    """Fuse one exact maximum per video and variant at `video_id` identity."""
+
+    variants = tuple(variants)
+    if not variants:
+        raise ValueError("variants must not be empty")
+    if len({variant.variant_id for variant in variants}) != len(variants):
+        raise ValueError("variant_id values must be unique")
+    if not math.isfinite(rrf_constant) or rrf_constant <= 0:
+        raise ValueError("rrf_constant must be finite and positive")
+    if nomination_depth <= 0 or selected_video_cap <= 0:
+        raise ValueError("nomination_depth and selected_video_cap must be positive")
+    expected_ids = {variant.variant_id for variant in variants}
+    if set(maxima.rankings) != expected_ids:
+        raise ValueError("maxima must contain exactly one video ranking per variant")
+
+    by_variant_video = {
+        variant.variant_id: {
+            hit.video_id: hit for hit in maxima.rankings[variant.variant_id]
+        }
+        for variant in variants
+    }
+    video_sets = [set(items) for items in by_variant_video.values()]
+    if not video_sets or any(items != video_sets[0] for items in video_sets[1:]):
+        raise ValueError("variant video rankings must cover the same corpus videos")
+
+    staged: list[FusedVideoEvidence] = []
+    for video_id in sorted(video_sets[0]):
+        provenance = tuple(
+            VariantVideoEvidence(
+                variant_id=variant.variant_id,
+                weight=float(variant.weight),
+                video_rank=by_variant_video[variant.variant_id][video_id].rank,
+                maximum_frame_id=(
+                    by_variant_video[variant.variant_id][video_id].frame_id
+                ),
+                maximum_clip_row=(
+                    by_variant_video[variant.variant_id][video_id].clip_row
+                ),
+                maximum_cosine_score=(
+                    by_variant_video[variant.variant_id][video_id].cosine_score
+                ),
+            )
+            for variant in sorted(variants, key=lambda item: item.variant_id)
+        )
+        score = sum(
+            hit.weight / (rrf_constant + hit.video_rank) for hit in provenance
+        )
+        staged.append(
+            FusedVideoEvidence(
+                video_id=video_id,
+                rank=0,
+                fusion_score=float(score),
+                variant_hit_count=sum(
+                    hit.video_rank <= nomination_depth for hit in provenance
+                ),
+                primary_coverage_count=sum(
+                    hit.variant_id in primary_variant_ids
+                    and hit.video_rank <= nomination_depth
+                    for hit in provenance
+                ),
+                best_individual_rank=min(hit.video_rank for hit in provenance),
+                per_variant=provenance,
+            )
+        )
+    ordered = sorted(
+        staged,
+        key=lambda item: (
+            -item.fusion_score,
+            -item.primary_coverage_count,
+            -item.variant_hit_count,
+            item.best_individual_rank,
+            item.video_id,
+        ),
+    )[:selected_video_cap]
+    return tuple(
+        FusedVideoEvidence(
+            video_id=item.video_id,
+            rank=rank,
+            fusion_score=item.fusion_score,
+            variant_hit_count=item.variant_hit_count,
+            primary_coverage_count=item.primary_coverage_count,
+            best_individual_rank=item.best_individual_rank,
+            per_variant=item.per_variant,
+        )
+        for rank, item in enumerate(ordered, start=1)
+    )
+
+
+def fuse_restricted_frames(
+    *,
+    query_id: str,
+    variants: Sequence[QueryVariant],
+    restricted: VideoRestrictedSearchOutcome,
+    selected_videos: Sequence[FusedVideoEvidence],
+    weighted_rrf: WeightedRRFRetriever,
+    output_top_k: int,
+    rrf_constant: float,
+) -> KISResult:
+    """Globally rank restricted frames per variant, then apply frame-identity RRF."""
+
+    variants = tuple(variants)
+    selected_videos = tuple(selected_videos)
+    selected_ids = {item.video_id for item in selected_videos}
+    if not selected_ids:
+        raise ValueError("selected_videos must not be empty")
+    if len(selected_ids) != len(selected_videos):
+        raise ValueError("selected_videos must be unique")
+
+    rankings: dict[str, KISResult] = {}
+    for variant in variants:
+        per_video = restricted.rankings.get(variant.variant_id)
+        if per_video is None or set(per_video) != selected_ids:
+            raise ValueError(
+                f"restricted ranking coverage mismatch for {variant.variant_id}"
+            )
+        hits = [hit for video_id in sorted(selected_ids) for hit in per_video[video_id]]
+        ordered = sorted(
+            hits,
+            key=lambda hit: (
+                -hit.cosine_score,
+                hit.video_id,
+                hit.frame_id,
+                hit.clip_row,
+            ),
+        )
+        rankings[variant.variant_id] = KISResult(
+            query_id=variant.variant_id,
+            ranked_candidates=tuple(
+                CandidateFrame(
+                    video_id=hit.video_id,
+                    frame_id=hit.frame_id,
+                    clip_row=hit.clip_row,
+                    keyframe_order=hit.keyframe_order,
+                    score=float(hit.cosine_score),
+                    rank=rank,
+                    source="video_restricted_exact",
+                    diagnostic_metadata={"pts_time": hit.pts_time},
+                )
+                for rank, hit in enumerate(ordered, start=1)
+            ),
+        )
+
+    fused = weighted_rrf.fuse_rankings(
+        query_id=query_id,
+        variants=variants,
+        rankings=rankings,
+        output_top_k=output_top_k,
+        rrf_constant=rrf_constant,
+    )
+    video_by_id = {item.video_id: item for item in selected_videos}
+    enriched = tuple(
+        CandidateFrame(
+            video_id=item.video_id,
+            frame_id=item.frame_id,
+            clip_row=item.clip_row,
+            keyframe_order=item.keyframe_order,
+            score=item.score,
+            rank=item.rank,
+            source="kis_semantic_video_first",
+            diagnostic_metadata={
+                **dict(item.diagnostic_metadata or {}),
+                "video_nomination_rank": video_by_id[item.video_id].rank,
+                "video_fusion_score": video_by_id[item.video_id].fusion_score,
+                "video_primary_coverage_count": (
+                    video_by_id[item.video_id].primary_coverage_count
+                ),
+            },
+        )
+        for item in fused.ranked_candidates
+    )
+    return KISResult(query_id=query_id, ranked_candidates=enriched)
+
+
+def build_kis_video_first_outcome(
+    *,
+    query_id: str,
+    variants: Sequence[QueryVariant],
+    maxima: FullCorpusVideoMaximaOutcome,
+    restricted: VideoRestrictedSearchOutcome,
+    selected_videos: Sequence[FusedVideoEvidence],
+    weighted_rrf: WeightedRRFRetriever,
+    output_top_k: int,
+    rrf_constant: float,
+) -> KISVideoFirstOutcome:
+    result = fuse_restricted_frames(
+        query_id=query_id,
+        variants=variants,
+        restricted=restricted,
+        selected_videos=selected_videos,
+        weighted_rrf=weighted_rrf,
+        output_top_k=output_top_k,
+        rrf_constant=rrf_constant,
+    )
+    return KISVideoFirstOutcome(
+        result=result,
+        selected_videos=tuple(selected_videos),
+        full_corpus_rows_scored=maxima.physical_rows_scored,
+        full_corpus_store_scan_count=maxima.video_store_scan_count,
+        restricted_rows_scored=restricted.physical_rows_scored,
+        restricted_store_scan_count=restricted.video_store_scan_count,
+    )

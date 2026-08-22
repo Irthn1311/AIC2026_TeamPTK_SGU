@@ -19,6 +19,15 @@ from .multi_query import (
     QueryVariantType,
     WeightedRRFRetriever,
 )
+from .semantic_query import (
+    CompiledSemanticQuery,
+    CompiledSemanticVariant,
+    SemanticQueryConfig,
+    SemanticUnitRole,
+    VietnameseSemanticUnit,
+    compile_vietnamese_semantic_query,
+    decompose_vietnamese_semantic_units,
+)
 from .vector_search import ExactNumpyRetriever, VectorSearch
 from .video_evidence import (
     FullCorpusVideoMaximaOutcome,
@@ -38,6 +47,8 @@ __all__ = [
     "BM25Index",
     "BM25TextRetriever",
     "CandidateConstructor",
+    "CompiledSemanticQuery",
+    "CompiledSemanticVariant",
     "ExactNumpyRetriever",
     "FaissVectorIndex",
     "FaissVectorRetriever",
@@ -47,6 +58,8 @@ __all__ = [
     "QueryVariant",
     "QueryVariantType",
     "RestrictedFrameHit",
+    "SemanticQueryConfig",
+    "SemanticUnitRole",
     "VectorRecord",
     "VectorSearch",
     "VideoConditionedKeyframeConfig",
@@ -55,6 +68,9 @@ __all__ = [
     "VideoMaximumHit",
     "VideoRestrictedFeatureSearcher",
     "VideoRestrictedSearchOutcome",
+    "VietnameseSemanticUnit",
     "WeightedRRFRetriever",
+    "compile_vietnamese_semantic_query",
+    "decompose_vietnamese_semantic_units",
     "tokenize_text",
 ]

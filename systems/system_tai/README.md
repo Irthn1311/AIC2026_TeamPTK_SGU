@@ -748,3 +748,35 @@ SEQUENTIAL remains contest/default strategy.
 SPARSE_VERIFIED remains experimental opt-in only.
 
 Phase 4.3B proved that fewer physical frame reads do not necessarily mean lower latency because repeated H.264/OpenCV seeks can be expensive.
+
+## Experimental KIS semantic video-first path
+
+The operational KIS session now has an opt-in Vietnamese-only path for long,
+multi-scene descriptions. It deterministically separates the original Vietnamese query
+into a full unit plus primary scene clauses and lower-weight supporting attributes,
+translates all units with the pinned VinAI vi-to-en model in one batch, and losslessly
+segments them to the fixed OpenAI CLIP ViT-B/32 token budget. Manual English variants
+are rejected in this mode; no Marian fallback exists under `system_tai` production code.
+
+Exact feature search remains the correctness backend. Every semantic variant is scanned
+over the complete registry in one store traversal, each video is represented by its exact
+maximum-cosine keyframe per variant, and weighted RRF nominates videos by rank only. The
+selected videos are then searched across all their keyframes and fused at the canonical
+`(video_id, frame_id)` identity. Existing Q3 diversity and bounded raw-video refinement
+remain optional downstream flags.
+
+```bash
+python -m system_tai.kis.session \
+  --input-root /kaggle/input \
+  --reuse-manifest /kaggle/input/system-tai-manifest/feature_manifest.json \
+  --output-root /kaggle/working/system_tai_kis_session \
+  --device auto \
+  --allow-model-download \
+  --translation-allow-model-download \
+  --enable-kis-semantic-video-first \
+  --kis-selected-video-cap 32 \
+  --kis-restricted-frames-per-video-per-variant 10
+```
+
+This path is implemented and synthetic-tested, but private Kaggle A/B and gold-set
+quality evaluation are pending. It must not be described as a semantic-quality win.

@@ -33,10 +33,17 @@ retrieval:
 kis:
   status: "PROVEN_WINNER"
   enable_dynamic_translation: true
+  semantic_video_first: true        # EXPERIMENTAL: private Kaggle/gold-set gate pending
   translation_model_name: "vinai/vinai-translate-vi2en-v2"
   translation_revision: "ae7baa85da07dbe8e23ac26a9f5ef560c17e2138"
   translation_allow_model_download: true
   translation_max_clip_tokens: 75
+  selected_video_cap: 32
+  video_nomination_depth: 100
+  restricted_frames_per_video_per_variant: 10
+  full_query_weight: 1.0
+  primary_scene_weight: 1.0
+  supporting_attribute_weight: 0.35
   language_policy: "en_only"
   top_k_candidates: 100
   coarse_to_fine_refinement: true

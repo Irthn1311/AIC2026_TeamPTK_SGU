@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from system_tai.kis.video_first import KISVideoFirstConfig
 from system_tai.qa.grounding import QAVideoConditionedEvidenceConfig
 from system_tai.qa.object_provider import ObjectAnswerProviderConfig
 from system_tai.qa.ocr_provider import OCRAnswerProviderConfig
@@ -74,6 +75,9 @@ class SessionConfig:
     video_conditioned_keyframe_config: VideoConditionedKeyframeConfig = field(
         default_factory=VideoConditionedKeyframeConfig
     )
+    kis_video_first_config: KISVideoFirstConfig = field(
+        default_factory=KISVideoFirstConfig
+    )
     q3_anchor_refinement_config: Q3AnchorRefinementConfig = field(
         default_factory=Q3AnchorRefinementConfig
     )
@@ -133,6 +137,18 @@ class SessionConfig:
                 "video_conditioned_keyframe_config must be "
                 "VideoConditionedKeyframeConfig"
             )
+        if not isinstance(self.kis_video_first_config, KISVideoFirstConfig):
+            raise ValueError("kis_video_first_config must be KISVideoFirstConfig")
+        if self.kis_video_first_config.enabled:
+            if not self.enable_dynamic_translation:
+                raise ValueError(
+                    "KIS semantic video-first retrieval requires dynamic VinAI translation"
+                )
+            if self.translation_model_name != "vinai/vinai-translate-vi2en-v2":
+                raise ValueError(
+                    "KIS semantic video-first retrieval requires "
+                    "vinai/vinai-translate-vi2en-v2"
+                )
         if not isinstance(self.q3_anchor_refinement_config, Q3AnchorRefinementConfig):
             raise ValueError(
                 "q3_anchor_refinement_config must be Q3AnchorRefinementConfig"
@@ -247,6 +263,21 @@ class SessionConfig:
             "translation_max_clip_tokens": kis_cfg.get(
                 "translation_max_clip_tokens",
                 75,
+            ),
+            "kis_video_first_config": KISVideoFirstConfig(
+                enabled=kis_cfg.get("semantic_video_first", False),
+                selected_video_cap=kis_cfg.get("selected_video_cap", 32),
+                video_nomination_depth=kis_cfg.get("video_nomination_depth", 100),
+                restricted_frames_per_video_per_variant=kis_cfg.get(
+                    "restricted_frames_per_video_per_variant",
+                    10,
+                ),
+                full_query_weight=kis_cfg.get("full_query_weight", 1.0),
+                primary_scene_weight=kis_cfg.get("primary_scene_weight", 1.0),
+                supporting_attribute_weight=kis_cfg.get(
+                    "supporting_attribute_weight",
+                    0.35,
+                ),
             ),
         }
         kwargs.update(overrides)
