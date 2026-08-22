@@ -139,9 +139,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 def session_config_from_args(args: argparse.Namespace) -> SessionConfig:
     resolved_device = resolve_device(args.device)
+    # RefinementConfig describes an executable refinement pass and therefore
+    # requires at least one candidate.  The session-level value zero is still
+    # the supported switch that disables refinement for every default request;
+    # keep a valid dormant template without changing that request semantics.
+    refinement_template_top_n = max(1, args.default_refine_top_n)
     ref_config = RefinementConfig(
         device=resolved_device,
-        top_candidates_to_refine=args.default_refine_top_n,
+        top_candidates_to_refine=refinement_template_top_n,
         window_before_seconds=args.window_before_seconds,
         window_after_seconds=args.window_after_seconds,
         coarse_stride_frames=args.coarse_stride_frames,

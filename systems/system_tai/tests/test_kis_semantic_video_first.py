@@ -323,6 +323,17 @@ def test_semantic_video_first_config_requires_vinai_and_cli_enables_it() -> None
     assert config.kis_video_first_config.enabled is True
 
 
+def test_cli_refine_top_n_zero_keeps_refinement_disabled_with_valid_template() -> None:
+    args = build_parser().parse_args(
+        ["--enable-kis-semantic-video-first", "--default-refine-top-n", "0"]
+    )
+
+    config = session_config_from_args(args)
+
+    assert config.default_refine_top_n == 0
+    assert config.refinement_config.top_candidates_to_refine == 1
+
+
 class _Encoder:
     dimension = 2
     identifiers = {"model": "ViT-B/32", "device": "cpu"}
