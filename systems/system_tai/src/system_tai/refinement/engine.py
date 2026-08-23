@@ -23,6 +23,8 @@ from system_tai.refinement.models import (
     RefinementQuery,
     RefinementStatus,
     SelectedVideoTimelineScoutConfig,
+    SelectedVideoVisualVerifierConfig,
+    VisualVerifierFailurePolicy,
 )
 from system_tai.refinement.video import (
     DecodedFrame,
@@ -33,6 +35,12 @@ from system_tai.refinement.video import (
     SparseDecodeRequest,
     VideoDecoder,
     VideoProbe,
+)
+from system_tai.refinement.visual_verifier import (
+    StructuredVisualVerifier,
+    VisualVerificationError,
+    VisualVerificationInput,
+    VisualVerificationResult,
 )
 from system_tai.retrieval.multi_query import QueryVariant
 
@@ -245,6 +253,103 @@ def select_timeline_regions(
     return tuple(selected)
 
 
+def build_visual_verification_shortlist(
+    ranked: Sequence[LocalFrameFusion],
+    *,
+    total_frame_count: int,
+    shortlist_size: int,
+    coverage_bins: int,
+) -> tuple[LocalFrameFusion, ...]:
+    """Combine global CLIP leaders with deterministic full-timeline coverage.
+
+    Coverage candidates are the sampled frames nearest each temporal-bin midpoint,
+    independent of CLIP score. This prevents a semantically subtle late scene from
+    being excluded solely because broad exercise frames dominate CLIP ranking.
+    """
+    if total_frame_count <= 0:
+        raise ValueError("total_frame_count must be positive")
+    if shortlist_size <= 0:
+        raise ValueError("shortlist_size must be positive")
+    if not 1 <= coverage_bins <= shortlist_size:
+        raise ValueError("coverage_bins must be in [1, shortlist_size]")
+    if not ranked:
+        return ()
+    rank_index = {item.absolute_frame_id: index for index, item in enumerate(ranked)}
+    chosen: dict[int, LocalFrameFusion] = {}
+    global_budget = max(0, shortlist_size - coverage_bins)
+    for item in ranked[:global_budget]:
+        chosen[item.absolute_frame_id] = item
+    for bin_index in range(coverage_bins):
+        start = (bin_index * total_frame_count) // coverage_bins
+        end = ((bin_index + 1) * total_frame_count) // coverage_bins
+        bin_candidates = [
+            item
+            for item in ranked
+            if start <= item.absolute_frame_id < end
+        ]
+        if bin_candidates:
+            midpoint = (start + end - 1) / 2.0
+            representative = min(
+                bin_candidates,
+                key=lambda item: (
+                    abs(item.absolute_frame_id - midpoint),
+                    item.absolute_frame_id,
+                ),
+            )
+            chosen[representative.absolute_frame_id] = representative
+    for item in ranked:
+        if len(chosen) >= shortlist_size:
+            break
+        chosen[item.absolute_frame_id] = item
+    return tuple(
+        sorted(chosen.values(), key=lambda item: rank_index[item.absolute_frame_id])
+    )
+
+
+def rank_visually_verified_timeline_frames(
+    shortlist: Sequence[LocalFrameFusion],
+    results: Sequence[VisualVerificationResult],
+) -> tuple[LocalFrameFusion, ...]:
+    """Rank VLM-verified frames without mixing raw CLIP and VLM score scales."""
+    by_frame = {item.absolute_frame_id: item for item in shortlist}
+    if len(results) != len(shortlist):
+        raise ValueError("visual verifier result count mismatch")
+    if {item.absolute_frame_id for item in results} != set(by_frame):
+        raise ValueError("visual verifier result identity mismatch")
+    result_by_frame = {item.absolute_frame_id: item for item in results}
+    ordered = sorted(
+        shortlist,
+        key=lambda item: (
+            -int(
+                result_by_frame[
+                    item.absolute_frame_id
+                ].all_visible_requirements_satisfied
+            ),
+            -result_by_frame[item.absolute_frame_id].match_score,
+            -result_by_frame[item.absolute_frame_id].requirement_coverage,
+            -item.fusion_score,
+            item.absolute_frame_id,
+        ),
+    )
+    return tuple(
+        LocalFrameFusion(
+            absolute_frame_id=item.absolute_frame_id,
+            fusion_score=result_by_frame[item.absolute_frame_id].match_score,
+            variant_hit_count=item.variant_hit_count,
+            best_individual_rank=item.best_individual_rank,
+            per_variant_provenance=(
+                *item.per_variant_provenance,
+                {
+                    "visual_verification": dict(
+                        result_by_frame[item.absolute_frame_id].to_trace()
+                    )
+                },
+            ),
+        )
+        for item in ordered
+    )
+
+
 def fine_frame_ids(
     winners: Sequence[int],
     *,
@@ -387,11 +492,13 @@ class ExactFrameRefiner:
         raw_videos: RawVideoRegistry,
         decoder: VideoDecoder,
         encoder: RefinementEncoder,
+        visual_verifier: StructuredVisualVerifier | None = None,
         clock: Callable[[], float] = time.perf_counter,
     ) -> None:
         self.raw_videos = raw_videos
         self.decoder = decoder
         self.encoder = encoder
+        self.visual_verifier = visual_verifier
         self.clock = clock
         self._probe_cache: dict[str, VideoProbe] = {}
 
@@ -613,10 +720,13 @@ class ExactFrameRefiner:
         self,
         *,
         query_id: str,
+        query_vi: str,
+        query_en: str,
         variants: tuple[QueryVariant, ...],
         ranked_video_ids: tuple[str, ...],
         rank_slots: tuple[Phase3Candidate, ...],
         config: SelectedVideoTimelineScoutConfig,
+        visual_verifier_config: SelectedVideoVisualVerifierConfig,
         refinement_config: RefinementConfig,
         precomputed_text_embeddings: NDArray[np.float32],
         frame_embedding_cache: FrameEmbeddingCache,
@@ -645,6 +755,10 @@ class ExactFrameRefiner:
             )
         if not query_id.strip() or not variants:
             raise ValueError("timeline scout requires query_id and variants")
+        if not query_vi.strip() or not query_en.strip():
+            raise ValueError("timeline scout requires Vietnamese and English query text")
+        if visual_verifier_config.enabled and self.visual_verifier is None:
+            raise ValueError("visual verifier is enabled but no verifier was initialized")
         if precomputed_text_embeddings.shape != (
             len(variants),
             self.encoder.dimension,
@@ -673,6 +787,8 @@ class ExactFrameRefiner:
         sample_count = 0
         decoded_count = 0
         encoded_count = 0
+        visual_verified_count = 0
+        visual_verifier_seconds = 0.0
         for nomination_rank, video_id in enumerate(selected_videos, start=1):
             try:
                 raw_record = self.raw_videos.get(video_id)
@@ -719,8 +835,88 @@ class ExactFrameRefiner:
                     precomputed_text_embeddings,
                     rrf_constant=refinement_config.rrf_constant,
                 )
+                verification_trace: dict[str, Any] = {"enabled": False}
+                ranked_for_selection = fused
+                if visual_verifier_config.enabled:
+                    shortlist = build_visual_verification_shortlist(
+                        fused,
+                        total_frame_count=probe.total_frame_count,
+                        shortlist_size=visual_verifier_config.shortlist_per_video,
+                        coverage_bins=visual_verifier_config.coverage_bins,
+                    )
+                    frame_index = {
+                        frame.absolute_frame_id: index
+                        for index, frame in enumerate(decoded.frames)
+                    }
+                    verification_inputs: list[VisualVerificationInput] = []
+                    for item in shortlist:
+                        center_index = frame_index[item.absolute_frame_id]
+                        start_index = max(
+                            0,
+                            center_index - visual_verifier_config.neighbor_sample_radius,
+                        )
+                        end_index = min(
+                            len(decoded.frames),
+                            center_index
+                            + visual_verifier_config.neighbor_sample_radius
+                            + 1,
+                        )
+                        center = decoded.frames[center_index]
+                        verification_inputs.append(
+                            VisualVerificationInput(
+                                video_id=video_id,
+                                absolute_frame_id=center.absolute_frame_id,
+                                timestamp_seconds=center.timestamp_seconds,
+                                images=tuple(
+                                    frame.image
+                                    for frame in decoded.frames[start_index:end_index]
+                                ),
+                            )
+                        )
+                    verify_started = self.clock()
+                    try:
+                        assert self.visual_verifier is not None
+                        verification_results = self.visual_verifier.verify(
+                            query_vi=query_vi,
+                            query_en=query_en,
+                            candidates=verification_inputs,
+                        )
+                        visual_verifier_seconds += self.clock() - verify_started
+                        visual_verified_count += len(verification_results)
+                        ranked_for_selection = rank_visually_verified_timeline_frames(
+                            shortlist,
+                            verification_results,
+                        )
+                        verification_trace = {
+                            "enabled": True,
+                            "status": "SUCCESS",
+                            "provider": dict(self.visual_verifier.identifiers),
+                            "shortlist_frame_ids": [
+                                item.absolute_frame_id for item in shortlist
+                            ],
+                            "results": [
+                                dict(item.to_trace()) for item in verification_results
+                            ],
+                        }
+                    except Exception as exc:
+                        visual_verifier_seconds += self.clock() - verify_started
+                        if (
+                            visual_verifier_config.failure_policy
+                            is VisualVerifierFailurePolicy.FAIL_QUERY
+                        ):
+                            raise VisualVerificationError(
+                                f"visual verifier failed for {video_id}: {exc}"
+                            ) from exc
+                        warnings.append(
+                            f"visual verifier fallback to CLIP for {video_id}: {exc}"
+                        )
+                        verification_trace = {
+                            "enabled": True,
+                            "status": "FALLBACK_CLIP",
+                            "failure_reason": str(exc),
+                        }
                 regions = select_timeline_regions(
-                    fused,
+                    ranked_for_selection,
                     fps=probe.fps,
                     max_regions=config.max_regions_per_video,
                     minimum_gap_seconds=config.minimum_region_gap_seconds,
@@ -749,6 +945,9 @@ class ExactFrameRefiner:
                                 "timeline_per_variant_provenance": (
                                     region.per_variant_provenance
                                 ),
+                                "timeline_visual_verifier_enabled": (
+                                    visual_verifier_config.enabled
+                                ),
                             },
                         )
                     )
@@ -769,9 +968,12 @@ class ExactFrameRefiner:
                         ],
                         "assigned_rank_slots": [slot.rank for slot, _ in assigned],
                         "decoder_backend": decoded.decoder_backend,
+                        "visual_verification": verification_trace,
                         "warnings": decoded.warnings,
                     }
                 )
+            except VisualVerificationError:
+                raise
             except Exception as exc:
                 warnings.append(f"timeline scout failed for {video_id}: {exc}")
 
@@ -783,6 +985,8 @@ class ExactFrameRefiner:
             "timeline_decoded_frame_count": decoded_count,
             "timeline_encoded_image_count": encoded_count,
             "timeline_region_count": len(ordered_anchors),
+            "timeline_visual_verified_candidate_count": visual_verified_count,
+            "timeline_visual_verifier_seconds": visual_verifier_seconds,
         }
         return TimelineScoutOutcome(
             candidates=ordered_anchors,
@@ -791,6 +995,7 @@ class ExactFrameRefiner:
                 "enabled": True,
                 "selection_source": "system_video_first_nomination",
                 "hard_coded_target": False,
+                "visual_verifier_enabled": visual_verifier_config.enabled,
                 "ranked_video_ids_considered": list(selected_videos),
                 "videos": video_traces,
                 "selected_anchors": [

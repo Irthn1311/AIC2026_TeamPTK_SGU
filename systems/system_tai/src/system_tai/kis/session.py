@@ -32,6 +32,8 @@ from system_tai.refinement.models import (
     Q3AnchorRefinementConfig,
     RefinementConfig,
     SelectedVideoTimelineScoutConfig,
+    SelectedVideoVisualVerifierConfig,
+    VisualVerifierFailurePolicy,
 )
 from system_tai.refinement.video import CoarseDecodeStrategy
 from system_tai.retrieval.video_restricted import VideoConditionedKeyframeConfig
@@ -117,6 +119,30 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--kis-timeline-max-samples-per-video", type=int, default=300)
     parser.add_argument("--kis-timeline-max-regions-per-video", type=int, default=3)
     parser.add_argument("--kis-timeline-min-region-gap-seconds", type=float, default=5.0)
+    parser.add_argument(
+        "--enable-kis-visual-predicate-verifier",
+        action="store_true",
+        help=(
+            "Use one locally loaded structured VLM to verify a bounded, "
+            "coverage-preserving shortlist from the automatic timeline scout."
+        ),
+    )
+    parser.add_argument(
+        "--kis-visual-verifier-model",
+        default="Qwen/Qwen2.5-VL-3B-Instruct",
+    )
+    parser.add_argument("--kis-visual-verifier-revision")
+    parser.add_argument("--kis-visual-verifier-cache-dir", type=Path)
+    parser.add_argument("--kis-visual-verifier-allow-model-download", action="store_true")
+    parser.add_argument("--kis-visual-verifier-shortlist-per-video", type=int, default=32)
+    parser.add_argument("--kis-visual-verifier-coverage-bins", type=int, default=12)
+    parser.add_argument("--kis-visual-verifier-neighbor-radius", type=int, default=1)
+    parser.add_argument("--kis-visual-verifier-max-new-tokens", type=int, default=512)
+    parser.add_argument(
+        "--kis-visual-verifier-failure-policy",
+        choices=tuple(policy.value for policy in VisualVerifierFailurePolicy),
+        default=VisualVerifierFailurePolicy.FALLBACK_CLIP.value,
+    )
     parser.add_argument("--rrf-constant", type=float, default=60.0)
     parser.add_argument("--chunk-size", type=int, default=4096)
     parser.add_argument("--default-top-k-per-variant", type=int, default=100)
@@ -195,6 +221,14 @@ def session_config_from_args(args: argparse.Namespace) -> SessionConfig:
         raise ValueError(
             "--enable-kis-selected-video-timeline-scout requires "
             "--default-refine-top-n greater than zero"
+        )
+    visual_verifier_enabled = getattr(
+        args, "enable_kis_visual_predicate_verifier", False
+    )
+    if visual_verifier_enabled and not timeline_scout_enabled:
+        raise ValueError(
+            "--enable-kis-visual-predicate-verifier requires "
+            "--enable-kis-selected-video-timeline-scout"
         )
     # RefinementConfig describes an executable refinement pass and therefore
     # requires at least one candidate.  The session-level value zero is still
@@ -305,6 +339,35 @@ def session_config_from_args(args: argparse.Namespace) -> SessionConfig:
             ),
             minimum_region_gap_seconds=getattr(
                 args, "kis_timeline_min_region_gap_seconds", 5.0
+            ),
+        ),
+        selected_video_visual_verifier_config=SelectedVideoVisualVerifierConfig(
+            enabled=visual_verifier_enabled,
+            model_name=getattr(
+                args,
+                "kis_visual_verifier_model",
+                "Qwen/Qwen2.5-VL-3B-Instruct",
+            ),
+            model_revision=getattr(args, "kis_visual_verifier_revision", None),
+            shortlist_per_video=getattr(
+                args, "kis_visual_verifier_shortlist_per_video", 32
+            ),
+            coverage_bins=getattr(args, "kis_visual_verifier_coverage_bins", 12),
+            neighbor_sample_radius=getattr(
+                args, "kis_visual_verifier_neighbor_radius", 1
+            ),
+            max_new_tokens=getattr(args, "kis_visual_verifier_max_new_tokens", 512),
+            device=resolved_device,
+            allow_model_download=getattr(
+                args, "kis_visual_verifier_allow_model_download", False
+            ),
+            cache_dir=getattr(args, "kis_visual_verifier_cache_dir", None),
+            failure_policy=VisualVerifierFailurePolicy(
+                getattr(
+                    args,
+                    "kis_visual_verifier_failure_policy",
+                    VisualVerifierFailurePolicy.FALLBACK_CLIP.value,
+                )
             ),
         ),
         rrf_constant=args.rrf_constant,

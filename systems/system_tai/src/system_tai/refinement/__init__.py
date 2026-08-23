@@ -7,7 +7,9 @@ from system_tai.refinement.models import (
     RefinementConfig,
     RefinementStatus,
     SelectedVideoTimelineScoutConfig,
+    SelectedVideoVisualVerifierConfig,
     SharedRawRegionRefinementConfig,
+    VisualVerifierFailurePolicy,
 )
 
 __all__ = [
@@ -17,5 +19,7 @@ __all__ = [
     "RefinementConfig",
     "RefinementStatus",
     "SelectedVideoTimelineScoutConfig",
+    "SelectedVideoVisualVerifierConfig",
     "SharedRawRegionRefinementConfig",
+    "VisualVerifierFailurePolicy",
 ]

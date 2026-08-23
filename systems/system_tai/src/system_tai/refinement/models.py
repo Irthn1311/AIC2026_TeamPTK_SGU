@@ -26,6 +26,11 @@ class CandidateFailurePolicy(StrEnum):
     FAIL_QUERY = "fail-query"
 
 
+class VisualVerifierFailurePolicy(StrEnum):
+    FALLBACK_CLIP = "fallback-clip"
+    FAIL_QUERY = "fail-query"
+
+
 class RefinementStatus(StrEnum):
     REFINED = "REFINED"
     KEEP_ORIGINAL = "KEEP_ORIGINAL"
@@ -140,6 +145,47 @@ class SelectedVideoTimelineScoutConfig:
         ):
             if not math.isfinite(value) or value <= 0:
                 raise ValueError(f"{field_name} must be finite and positive")
+
+
+@dataclass(frozen=True, slots=True)
+class SelectedVideoVisualVerifierConfig:
+    """Opt-in VLM verification over an automatically constructed timeline shortlist.
+
+    Global CLIP winners are combined with deterministic full-timeline coverage bins.
+    The config intentionally contains no video, timestamp, frame, or label input.
+    """
+
+    enabled: bool = False
+    model_name: str = "Qwen/Qwen2.5-VL-3B-Instruct"
+    model_revision: str | None = None
+    shortlist_per_video: int = 32
+    coverage_bins: int = 12
+    neighbor_sample_radius: int = 1
+    max_new_tokens: int = 512
+    device: str = "cpu"
+    allow_model_download: bool = False
+    cache_dir: Path | None = None
+    failure_policy: VisualVerifierFailurePolicy = VisualVerifierFailurePolicy.FALLBACK_CLIP
+
+    def __post_init__(self) -> None:
+        if type(self.enabled) is not bool:
+            raise ValueError("enabled must be a boolean")
+        if not self.model_name.strip():
+            raise ValueError("visual verifier model_name must not be empty")
+        for field_name, value, lower, upper in (
+            ("shortlist_per_video", self.shortlist_per_video, 1, 128),
+            ("coverage_bins", self.coverage_bins, 1, 64),
+            ("neighbor_sample_radius", self.neighbor_sample_radius, 0, 4),
+            ("max_new_tokens", self.max_new_tokens, 32, 2048),
+        ):
+            if type(value) is not int or not lower <= value <= upper:
+                raise ValueError(f"{field_name} must be in [{lower}, {upper}]")
+        if self.coverage_bins > self.shortlist_per_video:
+            raise ValueError("coverage_bins must not exceed shortlist_per_video")
+        if self.device not in {"cpu", "cuda"}:
+            raise ValueError("visual verifier device must be cpu or cuda")
+        if not isinstance(self.failure_policy, VisualVerifierFailurePolicy):
+            raise ValueError("invalid visual verifier failure_policy")
 
 
 @dataclass(frozen=True, slots=True)

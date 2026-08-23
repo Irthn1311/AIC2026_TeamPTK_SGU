@@ -17,6 +17,7 @@ from system_tai.refinement.models import (
     Q3AnchorRefinementConfig,
     RefinementConfig,
     SelectedVideoTimelineScoutConfig,
+    SelectedVideoVisualVerifierConfig,
     SharedRawRegionRefinementConfig,
 )
 from system_tai.retrieval.multi_query import (
@@ -84,6 +85,9 @@ class SessionConfig:
     )
     selected_video_timeline_scout_config: SelectedVideoTimelineScoutConfig = field(
         default_factory=SelectedVideoTimelineScoutConfig
+    )
+    selected_video_visual_verifier_config: SelectedVideoVisualVerifierConfig = field(
+        default_factory=SelectedVideoVisualVerifierConfig
     )
     trake_video_first_config: TRAKEVideoFirstConfig = field(
         default_factory=TRAKEVideoFirstConfig
@@ -177,6 +181,19 @@ class SessionConfig:
             and not self.kis_video_first_config.enabled
         ):
             raise ValueError("timeline scout requires KIS semantic video-first retrieval")
+        if not isinstance(
+            self.selected_video_visual_verifier_config,
+            SelectedVideoVisualVerifierConfig,
+        ):
+            raise ValueError(
+                "selected_video_visual_verifier_config must be "
+                "SelectedVideoVisualVerifierConfig"
+            )
+        if (
+            self.selected_video_visual_verifier_config.enabled
+            and not self.selected_video_timeline_scout_config.enabled
+        ):
+            raise ValueError("visual verifier requires selected-video timeline scout")
         if (
             self.q3_anchor_refinement_config.enabled
             and not self.video_conditioned_keyframe_config.enabled

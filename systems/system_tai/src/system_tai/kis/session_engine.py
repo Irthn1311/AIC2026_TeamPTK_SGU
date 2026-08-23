@@ -76,6 +76,10 @@ from system_tai.refinement.q3_anchor import (
 )
 from system_tai.refinement.runner import _write_json, _write_refined_csv
 from system_tai.refinement.video import OpenCVVideoDecoder, RawVideoRegistry
+from system_tai.refinement.visual_verifier import (
+    HuggingFaceStructuredVisualVerifier,
+    StructuredVisualVerifier,
+)
 from system_tai.retrieval.multi_query import WeightedRRFRetriever
 from system_tai.retrieval.semantic_query import (
     SemanticQueryConfig,
@@ -143,6 +147,7 @@ class OperationalKISRuntime:
         raw_video_registry: RawVideoRegistry,
         shared_encoder: SharedOpenAIClipEncoder,
         decoder: OpenCVVideoDecoder,
+        visual_verifier: StructuredVisualVerifier | None = None,
         exporter: CheckpointExporter | None = None,
         validator: CheckpointValidator | None = None,
         object_answer_provider: ObjectEntityAnswerProvider | None = None,
@@ -157,6 +162,7 @@ class OperationalKISRuntime:
         self.raw_video_registry = raw_video_registry
         self.shared_encoder = shared_encoder
         self.decoder = decoder
+        self.visual_verifier = visual_verifier
         self.exporter = exporter or CheckpointExporter()
         self.validator = validator or CheckpointValidator()
         self.clock = clock
@@ -229,6 +235,7 @@ class OperationalKISRuntime:
             raw_videos=self.raw_video_registry,
             decoder=self.decoder,
             encoder=self.shared_encoder,
+            visual_verifier=self.visual_verifier,
             clock=self.clock,
         )
 
@@ -304,6 +311,7 @@ class OperationalKISRuntime:
         registry_loader: Callable[[Path], FeatureStoreRegistry] | None = None,
         encoder_factory: Callable[..., SharedOpenAIClipEncoder] | None = None,
         decoder_factory: Callable[[], OpenCVVideoDecoder] | None = None,
+        visual_verifier_factory: Callable[..., StructuredVisualVerifier] | None = None,
         exporter: CheckpointExporter | None = None,
         validator: CheckpointValidator | None = None,
         object_answer_provider: ObjectEntityAnswerProvider | None = None,
@@ -363,10 +371,14 @@ class OperationalKISRuntime:
         ref_config = config.refinement_config
         if ref_config.device not in {"cpu", "cuda"}:
             ref_config = dataclasses.replace(ref_config, device=resolved_device)
+        visual_config = config.selected_video_visual_verifier_config
+        if visual_config.device != resolved_device:
+            visual_config = dataclasses.replace(visual_config, device=resolved_device)
         exec_config = dataclasses.replace(
             config,
             device=resolved_device,
             refinement_config=ref_config,
+            selected_video_visual_verifier_config=visual_config,
         )
 
         registry_start = clock()
@@ -388,12 +400,31 @@ class OperationalKISRuntime:
         decoder_make = decoder_factory or OpenCVVideoDecoder
         decoder = decoder_make()
 
+        visual_verifier = None
+        visual_verifier_model_seconds = 0.0
+        visual_config = exec_config.selected_video_visual_verifier_config
+        if visual_config.enabled:
+            visual_model_start = clock()
+            visual_factory = (
+                visual_verifier_factory or HuggingFaceStructuredVisualVerifier
+            )
+            visual_verifier = visual_factory(
+                model_name=visual_config.model_name,
+                revision=visual_config.model_revision,
+                device=resolved_device,
+                allow_model_download=visual_config.allow_model_download,
+                cache_dir=visual_config.cache_dir,
+                max_new_tokens=visual_config.max_new_tokens,
+            )
+            visual_verifier_model_seconds = clock() - visual_model_start
+
         bootstrap_timings = {
             "discovery_seconds": discovery_seconds,
             "manifest_load_or_build_seconds": manifest_seconds,
             "manifest_write_seconds": manifest_write_seconds,
             "registry_load_seconds": registry_seconds,
             "model_load_seconds": model_seconds,
+            "visual_verifier_model_load_seconds": visual_verifier_model_seconds,
             "total_bootstrap_seconds": clock() - start_time,
             "manifest_source_status": manifest_source_status,
             **discovery_metrics.to_payload(),
@@ -407,6 +438,7 @@ class OperationalKISRuntime:
             raw_video_registry=raw_video_registry,
             shared_encoder=shared_encoder,
             decoder=decoder,
+            visual_verifier=visual_verifier,
             exporter=exporter,
             validator=validator,
             object_answer_provider=object_answer_provider,
@@ -831,6 +863,8 @@ class OperationalKISRuntime:
         timeline_decoded_frame_count = 0
         timeline_encoded_image_count = 0
         timeline_region_count = 0
+        timeline_visual_verified_candidate_count = 0
+        timeline_visual_verifier_seconds = 0.0
         timeline_refined_count = 0
         timeline_kept_original_count = 0
         timeline_collision_skip_count = 0
@@ -986,10 +1020,15 @@ class OperationalKISRuntime:
             if timeline_enabled:
                 timeline_outcome = self.refiner.scout_selected_video_timelines(
                     query_id=request.query_id,
+                    query_vi=request.query_vi,
+                    query_en=compiled_semantic_query.variants[0].raw_english,
                     variants=variants,
                     ranked_video_ids=tuple(item.video_id for item in selected_videos),
                     rank_slots=phase3_candidates,
                     config=timeline_config,
+                    visual_verifier_config=(
+                        self.config.selected_video_visual_verifier_config
+                    ),
                     refinement_config=exec_ref_config,
                     precomputed_text_embeddings=variant_embeddings,
                     frame_embedding_cache=frame_embedding_cache,
@@ -1024,6 +1063,14 @@ class OperationalKISRuntime:
                 )
                 timeline_region_count = int(
                     timeline_outcome.timings["timeline_region_count"]
+                )
+                timeline_visual_verified_candidate_count = int(
+                    timeline_outcome.timings[
+                        "timeline_visual_verified_candidate_count"
+                    ]
+                )
+                timeline_visual_verifier_seconds = float(
+                    timeline_outcome.timings["timeline_visual_verifier_seconds"]
                 )
                 timeline_refined_count = timeline_integration.refined_count
                 timeline_kept_original_count = timeline_integration.kept_original_count
@@ -1160,6 +1207,9 @@ class OperationalKISRuntime:
             "selected_video_timeline_scout_config": dataclasses.asdict(
                 timeline_config
             ),
+            "selected_video_visual_verifier_config": dataclasses.asdict(
+                self.config.selected_video_visual_verifier_config
+            ),
             "retrieval_valid": validation.valid,
             "refinement_requested": refinement_requested,
             "refinement_valid": refinement_valid,
@@ -1224,6 +1274,13 @@ class OperationalKISRuntime:
             "timeline_decoded_frame_count": timeline_decoded_frame_count,
             "timeline_encoded_image_count": timeline_encoded_image_count,
             "timeline_region_count": timeline_region_count,
+            "timeline_visual_verifier_enabled": (
+                self.config.selected_video_visual_verifier_config.enabled
+            ),
+            "timeline_visual_verified_candidate_count": (
+                timeline_visual_verified_candidate_count
+            ),
+            "timeline_visual_verifier_seconds": timeline_visual_verifier_seconds,
             "timeline_refined_count": timeline_refined_count,
             "timeline_kept_original_count": timeline_kept_original_count,
             "timeline_collision_skip_count": timeline_collision_skip_count,

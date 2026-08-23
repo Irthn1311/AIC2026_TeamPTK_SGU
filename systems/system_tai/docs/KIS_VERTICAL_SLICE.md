@@ -715,6 +715,32 @@ This stage repairs temporal coverage after video nomination; it is not evidence 
 can verify exact people/hat/glasses counts or other multi-attribute conjunctions. Private
 Kaggle visual acceptance remains required.
 
+### Bounded structured visual predicate verifier (experimental opt-in)
+
+- **Input:** the Vietnamese query, its pinned VinAI full-query translation, and a bounded
+  shortlist built only from the automatically selected-video timeline samples. No target
+  video, timestamp, frame, benchmark label, or ground truth is accepted.
+- **Shortlist:** global CLIP leaders are combined with one deterministic midpoint sample
+  from each full-timeline coverage bin. This preserves broad CLIP precision while ensuring
+  that visually subtle late regions can reach the verifier. Neighboring sampled frames are
+  presented together in temporal order.
+- **Output:** structured per-requirement scores for visible actions, objects, relations,
+  colors, and counts; overall match and coverage; a bounded text summary; and a reranked
+  region list. Images, embeddings, and model tensors are never written to trace artifacts.
+- **Ranking:** the VLM score scale is not numerically mixed with raw CLIP cosine. Verified
+  candidates sort by all-requirements-satisfied, VLM match score, requirement coverage,
+  prior CLIP fusion score, then absolute frame ID. Existing temporal NMS and dense raw-video
+  refinement run afterward. Rank-slot/video preservation and shared frame semantics remain
+  unchanged.
+- **Lifecycle/dependencies:** one optional local Hugging Face image-text model is loaded per
+  operational session and reused. It never downloads unless
+  `--kis-visual-verifier-allow-model-download` is explicitly supplied. Failure either falls
+  back explicitly to CLIP or fails the query according to configured policy.
+- **Status:** implemented behind `--enable-kis-visual-predicate-verifier`; it additionally
+  requires semantic video-first retrieval, selected-video timeline scouting, and refinement.
+  Default/off behavior remains unchanged. Synthetic tests prove mechanics only; semantic
+  quality and latency require private Kaggle/GPU acceptance.
+
 ## Phase 4.3C0 — Refinement Stage Timings
 - **Status**: [IMPLEMENTED] locally; Phase 4.3C0: instrumentation for stage-level Kaggle profiling.
 - **Decision**: No optimization claim. PRIVATE KAGGLE STAGE PROFILE PENDING.
