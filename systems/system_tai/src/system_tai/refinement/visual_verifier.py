@@ -104,6 +104,31 @@ class VisualVerificationResult:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class VisualVerificationFailure:
+    """Bounded diagnostic for one candidate that failed primary and retry attempts."""
+
+    video_id: str
+    absolute_frame_id: int
+    primary_error: str
+    retry_error: str
+
+    def __post_init__(self) -> None:
+        if not self.video_id.strip() or self.absolute_frame_id < 0:
+            raise ValueError("invalid visual verification failure identity")
+
+    def to_trace(self) -> Mapping[str, Any]:
+        return MappingProxyType(
+            {
+                "video_id": self.video_id,
+                "absolute_frame_id": self.absolute_frame_id,
+                "attempt_count": 2,
+                "primary_error": self.primary_error,
+                "retry_error": self.retry_error,
+            }
+        )
+
+
 class StructuredVisualVerifier(Protocol):
     identifiers: Mapping[str, Any]
 
@@ -114,6 +139,13 @@ class StructuredVisualVerifier(Protocol):
         query_en: str,
         candidates: Sequence[VisualVerificationInput],
     ) -> tuple[VisualVerificationResult, ...]: ...
+
+
+def _bounded_error(exc: BaseException, *, limit: int = 500) -> str:
+    rendered = f"{type(exc).__name__}: {exc}"
+    if len(rendered) <= limit:
+        return rendered
+    return rendered[: limit - 3] + "..."
 
 
 def _reject_duplicate_json_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -253,6 +285,8 @@ class HuggingFaceStructuredVisualVerifier:
         self._device = device
         self._max_new_tokens = max_new_tokens
         self._progress_callback = progress_callback
+        self._last_failures: tuple[VisualVerificationFailure, ...] = ()
+        self._last_recovered_retries: tuple[Mapping[str, Any], ...] = ()
         self.identifiers: Mapping[str, Any] = MappingProxyType(
             {
                 "provider": "huggingface-structured-visual-verifier",
@@ -267,6 +301,18 @@ class HuggingFaceStructuredVisualVerifier:
             }
         )
 
+    @property
+    def last_failures(self) -> tuple[VisualVerificationFailure, ...]:
+        """Candidate-local failures from the most recent verify call."""
+
+        return self._last_failures
+
+    @property
+    def last_recovered_retries(self) -> tuple[Mapping[str, Any], ...]:
+        """Successful bounded retries from the most recent verify call."""
+
+        return self._last_recovered_retries
+
     def verify(
         self,
         *,
@@ -274,9 +320,20 @@ class HuggingFaceStructuredVisualVerifier:
         query_en: str,
         candidates: Sequence[VisualVerificationInput],
     ) -> tuple[VisualVerificationResult, ...]:
+        """Verify frames independently so one malformed result is not batch-fatal.
+
+        Inputs retain absolute original-video frame IDs. The return value contains only
+        successful results; bounded candidate failures and recovered retries are exposed
+        through diagnostic properties for the caller's explicit policy handling.
+        """
+
+        self._last_failures = ()
+        self._last_recovered_retries = ()
         if not query_vi.strip() or not query_en.strip():
             raise ValueError("visual verification requires Vietnamese and English query text")
         results: list[VisualVerificationResult] = []
+        failures: list[VisualVerificationFailure] = []
+        recovered_retries: list[Mapping[str, Any]] = []
         total = len(candidates)
         for index, candidate in enumerate(candidates, start=1):
             started = time.perf_counter()
@@ -285,61 +342,125 @@ class HuggingFaceStructuredVisualVerifier:
                 f"{candidate.video_id}/{candidate.absolute_frame_id} "
                 f"images={len(candidate.images)}"
             )
-            prompt = self._build_prompt(query_vi=query_vi, query_en=query_en)
-            images = [self._to_rgb_image(image) for image in candidate.images]
-            content = [{"type": "image"} for _ in images]
-            content.append({"type": "text", "text": prompt})
-            messages = [{"role": "user", "content": content}]
             try:
-                rendered = self._processor.apply_chat_template(
-                    messages,
-                    tokenize=False,
-                    add_generation_prompt=True,
+                result = self._verify_candidate(
+                    query_vi=query_vi,
+                    query_en=query_en,
+                    candidate=candidate,
+                    images=candidate.images,
+                    max_new_tokens=self._max_new_tokens,
                 )
-                inputs = self._processor(
-                    text=[rendered],
-                    images=images,
-                    return_tensors="pt",
-                    padding=True,
+            except Exception as primary_exc:
+                retry_images = (candidate.images[len(candidate.images) // 2],)
+                retry_max_tokens = min(self._max_new_tokens, 192)
+                self._progress(
+                    f"visual verifier candidate {index}/{total} primary failed: "
+                    f"{type(primary_exc).__name__}: {primary_exc}; retrying with "
+                    f"images=1 max_new_tokens={retry_max_tokens}"
                 )
-                inputs = {
-                    key: value.to(self._device) if hasattr(value, "to") else value
-                    for key, value in inputs.items()
-                }
-                inference_context = getattr(
-                    self._torch,
-                    "inference_mode",
-                    self._torch.no_grad,
-                )
-                with inference_context():
-                    generated = self._model.generate(
-                        **inputs,
-                        max_new_tokens=self._max_new_tokens,
-                        do_sample=False,
+                try:
+                    result = self._verify_candidate(
+                        query_vi=query_vi,
+                        query_en=query_en,
+                        candidate=candidate,
+                        images=retry_images,
+                        max_new_tokens=retry_max_tokens,
                     )
-                input_length = int(inputs["input_ids"].shape[1])
-                decoded = self._processor.batch_decode(
-                    generated[:, input_length:],
-                    skip_special_tokens=True,
-                    clean_up_tokenization_spaces=False,
-                )[0]
-            except Exception as exc:
-                raise VisualVerificationError(
-                    f"visual verification generation failed for "
-                    f"{candidate.video_id}/{candidate.absolute_frame_id}: {exc}"
-                ) from exc
-            results.append(
-                parse_visual_verification_json(
-                    decoded,
-                    video_id=candidate.video_id,
-                    absolute_frame_id=candidate.absolute_frame_id,
+                except Exception as retry_exc:
+                    failures.append(
+                        VisualVerificationFailure(
+                            video_id=candidate.video_id,
+                            absolute_frame_id=candidate.absolute_frame_id,
+                            primary_error=_bounded_error(primary_exc),
+                            retry_error=_bounded_error(retry_exc),
+                        )
+                    )
+                    self._progress(
+                        f"visual verifier candidate {index}/{total} failed after "
+                        f"retry in {time.perf_counter() - started:.2f}s: "
+                        f"{type(retry_exc).__name__}: {retry_exc}"
+                    )
+                    continue
+                recovered_retries.append(
+                    MappingProxyType(
+                        {
+                            "video_id": candidate.video_id,
+                            "absolute_frame_id": candidate.absolute_frame_id,
+                            "primary_error": _bounded_error(primary_exc),
+                            "retry_image_count": 1,
+                            "retry_max_new_tokens": retry_max_tokens,
+                        }
+                    )
                 )
-            )
+                self._progress(
+                    f"visual verifier candidate {index}/{total} recovered on retry"
+                )
+            results.append(result)
             self._progress(
                 f"visual verifier candidate {index}/{total} completed in "
                 f"{time.perf_counter() - started:.2f}s"
             )
+        self._last_failures = tuple(failures)
+        self._last_recovered_retries = tuple(recovered_retries)
         return tuple(results)
+
+    def _verify_candidate(
+        self,
+        *,
+        query_vi: str,
+        query_en: str,
+        candidate: VisualVerificationInput,
+        images: Sequence[Any],
+        max_new_tokens: int,
+    ) -> VisualVerificationResult:
+        prompt = self._build_prompt(query_vi=query_vi, query_en=query_en)
+        rgb_images = [self._to_rgb_image(image) for image in images]
+        content = [{"type": "image"} for _ in rgb_images]
+        content.append({"type": "text", "text": prompt})
+        messages = [{"role": "user", "content": content}]
+        try:
+            rendered = self._processor.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+            inputs = self._processor(
+                text=[rendered],
+                images=rgb_images,
+                return_tensors="pt",
+                padding=True,
+            )
+            inputs = {
+                key: value.to(self._device) if hasattr(value, "to") else value
+                for key, value in inputs.items()
+            }
+            inference_context = getattr(
+                self._torch,
+                "inference_mode",
+                self._torch.no_grad,
+            )
+            with inference_context():
+                generated = self._model.generate(
+                    **inputs,
+                    max_new_tokens=max_new_tokens,
+                    do_sample=False,
+                )
+            input_length = int(inputs["input_ids"].shape[1])
+            decoded = self._processor.batch_decode(
+                generated[:, input_length:],
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=False,
+            )[0]
+        except Exception as exc:
+            raise VisualVerificationError(
+                f"visual verification generation failed for "
+                f"{candidate.video_id}/{candidate.absolute_frame_id}: {exc}"
+            ) from exc
+        return parse_visual_verification_json(
+            decoded,
+            video_id=candidate.video_id,
+            absolute_frame_id=candidate.absolute_frame_id,
+        )
 
     @staticmethod
     def _build_prompt(*, query_vi: str, query_en: str) -> str:

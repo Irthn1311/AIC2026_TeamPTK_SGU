@@ -310,15 +310,22 @@ def rank_visually_verified_timeline_frames(
     shortlist: Sequence[LocalFrameFusion],
     results: Sequence[VisualVerificationResult],
 ) -> tuple[LocalFrameFusion, ...]:
-    """Rank VLM-verified frames without mixing raw CLIP and VLM score scales."""
+    """Rank successful VLM results, then candidate-local CLIP fallbacks.
+
+    VLM and raw CLIP score scales are never added or compared numerically. A partial
+    result set is valid: successfully verified frames form the leading partition and
+    failed candidates retain their original CLIP order in the fallback partition.
+    """
     by_frame = {item.absolute_frame_id: item for item in shortlist}
-    if len(results) != len(shortlist):
-        raise ValueError("visual verifier result count mismatch")
-    if {item.absolute_frame_id for item in results} != set(by_frame):
-        raise ValueError("visual verifier result identity mismatch")
     result_by_frame = {item.absolute_frame_id: item for item in results}
-    ordered = sorted(
-        shortlist,
+    if len(result_by_frame) != len(results):
+        raise ValueError("visual verifier returned duplicate frame identities")
+    if not set(result_by_frame).issubset(by_frame):
+        raise ValueError("visual verifier result identity mismatch")
+    if not result_by_frame:
+        raise ValueError("visual verifier returned no successful results")
+    verified = sorted(
+        (item for item in shortlist if item.absolute_frame_id in result_by_frame),
         key=lambda item: (
             -int(
                 result_by_frame[
@@ -331,19 +338,35 @@ def rank_visually_verified_timeline_frames(
             item.absolute_frame_id,
         ),
     )
+    fallbacks = [
+        item for item in shortlist if item.absolute_frame_id not in result_by_frame
+    ]
+    ordered = [*verified, *fallbacks]
     return tuple(
         LocalFrameFusion(
             absolute_frame_id=item.absolute_frame_id,
-            fusion_score=result_by_frame[item.absolute_frame_id].match_score,
+            fusion_score=(
+                result_by_frame[item.absolute_frame_id].match_score
+                if item.absolute_frame_id in result_by_frame
+                else item.fusion_score
+            ),
             variant_hit_count=item.variant_hit_count,
             best_individual_rank=item.best_individual_rank,
             per_variant_provenance=(
                 *item.per_variant_provenance,
-                {
-                    "visual_verification": dict(
-                        result_by_frame[item.absolute_frame_id].to_trace()
-                    )
-                },
+                (
+                    {
+                        "visual_verification": dict(
+                            result_by_frame[item.absolute_frame_id].to_trace()
+                        )
+                    }
+                    if item.absolute_frame_id in result_by_frame
+                    else {
+                        "visual_verification": {
+                            "status": "CANDIDATE_FALLBACK_CLIP"
+                        }
+                    }
+                ),
             ),
         )
         for item in ordered
@@ -885,20 +908,66 @@ class ExactFrameRefiner:
                     verify_started = self.clock()
                     try:
                         assert self.visual_verifier is not None
-                        verification_results = self.visual_verifier.verify(
-                            query_vi=query_vi,
-                            query_en=query_en,
-                            candidates=verification_inputs,
+                        try:
+                            verification_results = self.visual_verifier.verify(
+                                query_vi=query_vi,
+                                query_en=query_en,
+                                candidates=verification_inputs,
+                            )
+                        finally:
+                            visual_verifier_seconds += (
+                                self.clock() - verify_started
+                            )
+                        candidate_failures = tuple(
+                            getattr(self.visual_verifier, "last_failures", ())
                         )
-                        visual_verifier_seconds += self.clock() - verify_started
+                        recovered_retries = tuple(
+                            getattr(
+                                self.visual_verifier,
+                                "last_recovered_retries",
+                                (),
+                            )
+                        )
+                        if candidate_failures and (
+                            visual_verifier_config.failure_policy
+                            is VisualVerifierFailurePolicy.FAIL_QUERY
+                        ):
+                            raise VisualVerificationError(
+                                "visual verifier candidate failures: "
+                                + "; ".join(
+                                    f"{item.video_id}/{item.absolute_frame_id}: "
+                                    f"{item.retry_error}"
+                                    for item in candidate_failures
+                                )
+                            )
+                        if not verification_results:
+                            raise VisualVerificationError(
+                                "visual verifier returned no successful candidates"
+                            )
                         visual_verified_count += len(verification_results)
                         ranked_for_selection = rank_visually_verified_timeline_frames(
                             shortlist,
                             verification_results,
                         )
+                        failure_traces = [
+                            dict(item.to_trace()) for item in candidate_failures
+                        ]
+                        if candidate_failures:
+                            warnings.append(
+                                "visual verifier candidate-local fallback to CLIP for "
+                                f"{video_id}: "
+                                + ", ".join(
+                                    str(item.absolute_frame_id)
+                                    for item in candidate_failures
+                                )
+                            )
                         verification_trace = {
                             "enabled": True,
-                            "status": "SUCCESS",
+                            "status": (
+                                "PARTIAL_SUCCESS"
+                                if candidate_failures
+                                else "SUCCESS"
+                            ),
                             "provider": dict(self.visual_verifier.identifiers),
                             "execution": execution_trace,
                             "shortlist_frame_ids": [
@@ -907,9 +976,16 @@ class ExactFrameRefiner:
                             "results": [
                                 dict(item.to_trace()) for item in verification_results
                             ],
+                            "successful_candidate_count": len(
+                                verification_results
+                            ),
+                            "failed_candidate_count": len(candidate_failures),
+                            "failures": failure_traces,
+                            "recovered_retries": [
+                                dict(item) for item in recovered_retries
+                            ],
                         }
                     except Exception as exc:
-                        visual_verifier_seconds += self.clock() - verify_started
                         if (
                             visual_verifier_config.failure_policy
                             is VisualVerifierFailurePolicy.FAIL_QUERY

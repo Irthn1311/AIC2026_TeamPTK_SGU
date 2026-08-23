@@ -9,9 +9,55 @@ from system_tai.refinement.models import (
     VisualVerifierExecutionMode,
 )
 from system_tai.refinement.visual_verifier import (
+    HuggingFaceStructuredVisualVerifier,
+    VisualPredicateScore,
     VisualVerificationError,
+    VisualVerificationInput,
+    VisualVerificationResult,
     parse_visual_verification_json,
 )
+
+
+def _verification_result(frame_id: int) -> VisualVerificationResult:
+    return VisualVerificationResult(
+        video_id="V",
+        absolute_frame_id=frame_id,
+        match_score=0.9,
+        requirement_coverage=0.8,
+        all_visible_requirements_satisfied=False,
+        predicates=(VisualPredicateScore("action", 0.9, True, "visible"),),
+        summary="synthetic",
+    )
+
+
+class _CandidateIsolationVerifier(HuggingFaceStructuredVisualVerifier):
+    """Exercise the production retry loop without loading a real model."""
+
+    def __init__(self) -> None:
+        self._max_new_tokens = 384
+        self._progress_callback = None
+        self._last_failures = ()
+        self._last_recovered_retries = ()
+        self.calls: list[tuple[int, int, int]] = []
+
+    def _verify_candidate(
+        self,
+        *,
+        query_vi,
+        query_en,
+        candidate,
+        images,
+        max_new_tokens,
+    ):
+        del query_vi, query_en
+        self.calls.append(
+            (candidate.absolute_frame_id, len(images), max_new_tokens)
+        )
+        if candidate.absolute_frame_id == 20 and len(images) > 1:
+            raise VisualVerificationError("primary parse failed")
+        if candidate.absolute_frame_id == 30:
+            raise VisualVerificationError("persistent parse failure")
+        return _verification_result(candidate.absolute_frame_id)
 
 
 def test_structured_visual_result_parses_without_provenance_leak() -> None:
@@ -66,6 +112,34 @@ def test_structured_visual_result_rejects_duplicate_json_keys() -> None:
             video_id="V",
             absolute_frame_id=1,
         )
+
+
+def test_candidate_failure_retries_then_isolates_without_discarding_later_results() -> None:
+    verifier = _CandidateIsolationVerifier()
+    candidates = tuple(
+        VisualVerificationInput("V", frame_id, frame_id / 10.0, (1, 2, 3))
+        for frame_id in (10, 20, 30, 40)
+    )
+
+    results = verifier.verify(
+        query_vi="mô tả",
+        query_en="description",
+        candidates=candidates,
+    )
+
+    assert tuple(item.absolute_frame_id for item in results) == (10, 20, 40)
+    assert verifier.calls == [
+        (10, 3, 384),
+        (20, 3, 384),
+        (20, 1, 192),
+        (30, 3, 384),
+        (30, 1, 192),
+        (40, 3, 384),
+    ]
+    assert tuple(item.absolute_frame_id for item in verifier.last_failures) == (30,)
+    assert tuple(
+        item["absolute_frame_id"] for item in verifier.last_recovered_retries
+    ) == (20,)
 
 
 def test_visual_verifier_config_is_bounded_and_default_off() -> None:

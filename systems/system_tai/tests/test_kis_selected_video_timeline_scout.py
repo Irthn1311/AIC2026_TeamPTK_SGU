@@ -33,6 +33,7 @@ from system_tai.refinement.video import (
 from system_tai.refinement.visual_verifier import (
     VisualPredicateScore,
     VisualVerificationError,
+    VisualVerificationFailure,
     VisualVerificationResult,
 )
 from system_tai.retrieval.multi_query import (
@@ -215,6 +216,49 @@ class _FailingVerifier:
         raise RuntimeError("synthetic verifier failure")
 
 
+class _PartiallyFailingVerifier:
+    identifiers = {"provider": "partial"}
+    last_recovered_retries = ()
+
+    def __init__(self) -> None:
+        self.last_failures = ()
+        self.target_frame = None
+
+    def verify(self, *, query_vi, query_en, candidates):
+        del query_vi, query_en
+        failed = candidates[1]
+        target = candidates[-1]
+        self.target_frame = target.absolute_frame_id
+        self.last_failures = (
+            VisualVerificationFailure(
+                failed.video_id,
+                failed.absolute_frame_id,
+                "primary",
+                "retry",
+            ),
+        )
+        return tuple(
+            VisualVerificationResult(
+                video_id=item.video_id,
+                absolute_frame_id=item.absolute_frame_id,
+                match_score=(1.0 if item is target else 0.1),
+                requirement_coverage=(1.0 if item is target else 0.1),
+                all_visible_requirements_satisfied=(item is target),
+                predicates=(
+                    VisualPredicateScore(
+                        "synthetic conjunction",
+                        1.0 if item is target else 0.1,
+                        item is target,
+                        "synthetic evidence",
+                    ),
+                ),
+                summary="synthetic",
+            )
+            for item in candidates
+            if item is not failed
+        )
+
+
 def test_coverage_shortlist_includes_late_bin_despite_low_global_clip_rank() -> None:
     ranked = tuple(
         # Deliberately make early frames dominate global CLIP rank.
@@ -337,6 +381,59 @@ def test_visual_verifier_failure_falls_back_to_clip_with_explicit_warning(
     assert outcome.candidates[0].frame_id == 0
     assert any("fallback to CLIP" in warning for warning in outcome.warnings)
     assert outcome.trace["videos"][0]["visual_verification"]["status"] == "FALLBACK_CLIP"
+
+
+def test_visual_verifier_candidate_failure_keeps_successes_and_later_candidate(
+    tmp_path: Path,
+) -> None:
+    video_path = tmp_path / "video-alpha.mp4"
+    video_path.touch()
+    verifier = _PartiallyFailingVerifier()
+    refiner = ExactFrameRefiner(
+        raw_videos=RawVideoRegistry((RawVideoRecord("video-alpha", video_path),)),
+        decoder=_SyntheticDecoder(),
+        encoder=_SyntheticEncoder(peak_frame=0),
+        visual_verifier=verifier,
+    )
+    variant = QueryVariant(
+        "scene",
+        "English description",
+        QueryLanguage.ENGLISH,
+        QueryVariantType.ENGLISH_TRANSLATION,
+        1.0,
+    )
+
+    outcome = refiner.scout_selected_video_timelines(
+        query_id="Q",
+        query_vi="mô tả tiếng Việt",
+        query_en="English description",
+        variants=(variant,),
+        ranked_video_ids=("video-alpha",),
+        rank_slots=(_slot(1, "video-alpha", 10),),
+        config=SelectedVideoTimelineScoutConfig(
+            enabled=True,
+            max_videos=1,
+            sample_stride_seconds=2.0,
+            max_samples_per_video=6,
+            max_regions_per_video=1,
+            minimum_region_gap_seconds=1.0,
+        ),
+        visual_verifier_config=SelectedVideoVisualVerifierConfig(
+            enabled=True,
+            shortlist_per_video=4,
+            coverage_bins=3,
+        ),
+        refinement_config=RefinementConfig(),
+        precomputed_text_embeddings=np.asarray([[1.0, 0.0]], dtype=np.float32),
+        frame_embedding_cache={},
+    )
+
+    assert outcome.candidates[0].frame_id == verifier.target_frame
+    verification = outcome.trace["videos"][0]["visual_verification"]
+    assert verification["status"] == "PARTIAL_SUCCESS"
+    assert verification["successful_candidate_count"] == 3
+    assert verification["failed_candidate_count"] == 1
+    assert any("candidate-local fallback" in item for item in outcome.warnings)
 
 
 def test_visual_verifier_cpu_auto_profile_bounds_candidates_and_neighbor_images(
