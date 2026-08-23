@@ -33,6 +33,7 @@ from system_tai.refinement.models import (
     RefinementConfig,
     SelectedVideoTimelineScoutConfig,
     SelectedVideoVisualVerifierConfig,
+    VisualVerifierExecutionMode,
     VisualVerifierFailurePolicy,
 )
 from system_tai.refinement.video import CoarseDecodeStrategy
@@ -138,6 +139,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--kis-visual-verifier-coverage-bins", type=int, default=12)
     parser.add_argument("--kis-visual-verifier-neighbor-radius", type=int, default=1)
     parser.add_argument("--kis-visual-verifier-max-new-tokens", type=int, default=512)
+    parser.add_argument(
+        "--kis-visual-verifier-execution-mode",
+        choices=tuple(mode.value for mode in VisualVerifierExecutionMode),
+        default=VisualVerifierExecutionMode.AUTO.value,
+        help=(
+            "auto applies a bounded CPU-safe workload on CPU and preserves the "
+            "requested workload on CUDA; full always preserves requested values."
+        ),
+    )
     parser.add_argument(
         "--kis-visual-verifier-failure-policy",
         choices=tuple(policy.value for policy in VisualVerifierFailurePolicy),
@@ -358,6 +368,13 @@ def session_config_from_args(args: argparse.Namespace) -> SessionConfig:
             ),
             max_new_tokens=getattr(args, "kis_visual_verifier_max_new_tokens", 512),
             device=resolved_device,
+            execution_mode=VisualVerifierExecutionMode(
+                getattr(
+                    args,
+                    "kis_visual_verifier_execution_mode",
+                    VisualVerifierExecutionMode.AUTO.value,
+                )
+            ),
             allow_model_download=getattr(
                 args, "kis_visual_verifier_allow_model_download", False
             ),

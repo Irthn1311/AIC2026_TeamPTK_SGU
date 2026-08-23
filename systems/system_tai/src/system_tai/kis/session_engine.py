@@ -414,7 +414,24 @@ class OperationalKISRuntime:
                 device=resolved_device,
                 allow_model_download=visual_config.allow_model_download,
                 cache_dir=visual_config.cache_dir,
-                max_new_tokens=visual_config.max_new_tokens,
+                max_new_tokens=visual_config.effective_max_new_tokens,
+                **(
+                    {
+                        "max_image_pixels": visual_config.effective_max_image_pixels,
+                        "execution_profile": (
+                            "cpu-fast"
+                            if visual_config.cpu_fast_profile_applied
+                            else "full"
+                        ),
+                        "progress_callback": lambda message: print(
+                            message,
+                            file=sys.stderr,
+                            flush=True,
+                        ),
+                    }
+                    if visual_verifier_factory is None
+                    else {}
+                ),
             )
             visual_verifier_model_seconds = clock() - visual_model_start
 

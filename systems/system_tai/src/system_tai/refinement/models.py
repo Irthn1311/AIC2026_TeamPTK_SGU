@@ -31,6 +31,14 @@ class VisualVerifierFailurePolicy(StrEnum):
     FAIL_QUERY = "fail-query"
 
 
+class VisualVerifierExecutionMode(StrEnum):
+    """Select the bounded workload used by the optional generative verifier."""
+
+    AUTO = "auto"
+    FULL = "full"
+    CPU_FAST = "cpu-fast"
+
+
 class RefinementStatus(StrEnum):
     REFINED = "REFINED"
     KEEP_ORIGINAL = "KEEP_ORIGINAL"
@@ -163,6 +171,7 @@ class SelectedVideoVisualVerifierConfig:
     neighbor_sample_radius: int = 1
     max_new_tokens: int = 512
     device: str = "cpu"
+    execution_mode: VisualVerifierExecutionMode = VisualVerifierExecutionMode.AUTO
     allow_model_download: bool = False
     cache_dir: Path | None = None
     failure_policy: VisualVerifierFailurePolicy = VisualVerifierFailurePolicy.FALLBACK_CLIP
@@ -184,8 +193,69 @@ class SelectedVideoVisualVerifierConfig:
             raise ValueError("coverage_bins must not exceed shortlist_per_video")
         if self.device not in {"cpu", "cuda"}:
             raise ValueError("visual verifier device must be cpu or cuda")
+        if not isinstance(self.execution_mode, VisualVerifierExecutionMode):
+            raise ValueError("invalid visual verifier execution_mode")
         if not isinstance(self.failure_policy, VisualVerifierFailurePolicy):
             raise ValueError("invalid visual verifier failure_policy")
+
+    @property
+    def cpu_fast_profile_applied(self) -> bool:
+        return self.execution_mode is VisualVerifierExecutionMode.CPU_FAST or (
+            self.execution_mode is VisualVerifierExecutionMode.AUTO
+            and self.device == "cpu"
+        )
+
+    @property
+    def effective_shortlist_per_video(self) -> int:
+        return (
+            min(self.shortlist_per_video, 6)
+            if self.cpu_fast_profile_applied
+            else self.shortlist_per_video
+        )
+
+    @property
+    def effective_coverage_bins(self) -> int:
+        if self.cpu_fast_profile_applied:
+            return min(self.coverage_bins, 4, self.effective_shortlist_per_video)
+        return self.coverage_bins
+
+    @property
+    def effective_neighbor_sample_radius(self) -> int:
+        return 0 if self.cpu_fast_profile_applied else self.neighbor_sample_radius
+
+    @property
+    def effective_max_new_tokens(self) -> int:
+        if self.cpu_fast_profile_applied:
+            return min(self.max_new_tokens, 192)
+        return self.max_new_tokens
+
+    @property
+    def effective_max_image_pixels(self) -> int | None:
+        if self.cpu_fast_profile_applied:
+            # Qwen-VL pixels are grouped into 28x28 visual-token patches.
+            return 256 * 28 * 28
+        return None
+
+    def execution_trace(self) -> Mapping[str, Any]:
+        return MappingProxyType(
+            {
+                "mode": self.execution_mode.value,
+                "cpu_fast_profile_applied": self.cpu_fast_profile_applied,
+                "requested": {
+                    "shortlist_per_video": self.shortlist_per_video,
+                    "coverage_bins": self.coverage_bins,
+                    "neighbor_sample_radius": self.neighbor_sample_radius,
+                    "max_new_tokens": self.max_new_tokens,
+                },
+                "effective": {
+                    "shortlist_per_video": self.effective_shortlist_per_video,
+                    "coverage_bins": self.effective_coverage_bins,
+                    "neighbor_sample_radius": self.effective_neighbor_sample_radius,
+                    "max_new_tokens": self.effective_max_new_tokens,
+                    "max_image_pixels": self.effective_max_image_pixels,
+                },
+            }
+        )
 
 
 @dataclass(frozen=True, slots=True)

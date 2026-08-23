@@ -19,6 +19,7 @@ from system_tai.refinement.models import (
     RefinementConfig,
     SelectedVideoTimelineScoutConfig,
     SelectedVideoVisualVerifierConfig,
+    VisualVerifierExecutionMode,
     VisualVerifierFailurePolicy,
 )
 from system_tai.refinement.video import (
@@ -334,8 +335,65 @@ def test_visual_verifier_failure_falls_back_to_clip_with_explicit_warning(
     )
 
     assert outcome.candidates[0].frame_id == 0
-    assert "fallback to CLIP" in outcome.warnings[0]
+    assert any("fallback to CLIP" in warning for warning in outcome.warnings)
     assert outcome.trace["videos"][0]["visual_verification"]["status"] == "FALLBACK_CLIP"
+
+
+def test_visual_verifier_cpu_auto_profile_bounds_candidates_and_neighbor_images(
+    tmp_path: Path,
+) -> None:
+    video_path = tmp_path / "video-alpha.mp4"
+    video_path.touch()
+    verifier = _TailVerifier(target_frame=100)
+    refiner = ExactFrameRefiner(
+        raw_videos=RawVideoRegistry((RawVideoRecord("video-alpha", video_path),)),
+        decoder=_SyntheticDecoder(total_frames=201),
+        encoder=_SyntheticEncoder(peak_frame=0),
+        visual_verifier=verifier,
+    )
+    variant = QueryVariant(
+        "scene",
+        "English description",
+        QueryLanguage.ENGLISH,
+        QueryVariantType.ENGLISH_TRANSLATION,
+        1.0,
+    )
+
+    outcome = refiner.scout_selected_video_timelines(
+        query_id="Q",
+        query_vi="mô tả tiếng Việt",
+        query_en="English description",
+        variants=(variant,),
+        ranked_video_ids=("video-alpha",),
+        rank_slots=(_slot(1, "video-alpha", 10),),
+        config=SelectedVideoTimelineScoutConfig(
+            enabled=True,
+            max_videos=1,
+            sample_stride_seconds=1.0,
+            max_samples_per_video=21,
+            max_regions_per_video=1,
+            minimum_region_gap_seconds=1.0,
+        ),
+        visual_verifier_config=SelectedVideoVisualVerifierConfig(
+            enabled=True,
+            shortlist_per_video=16,
+            coverage_bins=12,
+            neighbor_sample_radius=1,
+            max_new_tokens=384,
+            device="cpu",
+        ),
+        refinement_config=RefinementConfig(),
+        precomputed_text_embeddings=np.asarray([[1.0, 0.0]], dtype=np.float32),
+        frame_embedding_cache={},
+    )
+
+    assert len(verifier.inputs) == 6
+    assert all(len(item.images) == 1 for item in verifier.inputs)
+    verification = outcome.trace["videos"][0]["visual_verification"]
+    assert verification["execution"]["cpu_fast_profile_applied"] is True
+    assert verification["execution"]["effective"]["shortlist_per_video"] == 6
+    assert outcome.timings["timeline_visual_verified_candidate_count"] == 6
+    assert "CPU-fast profile applied" in outcome.warnings[0]
 
 
 def test_visual_verifier_fail_query_policy_propagates(tmp_path: Path) -> None:
@@ -410,3 +468,20 @@ def test_timeline_cli_is_opt_in_and_requires_video_first() -> None:
     )
     verified_config = session_config_from_args(verified)
     assert verified_config.selected_video_visual_verifier_config.enabled is True
+
+    full = parser.parse_args(
+        [
+            "--enable-kis-semantic-video-first",
+            "--enable-kis-selected-video-timeline-scout",
+            "--enable-kis-visual-predicate-verifier",
+            "--kis-visual-verifier-execution-mode",
+            "full",
+            "--default-refine-top-n",
+            "3",
+        ]
+    )
+    full_config = session_config_from_args(full)
+    assert (
+        full_config.selected_video_visual_verifier_config.execution_mode
+        is VisualVerifierExecutionMode.FULL
+    )

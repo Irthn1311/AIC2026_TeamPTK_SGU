@@ -838,11 +838,19 @@ class ExactFrameRefiner:
                 verification_trace: dict[str, Any] = {"enabled": False}
                 ranked_for_selection = fused
                 if visual_verifier_config.enabled:
+                    execution_trace = dict(visual_verifier_config.execution_trace())
+                    if visual_verifier_config.cpu_fast_profile_applied:
+                        warnings.append(
+                            "visual verifier CPU-fast profile applied for "
+                            f"{video_id}: {execution_trace['effective']}"
+                        )
                     shortlist = build_visual_verification_shortlist(
                         fused,
                         total_frame_count=probe.total_frame_count,
-                        shortlist_size=visual_verifier_config.shortlist_per_video,
-                        coverage_bins=visual_verifier_config.coverage_bins,
+                        shortlist_size=(
+                            visual_verifier_config.effective_shortlist_per_video
+                        ),
+                        coverage_bins=visual_verifier_config.effective_coverage_bins,
                     )
                     frame_index = {
                         frame.absolute_frame_id: index
@@ -853,12 +861,13 @@ class ExactFrameRefiner:
                         center_index = frame_index[item.absolute_frame_id]
                         start_index = max(
                             0,
-                            center_index - visual_verifier_config.neighbor_sample_radius,
+                            center_index
+                            - visual_verifier_config.effective_neighbor_sample_radius,
                         )
                         end_index = min(
                             len(decoded.frames),
                             center_index
-                            + visual_verifier_config.neighbor_sample_radius
+                            + visual_verifier_config.effective_neighbor_sample_radius
                             + 1,
                         )
                         center = decoded.frames[center_index]
@@ -891,6 +900,7 @@ class ExactFrameRefiner:
                             "enabled": True,
                             "status": "SUCCESS",
                             "provider": dict(self.visual_verifier.identifiers),
+                            "execution": execution_trace,
                             "shortlist_frame_ids": [
                                 item.absolute_frame_id for item in shortlist
                             ],
@@ -913,6 +923,7 @@ class ExactFrameRefiner:
                         verification_trace = {
                             "enabled": True,
                             "status": "FALLBACK_CLIP",
+                            "execution": execution_trace,
                             "failure_reason": str(exc),
                         }
                 regions = select_timeline_regions(

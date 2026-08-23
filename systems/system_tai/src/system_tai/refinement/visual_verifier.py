@@ -10,7 +10,8 @@ from __future__ import annotations
 import importlib
 import json
 import math
-from collections.abc import Mapping, Sequence
+import time
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -191,6 +192,9 @@ class HuggingFaceStructuredVisualVerifier:
         allow_model_download: bool,
         cache_dir: Path | None,
         max_new_tokens: int,
+        max_image_pixels: int | None = None,
+        execution_profile: str = "full",
+        progress_callback: Callable[[str], None] | None = None,
         transformers_module: Any | None = None,
         torch_module: Any | None = None,
         image_module: Any | None = None,
@@ -201,6 +205,8 @@ class HuggingFaceStructuredVisualVerifier:
             raise ValueError("visual verifier device must be cpu or cuda")
         if max_new_tokens <= 0:
             raise ValueError("visual verifier max_new_tokens must be positive")
+        if max_image_pixels is not None and max_image_pixels <= 0:
+            raise ValueError("visual verifier max_image_pixels must be positive")
         try:
             transformers = transformers_module or importlib.import_module("transformers")
             torch = torch_module or importlib.import_module("torch")
@@ -225,8 +231,14 @@ class HuggingFaceStructuredVisualVerifier:
             "local_files_only": not allow_model_download,
         }
         load_kwargs = {key: value for key, value in load_kwargs.items() if value is not None}
+        processor_kwargs = dict(load_kwargs)
+        if max_image_pixels is not None:
+            processor_kwargs["max_pixels"] = max_image_pixels
         try:
-            self._processor = processor_class.from_pretrained(model_name, **load_kwargs)
+            self._processor = processor_class.from_pretrained(
+                model_name,
+                **processor_kwargs,
+            )
             dtype = torch.float16 if device == "cuda" else torch.float32
             self._model = model_class.from_pretrained(
                 model_name,
@@ -240,6 +252,7 @@ class HuggingFaceStructuredVisualVerifier:
         self._image_api = image_api
         self._device = device
         self._max_new_tokens = max_new_tokens
+        self._progress_callback = progress_callback
         self.identifiers: Mapping[str, Any] = MappingProxyType(
             {
                 "provider": "huggingface-structured-visual-verifier",
@@ -248,6 +261,9 @@ class HuggingFaceStructuredVisualVerifier:
                 "device": device,
                 "model_download_allowed": allow_model_download,
                 "candidate_batching": "one-temporal-candidate-per-generation",
+                "execution_profile": execution_profile,
+                "max_new_tokens": max_new_tokens,
+                "max_image_pixels": max_image_pixels,
             }
         )
 
@@ -261,7 +277,14 @@ class HuggingFaceStructuredVisualVerifier:
         if not query_vi.strip() or not query_en.strip():
             raise ValueError("visual verification requires Vietnamese and English query text")
         results: list[VisualVerificationResult] = []
-        for candidate in candidates:
+        total = len(candidates)
+        for index, candidate in enumerate(candidates, start=1):
+            started = time.perf_counter()
+            self._progress(
+                f"visual verifier candidate {index}/{total} started: "
+                f"{candidate.video_id}/{candidate.absolute_frame_id} "
+                f"images={len(candidate.images)}"
+            )
             prompt = self._build_prompt(query_vi=query_vi, query_en=query_en)
             images = [self._to_rgb_image(image) for image in candidate.images]
             content = [{"type": "image"} for _ in images]
@@ -283,7 +306,12 @@ class HuggingFaceStructuredVisualVerifier:
                     key: value.to(self._device) if hasattr(value, "to") else value
                     for key, value in inputs.items()
                 }
-                with self._torch.no_grad():
+                inference_context = getattr(
+                    self._torch,
+                    "inference_mode",
+                    self._torch.no_grad,
+                )
+                with inference_context():
                     generated = self._model.generate(
                         **inputs,
                         max_new_tokens=self._max_new_tokens,
@@ -307,6 +335,10 @@ class HuggingFaceStructuredVisualVerifier:
                     absolute_frame_id=candidate.absolute_frame_id,
                 )
             )
+            self._progress(
+                f"visual verifier candidate {index}/{total} completed in "
+                f"{time.perf_counter() - started:.2f}s"
+            )
         return tuple(results)
 
     @staticmethod
@@ -320,9 +352,15 @@ class HuggingFaceStructuredVisualVerifier:
             "attribute, count, or action. Exact counts and conjunctions matter. Return one "
             "JSON object only with keys: match_score (0..1), requirement_coverage (0..1), "
             "all_visible_requirements_satisfied (boolean), predicates (non-empty array of "
-            "objects with requirement, score 0..1, visible boolean, evidence), and summary. "
+            "objects with requirement, score 0..1, visible boolean, and optional evidence), "
+            "and summary. Keep each requirement under six words, each evidence under eight "
+            "words, and summary under ten words. "
             f"Vietnamese query: {query_vi}\nEnglish translation: {query_en}"
         )
+
+    def _progress(self, message: str) -> None:
+        if self._progress_callback is not None:
+            self._progress_callback(message)
 
     def _to_rgb_image(self, image: Any) -> Any:
         import numpy as np
