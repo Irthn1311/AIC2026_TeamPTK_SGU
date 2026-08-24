@@ -262,9 +262,9 @@ def build_visual_verification_shortlist(
 ) -> tuple[LocalFrameFusion, ...]:
     """Combine global CLIP leaders with deterministic full-timeline coverage.
 
-    Coverage candidates are the sampled frames nearest each temporal-bin midpoint,
-    independent of CLIP score. This prevents a semantically subtle late scene from
-    being excluded solely because broad exercise frames dominate CLIP ranking.
+    Coverage candidates are the strongest semantically ranked sampled frame in each
+    temporal bin. This preserves full-timeline coverage without spending verifier
+    budget on an arbitrary midpoint when a short action occurs elsewhere in the bin.
     """
     if total_frame_count <= 0:
         raise ValueError("total_frame_count must be positive")
@@ -288,11 +288,10 @@ def build_visual_verification_shortlist(
             if start <= item.absolute_frame_id < end
         ]
         if bin_candidates:
-            midpoint = (start + end - 1) / 2.0
             representative = min(
                 bin_candidates,
                 key=lambda item: (
-                    abs(item.absolute_frame_id - midpoint),
+                    rank_index[item.absolute_frame_id],
                     item.absolute_frame_id,
                 ),
             )
@@ -303,6 +302,97 @@ def build_visual_verification_shortlist(
         chosen[item.absolute_frame_id] = item
     return tuple(
         sorted(chosen.values(), key=lambda item: rank_index[item.absolute_frame_id])
+    )
+
+
+def fuse_temporal_neighborhood_rankings(
+    ranked: Sequence[LocalFrameFusion],
+    *,
+    fps: float,
+    evidence_window_seconds: float,
+    rrf_constant: float,
+) -> tuple[LocalFrameFusion, ...]:
+    """Fuse per-variant rank evidence across a bounded temporal neighborhood.
+
+    Each center frame keeps its absolute original-video identity. For every query
+    variant, only the best rank observed within the bounded neighborhood contributes
+    to Weighted RRF. Raw cosine values are never added across variants. This lets a
+    short scene accumulate complementary evidence from adjacent samples while
+    retaining deterministic frame-level output semantics.
+    """
+    if not math.isfinite(fps) or fps <= 0:
+        raise ValueError("fps must be finite and positive")
+    if not math.isfinite(evidence_window_seconds) or evidence_window_seconds < 0:
+        raise ValueError("evidence_window_seconds must be finite and non-negative")
+    if not math.isfinite(rrf_constant) or rrf_constant <= 0:
+        raise ValueError("rrf_constant must be finite and positive")
+    if not ranked or evidence_window_seconds == 0:
+        return tuple(ranked)
+
+    radius_frames = int(round(evidence_window_seconds * fps))
+    ordered_by_frame = tuple(sorted(ranked, key=lambda item: item.absolute_frame_id))
+    fused: list[LocalFrameFusion] = []
+    for center in ordered_by_frame:
+        best_by_variant: dict[str, tuple[int, int, Mapping[str, Any]]] = {}
+        for evidence_frame in ordered_by_frame:
+            if (
+                abs(evidence_frame.absolute_frame_id - center.absolute_frame_id)
+                > radius_frames
+            ):
+                continue
+            for provenance in evidence_frame.per_variant_provenance:
+                variant_id = str(provenance["variant_id"])
+                candidate_key = (
+                    int(provenance["rank"]),
+                    evidence_frame.absolute_frame_id,
+                )
+                prior = best_by_variant.get(variant_id)
+                if prior is None or candidate_key < prior[:2]:
+                    best_by_variant[variant_id] = (
+                        candidate_key[0],
+                        candidate_key[1],
+                        provenance,
+                    )
+        if not best_by_variant:
+            continue
+        temporal_provenance = tuple(
+            {
+                **dict(provenance),
+                "center_frame_id": center.absolute_frame_id,
+                "evidence_frame_id": evidence_frame_id,
+                "temporal_offset_frames": evidence_frame_id
+                - center.absolute_frame_id,
+            }
+            for _, evidence_frame_id, provenance in (
+                best_by_variant[variant_id]
+                for variant_id in sorted(best_by_variant)
+            )
+        )
+        fusion_score = sum(
+            float(item["weight"]) / (rrf_constant + int(item["rank"]))
+            for item in temporal_provenance
+        )
+        fused.append(
+            LocalFrameFusion(
+                absolute_frame_id=center.absolute_frame_id,
+                fusion_score=float(fusion_score),
+                variant_hit_count=len(temporal_provenance),
+                best_individual_rank=min(
+                    int(item["rank"]) for item in temporal_provenance
+                ),
+                per_variant_provenance=temporal_provenance,
+            )
+        )
+    return tuple(
+        sorted(
+            fused,
+            key=lambda item: (
+                -item.fusion_score,
+                -item.variant_hit_count,
+                item.best_individual_rank,
+                item.absolute_frame_id,
+            ),
+        )
     )
 
 
@@ -922,6 +1012,14 @@ class ExactFrameRefiner:
                 verification_trace: dict[str, Any] = {"enabled": False}
                 ranked_for_selection = fused
                 if visual_verifier_config.enabled:
+                    ranked_for_selection = fuse_temporal_neighborhood_rankings(
+                        fused,
+                        fps=probe.fps,
+                        evidence_window_seconds=(
+                            visual_verifier_config.temporal_evidence_window_seconds
+                        ),
+                        rrf_constant=refinement_config.rrf_constant,
+                    )
                     execution_trace = dict(visual_verifier_config.execution_trace())
                     if visual_verifier_config.cpu_fast_profile_applied:
                         warnings.append(
@@ -929,7 +1027,7 @@ class ExactFrameRefiner:
                             f"{video_id}: {execution_trace['effective']}"
                         )
                     shortlist = build_visual_verification_shortlist(
-                        fused,
+                        ranked_for_selection,
                         total_frame_count=probe.total_frame_count,
                         shortlist_size=(
                             visual_verifier_config.effective_shortlist_per_video
@@ -1043,6 +1141,10 @@ class ExactFrameRefiner:
                             ),
                             "provider": dict(self.visual_verifier.identifiers),
                             "execution": execution_trace,
+                            "temporal_prefilter_top_frame_ids": [
+                                item.absolute_frame_id
+                                for item in ranked_for_selection[:20]
+                            ],
                             "shortlist_frame_ids": [
                                 item.absolute_frame_id for item in shortlist
                             ],
@@ -1108,6 +1210,10 @@ class ExactFrameRefiner:
                             "status": "FALLBACK_CLIP",
                             "provider": dict(self.visual_verifier.identifiers),
                             "execution": execution_trace,
+                            "temporal_prefilter_top_frame_ids": [
+                                item.absolute_frame_id
+                                for item in ranked_for_selection[:20]
+                            ],
                             "shortlist_frame_ids": [
                                 item.absolute_frame_id for item in shortlist
                             ],

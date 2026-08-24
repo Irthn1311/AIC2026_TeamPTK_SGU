@@ -137,6 +137,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--kis-visual-verifier-allow-model-download", action="store_true")
     parser.add_argument("--kis-visual-verifier-shortlist-per-video", type=int, default=32)
     parser.add_argument("--kis-visual-verifier-coverage-bins", type=int, default=12)
+    parser.add_argument(
+        "--kis-visual-verifier-temporal-evidence-window-seconds",
+        type=float,
+        default=6.0,
+    )
     parser.add_argument("--kis-visual-verifier-neighbor-radius", type=int, default=1)
     parser.add_argument("--kis-visual-verifier-max-new-tokens", type=int, default=512)
     parser.add_argument(
@@ -363,6 +368,11 @@ def session_config_from_args(args: argparse.Namespace) -> SessionConfig:
                 args, "kis_visual_verifier_shortlist_per_video", 32
             ),
             coverage_bins=getattr(args, "kis_visual_verifier_coverage_bins", 12),
+            temporal_evidence_window_seconds=getattr(
+                args,
+                "kis_visual_verifier_temporal_evidence_window_seconds",
+                6.0,
+            ),
             neighbor_sample_radius=getattr(
                 args, "kis_visual_verifier_neighbor_radius", 1
             ),

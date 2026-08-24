@@ -12,6 +12,7 @@ from system_tai.refinement.engine import (
     ExactFrameRefiner,
     LocalFrameFusion,
     build_visual_verification_shortlist,
+    fuse_temporal_neighborhood_rankings,
     timeline_sparse_frame_ids,
 )
 from system_tai.refinement.models import (
@@ -288,10 +289,12 @@ class _PartiallyFailingVerifier:
 
 
 def test_coverage_shortlist_includes_late_bin_despite_low_global_clip_rank() -> None:
+    # Early frames dominate globally, but frame 90 is the strongest semantic item
+    # inside the final coverage bin even though frame 80 is nearer its midpoint.
+    frame_order = (0, 10, 20, 30, 40, 50, 60, 70, 90, 80)
     ranked = tuple(
-        # Deliberately make early frames dominate global CLIP rank.
         LocalFrameFusion(frame_id, 1.0 / (index + 1), 1, index + 1, ())
-        for index, frame_id in enumerate((0, 10, 20, 30, 40, 50, 60, 70, 80, 90))
+        for index, frame_id in enumerate(frame_order)
     )
 
     shortlist = build_visual_verification_shortlist(
@@ -303,6 +306,68 @@ def test_coverage_shortlist_includes_late_bin_despite_low_global_clip_rank() -> 
 
     assert 90 in {item.absolute_frame_id for item in shortlist}
     assert len(shortlist) == 6
+
+
+def test_temporal_neighborhood_fuses_variant_ranks_without_raw_score_addition() -> None:
+    def item(
+        frame_id: int,
+        first_rank: int,
+        second_rank: int,
+    ) -> LocalFrameFusion:
+        provenance = (
+            {
+                "variant_id": "action",
+                "variant_type": "english_translation",
+                "language": "en",
+                "weight": 1.0,
+                "rank": first_rank,
+                "cosine_score": 999.0,
+            },
+            {
+                "variant_id": "attributes",
+                "variant_type": "english_translation",
+                "language": "en",
+                "weight": 1.0,
+                "rank": second_rank,
+                "cosine_score": -999.0,
+            },
+        )
+        return LocalFrameFusion(frame_id, 0.0, 2, min(first_rank, second_rank), provenance)
+
+    ranked = (
+        item(0, 2, 2),
+        item(80, 1, 100),
+        item(90, 100, 100),
+        item(100, 100, 1),
+    )
+
+    fused = fuse_temporal_neighborhood_rankings(
+        ranked,
+        fps=1.0,
+        evidence_window_seconds=10.0,
+        rrf_constant=60.0,
+    )
+
+    assert fused[0].absolute_frame_id == 90
+    assert fused[0].fusion_score == pytest.approx(2.0 / 61.0)
+    assert {
+        item["evidence_frame_id"] for item in fused[0].per_variant_provenance
+    } == {80, 100}
+    assert fused[0].fusion_score != pytest.approx(0.0)
+
+
+def test_temporal_neighborhood_zero_window_preserves_exact_frame_ranking() -> None:
+    ranked = (
+        LocalFrameFusion(10, 0.2, 1, 1, ()),
+        LocalFrameFusion(20, 0.1, 1, 2, ()),
+    )
+
+    assert fuse_temporal_neighborhood_rankings(
+        ranked,
+        fps=25.0,
+        evidence_window_seconds=0.0,
+        rrf_constant=60.0,
+    ) == ranked
 
 
 def test_visual_verifier_promotes_tail_without_target_video_or_frame_config(
@@ -662,6 +727,8 @@ def test_timeline_cli_is_opt_in_and_requires_video_first() -> None:
             "--enable-kis-visual-predicate-verifier",
             "--kis-visual-verifier-execution-mode",
             "full",
+            "--kis-visual-verifier-temporal-evidence-window-seconds",
+            "8",
             "--default-refine-top-n",
             "3",
         ]
@@ -670,4 +737,9 @@ def test_timeline_cli_is_opt_in_and_requires_video_first() -> None:
     assert (
         full_config.selected_video_visual_verifier_config.execution_mode
         is VisualVerifierExecutionMode.FULL
+    )
+    assert (
+        full_config.selected_video_visual_verifier_config
+        .temporal_evidence_window_seconds
+        == 8.0
     )

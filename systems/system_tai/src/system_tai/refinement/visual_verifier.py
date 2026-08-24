@@ -560,10 +560,15 @@ def parse_visual_verification_json(
                     satisfied = predicate_value("satisfied", "x", "sat")
                     observed_value = predicate_value(
                         "observed_value",
+                        "short_observed_fact",
                         "observed",
                         "o",
                     )
-                    evidence = predicate_value("evidence", "e")
+                    evidence = predicate_value(
+                        "evidence",
+                        "short_evidence",
+                        "e",
+                    )
                     reported_score = predicate_value(
                         "score",
                         "confidence",

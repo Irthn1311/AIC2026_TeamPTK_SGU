@@ -168,6 +168,7 @@ class SelectedVideoVisualVerifierConfig:
     model_revision: str | None = None
     shortlist_per_video: int = 32
     coverage_bins: int = 12
+    temporal_evidence_window_seconds: float = 6.0
     neighbor_sample_radius: int = 1
     max_new_tokens: int = 512
     device: str = "cpu"
@@ -191,6 +192,13 @@ class SelectedVideoVisualVerifierConfig:
                 raise ValueError(f"{field_name} must be in [{lower}, {upper}]")
         if self.coverage_bins > self.shortlist_per_video:
             raise ValueError("coverage_bins must not exceed shortlist_per_video")
+        if (
+            not math.isfinite(self.temporal_evidence_window_seconds)
+            or self.temporal_evidence_window_seconds < 0
+        ):
+            raise ValueError(
+                "temporal_evidence_window_seconds must be finite and non-negative"
+            )
         if self.device not in {"cpu", "cuda"}:
             raise ValueError("visual verifier device must be cpu or cuda")
         if not isinstance(self.execution_mode, VisualVerifierExecutionMode):
@@ -244,12 +252,18 @@ class SelectedVideoVisualVerifierConfig:
                 "requested": {
                     "shortlist_per_video": self.shortlist_per_video,
                     "coverage_bins": self.coverage_bins,
+                    "temporal_evidence_window_seconds": (
+                        self.temporal_evidence_window_seconds
+                    ),
                     "neighbor_sample_radius": self.neighbor_sample_radius,
                     "max_new_tokens": self.max_new_tokens,
                 },
                 "effective": {
                     "shortlist_per_video": self.effective_shortlist_per_video,
                     "coverage_bins": self.effective_coverage_bins,
+                    "temporal_evidence_window_seconds": (
+                        self.temporal_evidence_window_seconds
+                    ),
                     "neighbor_sample_radius": self.effective_neighbor_sample_radius,
                     "max_new_tokens": self.effective_max_new_tokens,
                     "max_image_pixels": self.effective_max_image_pixels,

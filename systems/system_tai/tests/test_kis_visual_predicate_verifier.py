@@ -412,6 +412,39 @@ def test_fixed_contract_accepts_qwen_predicate_id_object_alias() -> None:
     )
 
 
+def test_fixed_contract_accepts_observed_fact_and_evidence_aliases() -> None:
+    contract = compile_visual_predicate_contract(
+        query_vi=QUERY_VI,
+        query_en=QUERY_EN,
+    )
+    predicates = []
+    for values in json.loads(_strict_contract_payload(contract))["p"]:
+        predicate_id, score, visible, satisfied, observed, evidence = values
+        predicates.append(
+            {
+                "predicate_id": predicate_id,
+                "score": score,
+                "visible": visible,
+                "satisfied": satisfied,
+                "short_observed_fact": observed,
+                "short_evidence": evidence,
+            }
+        )
+    payload = json.dumps(
+        {"m": 0.9, "c": 1.0, "a": True, "p": predicates, "s": "match"}
+    )
+
+    result = parse_visual_verification_json(
+        payload,
+        video_id="V",
+        absolute_frame_id=6650,
+        predicate_contract=contract,
+    )
+
+    assert result.contract_validated is True
+    assert result.eligible_for_promotion is True
+
+
 def test_fixed_contract_accepts_qwen_object_without_numeric_scores() -> None:
     contract = compile_visual_predicate_contract(
         query_vi=QUERY_VI,
@@ -618,6 +651,11 @@ def test_visual_verifier_config_is_bounded_and_default_off() -> None:
             shortlist_per_video=8,
             coverage_bins=9,
         )
+    with pytest.raises(ValueError, match="temporal_evidence_window_seconds"):
+        SelectedVideoVisualVerifierConfig(
+            enabled=True,
+            temporal_evidence_window_seconds=-0.1,
+        )
 
 
 def test_visual_verifier_auto_mode_bounds_cpu_work_without_changing_request() -> None:
@@ -625,6 +663,7 @@ def test_visual_verifier_auto_mode_bounds_cpu_work_without_changing_request() ->
         enabled=True,
         shortlist_per_video=16,
         coverage_bins=12,
+        temporal_evidence_window_seconds=8.0,
         neighbor_sample_radius=1,
         max_new_tokens=384,
         device="cpu",
@@ -632,11 +671,17 @@ def test_visual_verifier_auto_mode_bounds_cpu_work_without_changing_request() ->
 
     assert config.shortlist_per_video == 16
     assert config.coverage_bins == 12
+    assert config.temporal_evidence_window_seconds == 8.0
     assert config.neighbor_sample_radius == 1
     assert config.max_new_tokens == 384
     assert config.cpu_fast_profile_applied is True
     assert config.effective_shortlist_per_video == 6
     assert config.effective_coverage_bins == 4
+    assert (
+        config.execution_trace()["effective"]
+        ["temporal_evidence_window_seconds"]
+        == 8.0
+    )
     assert config.effective_neighbor_sample_radius == 0
     assert config.effective_max_new_tokens == 192
     assert config.effective_max_image_pixels == 256 * 28 * 28
