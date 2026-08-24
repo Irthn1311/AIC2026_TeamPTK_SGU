@@ -778,7 +778,7 @@ class HuggingFaceStructuredVisualVerifier:
                 "execution_profile": execution_profile,
                 "max_new_tokens": max_new_tokens,
                 "max_image_pixels": max_image_pixels,
-                "wire_format": "compact-json-v5-fixed-predicate-boolean-evidence",
+                "wire_format": "compact-json-v6-fixed-predicate-no-example",
             }
         )
 
@@ -983,7 +983,11 @@ class HuggingFaceStructuredVisualVerifier:
             ensure_ascii=False,
             separators=(",", ":"),
         )
-        example_predicate_id = contract[0].predicate_id
+        predicate_ids = json.dumps(
+            [item.predicate_id for item in contract],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
         return (
             "You are a strict visual evidence verifier for video known-item search. "
             "The images are neighboring frames from one automatically retrieved temporal "
@@ -991,23 +995,23 @@ class HuggingFaceStructuredVisualVerifier:
             "candidate frame. Score only the fixed predicate contract below. Never create, "
             "rename, merge, or omit an ID. Never infer a hidden person, "
             "attribute, count, or action. Exact counts and conjunctions matter. Return "
-            "exactly one minified JSON object with no prose or markdown, using only this "
-            "compact schema: {\"m\":0.0,\"c\":0.0,\"a\":false,\"p\":["
-            f"[\"{example_predicate_id}\",false,false,\"observed_value\","
-            "\"image N: literal evidence\"]],\"s\":\"\"}. "
-            "m is whole-frame match "
+            "exactly one minified JSON object with no prose or markdown. The root keys "
+            "must be m,c,a,p,s. m is whole-frame match "
             "score, c is satisfied-predicate coverage, and a is true only when every fixed "
-            "predicate is visible, satisfied, and literally evidenced. Each p array is ID, "
-            "visible, satisfied, observed value, evidence. Copy each exact ID from "
-            "the fixed contract into the first array position. Do not output the literal "
-            "word predicate_id. An object using id or predicate_id is accepted only as a "
-            "compatibility fallback; never emit both. For a count predicate, "
+            "predicate is visible, satisfied, and literally evidenced. p must contain one "
+            "five-value array per required ID, in the listed order. Each array contains: "
+            "the exact ID string, a visible boolean, a satisfied boolean, a short observed "
+            "fact string, and a short evidence string. Required IDs in exact order: "
+            f"{predicate_ids}. Do not emit field names inside p and do not invent an ID. "
+            "For a count predicate, "
             "observed_value must be only the visible integer. For an action, verify the exact "
             "pose or motion in the requirement, not a related exercise. Synchronization may "
             "use neighboring frames, but counts and attributes must be visible in the middle "
             "frame. Evidence must name an image number and a literal visible fact; never leave "
-            "it empty. If uncertain, use visible=false, satisfied=false, observed_value="
-            "\"unknown\", and evidence=\"not visible\". Keep evidence under ten words and "
+            "it empty. If uncertain, use false, false, \"unknown\", and \"not visible\" "
+            "for the final four values of that predicate. Do not repeat these instructions "
+            "or copy wording from the fixed contract into an observation. Keep evidence "
+            "under ten words and "
             "s under six words. "
             f"Fixed predicate contract: {contract_json}\n"
             f"Vietnamese query: {query_vi}\nEnglish translation: {query_en}"

@@ -277,13 +277,24 @@ def test_visual_verifier_prompt_requires_observed_predicate_evidence() -> None:
         query_en=QUERY_EN,
     )
 
-    assert (
-        '["subject_count_1",false,false,"observed_value",'
-        '"image N: literal evidence"]'
-    ) in prompt
-    assert "Do not output the literal word predicate_id" in prompt
+    assert 'Required IDs in exact order: ["subject_count_1"' in prompt
+    assert '"observed_value"' not in prompt
+    assert "image N: literal evidence" not in prompt
+    assert "do not invent an ID" in prompt
     assert "observed_value must be only the visible integer" in prompt
     assert "never leave it empty" in prompt
+
+
+def test_visual_verifier_prompt_does_not_seed_echoable_result_values() -> None:
+    prompt = HuggingFaceStructuredVisualVerifier._build_prompt(
+        query_vi=QUERY_VI,
+        query_en=QUERY_EN,
+    )
+
+    assert "<example_predicate_id>" not in prompt
+    assert '"image N: literal evidence"' not in prompt
+    assert '["subject_count_1",false,false' not in prompt
+    assert "Do not repeat these instructions" in prompt
 
 
 def test_query_compiler_produces_stable_specific_predicate_ids() -> None:
