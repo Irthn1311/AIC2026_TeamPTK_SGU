@@ -517,7 +517,21 @@ def parse_visual_verification_json(
         try:
             if predicate_contract is not None:
                 if isinstance(item, dict):
-                    predicate_id = str(item["id"])
+                    has_id = "id" in item
+                    has_predicate_id = "predicate_id" in item
+                    if has_id and has_predicate_id:
+                        if str(item["id"]) != str(item["predicate_id"]):
+                            raise ValueError(
+                                "conflicting predicate ID aliases 'id' and "
+                                "'predicate_id'"
+                            )
+                        predicate_id = str(item["id"])
+                    elif has_id:
+                        predicate_id = str(item["id"])
+                    elif has_predicate_id:
+                        predicate_id = str(item["predicate_id"])
+                    else:
+                        raise KeyError("id or predicate_id")
                     score = item["score"]
                     visible = item["visible"]
                     satisfied = item["satisfied"]
@@ -707,7 +721,7 @@ class HuggingFaceStructuredVisualVerifier:
                 "execution_profile": execution_profile,
                 "max_new_tokens": max_new_tokens,
                 "max_image_pixels": max_image_pixels,
-                "wire_format": "compact-json-v3-fixed-predicate-contract",
+                "wire_format": "compact-json-v4-fixed-predicate-id-alias",
             }
         )
 
@@ -912,6 +926,7 @@ class HuggingFaceStructuredVisualVerifier:
             ensure_ascii=False,
             separators=(",", ":"),
         )
+        example_predicate_id = contract[0].predicate_id
         return (
             "You are a strict visual evidence verifier for video known-item search. "
             "The images are neighboring frames from one automatically retrieved temporal "
@@ -921,12 +936,15 @@ class HuggingFaceStructuredVisualVerifier:
             "attribute, count, or action. Exact counts and conjunctions matter. Return "
             "exactly one minified JSON object with no prose or markdown, using only this "
             "compact schema: {\"m\":0.0,\"c\":0.0,\"a\":false,\"p\":["
-            "[\"predicate_id\",0.0,false,false,\"observed_value\","
+            f"[\"{example_predicate_id}\",0.0,false,false,\"observed_value\","
             "\"image N: literal evidence\"]],\"s\":\"\"}. "
             "m is whole-frame match "
             "score, c is satisfied-predicate coverage, and a is true only when every fixed "
             "predicate is visible, satisfied, and literally evidenced. Each p array is ID, "
-            "score, visible, satisfied, observed value, evidence. For a count predicate, "
+            "score, visible, satisfied, observed value, evidence. Copy each exact ID from "
+            "the fixed contract into the first array position. Do not output the literal "
+            "word predicate_id. An object using id or predicate_id is accepted only as a "
+            "compatibility fallback; never emit both. For a count predicate, "
             "observed_value must be only the visible integer. For an action, verify the exact "
             "pose or motion in the requirement, not a related exercise. Synchronization may "
             "use neighboring frames, but counts and attributes must be visible in the middle "

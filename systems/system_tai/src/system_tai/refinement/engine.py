@@ -1086,10 +1086,44 @@ class ExactFrameRefiner:
                         warnings.append(
                             f"visual verifier fallback to CLIP for {video_id}: {exc}"
                         )
+                        candidate_failures = tuple(
+                            getattr(self.visual_verifier, "last_failures", ())
+                        )
+                        recovered_retries = tuple(
+                            getattr(
+                                self.visual_verifier,
+                                "last_recovered_retries",
+                                (),
+                            )
+                        )
+                        predicate_contract = tuple(
+                            getattr(
+                                self.visual_verifier,
+                                "last_predicate_contract",
+                                (),
+                            )
+                        )
                         verification_trace = {
                             "enabled": True,
                             "status": "FALLBACK_CLIP",
+                            "provider": dict(self.visual_verifier.identifiers),
                             "execution": execution_trace,
+                            "shortlist_frame_ids": [
+                                item.absolute_frame_id for item in shortlist
+                            ],
+                            "results": [],
+                            "predicate_contract": [
+                                dict(item.to_prompt()) for item in predicate_contract
+                            ],
+                            "strictly_promotable_candidate_count": 0,
+                            "successful_candidate_count": 0,
+                            "failed_candidate_count": len(candidate_failures),
+                            "failures": [
+                                dict(item.to_trace()) for item in candidate_failures
+                            ],
+                            "recovered_retries": [
+                                dict(item) for item in recovered_retries
+                            ],
                             "failure_reason": str(exc),
                         }
                 regions = select_timeline_regions(

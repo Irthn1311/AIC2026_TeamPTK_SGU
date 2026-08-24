@@ -273,14 +273,15 @@ def test_repeated_positive_visual_template_abstains_instead_of_promoting() -> No
 
 def test_visual_verifier_prompt_requires_observed_predicate_evidence() -> None:
     prompt = HuggingFaceStructuredVisualVerifier._build_prompt(
-        query_vi="mô tả",
-        query_en="description",
+        query_vi=QUERY_VI,
+        query_en=QUERY_EN,
     )
 
     assert (
-        '["predicate_id",0.0,false,false,"observed_value",'
+        '["subject_count_1",0.0,false,false,"observed_value",'
         '"image N: literal evidence"]'
     ) in prompt
+    assert "Do not output the literal word predicate_id" in prompt
     assert "observed_value must be only the visible integer" in prompt
     assert "never leave it empty" in prompt
 
@@ -357,6 +358,68 @@ def test_fixed_contract_accepts_only_grounded_complete_conjunction() -> None:
     assert result.eligible_for_promotion is True
     assert result.requirement_coverage == pytest.approx(1.0)
     assert result.predicate_bottleneck_score == pytest.approx(0.9)
+
+
+def test_fixed_contract_accepts_qwen_predicate_id_object_alias() -> None:
+    contract = compile_visual_predicate_contract(
+        query_vi=QUERY_VI,
+        query_en=QUERY_EN,
+    )
+    predicates = []
+    for values in json.loads(_strict_contract_payload(contract))["p"]:
+        predicate_id, score, visible, satisfied, observed, evidence = values
+        predicates.append(
+            {
+                "predicate_id": predicate_id,
+                "score": score,
+                "visible": visible,
+                "satisfied": satisfied,
+                "observed_value": observed,
+                "evidence": evidence,
+            }
+        )
+    payload = json.dumps(
+        {"m": 0.9, "c": 1.0, "a": True, "p": predicates, "s": "match"}
+    )
+
+    result = parse_visual_verification_json(
+        payload,
+        video_id="V",
+        absolute_frame_id=6650,
+        predicate_contract=contract,
+    )
+
+    assert result.contract_validated is True
+    assert result.eligible_for_promotion is True
+    assert tuple(item.predicate_id for item in result.predicates) == tuple(
+        item.predicate_id for item in contract
+    )
+
+
+def test_fixed_contract_rejects_conflicting_predicate_id_aliases() -> None:
+    contract = compile_visual_predicate_contract(
+        query_vi=QUERY_VI,
+        query_en=QUERY_EN,
+    )
+    payload = json.loads(_strict_contract_payload(contract))
+    first = payload["p"][0]
+    payload["p"][0] = {
+        "id": first[0],
+        "predicate_id": "invented_count_1",
+        "score": first[1],
+        "visible": first[2],
+        "satisfied": first[3],
+        "observed_value": first[4],
+        "evidence": first[5],
+    }
+
+    with pytest.raises(VisualVerificationError, match="conflicting predicate ID"):
+        parse_visual_verification_json(
+            json.dumps(payload),
+            video_id="V",
+            absolute_frame_id=1,
+            predicate_contract=contract,
+        )
 
 
 @pytest.mark.parametrize(
