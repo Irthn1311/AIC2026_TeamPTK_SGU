@@ -80,6 +80,20 @@ class VisualVerificationResult:
         if not self.predicates:
             raise ValueError("visual verification must contain predicate scores")
 
+    @property
+    def predicate_bottleneck_score(self) -> float:
+        """Return the weakest independently verified requirement score.
+
+        An invisible requirement is a hard zero.  This keeps conjunction ranking from
+        rewarding a high broad-scene score when one required count, attribute, action,
+        or relation is absent from the frame.
+        """
+
+        return min(
+            predicate.score if predicate.visible else 0.0
+            for predicate in self.predicates
+        )
+
     def to_trace(self) -> Mapping[str, Any]:
         return MappingProxyType(
             {
@@ -90,6 +104,7 @@ class VisualVerificationResult:
                 "all_visible_requirements_satisfied": (
                     self.all_visible_requirements_satisfied
                 ),
+                "predicate_bottleneck_score": self.predicate_bottleneck_score,
                 "predicates": [
                     {
                         "requirement": predicate.requirement,
@@ -178,20 +193,45 @@ def parse_visual_verification_json(
         raise VisualVerificationError(f"invalid visual verifier JSON: {exc}") from exc
     if not isinstance(payload, dict):
         raise VisualVerificationError("visual verifier response must be an object")
-    raw_predicates = payload.get("predicates")
+    def aliased_value(canonical: str, compact: str, *, required: bool = True) -> Any:
+        if canonical in payload and compact in payload:
+            raise VisualVerificationError(
+                f"visual verifier response contains both {canonical!r} and {compact!r}"
+            )
+        if canonical in payload:
+            return payload[canonical]
+        if compact in payload:
+            return payload[compact]
+        if required:
+            raise VisualVerificationError(
+                f"visual verifier response is missing {canonical!r}"
+            )
+        return ""
+
+    raw_predicates = aliased_value("predicates", "p")
     if not isinstance(raw_predicates, list) or not raw_predicates:
         raise VisualVerificationError("visual verifier predicates must be a non-empty list")
     predicates: list[VisualPredicateScore] = []
     for index, item in enumerate(raw_predicates, start=1):
-        if not isinstance(item, dict):
-            raise VisualVerificationError(f"predicate {index} must be an object")
         try:
+            if isinstance(item, dict):
+                requirement = item["requirement"]
+                score = item["score"]
+                visible = item["visible"]
+                evidence = item.get("evidence", "")
+            elif isinstance(item, list) and len(item) in {3, 4}:
+                requirement, score, visible = item[:3]
+                evidence = item[3] if len(item) == 4 else ""
+            else:
+                raise TypeError(
+                    "must be an object or a compact [requirement, score, visible] array"
+                )
             predicates.append(
                 VisualPredicateScore(
-                    requirement=str(item["requirement"]),
-                    score=float(item["score"]),
-                    visible=item["visible"],
-                    evidence=str(item.get("evidence", "")),
+                    requirement=str(requirement),
+                    score=float(score),
+                    visible=visible,
+                    evidence=str(evidence),
                 )
             )
         except (KeyError, TypeError, ValueError) as exc:
@@ -200,13 +240,13 @@ def parse_visual_verification_json(
         return VisualVerificationResult(
             video_id=video_id,
             absolute_frame_id=absolute_frame_id,
-            match_score=float(payload["match_score"]),
-            requirement_coverage=float(payload["requirement_coverage"]),
-            all_visible_requirements_satisfied=payload[
-                "all_visible_requirements_satisfied"
-            ],
+            match_score=float(aliased_value("match_score", "m")),
+            requirement_coverage=float(aliased_value("requirement_coverage", "c")),
+            all_visible_requirements_satisfied=aliased_value(
+                "all_visible_requirements_satisfied", "a"
+            ),
             predicates=tuple(predicates),
-            summary=str(payload.get("summary", "")),
+            summary=str(aliased_value("summary", "s", required=False)),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise VisualVerificationError(f"invalid visual verifier result: {exc}") from exc
@@ -298,6 +338,7 @@ class HuggingFaceStructuredVisualVerifier:
                 "execution_profile": execution_profile,
                 "max_new_tokens": max_new_tokens,
                 "max_image_pixels": max_image_pixels,
+                "wire_format": "compact-json-v1",
             }
         )
 
@@ -352,7 +393,11 @@ class HuggingFaceStructuredVisualVerifier:
                 )
             except Exception as primary_exc:
                 retry_images = (candidate.images[len(candidate.images) // 2],)
-                retry_max_tokens = min(self._max_new_tokens, 192)
+                # Keep the configured generation budget.  The former 192-token retry
+                # cap could truncate otherwise valid JSON for conjunction-heavy queries.
+                # The retry is bounded by one center image and the same caller-approved
+                # token budget; the compact wire schema keeps its output small.
+                retry_max_tokens = self._max_new_tokens
                 self._progress(
                     f"visual verifier candidate {index}/{total} primary failed: "
                     f"{type(primary_exc).__name__}: {primary_exc}; retrying with "
@@ -470,12 +515,16 @@ class HuggingFaceStructuredVisualVerifier:
             "candidate, ordered by time. Decompose the query into every independently "
             "visible requirement, including actions, counts, colors, objects, people, and "
             "relations. Score only what is visibly supported. Never infer a hidden person, "
-            "attribute, count, or action. Exact counts and conjunctions matter. Return one "
-            "JSON object only with keys: match_score (0..1), requirement_coverage (0..1), "
-            "all_visible_requirements_satisfied (boolean), predicates (non-empty array of "
-            "objects with requirement, score 0..1, visible boolean, and optional evidence), "
-            "and summary. Keep each requirement under six words, each evidence under eight "
-            "words, and summary under ten words. "
+            "attribute, count, or action. Exact counts and conjunctions matter. Return "
+            "exactly one minified JSON object with no prose or markdown, using only this "
+            "compact schema: {\"m\":0.0,\"c\":0.0,\"a\":false,\"p\":["
+            "[\"requirement\",0.0,false]],\"s\":\"\"}. m is whole-frame match "
+            "score, c is visible-requirement coverage, a is true only when every required "
+            "predicate is both visible and satisfied, and p contains exactly one array for every "
+            "independently checkable action, count, color, object, person attribute, and "
+            "relation. Do not merge or omit requirements. Each p array is requirement, "
+            "score, visible. Keep requirement labels under four words and s under six "
+            "words. Do not emit evidence text. "
             f"Vietnamese query: {query_vi}\nEnglish translation: {query_en}"
         )
 

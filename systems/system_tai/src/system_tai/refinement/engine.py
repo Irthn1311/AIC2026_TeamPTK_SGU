@@ -310,11 +310,14 @@ def rank_visually_verified_timeline_frames(
     shortlist: Sequence[LocalFrameFusion],
     results: Sequence[VisualVerificationResult],
 ) -> tuple[LocalFrameFusion, ...]:
-    """Rank successful VLM results, then candidate-local CLIP fallbacks.
+    """Rank successful VLM results by conjunction, then CLIP fallbacks.
 
     VLM and raw CLIP score scales are never added or compared numerically. A partial
     result set is valid: successfully verified frames form the leading partition and
-    failed candidates retain their original CLIP order in the fallback partition.
+    failed candidates retain their original CLIP order in the fallback partition. Within
+    the verified partition, the weakest visible predicate precedes aggregate coverage and
+    match score so one missing count, attribute, action, or relation cannot be hidden by a
+    strong broad-scene match.
     """
     by_frame = {item.absolute_frame_id: item for item in shortlist}
     result_by_frame = {item.absolute_frame_id: item for item in results}
@@ -332,8 +335,9 @@ def rank_visually_verified_timeline_frames(
                     item.absolute_frame_id
                 ].all_visible_requirements_satisfied
             ),
-            -result_by_frame[item.absolute_frame_id].match_score,
+            -result_by_frame[item.absolute_frame_id].predicate_bottleneck_score,
             -result_by_frame[item.absolute_frame_id].requirement_coverage,
+            -result_by_frame[item.absolute_frame_id].match_score,
             -item.fusion_score,
             item.absolute_frame_id,
         ),

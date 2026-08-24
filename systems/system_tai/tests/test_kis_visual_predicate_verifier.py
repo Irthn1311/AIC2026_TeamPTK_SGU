@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import pytest
 
+from system_tai.refinement.engine import (
+    LocalFrameFusion,
+    rank_visually_verified_timeline_frames,
+)
 from system_tai.refinement.models import (
     SelectedVideoVisualVerifierConfig,
     VisualVerifierExecutionMode,
@@ -131,15 +135,69 @@ def test_candidate_failure_retries_then_isolates_without_discarding_later_result
     assert verifier.calls == [
         (10, 3, 384),
         (20, 3, 384),
-        (20, 1, 192),
+        (20, 1, 384),
         (30, 3, 384),
-        (30, 1, 192),
+        (30, 1, 384),
         (40, 3, 384),
     ]
     assert tuple(item.absolute_frame_id for item in verifier.last_failures) == (30,)
     assert tuple(
         item["absolute_frame_id"] for item in verifier.last_recovered_retries
     ) == (20,)
+
+
+def test_compact_visual_result_parses_with_bounded_wire_schema() -> None:
+    result = parse_visual_verification_json(
+        '{"m":0.8,"c":0.75,"a":false,"p":['
+        '["more than five",1.0,true],["three red hats",0.5,true],'
+        '["one wears glasses",0.0,false]],"s":"partial conjunction"}',
+        video_id="V",
+        absolute_frame_id=6650,
+    )
+
+    assert result.match_score == pytest.approx(0.8)
+    assert result.requirement_coverage == pytest.approx(0.75)
+    assert result.predicate_bottleneck_score == 0.0
+    assert result.predicates[0].evidence == ""
+    assert result.to_trace()["predicate_bottleneck_score"] == 0.0
+
+
+def test_visual_ranking_prioritizes_weakest_required_predicate() -> None:
+    broad_match = LocalFrameFusion(10, 0.9, 1, 1, ())
+    conjunction = LocalFrameFusion(20, 0.8, 1, 2, ())
+    results = (
+        VisualVerificationResult(
+            "V",
+            10,
+            match_score=0.99,
+            requirement_coverage=0.9,
+            all_visible_requirements_satisfied=False,
+            predicates=(
+                VisualPredicateScore("group exercise", 1.0, True, ""),
+                VisualPredicateScore("three red hats", 0.1, True, ""),
+            ),
+            summary="broad match",
+        ),
+        VisualVerificationResult(
+            "V",
+            20,
+            match_score=0.8,
+            requirement_coverage=0.8,
+            all_visible_requirements_satisfied=False,
+            predicates=(
+                VisualPredicateScore("group exercise", 0.7, True, ""),
+                VisualPredicateScore("three red hats", 0.7, True, ""),
+            ),
+            summary="balanced conjunction",
+        ),
+    )
+
+    ranked = rank_visually_verified_timeline_frames(
+        (broad_match, conjunction),
+        results,
+    )
+
+    assert tuple(item.absolute_frame_id for item in ranked) == (20, 10)
 
 
 def test_visual_verifier_config_is_bounded_and_default_off() -> None:
