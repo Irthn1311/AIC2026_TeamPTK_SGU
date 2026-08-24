@@ -94,6 +94,33 @@ class VisualVerificationResult:
             for predicate in self.predicates
         )
 
+    @property
+    def semantic_signature(self) -> tuple[Any, ...]:
+        """Return a bounded signature for cross-candidate calibration.
+
+        Small VLMs commonly quantize visual judgements to a few decimal values. When
+        several different frames receive the same positive conjunction verdict, the
+        verdict is non-discriminative and must not become independent ranking evidence.
+        Evidence text is deliberately excluded: free-form wording must not make an
+        otherwise identical score template appear unique.
+        """
+
+        return (
+            self.all_visible_requirements_satisfied,
+            round(self.match_score, 2),
+            round(self.requirement_coverage, 2),
+            tuple(
+                sorted(
+                    (
+                    " ".join(predicate.requirement.casefold().split()),
+                    round(predicate.score, 2),
+                    predicate.visible,
+                    )
+                    for predicate in self.predicates
+                )
+            ),
+        )
+
     def to_trace(self) -> Mapping[str, Any]:
         return MappingProxyType(
             {
@@ -338,7 +365,7 @@ class HuggingFaceStructuredVisualVerifier:
                 "execution_profile": execution_profile,
                 "max_new_tokens": max_new_tokens,
                 "max_image_pixels": max_image_pixels,
-                "wire_format": "compact-json-v1",
+                "wire_format": "compact-json-v2-observed-evidence",
             }
         )
 
@@ -518,13 +545,16 @@ class HuggingFaceStructuredVisualVerifier:
             "attribute, count, or action. Exact counts and conjunctions matter. Return "
             "exactly one minified JSON object with no prose or markdown, using only this "
             "compact schema: {\"m\":0.0,\"c\":0.0,\"a\":false,\"p\":["
-            "[\"requirement\",0.0,false]],\"s\":\"\"}. m is whole-frame match "
+            "[\"requirement\",0.0,false,\"observed evidence\"]],\"s\":\"\"}. "
+            "m is whole-frame match "
             "score, c is visible-requirement coverage, a is true only when every required "
             "predicate is both visible and satisfied, and p contains exactly one array for every "
             "independently checkable action, count, color, object, person attribute, and "
             "relation. Do not merge or omit requirements. Each p array is requirement, "
-            "score, visible. Keep requirement labels under four words and s under six "
-            "words. Do not emit evidence text. "
+            "score, visible, and a short literal observation from the images. For counts, "
+            "state the visible count; for attributes, state what is visibly present. Use "
+            "\"not visible\" when the evidence is absent. Keep requirement labels under "
+            "four words, observations under six words, and s under six words. "
             f"Vietnamese query: {query_vi}\nEnglish translation: {query_en}"
         )
 

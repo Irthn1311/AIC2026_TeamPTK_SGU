@@ -310,14 +310,14 @@ def rank_visually_verified_timeline_frames(
     shortlist: Sequence[LocalFrameFusion],
     results: Sequence[VisualVerificationResult],
 ) -> tuple[LocalFrameFusion, ...]:
-    """Rank successful VLM results by conjunction, then CLIP fallbacks.
+    """Rank calibrated VLM results by conjunction, then CLIP fallbacks.
 
     VLM and raw CLIP score scales are never added or compared numerically. A partial
-    result set is valid: successfully verified frames form the leading partition and
-    failed candidates retain their original CLIP order in the fallback partition. Within
-    the verified partition, the weakest visible predicate precedes aggregate coverage and
-    match score so one missing count, attribute, action, or relation cannot be hidden by a
-    strong broad-scene match.
+    result set is valid: discriminative verified frames form the leading partition while
+    failed candidates and non-discriminative positive plateaus retain their original CLIP
+    order in the fallback partition. Within the verified partition, the weakest visible
+    predicate precedes aggregate coverage and match score so one missing count, attribute,
+    action, or relation cannot be hidden by a strong broad-scene match.
     """
     by_frame = {item.absolute_frame_id: item for item in shortlist}
     result_by_frame = {item.absolute_frame_id: item for item in results}
@@ -327,31 +327,43 @@ def rank_visually_verified_timeline_frames(
         raise ValueError("visual verifier result identity mismatch")
     if not result_by_frame:
         raise ValueError("visual verifier returned no successful results")
+    plateau_frame_ids = non_discriminative_visual_plateau_frame_ids(results)
+    trusted_result_by_frame = {
+        frame_id: result
+        for frame_id, result in result_by_frame.items()
+        if frame_id not in plateau_frame_ids
+    }
     verified = sorted(
-        (item for item in shortlist if item.absolute_frame_id in result_by_frame),
+        (
+            item
+            for item in shortlist
+            if item.absolute_frame_id in trusted_result_by_frame
+        ),
         key=lambda item: (
             -int(
-                result_by_frame[
+                trusted_result_by_frame[
                     item.absolute_frame_id
                 ].all_visible_requirements_satisfied
             ),
-            -result_by_frame[item.absolute_frame_id].predicate_bottleneck_score,
-            -result_by_frame[item.absolute_frame_id].requirement_coverage,
-            -result_by_frame[item.absolute_frame_id].match_score,
+            -trusted_result_by_frame[item.absolute_frame_id].predicate_bottleneck_score,
+            -trusted_result_by_frame[item.absolute_frame_id].requirement_coverage,
+            -trusted_result_by_frame[item.absolute_frame_id].match_score,
             -item.fusion_score,
             item.absolute_frame_id,
         ),
     )
     fallbacks = [
-        item for item in shortlist if item.absolute_frame_id not in result_by_frame
+        item
+        for item in shortlist
+        if item.absolute_frame_id not in trusted_result_by_frame
     ]
     ordered = [*verified, *fallbacks]
     return tuple(
         LocalFrameFusion(
             absolute_frame_id=item.absolute_frame_id,
             fusion_score=(
-                result_by_frame[item.absolute_frame_id].match_score
-                if item.absolute_frame_id in result_by_frame
+                trusted_result_by_frame[item.absolute_frame_id].match_score
+                if item.absolute_frame_id in trusted_result_by_frame
                 else item.fusion_score
             ),
             variant_hit_count=item.variant_hit_count,
@@ -364,16 +376,58 @@ def rank_visually_verified_timeline_frames(
                             result_by_frame[item.absolute_frame_id].to_trace()
                         )
                     }
-                    if item.absolute_frame_id in result_by_frame
-                    else {
-                        "visual_verification": {
-                            "status": "CANDIDATE_FALLBACK_CLIP"
+                    if item.absolute_frame_id in trusted_result_by_frame
+                    else (
+                        {
+                            "visual_verification": {
+                                **dict(
+                                    result_by_frame[item.absolute_frame_id].to_trace()
+                                ),
+                                "calibration_status": (
+                                    "ABSTAIN_NON_DISCRIMINATIVE_POSITIVE_PLATEAU"
+                                ),
+                            }
                         }
-                    }
+                        if item.absolute_frame_id in plateau_frame_ids
+                        else {
+                            "visual_verification": {
+                                "status": "CANDIDATE_FALLBACK_CLIP"
+                            }
+                        }
+                    )
                 ),
             ),
         )
         for item in ordered
+    )
+
+
+def non_discriminative_visual_plateau_frame_ids(
+    results: Sequence[VisualVerificationResult],
+    *,
+    minimum_plateau_size: int = 3,
+) -> frozenset[int]:
+    """Find repeated positive VLM templates that cannot distinguish frames.
+
+    Plateau candidates remain in output but their VLM score abstains from promotion,
+    leaving them in canonical CLIP order. Repeated negative results are harmless and are
+    not calibrated by this policy.
+    """
+
+    if type(minimum_plateau_size) is not int or minimum_plateau_size < 2:
+        raise ValueError("minimum_plateau_size must be an integer of at least 2")
+    frames_by_signature: dict[tuple[Any, ...], list[int]] = {}
+    for result in results:
+        if not result.all_visible_requirements_satisfied:
+            continue
+        frames_by_signature.setdefault(result.semantic_signature, []).append(
+            result.absolute_frame_id
+        )
+    return frozenset(
+        frame_id
+        for frame_ids in frames_by_signature.values()
+        if len(frame_ids) >= minimum_plateau_size
+        for frame_id in frame_ids
     )
 
 
@@ -949,6 +1003,11 @@ class ExactFrameRefiner:
                                 "visual verifier returned no successful candidates"
                             )
                         visual_verified_count += len(verification_results)
+                        plateau_frame_ids = (
+                            non_discriminative_visual_plateau_frame_ids(
+                                verification_results
+                            )
+                        )
                         ranked_for_selection = rank_visually_verified_timeline_frames(
                             shortlist,
                             verification_results,
@@ -988,6 +1047,16 @@ class ExactFrameRefiner:
                             "recovered_retries": [
                                 dict(item) for item in recovered_retries
                             ],
+                            "calibration": {
+                                "policy": (
+                                    "positive-identical-signature-plateau-abstains"
+                                ),
+                                "minimum_plateau_size": 3,
+                                "abstained_frame_ids": sorted(plateau_frame_ids),
+                                "abstained_candidate_count": len(
+                                    plateau_frame_ids
+                                ),
+                            },
                         }
                     except Exception as exc:
                         if (

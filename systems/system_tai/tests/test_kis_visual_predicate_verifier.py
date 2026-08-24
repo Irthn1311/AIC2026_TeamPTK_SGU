@@ -6,6 +6,7 @@ import pytest
 
 from system_tai.refinement.engine import (
     LocalFrameFusion,
+    non_discriminative_visual_plateau_frame_ids,
     rank_visually_verified_timeline_frames,
 )
 from system_tai.refinement.models import (
@@ -198,6 +199,72 @@ def test_visual_ranking_prioritizes_weakest_required_predicate() -> None:
     )
 
     assert tuple(item.absolute_frame_id for item in ranked) == (20, 10)
+
+
+def test_repeated_positive_visual_template_abstains_instead_of_promoting() -> None:
+    shortlist = tuple(
+        LocalFrameFusion(frame_id, score, 1, rank, ())
+        for rank, (frame_id, score) in enumerate(
+            ((10, 0.9), (20, 0.8), (30, 0.7), (40, 0.6)),
+            start=1,
+        )
+    )
+
+    def result(frame_id: int, *, bottleneck: float) -> VisualVerificationResult:
+        return VisualVerificationResult(
+            "V",
+            frame_id,
+            match_score=0.9,
+            requirement_coverage=0.8,
+            all_visible_requirements_satisfied=True,
+            predicates=(
+                VisualPredicateScore(
+                    "group action",
+                    bottleneck,
+                    True,
+                    f"frame {frame_id} people bending",
+                ),
+                VisualPredicateScore(
+                    "three red hats",
+                    bottleneck,
+                    True,
+                    f"frame {frame_id} three hats",
+                ),
+            ),
+            summary="visible conjunction",
+        )
+
+    results = (
+        result(10, bottleneck=0.8),
+        result(20, bottleneck=0.8),
+        result(30, bottleneck=0.8),
+        result(40, bottleneck=0.6),
+    )
+
+    plateau = non_discriminative_visual_plateau_frame_ids(results)
+    ranked = rank_visually_verified_timeline_frames(shortlist, results)
+
+    assert plateau == frozenset({10, 20, 30})
+    assert tuple(item.absolute_frame_id for item in ranked) == (40, 10, 20, 30)
+    assert ranked[0].fusion_score == pytest.approx(0.9)
+    assert ranked[1].fusion_score == pytest.approx(0.9)
+    assert (
+        ranked[1].per_variant_provenance[-1]["visual_verification"][
+            "calibration_status"
+        ]
+        == "ABSTAIN_NON_DISCRIMINATIVE_POSITIVE_PLATEAU"
+    )
+
+
+def test_visual_verifier_prompt_requires_observed_predicate_evidence() -> None:
+    prompt = HuggingFaceStructuredVisualVerifier._build_prompt(
+        query_vi="mô tả",
+        query_en="description",
+    )
+
+    assert '["requirement",0.0,false,"observed evidence"]' in prompt
+    assert "state the visible count" in prompt
+    assert 'Use "not visible"' in prompt
 
 
 def test_visual_verifier_config_is_bounded_and_default_off() -> None:
