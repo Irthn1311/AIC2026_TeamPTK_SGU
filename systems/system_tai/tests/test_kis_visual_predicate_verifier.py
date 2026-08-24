@@ -285,7 +285,7 @@ def test_visual_verifier_prompt_requires_observed_predicate_evidence() -> None:
     assert "never leave it empty" in prompt
 
 
-def test_visual_verifier_prompt_does_not_seed_echoable_result_values() -> None:
+def test_visual_verifier_prompt_seeds_only_fail_closed_result_values() -> None:
     prompt = HuggingFaceStructuredVisualVerifier._build_prompt(
         query_vi=QUERY_VI,
         query_en=QUERY_EN,
@@ -293,7 +293,8 @@ def test_visual_verifier_prompt_does_not_seed_echoable_result_values() -> None:
 
     assert "<example_predicate_id>" not in prompt
     assert '"image N: literal evidence"' not in prompt
-    assert '["subject_count_1",false,false' not in prompt
+    assert '["subject_count_1",false,false,"unknown","not visible"]' in prompt
+    assert '"a":false' in prompt
     assert "Do not repeat these instructions" in prompt
 
 

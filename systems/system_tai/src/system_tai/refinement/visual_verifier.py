@@ -457,6 +457,13 @@ def _bounded_error(exc: BaseException, *, limit: int = 500) -> str:
     return rendered[: limit - 3] + "..."
 
 
+def _bounded_generated_response(text: str, *, limit: int = 600) -> str:
+    rendered = " ".join(text.split())
+    if len(rendered) <= limit:
+        return rendered
+    return rendered[: limit - 3] + "..."
+
+
 def _reject_duplicate_json_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in pairs:
@@ -778,7 +785,7 @@ class HuggingFaceStructuredVisualVerifier:
                 "execution_profile": execution_profile,
                 "max_new_tokens": max_new_tokens,
                 "max_image_pixels": max_image_pixels,
-                "wire_format": "compact-json-v6-fixed-predicate-no-example",
+                "wire_format": "compact-json-v7-fixed-predicate-safe-template",
             }
         )
 
@@ -957,12 +964,18 @@ class HuggingFaceStructuredVisualVerifier:
                 f"visual verification generation failed for "
                 f"{candidate.video_id}/{candidate.absolute_frame_id}: {exc}"
             ) from exc
-        return parse_visual_verification_json(
-            decoded,
-            video_id=candidate.video_id,
-            absolute_frame_id=candidate.absolute_frame_id,
-            predicate_contract=predicate_contract,
-        )
+        try:
+            return parse_visual_verification_json(
+                decoded,
+                video_id=candidate.video_id,
+                absolute_frame_id=candidate.absolute_frame_id,
+                predicate_contract=predicate_contract,
+            )
+        except VisualVerificationError as exc:
+            response = _bounded_generated_response(decoded)
+            raise VisualVerificationError(
+                f"{exc}; bounded_generated_response={response!r}"
+            ) from exc
 
     @staticmethod
     def _build_prompt(
@@ -988,6 +1001,26 @@ class HuggingFaceStructuredVisualVerifier:
             ensure_ascii=False,
             separators=(",", ":"),
         )
+        safe_template = json.dumps(
+            {
+                "m": 0.0,
+                "c": 0.0,
+                "a": False,
+                "p": [
+                    [
+                        item.predicate_id,
+                        False,
+                        False,
+                        "unknown",
+                        "not visible",
+                    ]
+                    for item in contract
+                ],
+                "s": "",
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
         return (
             "You are a strict visual evidence verifier for video known-item search. "
             "The images are neighboring frames from one automatically retrieved temporal "
@@ -995,8 +1028,11 @@ class HuggingFaceStructuredVisualVerifier:
             "candidate frame. Score only the fixed predicate contract below. Never create, "
             "rename, merge, or omit an ID. Never infer a hidden person, "
             "attribute, count, or action. Exact counts and conjunctions matter. Return "
-            "exactly one minified JSON object with no prose or markdown. The root keys "
-            "must be m,c,a,p,s. m is whole-frame match "
+            "exactly one minified JSON object with no prose or markdown. Start from this "
+            f"complete fail-closed template: {safe_template}. Preserve its structure and "
+            "IDs. Change a predicate's false/unknown/not-visible values only when the "
+            "provided images literally support the replacement. The root keys "
+            "must remain m,c,a,p,s. m is whole-frame match "
             "score, c is satisfied-predicate coverage, and a is true only when every fixed "
             "predicate is visible, satisfied, and literally evidenced. p must contain one "
             "five-value array per required ID, in the listed order. Each array contains: "
