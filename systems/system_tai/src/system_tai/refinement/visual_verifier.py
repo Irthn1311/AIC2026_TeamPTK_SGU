@@ -785,7 +785,7 @@ class HuggingFaceStructuredVisualVerifier:
                 "execution_profile": execution_profile,
                 "max_new_tokens": max_new_tokens,
                 "max_image_pixels": max_image_pixels,
-                "wire_format": "compact-json-v7-fixed-predicate-safe-template",
+                "wire_format": "compact-json-v8-output-template-last",
             }
         )
 
@@ -991,16 +991,18 @@ class HuggingFaceStructuredVisualVerifier:
                 query_en=query_en,
             )
         )
-        contract_json = json.dumps(
-            [dict(item.to_prompt()) for item in contract],
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
-        predicate_ids = json.dumps(
-            [item.predicate_id for item in contract],
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
+        contract_lines = []
+        for index, item in enumerate(contract, start=1):
+            comparison = (
+                f"; visible count must be {item.comparison} {item.expected_value}"
+                if item.comparison is not None
+                else ""
+            )
+            contract_lines.append(
+                f"{index}. {item.predicate_id}: {item.requirement}{comparison}"
+            )
+        predicate_requirements = "\n".join(contract_lines)
+        predicate_ids = ", ".join(item.predicate_id for item in contract)
         safe_template = json.dumps(
             {
                 "m": 0.0,
@@ -1028,10 +1030,7 @@ class HuggingFaceStructuredVisualVerifier:
             "candidate frame. Score only the fixed predicate contract below. Never create, "
             "rename, merge, or omit an ID. Never infer a hidden person, "
             "attribute, count, or action. Exact counts and conjunctions matter. Return "
-            "exactly one minified JSON object with no prose or markdown. Start from this "
-            f"complete fail-closed template: {safe_template}. Preserve its structure and "
-            "IDs. Change a predicate's false/unknown/not-visible values only when the "
-            "provided images literally support the replacement. The root keys "
+            "exactly one minified JSON object with no prose or markdown. The root keys "
             "must remain m,c,a,p,s. m is whole-frame match "
             "score, c is satisfied-predicate coverage, and a is true only when every fixed "
             "predicate is visible, satisfied, and literally evidenced. p must contain one "
@@ -1048,9 +1047,15 @@ class HuggingFaceStructuredVisualVerifier:
             "for the final four values of that predicate. Do not repeat these instructions "
             "or copy wording from the fixed contract into an observation. Keep evidence "
             "under ten words and "
-            "s under six words. "
-            f"Fixed predicate contract: {contract_json}\n"
-            f"Vietnamese query: {query_vi}\nEnglish translation: {query_en}"
+            "s under six words. The numbered requirements below are read-only prose, not "
+            "JSON. Never copy their descriptions or metadata into p.\n"
+            f"Vietnamese query: {query_vi}\nEnglish translation: {query_en}\n"
+            f"Required visual predicates:\n{predicate_requirements}\n"
+            "Use the following complete fail-closed JSON as the output skeleton. Preserve "
+            "its structure, order, and IDs. Change false/unknown/not visible only when the "
+            "images literally support the replacement. Return the completed JSON now; "
+            "this JSON skeleton must be the final and only object in the response:\n"
+            f"{safe_template}"
         )
 
     def _progress(self, message: str) -> None:

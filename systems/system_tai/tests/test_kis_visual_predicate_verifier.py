@@ -277,8 +277,9 @@ def test_visual_verifier_prompt_requires_observed_predicate_evidence() -> None:
         query_en=QUERY_EN,
     )
 
-    assert 'Required IDs in exact order: ["subject_count_1"' in prompt
+    assert "Required IDs in exact order: subject_count_1" in prompt
     assert '"observed_value"' not in prompt
+    assert '"requirement"' not in prompt
     assert "image N: literal evidence" not in prompt
     assert "do not invent an ID" in prompt
     assert "observed_value must be only the visible integer" in prompt
@@ -296,6 +297,9 @@ def test_visual_verifier_prompt_seeds_only_fail_closed_result_values() -> None:
     assert '["subject_count_1",false,false,"unknown","not visible"]' in prompt
     assert '"a":false' in prompt
     assert "Do not repeat these instructions" in prompt
+    assert "Fixed predicate contract:" not in prompt
+    assert prompt.count('{"m":') == 1
+    assert prompt.endswith('"s":""}')
 
 
 def test_query_compiler_produces_stable_specific_predicate_ids() -> None:
