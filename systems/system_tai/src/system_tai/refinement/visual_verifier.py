@@ -517,40 +517,97 @@ def parse_visual_verification_json(
         try:
             if predicate_contract is not None:
                 if isinstance(item, dict):
-                    has_id = "id" in item
-                    has_predicate_id = "predicate_id" in item
-                    if has_id and has_predicate_id:
-                        if str(item["id"]) != str(item["predicate_id"]):
-                            raise ValueError(
-                                "conflicting predicate ID aliases 'id' and "
-                                "'predicate_id'"
-                            )
-                        predicate_id = str(item["id"])
-                    elif has_id:
-                        predicate_id = str(item["id"])
-                    elif has_predicate_id:
-                        predicate_id = str(item["predicate_id"])
-                    else:
-                        raise KeyError("id or predicate_id")
-                    score = item["score"]
-                    visible = item["visible"]
-                    satisfied = item["satisfied"]
-                    observed_value = item["observed_value"]
-                    evidence = item["evidence"]
+                    def predicate_value(
+                        canonical: str,
+                        *aliases: str,
+                        required: bool = True,
+                    ) -> Any:
+                        present = [
+                            key for key in (canonical, *aliases) if key in item
+                        ]
+                        if len(present) > 1:
+                            values = {str(item[key]) for key in present}
+                            if len(values) > 1:
+                                raise ValueError(
+                                    f"conflicting predicate field aliases {present}"
+                                )
+                        if present:
+                            return item[present[0]]
+                        if required:
+                            raise KeyError(canonical)
+                        return None
+
+                    if (
+                        "id" in item
+                        and "predicate_id" in item
+                        and str(item["id"]) != str(item["predicate_id"])
+                    ):
+                        raise ValueError(
+                            "conflicting predicate ID aliases 'id' and "
+                            "'predicate_id'"
+                        )
+                    predicate_id = str(
+                        predicate_value("id", "predicate_id", "i")
+                    )
+                    visible = predicate_value("visible", "v")
+                    satisfied = predicate_value("satisfied", "x", "sat")
+                    observed_value = predicate_value(
+                        "observed_value",
+                        "observed",
+                        "o",
+                    )
+                    evidence = predicate_value("evidence", "e")
+                    reported_score = predicate_value(
+                        "score",
+                        "confidence",
+                        "sc",
+                        required=False,
+                    )
+                    try:
+                        parsed_score = float(reported_score)
+                    except (TypeError, ValueError):
+                        parsed_score = math.nan
+                    # The fixed contract is a boolean evidence gate, not a score
+                    # calibration benchmark. Small VLMs often omit this score or
+                    # emit a count/percentage. Preserve only a valid unit score.
+                    score = (
+                        parsed_score
+                        if math.isfinite(parsed_score) and 0.0 <= parsed_score <= 1.0
+                        else (1.0 if visible is True and satisfied is True else 0.0)
+                    )
                 elif isinstance(item, list) and len(item) == 6:
                     (
                         predicate_id,
-                        score,
+                        _reported_score,
                         visible,
                         satisfied,
                         observed_value,
                         evidence,
                     ) = item
                     predicate_id = str(predicate_id)
+                    try:
+                        parsed_score = float(_reported_score)
+                    except (TypeError, ValueError):
+                        parsed_score = math.nan
+                    score = (
+                        parsed_score
+                        if math.isfinite(parsed_score) and 0.0 <= parsed_score <= 1.0
+                        else (1.0 if visible is True and satisfied is True else 0.0)
+                    )
+                elif isinstance(item, list) and len(item) == 5:
+                    (
+                        predicate_id,
+                        visible,
+                        satisfied,
+                        observed_value,
+                        evidence,
+                    ) = item
+                    predicate_id = str(predicate_id)
+                    score = 1.0 if visible is True and satisfied is True else 0.0
                 else:
                     raise TypeError(
                         "must be an object or compact "
-                        "[id, score, visible, satisfied, observed_value, evidence] array"
+                        "[id, visible, satisfied, observed_value, evidence] array"
                     )
                 if predicate_id in seen_predicate_ids:
                     raise ValueError(f"duplicate predicate ID {predicate_id!r}")
@@ -721,7 +778,7 @@ class HuggingFaceStructuredVisualVerifier:
                 "execution_profile": execution_profile,
                 "max_new_tokens": max_new_tokens,
                 "max_image_pixels": max_image_pixels,
-                "wire_format": "compact-json-v4-fixed-predicate-id-alias",
+                "wire_format": "compact-json-v5-fixed-predicate-boolean-evidence",
             }
         )
 
@@ -936,12 +993,12 @@ class HuggingFaceStructuredVisualVerifier:
             "attribute, count, or action. Exact counts and conjunctions matter. Return "
             "exactly one minified JSON object with no prose or markdown, using only this "
             "compact schema: {\"m\":0.0,\"c\":0.0,\"a\":false,\"p\":["
-            f"[\"{example_predicate_id}\",0.0,false,false,\"observed_value\","
+            f"[\"{example_predicate_id}\",false,false,\"observed_value\","
             "\"image N: literal evidence\"]],\"s\":\"\"}. "
             "m is whole-frame match "
             "score, c is satisfied-predicate coverage, and a is true only when every fixed "
             "predicate is visible, satisfied, and literally evidenced. Each p array is ID, "
-            "score, visible, satisfied, observed value, evidence. Copy each exact ID from "
+            "visible, satisfied, observed value, evidence. Copy each exact ID from "
             "the fixed contract into the first array position. Do not output the literal "
             "word predicate_id. An object using id or predicate_id is accepted only as a "
             "compatibility fallback; never emit both. For a count predicate, "

@@ -278,7 +278,7 @@ def test_visual_verifier_prompt_requires_observed_predicate_evidence() -> None:
     )
 
     assert (
-        '["subject_count_1",0.0,false,false,"observed_value",'
+        '["subject_count_1",false,false,"observed_value",'
         '"image N: literal evidence"]'
     ) in prompt
     assert "Do not output the literal word predicate_id" in prompt
@@ -394,6 +394,102 @@ def test_fixed_contract_accepts_qwen_predicate_id_object_alias() -> None:
     assert tuple(item.predicate_id for item in result.predicates) == tuple(
         item.predicate_id for item in contract
     )
+
+
+def test_fixed_contract_accepts_qwen_object_without_numeric_scores() -> None:
+    contract = compile_visual_predicate_contract(
+        query_vi=QUERY_VI,
+        query_en=QUERY_EN,
+    )
+    predicates = []
+    for values in json.loads(_strict_contract_payload(contract))["p"]:
+        predicate_id, _score, visible, satisfied, observed, evidence = values
+        predicates.append(
+            {
+                "predicate_id": predicate_id,
+                "visible": visible,
+                "satisfied": satisfied,
+                "observed_value": observed,
+                "evidence": evidence,
+            }
+        )
+    payload = json.dumps(
+        {"m": 0.9, "c": 1.0, "a": True, "p": predicates, "s": "match"}
+    )
+
+    result = parse_visual_verification_json(
+        payload,
+        video_id="V",
+        absolute_frame_id=6650,
+        predicate_contract=contract,
+    )
+
+    assert result.eligible_for_promotion is True
+    assert all(item.score == 1.0 for item in result.predicates)
+
+
+def test_fixed_contract_accepts_compact_qwen_object_aliases() -> None:
+    contract = compile_visual_predicate_contract(
+        query_vi=QUERY_VI,
+        query_en=QUERY_EN,
+    )
+    predicates = []
+    for values in json.loads(_strict_contract_payload(contract))["p"]:
+        predicate_id, _score, visible, satisfied, observed, evidence = values
+        predicates.append(
+            {
+                "i": predicate_id,
+                "v": visible,
+                "x": satisfied,
+                "o": observed,
+                "e": evidence,
+            }
+        )
+    payload = json.dumps(
+        {"m": 0.9, "c": 1.0, "a": True, "p": predicates, "s": "match"}
+    )
+
+    result = parse_visual_verification_json(
+        payload,
+        video_id="V",
+        absolute_frame_id=6650,
+        predicate_contract=contract,
+    )
+
+    assert result.eligible_for_promotion is True
+    assert tuple(item.predicate_id for item in result.predicates) == tuple(
+        item.predicate_id for item in contract
+    )
+
+
+def test_fixed_contract_ignores_untrusted_predicate_score_scale() -> None:
+    contract = compile_visual_predicate_contract(
+        query_vi=QUERY_VI,
+        query_en=QUERY_EN,
+    )
+    payload = json.loads(_strict_contract_payload(contract))
+    payload["p"] = [
+        {
+            "predicate_id": predicate_id,
+            "score": 8,
+            "visible": visible,
+            "satisfied": satisfied,
+            "observed_value": observed,
+            "evidence": evidence,
+        }
+        for predicate_id, _score, visible, satisfied, observed, evidence
+        in payload["p"]
+    ]
+
+    result = parse_visual_verification_json(
+        json.dumps(payload),
+        video_id="V",
+        absolute_frame_id=6650,
+        predicate_contract=contract,
+    )
+
+    assert result.eligible_for_promotion is True
+    assert all(item.score == 1.0 for item in result.predicates)
 
 
 def test_fixed_contract_rejects_conflicting_predicate_id_aliases() -> None:
