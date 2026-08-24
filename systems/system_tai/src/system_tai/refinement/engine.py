@@ -331,7 +331,7 @@ def rank_visually_verified_timeline_frames(
     trusted_result_by_frame = {
         frame_id: result
         for frame_id, result in result_by_frame.items()
-        if frame_id not in plateau_frame_ids
+        if frame_id not in plateau_frame_ids and result.eligible_for_promotion
     }
     verified = sorted(
         (
@@ -418,7 +418,10 @@ def non_discriminative_visual_plateau_frame_ids(
         raise ValueError("minimum_plateau_size must be an integer of at least 2")
     frames_by_signature: dict[tuple[Any, ...], list[int]] = {}
     for result in results:
-        if not result.all_visible_requirements_satisfied:
+        if (
+            not result.all_visible_requirements_satisfied
+            or not result.eligible_for_promotion
+        ):
             continue
         frames_by_signature.setdefault(result.semantic_signature, []).append(
             result.absolute_frame_id
@@ -1008,6 +1011,13 @@ class ExactFrameRefiner:
                                 verification_results
                             )
                         )
+                        predicate_contract = tuple(
+                            getattr(
+                                self.visual_verifier,
+                                "last_predicate_contract",
+                                (),
+                            )
+                        )
                         ranked_for_selection = rank_visually_verified_timeline_frames(
                             shortlist,
                             verification_results,
@@ -1039,6 +1049,13 @@ class ExactFrameRefiner:
                             "results": [
                                 dict(item.to_trace()) for item in verification_results
                             ],
+                            "predicate_contract": [
+                                dict(item.to_prompt()) for item in predicate_contract
+                            ],
+                            "strictly_promotable_candidate_count": sum(
+                                item.eligible_for_promotion
+                                for item in verification_results
+                            ),
                             "successful_candidate_count": len(
                                 verification_results
                             ),
@@ -1049,7 +1066,7 @@ class ExactFrameRefiner:
                             ],
                             "calibration": {
                                 "policy": (
-                                    "positive-identical-signature-plateau-abstains"
+                                    "fixed-contract-fail-closed-and-positive-plateau-abstains"
                                 ),
                                 "minimum_plateau_size": 3,
                                 "abstained_frame_ids": sorted(plateau_frame_ids),

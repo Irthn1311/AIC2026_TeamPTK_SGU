@@ -10,6 +10,7 @@ from __future__ import annotations
 import importlib
 import json
 import math
+import re
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -20,6 +21,187 @@ from typing import Any, Protocol
 
 class VisualVerificationError(RuntimeError):
     """The optional visual verifier could not produce a trustworthy result."""
+
+
+_NUMBER_WORDS = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
+}
+_NUMBER_PATTERN = "|".join((*_NUMBER_WORDS, r"\d+"))
+_COUNT_PATTERN = re.compile(
+    rf"\b(?P<qualifier>more than|over|at least|fewer than|less than|at most|"
+    rf"exactly|only)?\s*(?P<number>{_NUMBER_PATTERN})\s+"
+    r"(?P<subject>people|person|men|man|women|woman|children|child|students?|"
+    r"workers?|players?|drivers?|employees?|animals?|objects?|items?)"
+    r"(?:\s+(?P<attribute>wearing|with|holding|carrying)\s+"
+    r"(?P<detail>[^,.;]+))?",
+    flags=re.IGNORECASE,
+)
+_SPATIAL_TERMS = re.compile(
+    r"\b(in (?:a |one )?(?:row|line)|lined up|next to|between|behind|in front of|"
+    r"left of|right of|around|surrounding|above|below)\b",
+    flags=re.IGNORECASE,
+)
+_ACTION_TERMS = re.compile(
+    r"\b(doing|performing|touching|bending|exercising|walking|running|sitting|"
+    r"standing|jumping|cutting|cooking|placing|pouring|stirring|pulling|holding|"
+    r"carrying|climbing|driving|riding|speaking|teaching|weighing|picking|"
+    r"showing|opening|closing|moving|turning|looking|observing)\b",
+    flags=re.IGNORECASE,
+)
+_SYNCHRONIZATION_TERMS = re.compile(
+    r"\b(together|simultaneously|at the same time|same action|in unison)\b",
+    flags=re.IGNORECASE,
+)
+_VI_SYNCHRONIZATION_TERMS = re.compile(
+    r"\b(cùng|đồng thời|cùng lúc|đồng loạt)\b",
+    flags=re.IGNORECASE,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class VisualPredicateRequirement:
+    """One stable, query-derived predicate shared by every candidate frame."""
+
+    predicate_id: str
+    requirement: str
+    comparison: str | None = None
+    expected_value: int | None = None
+
+    def __post_init__(self) -> None:
+        if not re.fullmatch(r"[a-z][a-z0-9_]*", self.predicate_id):
+            raise ValueError("visual predicate ID must be lower snake case")
+        if not self.requirement.strip():
+            raise ValueError("visual predicate requirement must not be empty")
+        if self.comparison not in {None, "eq", "gt", "ge", "lt", "le"}:
+            raise ValueError("unsupported visual predicate comparison")
+        if (self.comparison is None) != (self.expected_value is None):
+            raise ValueError("count comparison and expected value must be paired")
+
+    def to_prompt(self) -> Mapping[str, Any]:
+        return MappingProxyType(
+            {
+                "id": self.predicate_id,
+                "requirement": self.requirement,
+                "comparison": self.comparison,
+                "expected_value": self.expected_value,
+            }
+        )
+
+
+def _query_fragments(query_en: str) -> tuple[str, ...]:
+    fragments = re.split(
+        rf"[.;]|,\s+|\s+and\s+(?=(?:only\s+|exactly\s+)?(?:{_NUMBER_PATTERN})\b)",
+        query_en,
+        flags=re.IGNORECASE,
+    )
+    return tuple(" ".join(item.split()) for item in fragments if item.strip())
+
+
+def _number_value(raw: str) -> int:
+    normalized = raw.strip().casefold()
+    if normalized.isdigit():
+        return int(normalized)
+    return _NUMBER_WORDS[normalized]
+
+
+def _count_comparison(qualifier: str | None) -> str:
+    normalized = (qualifier or "").strip().casefold()
+    return {
+        "more than": "gt",
+        "over": "gt",
+        "at least": "ge",
+        "fewer than": "lt",
+        "less than": "lt",
+        "at most": "le",
+    }.get(normalized, "eq")
+
+
+def compile_visual_predicate_contract(
+    *,
+    query_vi: str,
+    query_en: str,
+    maximum_predicates: int = 12,
+) -> tuple[VisualPredicateRequirement, ...]:
+    """Compile stable predicates without target-video or ground-truth knowledge."""
+
+    if not query_vi.strip() or not query_en.strip():
+        raise ValueError("visual predicate compilation requires VI and EN query text")
+    if type(maximum_predicates) is not int or maximum_predicates <= 0:
+        raise ValueError("maximum_predicates must be a positive integer")
+    requirements: list[VisualPredicateRequirement] = []
+    category_counts: dict[str, int] = {}
+
+    def add(
+        category: str,
+        requirement: str,
+        *,
+        comparison: str | None = None,
+        expected_value: int | None = None,
+    ) -> None:
+        normalized = " ".join(requirement.split()).strip(" ,")
+        identity = (category, normalized.casefold(), comparison, expected_value)
+        if any(
+            (
+                item.predicate_id.rsplit("_", 1)[0],
+                item.requirement.casefold(),
+                item.comparison,
+                item.expected_value,
+            )
+            == identity
+            for item in requirements
+        ):
+            return
+        category_counts[category] = category_counts.get(category, 0) + 1
+        requirements.append(
+            VisualPredicateRequirement(
+                predicate_id=f"{category}_{category_counts[category]}",
+                requirement=normalized,
+                comparison=comparison,
+                expected_value=expected_value,
+            )
+        )
+
+    fragments = _query_fragments(query_en)
+    action_fragments: list[str] = []
+    for fragment in fragments:
+        for match in _COUNT_PATTERN.finditer(fragment):
+            detail = match.group("detail")
+            category = "person_attribute_count" if detail else "subject_count"
+            add(
+                category,
+                match.group(0),
+                comparison=_count_comparison(match.group("qualifier")),
+                expected_value=_number_value(match.group("number")),
+            )
+        if _SPATIAL_TERMS.search(fragment):
+            add("spatial_layout", fragment)
+        if _ACTION_TERMS.search(fragment) and "wearing" not in fragment.casefold():
+            add("primary_action", fragment)
+            action_fragments.append(fragment)
+
+    if (
+        _SYNCHRONIZATION_TERMS.search(query_en)
+        or _VI_SYNCHRONIZATION_TERMS.search(query_vi)
+    ):
+        action_context = "; ".join(action_fragments) or query_en
+        add(
+            "synchronized_action",
+            f"People perform together: {action_context}",
+        )
+    if not requirements:
+        add("scene_conjunction", query_en)
+    return tuple(requirements[:maximum_predicates])
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +228,11 @@ class VisualPredicateScore:
     score: float
     visible: bool
     evidence: str
+    predicate_id: str = ""
+    observed_value: str = ""
+    satisfied: bool = False
+    comparison: str | None = None
+    expected_value: int | None = None
 
     def __post_init__(self) -> None:
         if not self.requirement.strip():
@@ -54,6 +241,62 @@ class VisualPredicateScore:
             raise ValueError("visual predicate score must be in [0, 1]")
         if type(self.visible) is not bool:
             raise ValueError("visual predicate visible must be boolean")
+        if self.predicate_id and not re.fullmatch(
+            r"[a-z][a-z0-9_]*", self.predicate_id
+        ):
+            raise ValueError("visual predicate ID must be lower snake case")
+        if type(self.satisfied) is not bool:
+            raise ValueError("visual predicate satisfied must be boolean")
+
+    @property
+    def evidence_grounded(self) -> bool:
+        placeholders = {
+            "",
+            "n/a",
+            "na",
+            "none",
+            "not visible",
+            "unknown",
+            "unclear",
+            "cannot tell",
+        }
+        normalized_evidence = self.evidence.strip().casefold()
+        return (
+            normalized_evidence not in placeholders
+            and re.search(r"\bimage\s+\d+\b", normalized_evidence) is not None
+            and self.observed_value.strip().casefold() not in placeholders
+        )
+
+    @property
+    def count_matches(self) -> bool:
+        if self.comparison is None or self.expected_value is None:
+            return True
+        observed_match = re.search(
+            rf"\b({_NUMBER_PATTERN})\b",
+            self.observed_value,
+            flags=re.IGNORECASE,
+        )
+        if observed_match is None:
+            return False
+        observed = _number_value(observed_match.group(1))
+        expected = self.expected_value
+        return {
+            "eq": observed == expected,
+            "gt": observed > expected,
+            "ge": observed >= expected,
+            "lt": observed < expected,
+            "le": observed <= expected,
+        }[self.comparison]
+
+    @property
+    def strictly_satisfied(self) -> bool:
+        return (
+            self.visible
+            and self.satisfied
+            and self.score >= 0.5
+            and self.evidence_grounded
+            and self.count_matches
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +308,7 @@ class VisualVerificationResult:
     all_visible_requirements_satisfied: bool
     predicates: tuple[VisualPredicateScore, ...]
     summary: str
+    contract_validated: bool = False
 
     def __post_init__(self) -> None:
         if not self.video_id.strip() or self.absolute_frame_id < 0:
@@ -89,9 +333,22 @@ class VisualVerificationResult:
         or relation is absent from the frame.
         """
 
+        if self.contract_validated:
+            return min(
+                predicate.score if predicate.strictly_satisfied else 0.0
+                for predicate in self.predicates
+            )
         return min(
             predicate.score if predicate.visible else 0.0
             for predicate in self.predicates
+        )
+
+    @property
+    def eligible_for_promotion(self) -> bool:
+        if not self.contract_validated:
+            return True
+        return self.all_visible_requirements_satisfied and all(
+            predicate.strictly_satisfied for predicate in self.predicates
         )
 
     @property
@@ -112,9 +369,12 @@ class VisualVerificationResult:
             tuple(
                 sorted(
                     (
-                    " ".join(predicate.requirement.casefold().split()),
+                    predicate.predicate_id
+                    or " ".join(predicate.requirement.casefold().split()),
                     round(predicate.score, 2),
                     predicate.visible,
+                    predicate.satisfied,
+                    " ".join(predicate.observed_value.casefold().split()),
                     )
                     for predicate in self.predicates
                 )
@@ -132,12 +392,19 @@ class VisualVerificationResult:
                     self.all_visible_requirements_satisfied
                 ),
                 "predicate_bottleneck_score": self.predicate_bottleneck_score,
+                "contract_validated": self.contract_validated,
+                "eligible_for_promotion": self.eligible_for_promotion,
                 "predicates": [
                     {
+                        "predicate_id": predicate.predicate_id,
                         "requirement": predicate.requirement,
                         "score": predicate.score,
                         "visible": predicate.visible,
+                        "satisfied": predicate.satisfied,
+                        "observed_value": predicate.observed_value,
                         "evidence": predicate.evidence,
+                        "comparison": predicate.comparison,
+                        "expected_value": predicate.expected_value,
                     }
                     for predicate in self.predicates
                 ],
@@ -204,6 +471,7 @@ def parse_visual_verification_json(
     *,
     video_id: str,
     absolute_frame_id: int,
+    predicate_contract: Sequence[VisualPredicateRequirement] | None = None,
 ) -> VisualVerificationResult:
     """Parse one bounded JSON object; markdown fences and surrounding prose are tolerated."""
     stripped = text.strip()
@@ -239,8 +507,57 @@ def parse_visual_verification_json(
     if not isinstance(raw_predicates, list) or not raw_predicates:
         raise VisualVerificationError("visual verifier predicates must be a non-empty list")
     predicates: list[VisualPredicateScore] = []
+    contract_by_id = {
+        item.predicate_id: item for item in (predicate_contract or ())
+    }
+    if len(contract_by_id) != len(predicate_contract or ()):
+        raise ValueError("visual predicate contract contains duplicate IDs")
+    seen_predicate_ids: set[str] = set()
     for index, item in enumerate(raw_predicates, start=1):
         try:
+            if predicate_contract is not None:
+                if isinstance(item, dict):
+                    predicate_id = str(item["id"])
+                    score = item["score"]
+                    visible = item["visible"]
+                    satisfied = item["satisfied"]
+                    observed_value = item["observed_value"]
+                    evidence = item["evidence"]
+                elif isinstance(item, list) and len(item) == 6:
+                    (
+                        predicate_id,
+                        score,
+                        visible,
+                        satisfied,
+                        observed_value,
+                        evidence,
+                    ) = item
+                    predicate_id = str(predicate_id)
+                else:
+                    raise TypeError(
+                        "must be an object or compact "
+                        "[id, score, visible, satisfied, observed_value, evidence] array"
+                    )
+                if predicate_id in seen_predicate_ids:
+                    raise ValueError(f"duplicate predicate ID {predicate_id!r}")
+                seen_predicate_ids.add(predicate_id)
+                expected = contract_by_id.get(predicate_id)
+                if expected is None:
+                    raise ValueError(f"unexpected predicate ID {predicate_id!r}")
+                predicates.append(
+                    VisualPredicateScore(
+                        requirement=expected.requirement,
+                        score=float(score),
+                        visible=visible,
+                        evidence=str(evidence),
+                        predicate_id=predicate_id,
+                        observed_value=str(observed_value),
+                        satisfied=satisfied,
+                        comparison=expected.comparison,
+                        expected_value=expected.expected_value,
+                    )
+                )
+                continue
             if isinstance(item, dict):
                 requirement = item["requirement"]
                 score = item["score"]
@@ -264,16 +581,40 @@ def parse_visual_verification_json(
         except (KeyError, TypeError, ValueError) as exc:
             raise VisualVerificationError(f"invalid predicate {index}: {exc}") from exc
     try:
+        if predicate_contract is not None and seen_predicate_ids != set(contract_by_id):
+            missing = sorted(set(contract_by_id) - seen_predicate_ids)
+            raise VisualVerificationError(
+                f"visual verifier response is missing predicate IDs: {missing}"
+            )
+        reported_all = aliased_value(
+            "all_visible_requirements_satisfied", "a"
+        )
+        if type(reported_all) is not bool:
+            raise VisualVerificationError(
+                "all_visible_requirements_satisfied must be boolean"
+            )
+        reported_coverage = float(
+            aliased_value("requirement_coverage", "c")
+        )
+        strict_coverage = (
+            sum(item.strictly_satisfied for item in predicates) / len(predicates)
+            if predicate_contract is not None
+            else reported_coverage
+        )
+        strict_all = all(item.strictly_satisfied for item in predicates)
         return VisualVerificationResult(
             video_id=video_id,
             absolute_frame_id=absolute_frame_id,
             match_score=float(aliased_value("match_score", "m")),
-            requirement_coverage=float(aliased_value("requirement_coverage", "c")),
-            all_visible_requirements_satisfied=aliased_value(
-                "all_visible_requirements_satisfied", "a"
+            requirement_coverage=min(reported_coverage, strict_coverage),
+            all_visible_requirements_satisfied=(
+                reported_all and strict_all
+                if predicate_contract is not None
+                else reported_all
             ),
             predicates=tuple(predicates),
             summary=str(aliased_value("summary", "s", required=False)),
+            contract_validated=predicate_contract is not None,
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise VisualVerificationError(f"invalid visual verifier result: {exc}") from exc
@@ -354,6 +695,7 @@ class HuggingFaceStructuredVisualVerifier:
         self._progress_callback = progress_callback
         self._last_failures: tuple[VisualVerificationFailure, ...] = ()
         self._last_recovered_retries: tuple[Mapping[str, Any], ...] = ()
+        self._last_predicate_contract: tuple[VisualPredicateRequirement, ...] = ()
         self.identifiers: Mapping[str, Any] = MappingProxyType(
             {
                 "provider": "huggingface-structured-visual-verifier",
@@ -365,7 +707,7 @@ class HuggingFaceStructuredVisualVerifier:
                 "execution_profile": execution_profile,
                 "max_new_tokens": max_new_tokens,
                 "max_image_pixels": max_image_pixels,
-                "wire_format": "compact-json-v2-observed-evidence",
+                "wire_format": "compact-json-v3-fixed-predicate-contract",
             }
         )
 
@@ -380,6 +722,10 @@ class HuggingFaceStructuredVisualVerifier:
         """Successful bounded retries from the most recent verify call."""
 
         return self._last_recovered_retries
+
+    @property
+    def last_predicate_contract(self) -> tuple[VisualPredicateRequirement, ...]:
+        return self._last_predicate_contract
 
     def verify(
         self,
@@ -399,6 +745,10 @@ class HuggingFaceStructuredVisualVerifier:
         self._last_recovered_retries = ()
         if not query_vi.strip() or not query_en.strip():
             raise ValueError("visual verification requires Vietnamese and English query text")
+        self._last_predicate_contract = compile_visual_predicate_contract(
+            query_vi=query_vi,
+            query_en=query_en,
+        )
         results: list[VisualVerificationResult] = []
         failures: list[VisualVerificationFailure] = []
         recovered_retries: list[Mapping[str, Any]] = []
@@ -485,7 +835,15 @@ class HuggingFaceStructuredVisualVerifier:
         images: Sequence[Any],
         max_new_tokens: int,
     ) -> VisualVerificationResult:
-        prompt = self._build_prompt(query_vi=query_vi, query_en=query_en)
+        predicate_contract = compile_visual_predicate_contract(
+            query_vi=query_vi,
+            query_en=query_en,
+        )
+        prompt = self._build_prompt(
+            query_vi=query_vi,
+            query_en=query_en,
+            predicate_contract=predicate_contract,
+        )
         rgb_images = [self._to_rgb_image(image) for image in images]
         content = [{"type": "image"} for _ in rgb_images]
         content.append({"type": "text", "text": prompt})
@@ -532,29 +890,51 @@ class HuggingFaceStructuredVisualVerifier:
             decoded,
             video_id=candidate.video_id,
             absolute_frame_id=candidate.absolute_frame_id,
+            predicate_contract=predicate_contract,
         )
 
     @staticmethod
-    def _build_prompt(*, query_vi: str, query_en: str) -> str:
+    def _build_prompt(
+        *,
+        query_vi: str,
+        query_en: str,
+        predicate_contract: Sequence[VisualPredicateRequirement] | None = None,
+    ) -> str:
+        contract = tuple(
+            predicate_contract
+            or compile_visual_predicate_contract(
+                query_vi=query_vi,
+                query_en=query_en,
+            )
+        )
+        contract_json = json.dumps(
+            [dict(item.to_prompt()) for item in contract],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
         return (
             "You are a strict visual evidence verifier for video known-item search. "
             "The images are neighboring frames from one automatically retrieved temporal "
-            "candidate, ordered by time. Decompose the query into every independently "
-            "visible requirement, including actions, counts, colors, objects, people, and "
-            "relations. Score only what is visibly supported. Never infer a hidden person, "
+            "candidate, ordered by time and numbered from 1. The middle image is the "
+            "candidate frame. Score only the fixed predicate contract below. Never create, "
+            "rename, merge, or omit an ID. Never infer a hidden person, "
             "attribute, count, or action. Exact counts and conjunctions matter. Return "
             "exactly one minified JSON object with no prose or markdown, using only this "
             "compact schema: {\"m\":0.0,\"c\":0.0,\"a\":false,\"p\":["
-            "[\"requirement\",0.0,false,\"observed evidence\"]],\"s\":\"\"}. "
+            "[\"predicate_id\",0.0,false,false,\"observed_value\","
+            "\"image N: literal evidence\"]],\"s\":\"\"}. "
             "m is whole-frame match "
-            "score, c is visible-requirement coverage, a is true only when every required "
-            "predicate is both visible and satisfied, and p contains exactly one array for every "
-            "independently checkable action, count, color, object, person attribute, and "
-            "relation. Do not merge or omit requirements. Each p array is requirement, "
-            "score, visible, and a short literal observation from the images. For counts, "
-            "state the visible count; for attributes, state what is visibly present. Use "
-            "\"not visible\" when the evidence is absent. Keep requirement labels under "
-            "four words, observations under six words, and s under six words. "
+            "score, c is satisfied-predicate coverage, and a is true only when every fixed "
+            "predicate is visible, satisfied, and literally evidenced. Each p array is ID, "
+            "score, visible, satisfied, observed value, evidence. For a count predicate, "
+            "observed_value must be only the visible integer. For an action, verify the exact "
+            "pose or motion in the requirement, not a related exercise. Synchronization may "
+            "use neighboring frames, but counts and attributes must be visible in the middle "
+            "frame. Evidence must name an image number and a literal visible fact; never leave "
+            "it empty. If uncertain, use visible=false, satisfied=false, observed_value="
+            "\"unknown\", and evidence=\"not visible\". Keep evidence under ten words and "
+            "s under six words. "
+            f"Fixed predicate contract: {contract_json}\n"
             f"Vietnamese query: {query_vi}\nEnglish translation: {query_en}"
         )
 

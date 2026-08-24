@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from system_tai.refinement.engine import (
@@ -15,11 +17,24 @@ from system_tai.refinement.models import (
 )
 from system_tai.refinement.visual_verifier import (
     HuggingFaceStructuredVisualVerifier,
+    VisualPredicateRequirement,
     VisualPredicateScore,
     VisualVerificationError,
     VisualVerificationInput,
     VisualVerificationResult,
+    compile_visual_predicate_contract,
     parse_visual_verification_json,
+)
+
+QUERY_VI = (
+    "Cảnh quay một nhóm hơn 5 người xếp thành hàng tập thể dục, cùng thực hiện "
+    "động tác hai tay chạm mũi chân. Trong nhóm chỉ có một người đeo kính và "
+    "ba người đội nón có màu đỏ."
+)
+QUERY_EN = (
+    "The scene showed a group of more than five people in a row doing exercises, "
+    "touching their toes with both hands. In the group there was only one person "
+    "wearing glasses and three people wearing red hats."
 )
 
 
@@ -262,9 +277,162 @@ def test_visual_verifier_prompt_requires_observed_predicate_evidence() -> None:
         query_en="description",
     )
 
-    assert '["requirement",0.0,false,"observed evidence"]' in prompt
-    assert "state the visible count" in prompt
-    assert 'Use "not visible"' in prompt
+    assert (
+        '["predicate_id",0.0,false,false,"observed_value",'
+        '"image N: literal evidence"]'
+    ) in prompt
+    assert "observed_value must be only the visible integer" in prompt
+    assert "never leave it empty" in prompt
+
+
+def test_query_compiler_produces_stable_specific_predicate_ids() -> None:
+    first = compile_visual_predicate_contract(
+        query_vi=QUERY_VI,
+        query_en=QUERY_EN,
+    )
+    second = compile_visual_predicate_contract(
+        query_vi=QUERY_VI,
+        query_en=QUERY_EN,
+    )
+
+    assert first == second
+    assert tuple(item.predicate_id for item in first) == (
+        "subject_count_1",
+        "spatial_layout_1",
+        "primary_action_1",
+        "primary_action_2",
+        "person_attribute_count_1",
+        "person_attribute_count_2",
+        "synchronized_action_1",
+    )
+    assert (first[0].comparison, first[0].expected_value) == ("gt", 5)
+    assert (first[4].comparison, first[4].expected_value) == ("eq", 1)
+    assert (first[5].comparison, first[5].expected_value) == ("eq", 3)
+
+
+def _strict_contract_payload(
+    contract: tuple[VisualPredicateRequirement, ...],
+    *,
+    red_hat_count: int = 3,
+    action_evidence: str = "image 2: hands touch toes",
+) -> str:
+    predicates = []
+    for item in contract:
+        observed = "matched"
+        evidence = "image 2: exact requirement visible"
+        if item.predicate_id == "subject_count_1":
+            observed = "7"
+            evidence = "image 2: seven people visible"
+        elif item.predicate_id == "person_attribute_count_1":
+            observed = "1"
+            evidence = "image 2: one person has glasses"
+        elif item.predicate_id == "person_attribute_count_2":
+            observed = str(red_hat_count)
+            evidence = f"image 2: {red_hat_count} red hats visible"
+        elif item.predicate_id == "primary_action_2":
+            observed = "two-hand toe touch"
+            evidence = action_evidence
+        predicates.append(
+            [item.predicate_id, 0.9, True, True, observed, evidence]
+        )
+    return json.dumps(
+        {"m": 0.9, "c": 1.0, "a": True, "p": predicates, "s": "match"}
+    )
+
+
+def test_fixed_contract_accepts_only_grounded_complete_conjunction() -> None:
+    contract = compile_visual_predicate_contract(
+        query_vi=QUERY_VI,
+        query_en=QUERY_EN,
+    )
+    result = parse_visual_verification_json(
+        _strict_contract_payload(contract),
+        video_id="V",
+        absolute_frame_id=6650,
+        predicate_contract=contract,
+    )
+
+    assert result.contract_validated is True
+    assert result.all_visible_requirements_satisfied is True
+    assert result.eligible_for_promotion is True
+    assert result.requirement_coverage == pytest.approx(1.0)
+    assert result.predicate_bottleneck_score == pytest.approx(0.9)
+
+
+@pytest.mark.parametrize(
+    ("red_hat_count", "action_evidence"),
+    [(2, "image 2: hands touch toes"), (3, "")],
+)
+def test_fixed_contract_fails_closed_on_count_mismatch_or_empty_evidence(
+    red_hat_count: int,
+    action_evidence: str,
+) -> None:
+    contract = compile_visual_predicate_contract(
+        query_vi=QUERY_VI,
+        query_en=QUERY_EN,
+    )
+    result = parse_visual_verification_json(
+        _strict_contract_payload(
+            contract,
+            red_hat_count=red_hat_count,
+            action_evidence=action_evidence,
+        ),
+        video_id="V",
+        absolute_frame_id=4925,
+        predicate_contract=contract,
+    )
+
+    assert result.all_visible_requirements_satisfied is False
+    assert result.eligible_for_promotion is False
+    assert result.predicate_bottleneck_score == 0.0
+    assert result.requirement_coverage < 1.0
+
+
+def test_fixed_contract_rejects_missing_or_renamed_predicate_id() -> None:
+    contract = compile_visual_predicate_contract(
+        query_vi=QUERY_VI,
+        query_en=QUERY_EN,
+    )
+    payload = _strict_contract_payload(contract).replace(
+        '"subject_count_1"',
+        '"invented_count_1"',
+        1,
+    )
+
+    with pytest.raises(VisualVerificationError, match="unexpected predicate ID"):
+        parse_visual_verification_json(
+            payload,
+            video_id="V",
+            absolute_frame_id=1,
+            predicate_contract=contract,
+        )
+
+
+def test_unverified_fixed_contract_candidate_cannot_override_clip_order() -> None:
+    contract = compile_visual_predicate_contract(
+        query_vi=QUERY_VI,
+        query_en=QUERY_EN,
+    )
+    clip_first = LocalFrameFusion(10, 0.9, 1, 1, ())
+    claimed_match = LocalFrameFusion(20, 0.8, 1, 2, ())
+    result = parse_visual_verification_json(
+        _strict_contract_payload(contract, red_hat_count=2),
+        video_id="V",
+        absolute_frame_id=20,
+        predicate_contract=contract,
+    )
+
+    ranked = rank_visually_verified_timeline_frames(
+        (clip_first, claimed_match),
+        (result,),
+    )
+
+    assert tuple(item.absolute_frame_id for item in ranked) == (10, 20)
+    assert (
+        ranked[1].per_variant_provenance[-1]["visual_verification"]
+        ["status"]
+        == "CANDIDATE_FALLBACK_CLIP"
+    )
 
 
 def test_visual_verifier_config_is_bounded_and_default_off() -> None:
