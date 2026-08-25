@@ -288,10 +288,10 @@ class _PartiallyFailingVerifier:
         )
 
 
-def test_coverage_shortlist_includes_late_bin_despite_low_global_clip_rank() -> None:
-    # Early frames dominate globally, but frame 90 is the strongest semantic item
-    # inside the final coverage bin even though frame 80 is nearer its midpoint.
-    frame_order = (0, 10, 20, 30, 40, 50, 60, 70, 90, 80)
+def test_coverage_shortlist_uses_temporal_midpoint_not_semantic_bin_edge() -> None:
+    # Early frames dominate globally and frame 100 is the strongest semantic item
+    # inside the final coverage bin, but frame 90 is nearer its midpoint.
+    frame_order = (0, 10, 20, 30, 40, 50, 60, 70, 100, 90)
     ranked = tuple(
         LocalFrameFusion(frame_id, 1.0 / (index + 1), 1, index + 1, ())
         for index, frame_id in enumerate(frame_order)
@@ -306,6 +306,32 @@ def test_coverage_shortlist_includes_late_bin_despite_low_global_clip_rank() -> 
 
     assert 90 in {item.absolute_frame_id for item in shortlist}
     assert len(shortlist) == 6
+
+
+def test_shortlist_preserves_semantic_leaders_and_late_midpoint_hypothesis() -> None:
+    # This reproduces the geometry of a 6,932-frame timeline sampled every 25
+    # frames. The final-bin semantic winner is near 6,375, while independent
+    # midpoint coverage must retain the distinct late hypothesis near 6,650.
+    frame_ids = tuple(range(0, 6932, 25)) + (6931,)
+    semantic_order = (6375,) + tuple(
+        frame_id for frame_id in frame_ids if frame_id != 6375
+    )
+    ranked = tuple(
+        LocalFrameFusion(frame_id, 1.0 / (index + 1), 1, index + 1, ())
+        for index, frame_id in enumerate(semantic_order)
+    )
+
+    shortlist = build_visual_verification_shortlist(
+        ranked,
+        total_frame_count=6932,
+        shortlist_size=16,
+        coverage_bins=12,
+    )
+    selected = {item.absolute_frame_id for item in shortlist}
+
+    assert 6375 in selected
+    assert 6650 in selected
+    assert len(shortlist) == 16
 
 
 def test_temporal_neighborhood_fuses_variant_ranks_without_raw_score_addition() -> None:

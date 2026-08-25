@@ -262,9 +262,14 @@ def build_visual_verification_shortlist(
 ) -> tuple[LocalFrameFusion, ...]:
     """Combine global CLIP leaders with deterministic full-timeline coverage.
 
-    Coverage candidates are the strongest semantically ranked sampled frame in each
-    temporal bin. This preserves full-timeline coverage without spending verifier
-    budget on an arbitrary midpoint when a short action occurs elsewhere in the bin.
+    The shortlist deliberately uses two independent evidence channels.  The global
+    budget preserves the strongest semantic candidates, while every temporal bin
+    contributes the sampled frame nearest its midpoint.  A semantically broad frame
+    near one edge of a bin therefore cannot erase a visually distinctive moment near
+    the middle of that same interval before the visual verifier sees it.
+
+    Midpoint coverage is based only on the probed frame count and sampled absolute
+    frame IDs.  It accepts no target video, timestamp, frame, or ground-truth input.
     """
     if total_frame_count <= 0:
         raise ValueError("total_frame_count must be positive")
@@ -288,9 +293,11 @@ def build_visual_verification_shortlist(
             if start <= item.absolute_frame_id < end
         ]
         if bin_candidates:
+            midpoint_twice = start + end - 1
             representative = min(
                 bin_candidates,
                 key=lambda item: (
+                    abs((2 * item.absolute_frame_id) - midpoint_twice),
                     rank_index[item.absolute_frame_id],
                     item.absolute_frame_id,
                 ),

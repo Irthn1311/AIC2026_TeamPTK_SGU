@@ -282,8 +282,8 @@ def test_visual_verifier_prompt_requires_observed_predicate_evidence() -> None:
     assert '"requirement"' not in prompt
     assert "image N: literal evidence" not in prompt
     assert "do not invent an ID" in prompt
-    assert "observed_value must be only the visible integer" in prompt
-    assert "never leave it empty" in prompt
+    assert "OBSERVED must be only the visible integer" in prompt
+    assert "one-based image number" in prompt
 
 
 def test_visual_verifier_prompt_seeds_only_fail_closed_result_values() -> None:
@@ -294,12 +294,63 @@ def test_visual_verifier_prompt_seeds_only_fail_closed_result_values() -> None:
 
     assert "<example_predicate_id>" not in prompt
     assert '"image N: literal evidence"' not in prompt
-    assert '["subject_count_1",false,false,"unknown","not visible"]' in prompt
-    assert '"a":false' in prompt
+    assert '["subject_count_1","U","unknown",0]' in prompt
+    assert '"a":false' not in prompt
     assert "Do not repeat these instructions" in prompt
     assert "Fixed predicate contract:" not in prompt
     assert prompt.count('{"m":') == 1
-    assert prompt.endswith('"s":""}')
+    assert prompt.endswith(']]}')
+
+
+def test_fixed_contract_accepts_compact_state_wire_and_derives_strict_fields() -> None:
+    contract = compile_visual_predicate_contract(
+        query_vi=QUERY_VI,
+        query_en=QUERY_EN,
+    )
+    predicates = []
+    for item in contract:
+        observed = "matched"
+        if item.predicate_id == "subject_count_1":
+            observed = 7
+        elif item.predicate_id == "person_attribute_count_1":
+            observed = 1
+        elif item.predicate_id == "person_attribute_count_2":
+            observed = 3
+        predicates.append([item.predicate_id, "Y", observed, 2])
+
+    result = parse_visual_verification_json(
+        json.dumps({"m": 0.9, "p": predicates}),
+        video_id="V",
+        absolute_frame_id=6650,
+        predicate_contract=contract,
+    )
+
+    assert result.eligible_for_promotion is True
+    assert result.requirement_coverage == pytest.approx(1.0)
+    assert result.all_visible_requirements_satisfied is True
+    assert all("image 2:" in item.evidence for item in result.predicates)
+
+
+def test_compact_state_wire_is_fail_closed_for_unknown_predicate() -> None:
+    contract = compile_visual_predicate_contract(
+        query_vi=QUERY_VI,
+        query_en=QUERY_EN,
+    )
+    predicates = [
+        [item.predicate_id, "U", "unknown", 0]
+        for item in contract
+    ]
+
+    result = parse_visual_verification_json(
+        json.dumps({"m": 0.0, "p": predicates}),
+        video_id="V",
+        absolute_frame_id=6650,
+        predicate_contract=contract,
+    )
+
+    assert result.eligible_for_promotion is False
+    assert result.requirement_coverage == pytest.approx(0.0)
+    assert result.all_visible_requirements_satisfied is False
 
 
 def test_query_compiler_produces_stable_specific_predicate_ids() -> None:

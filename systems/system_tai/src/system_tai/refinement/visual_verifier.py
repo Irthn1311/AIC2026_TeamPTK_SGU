@@ -514,6 +514,7 @@ def parse_visual_verification_json(
     if not isinstance(raw_predicates, list) or not raw_predicates:
         raise VisualVerificationError("visual verifier predicates must be a non-empty list")
     predicates: list[VisualPredicateScore] = []
+    compact_state_wire = False
     contract_by_id = {
         item.predicate_id: item for item in (predicate_contract or ())
     }
@@ -616,10 +617,30 @@ def parse_visual_verification_json(
                     ) = item
                     predicate_id = str(predicate_id)
                     score = 1.0 if visible is True and satisfied is True else 0.0
+                elif isinstance(item, list) and len(item) == 4:
+                    predicate_id, state, observed_value, image_number = item
+                    predicate_id = str(predicate_id)
+                    if state not in {"Y", "N", "U"}:
+                        raise ValueError("compact predicate state must be Y, N, or U")
+                    compact_state_wire = True
+                    visible = state in {"Y", "N"}
+                    satisfied = state == "Y"
+                    score = 1.0 if satisfied else 0.0
+                    if state == "U":
+                        observed_value = "unknown"
+                        evidence = "not visible"
+                    else:
+                        if type(image_number) is not int or image_number <= 0:
+                            raise ValueError(
+                                "grounded compact predicate requires a positive image number"
+                            )
+                        observed_value = str(observed_value)
+                        evidence = f"image {image_number}: {observed_value}"
                 else:
                     raise TypeError(
                         "must be an object or compact "
-                        "[id, visible, satisfied, observed_value, evidence] array"
+                        "[id, visible, satisfied, observed_value, evidence] or "
+                        "[id, state, observed_value, image_number] array"
                     )
                 if predicate_id in seen_predicate_ids:
                     raise ValueError(f"duplicate predicate ID {predicate_id!r}")
@@ -669,26 +690,37 @@ def parse_visual_verification_json(
             raise VisualVerificationError(
                 f"visual verifier response is missing predicate IDs: {missing}"
             )
-        reported_all = aliased_value(
-            "all_visible_requirements_satisfied", "a"
-        )
-        if type(reported_all) is not bool:
-            raise VisualVerificationError(
-                "all_visible_requirements_satisfied must be boolean"
-            )
-        reported_coverage = float(
-            aliased_value("requirement_coverage", "c")
-        )
         strict_coverage = (
             sum(item.strictly_satisfied for item in predicates) / len(predicates)
             if predicate_contract is not None
-            else reported_coverage
+            else 0.0
         )
         strict_all = all(item.strictly_satisfied for item in predicates)
+        if compact_state_wire:
+            reported_all = strict_all
+            reported_coverage = strict_coverage
+            raw_match_score = aliased_value("match_score", "m", required=False)
+            match_score = (
+                strict_coverage if raw_match_score == "" else float(raw_match_score)
+            )
+        else:
+            reported_all = aliased_value(
+                "all_visible_requirements_satisfied", "a"
+            )
+            if type(reported_all) is not bool:
+                raise VisualVerificationError(
+                    "all_visible_requirements_satisfied must be boolean"
+                )
+            reported_coverage = float(
+                aliased_value("requirement_coverage", "c")
+            )
+            if predicate_contract is None:
+                strict_coverage = reported_coverage
+            match_score = float(aliased_value("match_score", "m"))
         return VisualVerificationResult(
             video_id=video_id,
             absolute_frame_id=absolute_frame_id,
-            match_score=float(aliased_value("match_score", "m")),
+            match_score=match_score,
             requirement_coverage=min(reported_coverage, strict_coverage),
             all_visible_requirements_satisfied=(
                 reported_all and strict_all
@@ -790,7 +822,7 @@ class HuggingFaceStructuredVisualVerifier:
                 "execution_profile": execution_profile,
                 "max_new_tokens": max_new_tokens,
                 "max_image_pixels": max_image_pixels,
-                "wire_format": "compact-json-v8-output-template-last",
+                "wire_format": "compact-json-v9-state-arrays",
             }
         )
 
@@ -1011,19 +1043,15 @@ class HuggingFaceStructuredVisualVerifier:
         safe_template = json.dumps(
             {
                 "m": 0.0,
-                "c": 0.0,
-                "a": False,
                 "p": [
                     [
                         item.predicate_id,
-                        False,
-                        False,
+                        "U",
                         "unknown",
-                        "not visible",
+                        0,
                     ]
                     for item in contract
                 ],
-                "s": "",
             },
             ensure_ascii=False,
             separators=(",", ":"),
@@ -1035,24 +1063,22 @@ class HuggingFaceStructuredVisualVerifier:
             "candidate frame. Score only the fixed predicate contract below. Never create, "
             "rename, merge, or omit an ID. Never infer a hidden person, "
             "attribute, count, or action. Exact counts and conjunctions matter. Return "
-            "exactly one minified JSON object with no prose or markdown. The root keys "
-            "must remain m,c,a,p,s. m is whole-frame match "
-            "score, c is satisfied-predicate coverage, and a is true only when every fixed "
-            "predicate is visible, satisfied, and literally evidenced. p must contain one "
-            "five-value array per required ID, in the listed order. Each array contains: "
-            "the exact ID string, a visible boolean, a satisfied boolean, a short observed "
-            "fact string, and a short evidence string. Required IDs in exact order: "
+            "exactly one minified JSON object with no prose or markdown. The only root "
+            "keys are m and p. m is a whole-frame score from 0 to 1. p must contain one "
+            "four-value array per required ID, in the listed order. Each array is exactly "
+            "[ID,STATE,OBSERVED,IMAGE]. STATE is Y only when visible and satisfied, N when "
+            "visible but not satisfied, or U when uncertain/not visible. IMAGE is the "
+            "one-based image number that literally supports Y or N; use 0 for U. Required "
+            "IDs in exact order: "
             f"{predicate_ids}. Do not emit field names inside p and do not invent an ID. "
             "For a count predicate, "
-            "observed_value must be only the visible integer. For an action, verify the exact "
+            "OBSERVED must be only the visible integer. For an action, use at most four "
+            "words and verify the exact "
             "pose or motion in the requirement, not a related exercise. Synchronization may "
             "use neighboring frames, but counts and attributes must be visible in the middle "
-            "frame. Evidence must name an image number and a literal visible fact; never leave "
-            "it empty. If uncertain, use false, false, \"unknown\", and \"not visible\" "
-            "for the final four values of that predicate. Do not repeat these instructions "
-            "or copy wording from the fixed contract into an observation. Keep evidence "
-            "under ten words and "
-            "s under six words. The numbered requirements below are read-only prose, not "
+            "frame. If uncertain, use U, \"unknown\", 0. Do not repeat these instructions "
+            "or copy wording from the fixed contract into OBSERVED. The numbered requirements "
+            "below are read-only prose, not "
             "JSON. Never copy their descriptions or metadata into p.\n"
             f"Vietnamese query: {query_vi}\nEnglish translation: {query_en}\n"
             f"Required visual predicates:\n{predicate_requirements}\n"
