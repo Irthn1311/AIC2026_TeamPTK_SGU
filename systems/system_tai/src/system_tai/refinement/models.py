@@ -233,9 +233,10 @@ class SelectedVideoVisualVerifierConfig:
 
     @property
     def effective_max_new_tokens(self) -> int:
-        if self.cpu_fast_profile_applied:
-            return min(self.max_new_tokens, 192)
-        return self.max_new_tokens
+        # The visual verifier wire is deliberately bounded to a state/count/image
+        # triple per predicate.  A larger generation budget only lets malformed model
+        # output run longer and previously allowed verbose JSON to be truncated late.
+        return min(self.max_new_tokens, 192)
 
     @property
     def effective_max_image_pixels(self) -> int | None:

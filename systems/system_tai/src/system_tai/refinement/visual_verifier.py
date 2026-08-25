@@ -515,6 +515,7 @@ def parse_visual_verification_json(
         raise VisualVerificationError("visual verifier predicates must be a non-empty list")
     predicates: list[VisualPredicateScore] = []
     compact_state_wire = False
+    ordered_state_wire = False
     contract_by_id = {
         item.predicate_id: item for item in (predicate_contract or ())
     }
@@ -524,6 +525,66 @@ def parse_visual_verification_json(
     for index, item in enumerate(raw_predicates, start=1):
         try:
             if predicate_contract is not None:
+                if isinstance(item, list) and len(item) == 3:
+                    if index > len(predicate_contract):
+                        raise ValueError("ordered state wire contains too many predicates")
+                    state, observed, image_number = item
+                    if state not in {"Y", "N", "U"}:
+                        raise ValueError("ordered predicate state must be Y, N, or U")
+                    if type(image_number) is not int or image_number < 0:
+                        raise ValueError(
+                            "ordered predicate image number must be a non-negative integer"
+                        )
+                    expected = predicate_contract[index - 1]
+                    predicate_id = expected.predicate_id
+                    compact_state_wire = True
+                    ordered_state_wire = True
+                    visible = state in {"Y", "N"}
+                    satisfied = state == "Y"
+                    score = 1.0 if satisfied else 0.0
+                    if state == "U":
+                        if observed != 0 or image_number != 0:
+                            raise ValueError(
+                                "unknown ordered predicate must be exactly [\"U\",0,0]"
+                            )
+                        observed_value = "unknown"
+                        evidence = "not visible"
+                    else:
+                        if image_number <= 0:
+                            raise ValueError(
+                                "grounded ordered predicate requires a positive image number"
+                            )
+                        if expected.comparison is not None:
+                            if type(observed) is not int or observed < 0:
+                                raise ValueError(
+                                    "ordered count predicate requires a non-negative integer"
+                                )
+                            observed_value = str(observed)
+                        else:
+                            required_flag = 1 if state == "Y" else 0
+                            if observed != required_flag:
+                                raise ValueError(
+                                    "ordered non-count predicate value must match its state"
+                                )
+                            observed_value = (
+                                "satisfied" if state == "Y" else "not satisfied"
+                            )
+                        evidence = f"image {image_number}: verifier state {state}"
+                    seen_predicate_ids.add(predicate_id)
+                    predicates.append(
+                        VisualPredicateScore(
+                            requirement=expected.requirement,
+                            score=score,
+                            visible=visible,
+                            evidence=evidence,
+                            predicate_id=predicate_id,
+                            observed_value=observed_value,
+                            satisfied=satisfied,
+                            comparison=expected.comparison,
+                            expected_value=expected.expected_value,
+                        )
+                    )
+                    continue
                 if isinstance(item, dict):
                     def predicate_value(
                         canonical: str,
@@ -696,13 +757,20 @@ def parse_visual_verification_json(
             else 0.0
         )
         strict_all = all(item.strictly_satisfied for item in predicates)
+        if ordered_state_wire and set(payload) != {"p"}:
+            raise VisualVerificationError(
+                "ordered state wire must contain only the root key 'p'"
+            )
         if compact_state_wire:
             reported_all = strict_all
             reported_coverage = strict_coverage
-            raw_match_score = aliased_value("match_score", "m", required=False)
-            match_score = (
-                strict_coverage if raw_match_score == "" else float(raw_match_score)
-            )
+            if ordered_state_wire:
+                match_score = strict_coverage
+            else:
+                raw_match_score = aliased_value("match_score", "m", required=False)
+                match_score = (
+                    strict_coverage if raw_match_score == "" else float(raw_match_score)
+                )
         else:
             reported_all = aliased_value(
                 "all_visible_requirements_satisfied", "a"
@@ -1039,18 +1107,11 @@ class HuggingFaceStructuredVisualVerifier:
                 f"{index}. {item.predicate_id}: {item.requirement}{comparison}"
             )
         predicate_requirements = "\n".join(contract_lines)
-        predicate_ids = ", ".join(item.predicate_id for item in contract)
         safe_template = json.dumps(
             {
-                "m": 0.0,
                 "p": [
-                    [
-                        item.predicate_id,
-                        "U",
-                        "unknown",
-                        0,
-                    ]
-                    for item in contract
+                    ["U", 0, 0]
+                    for _item in contract
                 ],
             },
             ensure_ascii=False,
@@ -1064,22 +1125,18 @@ class HuggingFaceStructuredVisualVerifier:
             "rename, merge, or omit an ID. Never infer a hidden person, "
             "attribute, count, or action. Exact counts and conjunctions matter. Return "
             "exactly one minified JSON object with no prose or markdown. The only root "
-            "keys are m and p. m is a whole-frame score from 0 to 1. p must contain one "
-            "four-value array per required ID, in the listed order. Each array is exactly "
-            "[ID,STATE,OBSERVED,IMAGE]. STATE is Y only when visible and satisfied, N when "
-            "visible but not satisfied, or U when uncertain/not visible. IMAGE is the "
-            "one-based image number that literally supports Y or N; use 0 for U. Required "
-            "IDs in exact order: "
-            f"{predicate_ids}. Do not emit field names inside p and do not invent an ID. "
-            "For a count predicate, "
-            "OBSERVED must be only the visible integer. For an action, use at most four "
-            "words and verify the exact "
+            "key is p. p must contain one three-value array per numbered requirement, in "
+            "the exact listed order. Each array is exactly [STATE,VALUE,IMAGE]. STATE is Y "
+            "only when visible and satisfied, N when visible but not satisfied, or U when "
+            "uncertain/not visible. IMAGE is the one-based image number that literally "
+            "supports Y or N. For a count requirement, VALUE is the visible integer. For "
+            "every other requirement, VALUE is 1 for Y and 0 for N. U must always be "
+            "exactly [\"U\",0,0]. Do not emit IDs, scores, explanations, observations, "
+            "field names, or any other values. Verify the exact "
             "pose or motion in the requirement, not a related exercise. Synchronization may "
             "use neighboring frames, but counts and attributes must be visible in the middle "
-            "frame. If uncertain, use U, \"unknown\", 0. Do not repeat these instructions "
-            "or copy wording from the fixed contract into OBSERVED. The numbered requirements "
-            "below are read-only prose, not "
-            "JSON. Never copy their descriptions or metadata into p.\n"
+            "frame. Do not repeat these instructions or copy any query or requirement text. "
+            "The numbered requirements below are read-only prose, not JSON.\n"
             f"Vietnamese query: {query_vi}\nEnglish translation: {query_en}\n"
             f"Required visual predicates:\n{predicate_requirements}\n"
             "Use the following complete fail-closed JSON as the output skeleton. Preserve "

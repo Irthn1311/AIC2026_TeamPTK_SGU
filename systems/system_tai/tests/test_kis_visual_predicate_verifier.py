@@ -277,12 +277,12 @@ def test_visual_verifier_prompt_requires_observed_predicate_evidence() -> None:
         query_en=QUERY_EN,
     )
 
-    assert "Required IDs in exact order: subject_count_1" in prompt
+    assert "[STATE,VALUE,IMAGE]" in prompt
     assert '"observed_value"' not in prompt
     assert '"requirement"' not in prompt
     assert "image N: literal evidence" not in prompt
-    assert "do not invent an ID" in prompt
-    assert "OBSERVED must be only the visible integer" in prompt
+    assert "Do not emit IDs" in prompt
+    assert "VALUE is the visible integer" in prompt
     assert "one-based image number" in prompt
 
 
@@ -294,12 +294,77 @@ def test_visual_verifier_prompt_seeds_only_fail_closed_result_values() -> None:
 
     assert "<example_predicate_id>" not in prompt
     assert '"image N: literal evidence"' not in prompt
-    assert '["subject_count_1","U","unknown",0]' in prompt
+    assert '["U",0,0]' in prompt
     assert '"a":false' not in prompt
+    assert '"m":' not in prompt
     assert "Do not repeat these instructions" in prompt
     assert "Fixed predicate contract:" not in prompt
-    assert prompt.count('{"m":') == 1
+    assert prompt.count('{"p":') == 1
     assert prompt.endswith(']]}')
+
+
+def test_fixed_contract_accepts_minimal_ordered_state_wire() -> None:
+    contract = compile_visual_predicate_contract(
+        query_vi=QUERY_VI,
+        query_en=QUERY_EN,
+    )
+    predicates = []
+    for item in contract:
+        observed = 1
+        if item.predicate_id == "subject_count_1":
+            observed = 7
+        elif item.predicate_id == "person_attribute_count_1":
+            observed = 1
+        elif item.predicate_id == "person_attribute_count_2":
+            observed = 3
+        predicates.append(["Y", observed, 2])
+
+    wire = json.dumps({"p": predicates}, separators=(",", ":"))
+    result = parse_visual_verification_json(
+        wire,
+        video_id="V",
+        absolute_frame_id=6650,
+        predicate_contract=contract,
+    )
+
+    assert len(wire) < 100
+    assert result.match_score == pytest.approx(1.0)
+    assert result.requirement_coverage == pytest.approx(1.0)
+    assert result.eligible_for_promotion is True
+    assert tuple(item.predicate_id for item in result.predicates) == tuple(
+        item.predicate_id for item in contract
+    )
+
+
+def test_minimal_ordered_state_wire_fails_closed_when_truncated() -> None:
+    contract = compile_visual_predicate_contract(
+        query_vi=QUERY_VI,
+        query_en=QUERY_EN,
+    )
+
+    with pytest.raises(VisualVerificationError, match="did not contain a JSON object"):
+        parse_visual_verification_json(
+            '{"p":[["Y",7,2],["Y",1,2]',
+            video_id="V",
+            absolute_frame_id=6650,
+            predicate_contract=contract,
+        )
+
+
+def test_minimal_ordered_state_wire_rejects_extra_root_fields() -> None:
+    contract = compile_visual_predicate_contract(
+        query_vi=QUERY_VI,
+        query_en=QUERY_EN,
+    )
+    predicates = [["U", 0, 0] for _item in contract]
+
+    with pytest.raises(VisualVerificationError, match="only the root key 'p'"):
+        parse_visual_verification_json(
+            json.dumps({"p": predicates, "m": 1.0}),
+            video_id="V",
+            absolute_frame_id=6650,
+            predicate_contract=contract,
+        )
 
 
 def test_fixed_contract_accepts_compact_state_wire_and_derives_strict_fields() -> None:
@@ -762,5 +827,5 @@ def test_visual_verifier_auto_cuda_and_explicit_full_preserve_requested_work() -
         assert config.effective_shortlist_per_video == 16
         assert config.effective_coverage_bins == 12
         assert config.effective_neighbor_sample_radius == 1
-        assert config.effective_max_new_tokens == 384
+        assert config.effective_max_new_tokens == 192
         assert config.effective_max_image_pixels is None
