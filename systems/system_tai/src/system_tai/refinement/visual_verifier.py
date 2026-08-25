@@ -127,6 +127,85 @@ def _count_comparison(qualifier: str | None) -> str:
     }.get(normalized, "eq")
 
 
+def _comparison_matches(observed: int, comparison: str, expected: int) -> bool:
+    return {
+        "eq": observed == expected,
+        "gt": observed > expected,
+        "ge": observed >= expected,
+        "lt": observed < expected,
+        "le": observed <= expected,
+    }[comparison]
+
+
+def _non_negative_integer(value: Any, *, field_name: str) -> int:
+    if type(value) is int and value >= 0:
+        return value
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    raise ValueError(f"{field_name} must be a non-negative integer")
+
+
+def _ordered_predicate_observation(
+    *,
+    requirement: VisualPredicateRequirement,
+    state: str,
+    observed: Any,
+    image_number: Any,
+) -> tuple[bool, bool, float, str, str]:
+    """Convert a compact VLM observation into deterministic predicate state.
+
+    The model supplies only visibility, a literal count/value, and an evidence image.
+    Count satisfaction is always computed in code from the frozen query contract; a
+    model-emitted ``Y`` can therefore never override an incorrect count.
+    """
+
+    if state not in {"Y", "N", "U"}:
+        raise ValueError("ordered predicate state must be Y, N, or U")
+    parsed_image_number = _non_negative_integer(
+        image_number,
+        field_name="ordered predicate image number",
+    )
+    if state == "U":
+        parsed_observed = _non_negative_integer(
+            observed,
+            field_name="unknown ordered predicate value",
+        )
+        if parsed_observed != 0 or parsed_image_number != 0:
+            raise ValueError(
+                'unknown ordered predicate must be exactly ["U",0,0]'
+            )
+        return False, False, 0.0, "unknown", "not visible"
+
+    # An ungrounded negative remains non-promotable instead of failing the whole
+    # candidate. Positive claims must always cite a supporting image.
+    if state == "Y" and parsed_image_number <= 0:
+        raise ValueError("positive ordered predicate requires a positive image number")
+    visible = parsed_image_number > 0
+    evidence = (
+        f"image {parsed_image_number}: verifier state {state}"
+        if visible
+        else "not visible"
+    )
+    if requirement.comparison is not None:
+        parsed_observed = _non_negative_integer(
+            observed,
+            field_name="ordered count predicate value",
+        )
+        assert requirement.expected_value is not None
+        satisfied = visible and _comparison_matches(
+            parsed_observed,
+            requirement.comparison,
+            requirement.expected_value,
+        )
+        observed_value = str(parsed_observed)
+    else:
+        if isinstance(observed, (dict, list, tuple)):
+            raise ValueError("ordered non-count predicate value must be scalar")
+        satisfied = visible and state == "Y"
+        observed_value = "satisfied" if satisfied else "not satisfied"
+    return visible, satisfied, 1.0 if satisfied else 0.0, observed_value, evidence
+
+
 def compile_visual_predicate_contract(
     *,
     query_vi: str,
@@ -405,6 +484,8 @@ class VisualVerificationResult:
                         "evidence": predicate.evidence,
                         "comparison": predicate.comparison,
                         "expected_value": predicate.expected_value,
+                        "count_matches": predicate.count_matches,
+                        "strictly_satisfied": predicate.strictly_satisfied,
                     }
                     for predicate in self.predicates
                 ],
@@ -529,47 +610,22 @@ def parse_visual_verification_json(
                     if index > len(predicate_contract):
                         raise ValueError("ordered state wire contains too many predicates")
                     state, observed, image_number = item
-                    if state not in {"Y", "N", "U"}:
-                        raise ValueError("ordered predicate state must be Y, N, or U")
-                    if type(image_number) is not int or image_number < 0:
-                        raise ValueError(
-                            "ordered predicate image number must be a non-negative integer"
-                        )
                     expected = predicate_contract[index - 1]
                     predicate_id = expected.predicate_id
                     compact_state_wire = True
                     ordered_state_wire = True
-                    visible = state in {"Y", "N"}
-                    satisfied = state == "Y"
-                    score = 1.0 if satisfied else 0.0
-                    if state == "U":
-                        if observed != 0 or image_number != 0:
-                            raise ValueError(
-                                "unknown ordered predicate must be exactly [\"U\",0,0]"
-                            )
-                        observed_value = "unknown"
-                        evidence = "not visible"
-                    else:
-                        if image_number <= 0:
-                            raise ValueError(
-                                "grounded ordered predicate requires a positive image number"
-                            )
-                        if expected.comparison is not None:
-                            if type(observed) is not int or observed < 0:
-                                raise ValueError(
-                                    "ordered count predicate requires a non-negative integer"
-                                )
-                            observed_value = str(observed)
-                        else:
-                            required_flag = 1 if state == "Y" else 0
-                            if observed != required_flag:
-                                raise ValueError(
-                                    "ordered non-count predicate value must match its state"
-                                )
-                            observed_value = (
-                                "satisfied" if state == "Y" else "not satisfied"
-                            )
-                        evidence = f"image {image_number}: verifier state {state}"
+                    (
+                        visible,
+                        satisfied,
+                        score,
+                        observed_value,
+                        evidence,
+                    ) = _ordered_predicate_observation(
+                        requirement=expected,
+                        state=state,
+                        observed=observed,
+                        image_number=image_number,
+                    )
                     seen_predicate_ids.add(predicate_id)
                     predicates.append(
                         VisualPredicateScore(
@@ -1127,10 +1183,12 @@ class HuggingFaceStructuredVisualVerifier:
             "exactly one minified JSON object with no prose or markdown. The only root "
             "key is p. p must contain one three-value array per numbered requirement, in "
             "the exact listed order. Each array is exactly [STATE,VALUE,IMAGE]. STATE is Y "
-            "only when visible and satisfied, N when visible but not satisfied, or U when "
+            "when the visual fact is present, N when it is visibly absent, or U when "
             "uncertain/not visible. IMAGE is the one-based image number that literally "
-            "supports Y or N. For a count requirement, VALUE is the visible integer. For "
-            "every other requirement, VALUE is 1 for Y and 0 for N. U must always be "
+            "supports the observation. For a count requirement, VALUE is the visible "
+            "integer; code compares it with the required count, so never convert the "
+            "comparison into Y/N yourself. For every other requirement, VALUE is 1 for Y "
+            "and 0 for N. U must always be "
             "exactly [\"U\",0,0]. Do not emit IDs, scores, explanations, observations, "
             "field names, or any other values. Verify the exact "
             "pose or motion in the requirement, not a related exercise. Synchronization may "

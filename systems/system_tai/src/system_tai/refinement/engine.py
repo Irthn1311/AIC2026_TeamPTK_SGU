@@ -404,10 +404,10 @@ def fuse_temporal_neighborhood_rankings(
 
 
 def rank_visually_verified_timeline_frames(
-    shortlist: Sequence[LocalFrameFusion],
+    ranked: Sequence[LocalFrameFusion],
     results: Sequence[VisualVerificationResult],
 ) -> tuple[LocalFrameFusion, ...]:
-    """Rank calibrated VLM results by conjunction, then CLIP fallbacks.
+    """Promote strict VLM conjunctions without destroying the full CLIP ranking.
 
     VLM and raw CLIP score scales are never added or compared numerically. A partial
     result set is valid: discriminative verified frames form the leading partition while
@@ -416,7 +416,7 @@ def rank_visually_verified_timeline_frames(
     predicate precedes aggregate coverage and match score so one missing count, attribute,
     action, or relation cannot be hidden by a strong broad-scene match.
     """
-    by_frame = {item.absolute_frame_id: item for item in shortlist}
+    by_frame = {item.absolute_frame_id: item for item in ranked}
     result_by_frame = {item.absolute_frame_id: item for item in results}
     if len(result_by_frame) != len(results):
         raise ValueError("visual verifier returned duplicate frame identities")
@@ -433,7 +433,7 @@ def rank_visually_verified_timeline_frames(
     verified = sorted(
         (
             item
-            for item in shortlist
+            for item in ranked
             if item.absolute_frame_id in trusted_result_by_frame
         ),
         key=lambda item: (
@@ -451,7 +451,7 @@ def rank_visually_verified_timeline_frames(
     )
     fallbacks = [
         item
-        for item in shortlist
+        for item in ranked
         if item.absolute_frame_id not in trusted_result_by_frame
     ]
     ordered = [*verified, *fallbacks]
@@ -488,7 +488,12 @@ def rank_visually_verified_timeline_frames(
                         if item.absolute_frame_id in plateau_frame_ids
                         else {
                             "visual_verification": {
-                                "status": "CANDIDATE_FALLBACK_CLIP"
+                                "status": "UNVERIFIED_PRESERVE_CLIP",
+                                "reason": (
+                                    "PREDICATE_CONTRACT_NOT_SATISFIED"
+                                    if item.absolute_frame_id in result_by_frame
+                                    else "VERIFIER_DID_NOT_RETURN_RESULT"
+                                ),
                             }
                         }
                     )
@@ -1027,6 +1032,7 @@ class ExactFrameRefiner:
                         ),
                         rrf_constant=refinement_config.rrf_constant,
                     )
+                    pre_verifier_ranking = ranked_for_selection
                     execution_trace = dict(visual_verifier_config.execution_trace())
                     if visual_verifier_config.cpu_fast_profile_applied:
                         warnings.append(
@@ -1124,7 +1130,7 @@ class ExactFrameRefiner:
                             )
                         )
                         ranked_for_selection = rank_visually_verified_timeline_frames(
-                            shortlist,
+                            pre_verifier_ranking,
                             verification_results,
                         )
                         failure_traces = [
@@ -1150,7 +1156,7 @@ class ExactFrameRefiner:
                             "execution": execution_trace,
                             "temporal_prefilter_top_frame_ids": [
                                 item.absolute_frame_id
-                                for item in ranked_for_selection[:20]
+                                for item in pre_verifier_ranking[:20]
                             ],
                             "shortlist_frame_ids": [
                                 item.absolute_frame_id for item in shortlist

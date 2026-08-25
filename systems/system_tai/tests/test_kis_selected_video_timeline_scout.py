@@ -218,6 +218,43 @@ class _FailingVerifier:
         raise RuntimeError("synthetic verifier failure")
 
 
+class _NonPromotableVerifier:
+    identifiers = {"provider": "non-promotable"}
+    last_failures = ()
+    last_recovered_retries = ()
+    last_predicate_contract = (
+        VisualPredicateRequirement(
+            "scene_conjunction_1",
+            "exact query-derived scene conjunction",
+        ),
+    )
+
+    def verify(self, *, query_vi, query_en, candidates):
+        del query_vi, query_en
+        return tuple(
+            VisualVerificationResult(
+                video_id=item.video_id,
+                absolute_frame_id=item.absolute_frame_id,
+                match_score=0.9,
+                requirement_coverage=0.5,
+                all_visible_requirements_satisfied=False,
+                predicates=(
+                    VisualPredicateScore(
+                        "exact query-derived scene conjunction",
+                        0.0,
+                        True,
+                        "image 1: visible but incomplete",
+                        satisfied=False,
+                        predicate_id="scene_conjunction_1",
+                    ),
+                ),
+                summary="incomplete",
+                contract_validated=True,
+            )
+            for item in candidates
+        )
+
+
 class _AllCandidateFailuresVerifier:
     identifiers = {"provider": "all-candidate-failures"}
     last_recovered_retries = ()
@@ -500,6 +537,61 @@ def test_visual_verifier_failure_falls_back_to_clip_with_explicit_warning(
     assert outcome.candidates[0].frame_id == 0
     assert any("fallback to CLIP" in warning for warning in outcome.warnings)
     assert outcome.trace["videos"][0]["visual_verification"]["status"] == "FALLBACK_CLIP"
+
+
+def test_non_promotable_shortlist_preserves_complete_pre_verifier_ranking(
+    tmp_path: Path,
+) -> None:
+    video_path = tmp_path / "video-alpha.mp4"
+    video_path.touch()
+    refiner = ExactFrameRefiner(
+        raw_videos=RawVideoRegistry((RawVideoRecord("video-alpha", video_path),)),
+        decoder=_SyntheticDecoder(),
+        encoder=_SyntheticEncoder(peak_frame=0),
+        visual_verifier=_NonPromotableVerifier(),
+    )
+    variant = QueryVariant(
+        "scene",
+        "English description",
+        QueryLanguage.ENGLISH,
+        QueryVariantType.ENGLISH_TRANSLATION,
+        1.0,
+    )
+
+    outcome = refiner.scout_selected_video_timelines(
+        query_id="Q",
+        query_vi="mô tả tiếng Việt",
+        query_en="English description",
+        variants=(variant,),
+        ranked_video_ids=("video-alpha",),
+        rank_slots=(
+            _slot(1, "video-alpha", 10),
+            _slot(2, "video-alpha", 20),
+            _slot(3, "video-alpha", 30),
+        ),
+        config=SelectedVideoTimelineScoutConfig(
+            enabled=True,
+            max_videos=1,
+            sample_stride_seconds=2.0,
+            max_samples_per_video=6,
+            max_regions_per_video=3,
+            minimum_region_gap_seconds=1.0,
+        ),
+        visual_verifier_config=SelectedVideoVisualVerifierConfig(
+            enabled=True,
+            shortlist_per_video=2,
+            coverage_bins=1,
+        ),
+        refinement_config=RefinementConfig(),
+        precomputed_text_embeddings=np.asarray([[1.0, 0.0]], dtype=np.float32),
+        frame_embedding_cache={},
+    )
+
+    assert tuple(item.frame_id for item in outcome.candidates) == (0, 20, 40)
+    video_trace = outcome.trace["videos"][0]
+    assert video_trace["selected_region_frame_ids"] == [0, 20, 40]
+    assert len(video_trace["visual_verification"]["shortlist_frame_ids"]) == 2
+    assert video_trace["visual_verification"]["strictly_promotable_candidate_count"] == 0
 
 
 def test_all_candidate_failures_preserve_fixed_contract_fallback_trace(

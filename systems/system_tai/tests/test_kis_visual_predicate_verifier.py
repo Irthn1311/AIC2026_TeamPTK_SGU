@@ -336,6 +336,73 @@ def test_fixed_contract_accepts_minimal_ordered_state_wire() -> None:
     )
 
 
+def test_ordered_wire_treats_qwen_values_as_observations_not_verdicts() -> None:
+    contract = compile_visual_predicate_contract(
+        query_vi=QUERY_VI,
+        query_en=QUERY_EN,
+    )
+    observed_by_id = {
+        "subject_count_1": "7",
+        "spatial_layout_1": 1,
+        # A small VLM can echo a visible quantity in a non-count slot. The
+        # deterministic contract uses only the Y/N observation for that slot.
+        "primary_action_1": 3,
+        "primary_action_2": 1,
+        "person_attribute_count_1": "1",
+        "person_attribute_count_2": "3",
+        "synchronized_action_1": 1,
+    }
+    wire = {
+        "p": [
+            ["Y", observed_by_id[item.predicate_id], "2"]
+            for item in contract
+        ]
+    }
+
+    result = parse_visual_verification_json(
+        json.dumps(wire),
+        video_id="V",
+        absolute_frame_id=6650,
+        predicate_contract=contract,
+    )
+
+    assert result.eligible_for_promotion is True
+    assert result.requirement_coverage == pytest.approx(1.0)
+    assert result.predicates[2].observed_value == "satisfied"
+    assert result.to_trace()["predicates"][0]["count_matches"] is True
+
+
+def test_ordered_wire_computes_count_failure_despite_positive_model_state() -> None:
+    contract = compile_visual_predicate_contract(
+        query_vi=QUERY_VI,
+        query_en=QUERY_EN,
+    )
+    predicates = []
+    for item in contract:
+        observed = 1
+        if item.predicate_id == "subject_count_1":
+            observed = 5
+        elif item.predicate_id == "person_attribute_count_1":
+            observed = 1
+        elif item.predicate_id == "person_attribute_count_2":
+            observed = 3
+        predicates.append(["Y", observed, 2])
+
+    result = parse_visual_verification_json(
+        json.dumps({"p": predicates}),
+        video_id="V",
+        absolute_frame_id=6650,
+        predicate_contract=contract,
+    )
+
+    subject_count = result.predicates[0]
+    assert subject_count.count_matches is False
+    assert subject_count.satisfied is False
+    assert subject_count.strictly_satisfied is False
+    assert result.eligible_for_promotion is False
+    assert result.requirement_coverage < 1.0
+
+
 def test_minimal_ordered_state_wire_fails_closed_when_truncated() -> None:
     contract = compile_visual_predicate_contract(
         query_vi=QUERY_VI,
@@ -739,6 +806,7 @@ def test_unverified_fixed_contract_candidate_cannot_override_clip_order() -> Non
     )
     clip_first = LocalFrameFusion(10, 0.9, 1, 1, ())
     claimed_match = LocalFrameFusion(20, 0.8, 1, 2, ())
+    unshortlisted = LocalFrameFusion(30, 0.7, 1, 3, ())
     result = parse_visual_verification_json(
         _strict_contract_payload(contract, red_hat_count=2),
         video_id="V",
@@ -747,15 +815,19 @@ def test_unverified_fixed_contract_candidate_cannot_override_clip_order() -> Non
     )
 
     ranked = rank_visually_verified_timeline_frames(
-        (clip_first, claimed_match),
+        (clip_first, claimed_match, unshortlisted),
         (result,),
     )
 
-    assert tuple(item.absolute_frame_id for item in ranked) == (10, 20)
+    assert tuple(item.absolute_frame_id for item in ranked) == (10, 20, 30)
     assert (
         ranked[1].per_variant_provenance[-1]["visual_verification"]
         ["status"]
-        == "CANDIDATE_FALLBACK_CLIP"
+        == "UNVERIFIED_PRESERVE_CLIP"
+    )
+    assert (
+        ranked[2].per_variant_provenance[-1]["visual_verification"]["reason"]
+        == "VERIFIER_DID_NOT_RETURN_RESULT"
     )
 
 
