@@ -94,6 +94,21 @@ class VinAITranslateProvider:
             "local_files_only": not allow_model_download,
             "revision": self.revision,
         }
+        model_load_kwargs = {
+            **load_kwargs,
+            "low_cpu_mem_usage": True,
+        }
+        if self._device == "cuda":
+            # Materialize the checkpoint directly on the accelerator.  Loading
+            # the complete model on CPU and then calling ``.to("cuda")``
+            # temporarily requires two resident copies and can exhaust a
+            # bounded Kaggle runtime while Qwen is already loaded.
+            model_load_kwargs.update(
+                {
+                    "torch_dtype": torch.float16,
+                    "device_map": "cuda",
+                }
+            )
         try:
             self.tokenizer = AutoTokenizer.from_pretrained(
                 self.model_name,
@@ -102,8 +117,10 @@ class VinAITranslateProvider:
             )
             self.model = AutoModelForSeq2SeqLM.from_pretrained(
                 self.model_name,
-                **load_kwargs,
-            ).to(self._device)
+                **model_load_kwargs,
+            )
+            if self._device == "cpu":
+                self.model = self.model.to("cpu")
             self.model.eval()
         except Exception as exc:
             download_hint = (

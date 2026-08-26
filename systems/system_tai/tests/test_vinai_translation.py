@@ -115,6 +115,63 @@ def test_vinai_provider_download_requires_explicit_opt_in(
     assert records["model_load"][1]["local_files_only"] is False
 
 
+def test_vinai_provider_materializes_directly_on_cuda(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    records: dict[str, Any] = {}
+
+    class FakeTokenizer:
+        lang_code_to_id = {"en_XX": 42}
+
+    class FakeAutoTokenizer:
+        @staticmethod
+        def from_pretrained(model_name: str, **kwargs: Any) -> FakeTokenizer:
+            records["tokenizer_load"] = (model_name, kwargs)
+            return FakeTokenizer()
+
+    class FakeModel:
+        def to(self, device: str) -> FakeModel:
+            records.setdefault("model_to", []).append(device)
+            return self
+
+        def eval(self) -> None:
+            records["model_eval"] = True
+
+    class FakeAutoModel:
+        @staticmethod
+        def from_pretrained(model_name: str, **kwargs: Any) -> FakeModel:
+            records["model_load"] = (model_name, kwargs)
+            return FakeModel()
+
+    monkeypatch.setitem(
+        sys.modules,
+        "torch",
+        types.SimpleNamespace(
+            cuda=types.SimpleNamespace(is_available=lambda: True),
+            float16="float16",
+            no_grad=nullcontext,
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "transformers",
+        types.SimpleNamespace(
+            AutoModelForSeq2SeqLM=FakeAutoModel,
+            AutoTokenizer=FakeAutoTokenizer,
+        ),
+    )
+
+    provider = VinAITranslateProvider(device="cuda", allow_model_download=False)
+
+    assert provider.device == "cuda"
+    _, model_kwargs = records["model_load"]
+    assert model_kwargs["low_cpu_mem_usage"] is True
+    assert model_kwargs["torch_dtype"] == "float16"
+    assert model_kwargs["device_map"] == "cuda"
+    assert "model_to" not in records
+    assert records["model_eval"] is True
+
+
 def test_vinai_provider_rejects_missing_target_language_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
