@@ -1127,11 +1127,23 @@ class HuggingFaceStructuredVisualVerifier:
                 **processor_kwargs,
             )
             dtype = torch.float16 if device == "cuda" else torch.float32
+            model_load_kwargs = {
+                **load_kwargs,
+                "torch_dtype": dtype,
+                "low_cpu_mem_usage": True,
+            }
+            if device == "cuda":
+                # Dispatch directly while materializing the checkpoint.  Loading the
+                # full VLM on CPU and only then calling ``to("cuda")`` temporarily
+                # keeps two model-sized allocations alive and has repeatedly stalled
+                # Kaggle T4 sessions during Qwen checkpoint materialization.
+                model_load_kwargs["device_map"] = device
             self._model = model_class.from_pretrained(
                 model_name,
-                torch_dtype=dtype,
-                **load_kwargs,
-            ).to(device)
+                **model_load_kwargs,
+            )
+            if device == "cpu":
+                self._model = self._model.to(device)
             self._model.eval()
         except Exception as exc:
             raise VisualVerificationError(f"visual verifier model load failed: {exc}") from exc

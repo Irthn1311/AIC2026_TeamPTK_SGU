@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -37,6 +38,66 @@ QUERY_EN = (
     "touching their toes with both hands. In the group there was only one person "
     "wearing glasses and three people wearing red hats."
 )
+
+
+def test_cuda_visual_verifier_materializes_directly_on_device() -> None:
+    class FakeProcessor:
+        @classmethod
+        def from_pretrained(cls, *_args, **_kwargs):
+            return cls()
+
+    class FakeModel:
+        def __init__(self) -> None:
+            self.to_calls: list[str] = []
+            self.eval_called = False
+
+        def to(self, device: str):
+            self.to_calls.append(device)
+            return self
+
+        def eval(self) -> None:
+            self.eval_called = True
+
+    captured: dict[str, object] = {}
+    model = FakeModel()
+
+    class FakeModelClass:
+        @classmethod
+        def from_pretrained(cls, model_name: str, **kwargs):
+            captured["model_name"] = model_name
+            captured["kwargs"] = kwargs
+            return model
+
+    verifier = HuggingFaceStructuredVisualVerifier(
+        model_name="fake/qwen",
+        revision="rev",
+        device="cuda",
+        allow_model_download=False,
+        cache_dir=None,
+        max_new_tokens=32,
+        transformers_module=SimpleNamespace(
+            AutoProcessor=FakeProcessor,
+            AutoModelForImageTextToText=FakeModelClass,
+        ),
+        torch_module=SimpleNamespace(
+            cuda=SimpleNamespace(is_available=lambda: True),
+            float16="float16",
+            float32="float32",
+        ),
+        image_module=SimpleNamespace(),
+    )
+
+    assert verifier.identifiers["device"] == "cuda"
+    assert captured["model_name"] == "fake/qwen"
+    assert captured["kwargs"] == {
+        "revision": "rev",
+        "local_files_only": True,
+        "torch_dtype": "float16",
+        "low_cpu_mem_usage": True,
+        "device_map": "cuda",
+    }
+    assert model.to_calls == []
+    assert model.eval_called is True
 
 
 def _verification_result(frame_id: int) -> VisualVerificationResult:
