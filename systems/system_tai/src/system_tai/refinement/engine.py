@@ -224,6 +224,63 @@ def timeline_sparse_frame_ids(
     return tuple((index * last) // (max_samples - 1) for index in range(max_samples))
 
 
+def temporal_visual_evidence_frames(
+    frames: Sequence[DecodedFrame],
+    *,
+    center_frame_id: int,
+    fps: float,
+    evidence_window_seconds: float,
+    sample_radius: int,
+) -> tuple[DecodedFrame, ...]:
+    """Select bounded evidence frames spanning the requested temporal window.
+
+    ``sample_radius`` controls the number of samples on each side, while
+    ``evidence_window_seconds`` controls their full reach. This avoids the historical
+    bug where a six-second verifier window still received only immediately adjacent
+    sparse samples. The center is always retained and every returned ID remains an
+    absolute original-video coordinate.
+    """
+
+    if not frames:
+        raise ValueError("temporal visual evidence requires decoded frames")
+    if not math.isfinite(fps) or fps <= 0:
+        raise ValueError("fps must be finite and positive")
+    if (
+        not math.isfinite(evidence_window_seconds)
+        or evidence_window_seconds < 0
+    ):
+        raise ValueError("evidence_window_seconds must be finite and non-negative")
+    if type(sample_radius) is not int or sample_radius < 0:
+        raise ValueError("sample_radius must be a non-negative integer")
+    by_id = {frame.absolute_frame_id: frame for frame in frames}
+    center = by_id.get(center_frame_id)
+    if center is None:
+        raise ValueError("center frame is absent from decoded timeline")
+    if sample_radius == 0 or evidence_window_seconds == 0:
+        return (center,)
+
+    maximum_offset = max(1, int(round(evidence_window_seconds * fps)))
+    target_ids = {
+        center_frame_id
+        + int(round(maximum_offset * offset_index / sample_radius))
+        for offset_index in range(-sample_radius, sample_radius + 1)
+    }
+    first_frame_id = frames[0].absolute_frame_id
+    last_frame_id = frames[-1].absolute_frame_id
+    selected: dict[int, DecodedFrame] = {center_frame_id: center}
+    for target_id in target_ids:
+        bounded_target = min(max(target_id, first_frame_id), last_frame_id)
+        nearest = min(
+            frames,
+            key=lambda frame: (
+                abs(frame.absolute_frame_id - bounded_target),
+                frame.absolute_frame_id,
+            ),
+        )
+        selected[nearest.absolute_frame_id] = nearest
+    return tuple(selected[frame_id] for frame_id in sorted(selected))
+
+
 def select_timeline_regions(
     ranked: Sequence[LocalFrameFusion],
     *,
@@ -1047,33 +1104,41 @@ class ExactFrameRefiner:
                         ),
                         coverage_bins=visual_verifier_config.effective_coverage_bins,
                     )
-                    frame_index = {
-                        frame.absolute_frame_id: index
-                        for index, frame in enumerate(decoded.frames)
-                    }
                     verification_inputs: list[VisualVerificationInput] = []
                     for item in shortlist:
-                        center_index = frame_index[item.absolute_frame_id]
-                        start_index = max(
-                            0,
-                            center_index
-                            - visual_verifier_config.effective_neighbor_sample_radius,
+                        evidence_frames = temporal_visual_evidence_frames(
+                            decoded.frames,
+                            center_frame_id=item.absolute_frame_id,
+                            fps=probe.fps,
+                            evidence_window_seconds=(
+                                visual_verifier_config
+                                .temporal_evidence_window_seconds
+                            ),
+                            sample_radius=(
+                                visual_verifier_config
+                                .effective_neighbor_sample_radius
+                            ),
                         )
-                        end_index = min(
-                            len(decoded.frames),
-                            center_index
-                            + visual_verifier_config.effective_neighbor_sample_radius
-                            + 1,
+                        center = next(
+                            frame
+                            for frame in evidence_frames
+                            if frame.absolute_frame_id == item.absolute_frame_id
                         )
-                        center = decoded.frames[center_index]
                         verification_inputs.append(
                             VisualVerificationInput(
                                 video_id=video_id,
                                 absolute_frame_id=center.absolute_frame_id,
                                 timestamp_seconds=center.timestamp_seconds,
                                 images=tuple(
-                                    frame.image
-                                    for frame in decoded.frames[start_index:end_index]
+                                    frame.image for frame in evidence_frames
+                                ),
+                                image_frame_ids=tuple(
+                                    frame.absolute_frame_id
+                                    for frame in evidence_frames
+                                ),
+                                image_timestamps_seconds=tuple(
+                                    frame.timestamp_seconds
+                                    for frame in evidence_frames
                                 ),
                             )
                         )
@@ -1160,6 +1225,20 @@ class ExactFrameRefiner:
                             ],
                             "shortlist_frame_ids": [
                                 item.absolute_frame_id for item in shortlist
+                            ],
+                            "evidence_windows": [
+                                {
+                                    "source_candidate_frame_id": (
+                                        item.absolute_frame_id
+                                    ),
+                                    "absolute_frame_ids": list(
+                                        item.image_frame_ids
+                                    ),
+                                    "timestamp_seconds": list(
+                                        item.image_timestamps_seconds
+                                    ),
+                                }
+                                for item in verification_inputs
                             ],
                             "results": [
                                 dict(item.to_trace()) for item in verification_results

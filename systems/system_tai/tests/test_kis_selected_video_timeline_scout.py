@@ -13,6 +13,7 @@ from system_tai.refinement.engine import (
     LocalFrameFusion,
     build_visual_verification_shortlist,
     fuse_temporal_neighborhood_rankings,
+    temporal_visual_evidence_frames,
     timeline_sparse_frame_ids,
 )
 from system_tai.refinement.models import (
@@ -120,6 +121,41 @@ def test_sparse_timeline_sampling_covers_tail_without_known_target() -> None:
     assert frame_ids == (0, 20, 40, 60, 80, 100)
     assert len(frame_ids) == 6
     SparseDecodeRequest(probe, frame_ids, max_decoded_frames=6)
+
+
+def test_visual_evidence_samples_span_full_bounded_window() -> None:
+    frames = tuple(
+        DecodedFrame(frame_id, frame_id / 10.0, frame_id)
+        for frame_id in (0, 20, 40, 60, 80, 100)
+    )
+
+    selected = temporal_visual_evidence_frames(
+        frames,
+        center_frame_id=80,
+        fps=10.0,
+        evidence_window_seconds=6.0,
+        sample_radius=1,
+    )
+
+    assert tuple(item.absolute_frame_id for item in selected) == (20, 80, 100)
+    assert selected[1].image == 80
+
+
+def test_visual_evidence_radius_zero_keeps_only_absolute_center() -> None:
+    frames = tuple(
+        DecodedFrame(frame_id, frame_id / 10.0, frame_id)
+        for frame_id in (0, 20, 40, 60, 80, 100)
+    )
+
+    selected = temporal_visual_evidence_frames(
+        frames,
+        center_frame_id=40,
+        fps=10.0,
+        evidence_window_seconds=6.0,
+        sample_radius=0,
+    )
+
+    assert tuple(item.absolute_frame_id for item in selected) == (40,)
 
 
 def test_scout_uses_retrieval_video_order_and_finds_late_synthetic_region(
@@ -475,6 +511,7 @@ def test_visual_verifier_promotes_tail_without_target_video_or_frame_config(
             shortlist_per_video=4,
             coverage_bins=3,
             neighbor_sample_radius=1,
+            execution_mode=VisualVerifierExecutionMode.FULL,
         ),
         refinement_config=RefinementConfig(),
         precomputed_text_embeddings=np.asarray([[1.0, 0.0]], dtype=np.float32),
@@ -488,6 +525,19 @@ def test_visual_verifier_promotes_tail_without_target_video_or_frame_config(
     assert outcome.trace["visual_verifier_enabled"] is True
     assert outcome.timings["timeline_visual_verified_candidate_count"] == 4
     assert 80 in {item.absolute_frame_id for item in verifier.inputs}
+    tail_input = next(
+        item for item in verifier.inputs if item.absolute_frame_id == 80
+    )
+    assert tail_input.image_frame_ids == (20, 80, 100)
+    assert tail_input.image_timestamps_seconds == (2.0, 8.0, 10.0)
+    evidence_windows = outcome.trace["videos"][0]["visual_verification"][
+        "evidence_windows"
+    ]
+    assert any(
+        item["source_candidate_frame_id"] == 80
+        and item["absolute_frame_ids"] == [20, 80, 100]
+        for item in evidence_windows
+    )
 
 
 def test_visual_verifier_failure_falls_back_to_clip_with_explicit_warning(

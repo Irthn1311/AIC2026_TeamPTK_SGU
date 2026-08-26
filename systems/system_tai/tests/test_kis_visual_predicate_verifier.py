@@ -22,6 +22,7 @@ from system_tai.refinement.visual_verifier import (
     VisualVerificationError,
     VisualVerificationInput,
     VisualVerificationResult,
+    bind_temporal_visual_evidence,
     compile_visual_predicate_contract,
     parse_visual_verification_json,
 )
@@ -78,6 +79,19 @@ class _CandidateIsolationVerifier(HuggingFaceStructuredVisualVerifier):
         if candidate.absolute_frame_id == 30:
             raise VisualVerificationError("persistent parse failure")
         return _verification_result(candidate.absolute_frame_id)
+
+
+class _RetryImageVerifier(_CandidateIsolationVerifier):
+    def __init__(self) -> None:
+        super().__init__()
+        self.received_images: list[tuple[object, ...]] = []
+
+    def _verify_candidate(self, **kwargs):
+        images = tuple(kwargs["images"])
+        self.received_images.append(images)
+        if len(images) > 1:
+            raise VisualVerificationError("force bounded retry")
+        return _verification_result(kwargs["candidate"].absolute_frame_id)
 
 
 def test_structured_visual_result_parses_without_provenance_leak() -> None:
@@ -160,6 +174,27 @@ def test_candidate_failure_retries_then_isolates_without_discarding_later_result
     assert tuple(
         item["absolute_frame_id"] for item in verifier.last_recovered_retries
     ) == (20,)
+
+
+def test_retry_uses_declared_candidate_image_at_bounded_timeline_edge() -> None:
+    verifier = _RetryImageVerifier()
+    candidate = VisualVerificationInput(
+        "V",
+        0,
+        0.0,
+        ("center", "future"),
+        image_frame_ids=(0, 60),
+        image_timestamps_seconds=(0.0, 6.0),
+    )
+
+    results = verifier.verify(
+        query_vi="mô tả",
+        query_en="description",
+        candidates=(candidate,),
+    )
+
+    assert tuple(item.absolute_frame_id for item in results) == (0,)
+    assert verifier.received_images == [("center", "future"), ("center",)]
 
 
 def test_compact_visual_result_parses_with_bounded_wire_schema() -> None:
@@ -275,6 +310,8 @@ def test_visual_verifier_prompt_requires_observed_predicate_evidence() -> None:
     prompt = HuggingFaceStructuredVisualVerifier._build_prompt(
         query_vi=QUERY_VI,
         query_en=QUERY_EN,
+        image_count=3,
+        candidate_image_number=2,
     )
 
     assert "[STATE,VALUE,IMAGE]" in prompt
@@ -284,6 +321,136 @@ def test_visual_verifier_prompt_requires_observed_predicate_evidence() -> None:
     assert "Do not emit IDs" in prompt
     assert "VALUE is the visible integer" in prompt
     assert "one-based image number" in prompt
+    assert "There are exactly 3 images; image 2 is the retrieval center" in prompt
+    assert "must cite the SAME single image" in prompt
+    assert "Never add people or attributes across images" in prompt
+
+
+def _ordered_temporal_payload(
+    contract: tuple[VisualPredicateRequirement, ...],
+    *,
+    context_image_number: int,
+    action_image_number: int,
+    red_hat_image_number: int | None = None,
+) -> str:
+    predicates = []
+    for item in contract:
+        observed = 1
+        image_number = action_image_number
+        if item.predicate_id == "subject_count_1":
+            observed = 7
+            image_number = context_image_number
+        elif item.predicate_id == "person_attribute_count_1":
+            observed = 1
+            image_number = context_image_number
+        elif item.predicate_id == "person_attribute_count_2":
+            observed = 3
+            image_number = (
+                red_hat_image_number
+                if red_hat_image_number is not None
+                else context_image_number
+            )
+        elif item.predicate_id.startswith("spatial_layout_"):
+            image_number = context_image_number
+        predicates.append(["Y", observed, image_number])
+    return json.dumps({"p": predicates}, separators=(",", ":"))
+
+
+def test_temporal_binding_allows_distinct_coherent_context_and_action_witnesses() -> None:
+    contract = compile_visual_predicate_contract(
+        query_vi=QUERY_VI,
+        query_en=QUERY_EN,
+    )
+    candidate = VisualVerificationInput(
+        "V",
+        6650,
+        266.0,
+        ("early", "center", "late"),
+        image_frame_ids=(6500, 6650, 6800),
+        image_timestamps_seconds=(260.0, 266.0, 272.0),
+    )
+    parsed = parse_visual_verification_json(
+        _ordered_temporal_payload(
+            contract,
+            context_image_number=1,
+            action_image_number=3,
+        ),
+        video_id="V",
+        absolute_frame_id=6650,
+        predicate_contract=contract,
+    )
+
+    bound = bind_temporal_visual_evidence(parsed, candidate=candidate)
+
+    assert bound.eligible_for_promotion is True
+    assert bound.absolute_frame_id == 6800
+    assert bound.source_candidate_frame_id == 6650
+    assert bound.temporal_context_witness_frame_id == 6500
+    assert bound.temporal_action_witness_frame_id == 6800
+    assert bound.temporal_evidence_frame_ids == (6500, 6650, 6800)
+    assert "absolute original-video frame 6500" in bound.predicates[0].evidence
+    assert bound.to_trace()["temporal_coherence_validated"] is True
+
+
+def test_temporal_binding_rejects_cross_frame_attribute_count_addition() -> None:
+    contract = compile_visual_predicate_contract(
+        query_vi=QUERY_VI,
+        query_en=QUERY_EN,
+    )
+    candidate = VisualVerificationInput(
+        "V",
+        6650,
+        266.0,
+        ("early", "center", "late"),
+        image_frame_ids=(6500, 6650, 6800),
+    )
+    parsed = parse_visual_verification_json(
+        _ordered_temporal_payload(
+            contract,
+            context_image_number=1,
+            action_image_number=3,
+            red_hat_image_number=2,
+        ),
+        video_id="V",
+        absolute_frame_id=6650,
+        predicate_contract=contract,
+    )
+
+    bound = bind_temporal_visual_evidence(parsed, candidate=candidate)
+
+    assert bound.eligible_for_promotion is False
+    assert bound.all_visible_requirements_satisfied is False
+    assert bound.absolute_frame_id == 6650
+    assert bound.temporal_context_witness_frame_id is None
+    assert bound.temporal_action_witness_frame_id == 6800
+    assert bound.temporal_coherence_validated is False
+
+
+def test_temporal_binding_rejects_evidence_outside_bounded_window() -> None:
+    contract = compile_visual_predicate_contract(
+        query_vi=QUERY_VI,
+        query_en=QUERY_EN,
+    )
+    candidate = VisualVerificationInput(
+        "V",
+        6650,
+        266.0,
+        ("early", "center", "late"),
+        image_frame_ids=(6500, 6650, 6800),
+    )
+    parsed = parse_visual_verification_json(
+        _ordered_temporal_payload(
+            contract,
+            context_image_number=1,
+            action_image_number=4,
+        ),
+        video_id="V",
+        absolute_frame_id=6650,
+        predicate_contract=contract,
+    )
+
+    with pytest.raises(VisualVerificationError, match="outside the bounded"):
+        bind_temporal_visual_evidence(parsed, candidate=candidate)
 
 
 def test_visual_verifier_prompt_seeds_only_fail_closed_result_values() -> None:

@@ -13,7 +13,7 @@ import math
 import re
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Protocol
@@ -289,6 +289,8 @@ class VisualVerificationInput:
     absolute_frame_id: int
     timestamp_seconds: float
     images: tuple[Any, ...]
+    image_frame_ids: tuple[int, ...] = ()
+    image_timestamps_seconds: tuple[float, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.video_id.strip():
@@ -299,6 +301,41 @@ class VisualVerificationInput:
             raise ValueError("visual verification timestamp must be finite and non-negative")
         if not self.images:
             raise ValueError("visual verification requires at least one image")
+        if self.image_frame_ids:
+            if len(self.image_frame_ids) != len(self.images):
+                raise ValueError(
+                    "visual verification image_frame_ids must align with images"
+                )
+            if any(frame_id < 0 for frame_id in self.image_frame_ids):
+                raise ValueError(
+                    "visual verification image frame IDs must be non-negative"
+                )
+            if len(set(self.image_frame_ids)) != len(self.image_frame_ids):
+                raise ValueError("visual verification image frame IDs must be unique")
+            if self.absolute_frame_id not in self.image_frame_ids:
+                raise ValueError(
+                    "visual verification candidate frame must be present in image_frame_ids"
+                )
+        if self.image_timestamps_seconds:
+            if len(self.image_timestamps_seconds) != len(self.images):
+                raise ValueError(
+                    "visual verification image timestamps must align with images"
+                )
+            if any(
+                not math.isfinite(timestamp) or timestamp < 0
+                for timestamp in self.image_timestamps_seconds
+            ):
+                raise ValueError(
+                    "visual verification image timestamps must be finite and non-negative"
+                )
+
+    @property
+    def candidate_image_number(self) -> int:
+        """Return the one-based position of the candidate image."""
+
+        if self.image_frame_ids:
+            return self.image_frame_ids.index(self.absolute_frame_id) + 1
+        return len(self.images) // 2 + 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -377,6 +414,11 @@ class VisualPredicateScore:
             and self.count_matches
         )
 
+    @property
+    def evidence_image_number(self) -> int | None:
+        match = re.search(r"\bimage\s+(\d+)\b", self.evidence, re.IGNORECASE)
+        return int(match.group(1)) if match is not None else None
+
 
 @dataclass(frozen=True, slots=True)
 class VisualVerificationResult:
@@ -388,6 +430,11 @@ class VisualVerificationResult:
     predicates: tuple[VisualPredicateScore, ...]
     summary: str
     contract_validated: bool = False
+    source_candidate_frame_id: int | None = None
+    temporal_context_witness_frame_id: int | None = None
+    temporal_action_witness_frame_id: int | None = None
+    temporal_evidence_frame_ids: tuple[int, ...] = ()
+    temporal_coherence_validated: bool | None = None
 
     def __post_init__(self) -> None:
         if not self.video_id.strip() or self.absolute_frame_id < 0:
@@ -402,6 +449,20 @@ class VisualVerificationResult:
             raise ValueError("all_visible_requirements_satisfied must be boolean")
         if not self.predicates:
             raise ValueError("visual verification must contain predicate scores")
+        for field_name, frame_id in (
+            ("source_candidate_frame_id", self.source_candidate_frame_id),
+            (
+                "temporal_context_witness_frame_id",
+                self.temporal_context_witness_frame_id,
+            ),
+            ("temporal_action_witness_frame_id", self.temporal_action_witness_frame_id),
+        ):
+            if frame_id is not None and frame_id < 0:
+                raise ValueError(f"{field_name} must be non-negative when provided")
+        if any(frame_id < 0 for frame_id in self.temporal_evidence_frame_ids):
+            raise ValueError("temporal evidence frame IDs must be non-negative")
+        if type(self.temporal_coherence_validated) not in {bool, type(None)}:
+            raise ValueError("temporal_coherence_validated must be boolean or None")
 
     @property
     def predicate_bottleneck_score(self) -> float:
@@ -426,6 +487,8 @@ class VisualVerificationResult:
     def eligible_for_promotion(self) -> bool:
         if not self.contract_validated:
             return True
+        if self.temporal_coherence_validated is False:
+            return False
         return self.all_visible_requirements_satisfied and all(
             predicate.strictly_satisfied for predicate in self.predicates
         )
@@ -443,6 +506,9 @@ class VisualVerificationResult:
 
         return (
             self.all_visible_requirements_satisfied,
+            self.temporal_coherence_validated,
+            self.temporal_context_witness_frame_id
+            == self.temporal_action_witness_frame_id,
             round(self.match_score, 2),
             round(self.requirement_coverage, 2),
             tuple(
@@ -473,6 +539,19 @@ class VisualVerificationResult:
                 "predicate_bottleneck_score": self.predicate_bottleneck_score,
                 "contract_validated": self.contract_validated,
                 "eligible_for_promotion": self.eligible_for_promotion,
+                "source_candidate_frame_id": self.source_candidate_frame_id,
+                "temporal_coherence_validated": (
+                    self.temporal_coherence_validated
+                ),
+                "temporal_context_witness_frame_id": (
+                    self.temporal_context_witness_frame_id
+                ),
+                "temporal_action_witness_frame_id": (
+                    self.temporal_action_witness_frame_id
+                ),
+                "temporal_evidence_frame_ids": list(
+                    self.temporal_evidence_frame_ids
+                ),
                 "predicates": [
                     {
                         "predicate_id": predicate.predicate_id,
@@ -492,6 +571,135 @@ class VisualVerificationResult:
                 "summary": self.summary,
             }
         )
+
+
+def bind_temporal_visual_evidence(
+    result: VisualVerificationResult,
+    *,
+    candidate: VisualVerificationInput,
+) -> VisualVerificationResult:
+    """Bind compact image-number evidence to absolute raw-video coordinates.
+
+    Count/layout predicates must share one context witness image. Action and
+    synchronization predicates must share one action witness image. The two witnesses
+    may differ inside the bounded temporal window, which models a short video moment
+    without combining unrelated observations across frames.
+    """
+
+    if not candidate.image_frame_ids:
+        return result
+    if result.video_id != candidate.video_id:
+        raise VisualVerificationError("visual verifier candidate video mismatch")
+
+    frame_by_image_number = {
+        index: frame_id
+        for index, frame_id in enumerate(candidate.image_frame_ids, start=1)
+    }
+    contextual: list[VisualPredicateScore] = []
+    actions: list[VisualPredicateScore] = []
+    evidence_image_numbers: list[int] = []
+    rebound_predicates: list[VisualPredicateScore] = []
+    for predicate in result.predicates:
+        image_number = predicate.evidence_image_number
+        if image_number is not None:
+            frame_id = frame_by_image_number.get(image_number)
+            if frame_id is None:
+                raise VisualVerificationError(
+                    "visual verifier cited an image outside the bounded candidate window"
+                )
+            evidence_image_numbers.append(image_number)
+            predicate = replace(
+                predicate,
+                evidence=(
+                    f"{predicate.evidence}; absolute original-video frame {frame_id}"
+                ),
+            )
+        predicate_id = predicate.predicate_id
+        if predicate.comparison is not None or predicate_id.startswith(
+            "spatial_layout_"
+        ):
+            contextual.append(predicate)
+        if predicate_id.startswith(("primary_action_", "synchronized_action_")):
+            actions.append(predicate)
+        rebound_predicates.append(predicate)
+
+    def coherent_witness(
+        predicates: Sequence[VisualPredicateScore],
+    ) -> int | None:
+        if not predicates:
+            return None
+        if not all(predicate.strictly_satisfied for predicate in predicates):
+            return None
+        image_numbers = {
+            predicate.evidence_image_number for predicate in predicates
+        }
+        if None in image_numbers or len(image_numbers) != 1:
+            return None
+        return frame_by_image_number[int(next(iter(image_numbers)))]
+
+    context_witness = coherent_witness(contextual)
+    action_witness = coherent_witness(actions)
+    every_predicate_strict = all(
+        predicate.strictly_satisfied for predicate in rebound_predicates
+    )
+    context_coherent = not contextual or context_witness is not None
+    action_coherent = not actions or action_witness is not None
+    temporal_coherent = (
+        every_predicate_strict and context_coherent and action_coherent
+    )
+
+    representative_frame_id = candidate.absolute_frame_id
+    if temporal_coherent:
+        # The exported frame should show the requested action whenever an action
+        # contract exists. Context-only queries use their coherent context witness.
+        representative_frame_id = (
+            action_witness or context_witness or candidate.absolute_frame_id
+        )
+        if action_witness is None and context_witness is None and evidence_image_numbers:
+            representative_frame_id = frame_by_image_number[
+                min(evidence_image_numbers)
+            ]
+
+    strict_coverage = sum(
+        predicate.strictly_satisfied for predicate in rebound_predicates
+    ) / len(rebound_predicates)
+    return VisualVerificationResult(
+        video_id=result.video_id,
+        absolute_frame_id=representative_frame_id,
+        match_score=strict_coverage,
+        requirement_coverage=strict_coverage,
+        all_visible_requirements_satisfied=temporal_coherent,
+        predicates=tuple(rebound_predicates),
+        summary=(
+            "bounded temporal conjunction verified"
+            if temporal_coherent
+            else "bounded temporal conjunction not coherently verified"
+        ),
+        contract_validated=result.contract_validated,
+        source_candidate_frame_id=candidate.absolute_frame_id,
+        temporal_context_witness_frame_id=context_witness,
+        temporal_action_witness_frame_id=action_witness,
+        temporal_evidence_frame_ids=candidate.image_frame_ids,
+        temporal_coherence_validated=temporal_coherent,
+    )
+
+
+def _visual_result_preference(
+    result: VisualVerificationResult,
+) -> tuple[int, int, float, float, float, int]:
+    source_frame_id = (
+        result.source_candidate_frame_id
+        if result.source_candidate_frame_id is not None
+        else result.absolute_frame_id
+    )
+    return (
+        int(result.eligible_for_promotion),
+        int(result.all_visible_requirements_satisfied),
+        result.predicate_bottleneck_score,
+        result.requirement_coverage,
+        result.match_score,
+        -source_frame_id,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -946,7 +1154,7 @@ class HuggingFaceStructuredVisualVerifier:
                 "execution_profile": execution_profile,
                 "max_new_tokens": max_new_tokens,
                 "max_image_pixels": max_image_pixels,
-                "wire_format": "compact-json-v9-state-arrays",
+                "wire_format": "compact-json-v10-temporal-witness-arrays",
             }
         )
 
@@ -1008,7 +1216,8 @@ class HuggingFaceStructuredVisualVerifier:
                     max_new_tokens=self._max_new_tokens,
                 )
             except Exception as primary_exc:
-                retry_images = (candidate.images[len(candidate.images) // 2],)
+                retry_index = candidate.candidate_image_number - 1
+                retry_images = (candidate.images[retry_index],)
                 # Keep the configured generation budget.  The former 192-token retry
                 # cap could truncate otherwise valid JSON for conjunction-heavy queries.
                 # The retry is bounded by one center image and the same caller-approved
@@ -1061,9 +1270,19 @@ class HuggingFaceStructuredVisualVerifier:
                 f"visual verifier candidate {index}/{total} completed in "
                 f"{time.perf_counter() - started:.2f}s"
             )
+        # Overlapping temporal windows can choose the same absolute witness frame.
+        # Keep only the strongest deterministic observation for that shared identity.
+        unique_results: dict[tuple[str, int], VisualVerificationResult] = {}
+        for result in results:
+            identity = (result.video_id, result.absolute_frame_id)
+            existing = unique_results.get(identity)
+            if existing is None or _visual_result_preference(result) > (
+                _visual_result_preference(existing)
+            ):
+                unique_results[identity] = result
         self._last_failures = tuple(failures)
         self._last_recovered_retries = tuple(recovered_retries)
-        return tuple(results)
+        return tuple(unique_results.values())
 
     def _verify_candidate(
         self,
@@ -1082,6 +1301,12 @@ class HuggingFaceStructuredVisualVerifier:
             query_vi=query_vi,
             query_en=query_en,
             predicate_contract=predicate_contract,
+            image_count=len(images),
+            candidate_image_number=(
+                candidate.candidate_image_number
+                if len(images) == len(candidate.images)
+                else 1
+            ),
         )
         rgb_images = [self._to_rgb_image(image) for image in images]
         content = [{"type": "image"} for _ in rgb_images]
@@ -1126,12 +1351,31 @@ class HuggingFaceStructuredVisualVerifier:
                 f"{candidate.video_id}/{candidate.absolute_frame_id}: {exc}"
             ) from exc
         try:
-            return parse_visual_verification_json(
+            parsed = parse_visual_verification_json(
                 decoded,
                 video_id=candidate.video_id,
                 absolute_frame_id=candidate.absolute_frame_id,
                 predicate_contract=predicate_contract,
             )
+            if len(images) == len(candidate.images):
+                return bind_temporal_visual_evidence(
+                    parsed,
+                    candidate=candidate,
+                )
+            if candidate.image_frame_ids:
+                retry_candidate = VisualVerificationInput(
+                    video_id=candidate.video_id,
+                    absolute_frame_id=candidate.absolute_frame_id,
+                    timestamp_seconds=candidate.timestamp_seconds,
+                    images=tuple(images),
+                    image_frame_ids=(candidate.absolute_frame_id,),
+                    image_timestamps_seconds=(candidate.timestamp_seconds,),
+                )
+                return bind_temporal_visual_evidence(
+                    parsed,
+                    candidate=retry_candidate,
+                )
+            return parsed
         except VisualVerificationError as exc:
             response = _bounded_generated_response(decoded)
             raise VisualVerificationError(
@@ -1144,6 +1388,8 @@ class HuggingFaceStructuredVisualVerifier:
         query_vi: str,
         query_en: str,
         predicate_contract: Sequence[VisualPredicateRequirement] | None = None,
+        image_count: int | None = None,
+        candidate_image_number: int | None = None,
     ) -> str:
         contract = tuple(
             predicate_contract
@@ -1173,11 +1419,26 @@ class HuggingFaceStructuredVisualVerifier:
             ensure_ascii=False,
             separators=(",", ":"),
         )
+        image_context = ""
+        if image_count is not None:
+            if image_count <= 0:
+                raise ValueError("image_count must be positive when provided")
+            if candidate_image_number is None or not (
+                1 <= candidate_image_number <= image_count
+            ):
+                raise ValueError(
+                    "candidate_image_number must identify one supplied image"
+                )
+            image_context = (
+                f" There are exactly {image_count} images; image "
+                f"{candidate_image_number} is the retrieval center."
+            )
         return (
             "You are a strict visual evidence verifier for video known-item search. "
             "The images are neighboring frames from one automatically retrieved temporal "
-            "candidate, ordered by time and numbered from 1. The middle image is the "
-            "candidate frame. Score only the fixed predicate contract below. Never create, "
+            "candidate, ordered by time and numbered from 1."
+            f"{image_context} Inspect every supplied image before answering. Score only "
+            "the fixed predicate contract below. Never create, "
             "rename, merge, or omit an ID. Never infer a hidden person, "
             "attribute, count, or action. Exact counts and conjunctions matter. Return "
             "exactly one minified JSON object with no prose or markdown. The only root "
@@ -1191,9 +1452,12 @@ class HuggingFaceStructuredVisualVerifier:
             "and 0 for N. U must always be "
             "exactly [\"U\",0,0]. Do not emit IDs, scores, explanations, observations, "
             "field names, or any other values. Verify the exact "
-            "pose or motion in the requirement, not a related exercise. Synchronization may "
-            "use neighboring frames, but counts and attributes must be visible in the middle "
-            "frame. Do not repeat these instructions or copy any query or requirement text. "
+            "pose or motion in the requirement, not a related exercise. All count, person-"
+            "attribute, and spatial-layout requirements must cite the SAME single image. "
+            "All action and synchronization requirements must cite the SAME single image. "
+            "Those two witness images may differ because they belong to one bounded video "
+            "moment. Never add people or attributes across images. Code rejects incoherent "
+            "witnesses. Do not repeat these instructions or copy any query or requirement text. "
             "The numbered requirements below are read-only prose, not JSON.\n"
             f"Vietnamese query: {query_vi}\nEnglish translation: {query_en}\n"
             f"Required visual predicates:\n{predicate_requirements}\n"
