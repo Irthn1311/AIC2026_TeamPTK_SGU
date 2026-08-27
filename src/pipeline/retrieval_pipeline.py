@@ -1,10 +1,11 @@
 """
-Retrieval Pipeline — end-to-end query processing for all 3 AIC task types (v2).
+Retrieval Pipeline — end-to-end query processing for all 3 AIC task types (v3).
 
-Flow:
-  KIS   → visual + text retrieval → RRF fusion → best frame
-  Q&A   → enriched retrieval (event_desc + question) → VLM 1-call per frame → voting
-  TRAKE → compact Phase1 query → per-event alignment with temporal window → VLM verify
+Flow (v3 — 7 trụ cột):
+  KIS   → retrieve_adaptive (Trụ 2) → NSF (Trụ 3) → ConstraintFilter (Trụ 5)
+          → CLIPReranker → OCRReranker → TemporalReranker → GeminiReranker (Trụ 7)
+  Q&A   → enriched retrieval → VLM 1-call per frame → voting
+  TRAKE → compact Phase1 → NSF video-level → per-event alignment → VLM verify
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from src.reasoning.batch_router import BatchRouter
 from src.retrieval.visual_retriever import VisualRetriever
 from src.retrieval.text_retriever import TextRetriever
 from src.fusion.reciprocal_rank import ReciprocalRankFusion
+from src.fusion.normalized_score_fusion import NormalizedScoreFusion
 from src.evidence.frame_selector import FrameSelector
 from src.database.faiss_db import FaissDB
 from src.storage.metadata_store import MetadataStore
@@ -28,6 +30,8 @@ from src.preprocessing.text_cleaner import clean_query
 from src.reranking.ocr_reranker import OCRRelevanceReranker
 from src.reranking.temporal_reranker import TemporalReranker
 from src.reranking.clip_reranker import CLIPReranker
+from src.reranking.constraint_filter import ConstraintFilter
+from src.reranking.gemini_reranker import GeminiReranker
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -61,13 +65,15 @@ class RetrievalPipeline:
         encoder: CLIPEncoder,
         text_retrievers: Optional[List[TextRetriever]] = None,
         vlm_client=None,                # QwenVLClient (optional)
-        keyframe_image_root: str = "",  # Required for QA / TRAKE
+        keyframe_image_root: str = "",  # Required for QA / TRAKE / GeminiReranker
         rrf_k: int = 60,
         visual_weight: float = 1.0,
         text_weight: float = 0.8,
         top_k_retrieval: int = 100,
         top_k_fusion: int = 100,
         media_info_dir: Optional[str] = None,
+        enable_gemini_reranker: bool = True,
+        gemini_top_n_verify: int = 15,
         **kwargs,
     ):
         self._faiss_db   = faiss_db
@@ -80,13 +86,21 @@ class RetrievalPipeline:
         self._parser      = QueryParser()
         self._vis_ret     = VisualRetriever(faiss_db, meta_store, encoder)
         self._text_rets   = text_retrievers or []
-        self._rrf         = ReciprocalRankFusion(k=rrf_k)
+        self._rrf         = ReciprocalRankFusion(k=rrf_k)   # kept for legacy/TRAKE
+        self._nsf         = NormalizedScoreFusion()          # Trụ 3: primary fusion
         self._selector    = FrameSelector()
 
-        # Advanced Rerankers
+        # Rerankers — v3 normalized weights (Trụ 6)
+        self._clip_reranker     = CLIPReranker()             # default 0.70/0.30
         self._ocr_reranker      = OCRRelevanceReranker()
         self._temporal_reranker = TemporalReranker()
-        self._clip_reranker     = CLIPReranker(visual_weight=0.6, fusion_weight=0.4)
+        # Trụ 5: constraint-based soft penalization
+        self._constraint_filter = ConstraintFilter()
+        # Trụ 7: Gemini Vision semantic reranker (lazy API — skips if no key)
+        self._gemini_reranker   = GeminiReranker(
+            keyframe_image_root=keyframe_image_root,
+            top_n_verify=gemini_top_n_verify,
+        ) if enable_gemini_reranker else None
 
         # BatchRouter: predicts which batch(es) to search when target_prefix is absent
         self._batch_router = BatchRouter(
@@ -164,6 +178,19 @@ class RetrievalPipeline:
                     logger.info(f"InMemoryOCRRetriever loaded from: {ocr_dir}")
             except Exception as e:
                 logger.warning(f"Failed to load InMemoryOCRRetriever: {e}")
+
+        # Trụ 4B: ASR retriever
+        asr_dir = kwargs.pop("asr_dir", None)
+        if asr_dir and Path(asr_dir).exists():
+            try:
+                from src.retrieval.asr_retriever import ASRRetriever
+                asr_ret = ASRRetriever(asr_dir=asr_dir, meta_store=meta_store)
+                asr_ret.load()
+                if asr_ret.is_configured:
+                    text_retrievers.append(asr_ret)
+                    logger.info(f"ASRRetriever loaded from: {asr_dir}")
+            except Exception as e:
+                logger.warning(f"Failed to load ASRRetriever: {e}")
 
         if qdrant_url:
             try:
@@ -310,14 +337,14 @@ class RetrievalPipeline:
         for i, ep in enumerate(extra_prompts):
             logger.info(f"  • Prompt Mở Rộng #{i+1}     : '{ep}'")
 
-        # Step 3: Multimodal Candidate Retrieval — balanced global search
-        logger.info(f"\n[BƯỚC 3/5 - TRUY XUẤT VECTOR BAN ĐẦU (FAISS HNSW efSearch=256)]")
-        vis_results = self._vis_ret.retrieve_balanced(
-            retrieval_text, top_k=self._top_k_ret, max_per_video=5
+        # Step 3: Adaptive Score-Gated Retrieval (Trụ 2 — thay retrieve_balanced)
+        logger.info(f"\n[BƯỚC 3/5 - TRUY XUẤT VECTOR BAN ĐẦU (Adaptive Score-Gated)]")
+        vis_results = self._vis_ret.retrieve_adaptive(
+            retrieval_text, top_k=self._top_k_ret, max_per_video=3
         )
 
         top1_score = vis_results[0].score if vis_results else 0.0
-        logger.info(f"  • Truy xuất Thị giác (CLIP Primary) : {len(vis_results)} ứng viên (Top-1 Cosine: {top1_score:.4f})")
+        logger.info(f"  • Truy xuất Thị giác (CLIP Adaptive) : {len(vis_results)} ứng viên (Top-1 Cosine: {top1_score:.4f})")
 
         all_lists   = []
         all_weights = []
@@ -326,40 +353,52 @@ class RetrievalPipeline:
             all_lists.append(vis_results)
             all_weights.append(dyn_visual_w)
 
-        # Execute expansion queries as SEPARATE fusion streams (not concatenated into vis_results)
+        # Expansion queries (Trụ 2: cũng dùng retrieve_adaptive)
         for i, ep in enumerate(extra_prompts):
             try:
-                ep_results = self._vis_ret.retrieve_balanced(
-                    ep, top_k=max(30, self._top_k_ret // 3), max_per_video=3
+                ep_results = self._vis_ret.retrieve_adaptive(
+                    ep, top_k=max(30, self._top_k_ret // 3), max_per_video=2
                 )
                 if ep_results:
                     all_lists.append(ep_results)
-                    all_weights.append(dyn_visual_w * 0.75)  # Slightly lower weight for secondary perspective
+                    all_weights.append(dyn_visual_w * 0.75)
                     logger.info(f"  • Truy xuất bổ sung #{i+1}           : {len(ep_results)} ứng viên (Top-1 Cosine: {ep_results[0].score:.4f})")
             except Exception as e:
                 logger.debug(f"  • Query mở rộng #{i+1} không thành công: {e}")
 
-        # Only invoke OCR text retrievers if OCR keywords are explicitly present
-        if kis_query.ocr_keywords:
-            for text_ret in self._text_rets:
-                if getattr(text_ret, "name", "") == "ocr_inmemory":
+        # Text retrievers: OCR keywords → OCR retriever; always run ASR
+        for text_ret in self._text_rets:
+            ret_name = getattr(text_ret, "name", "")
+            if ret_name == "ocr_inmemory":
+                if kis_query.ocr_keywords:
                     txt = text_ret.retrieve(kis_query, top_k=self._top_k_ret)
+                    if txt:
+                        all_lists.append(txt)
+                        all_weights.append(dyn_text_w)
+                        logger.info(f"  • Truy xuất OCR ({ret_name}): {len(txt)} ứng viên")
                 else:
-                    txt = text_ret.retrieve(raw_text, top_k=self._top_k_ret)
+                    logger.info("  • Bỏ qua OCR (không có từ khóa chữ viết)")
+            elif ret_name == "asr_retriever":
+                # ASR always runs — speech may carry query-relevant info
+                txt = text_ret.retrieve(raw_text, top_k=self._top_k_ret // 2)
+                if txt:
+                    all_lists.append(txt)
+                    all_weights.append(dyn_text_w * 0.6)  # Lower weight: ASR is noisier
+                    logger.info(f"  • Truy xuất ASR: {len(txt)} ứng viên")
+            else:
+                txt = text_ret.retrieve(raw_text, top_k=self._top_k_ret)
                 if txt:
                     all_lists.append(txt)
                     all_weights.append(dyn_text_w)
-                    logger.info(f"  • Truy xuất Văn bản ({getattr(text_ret, 'name', 'text')}): {len(txt)} ứng viên")
-        else:
-            logger.info("  • Bỏ qua Truy xuất OCR (Không phát hiện từ khóa chữ viết trong query)")
+                    logger.info(f"  • Truy xuất Văn bản ({ret_name}): {len(txt)} ứng viên")
 
         if not all_lists:
             logger.warning(f"[KIS] Không tìm thấy ứng viên nào cho query_id='{query_id}'")
             return None
 
-        # Step 4: RRF Fusion & Multi-Stage Reranking
-        logger.info(f"\n[BƯỚC 4/5 - HÒA TRỘN & XẾP HẠNG ĐA TẦNG (FUSION & RERANKING)]")
-        fused = self._rrf.fuse(
+        # Step 4: NSF Fusion (Trụ 3) & Multi-Stage Reranking
+        logger.info(f"\n[BƯỚC 4/5 - HÒA TRỘN NSF & XẾP HẠNG ĐA TẦNG]")
+        fused = self._nsf.fuse(
             all_lists, all_weights,
             top_k=self._top_k_fus,
             max_per_video=5,
@@ -369,23 +408,31 @@ class RetrievalPipeline:
 
         if not fused or (fused[0].score < 0.005 and query_topic is not None):
             logger.info(f"  • Fallback: Tắt Topic Boost do độ tin cậy thấp")
-            fused = self._rrf.fuse(all_lists, all_weights, top_k=self._top_k_fus, query_topic=None)
+            fused = self._nsf.fuse(all_lists, all_weights, top_k=self._top_k_fus, query_topic=None)
         elif query_topic:
-            logger.info(f"  • Đã áp dụng Topic Soft-Scoring: '{query_topic}' (+15%)")
+            logger.info(f"  • Đã áp dụng Topic Soft-Scoring (NSF): '{query_topic}' (+15%)")
 
         if not fused:
-            logger.warning(f"[KIS] Không có kết quả sau Fusion cho query_id='{query_id}'")
+            logger.warning(f"[KIS] Không có kết quả sau NSF Fusion cho query_id='{query_id}'")
             return None
 
         # Multi-Stage Reranking
+        fused = self._constraint_filter.rerank(kis_query, fused, top_k=self._top_k_fus)
+        logger.info(f"  • Tầng 0 - Constraint Filter (Trụ 5) : Hoàn tất")
+
         fused = self._clip_reranker.rerank(kis_query, fused, top_k=self._top_k_fus)
-        logger.info(f"  • Tầng 1 - CLIP Visual Reranker     : Hoàn tất (Top-1 score: {fused[0].score:.4f})")
+        logger.info(f"  • Tầng 1 - CLIP Visual Reranker       : Hoàn tất (Top-1 score: {fused[0].score:.4f})")
 
         fused = self._ocr_reranker.rerank(kis_query, fused, top_k=self._top_k_fus)
-        logger.info(f"  • Tầng 2 - OCR Keyword Reranker      : Hoàn tất")
+        logger.info(f"  • Tầng 2 - OCR Keyword Reranker       : Hoàn tất")
 
         fused = self._temporal_reranker.rerank(kis_query, fused, top_k=self._top_k_fus)
-        logger.info(f"  • Tầng 3 - Temporal Continuity Rerank: Hoàn tất (Đã tối ưu cụm thời gian)")
+        logger.info(f"  • Tầng 3 - Temporal Continuity Rerank : Hoàn tất")
+
+        # Trụ 7: Gemini Vision Reranker (final stage — only if API key available)
+        if self._gemini_reranker is not None:
+            fused = self._gemini_reranker.rerank(kis_query, fused, top_k=self._top_k_fus)
+            logger.info(f"  • Tầng 4 - Gemini Semantic Reranker  : Hoàn tất")
 
         # Step 5: Final Selection & Top Output
         logger.info(f"\n[BƯỚC 5/5 - LỰA CHỌN KEYFRAME & XUẤT TOP 100 ĐÁP ÁN]")

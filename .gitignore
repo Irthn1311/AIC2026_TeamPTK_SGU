@@ -33,6 +33,7 @@ datasets/embeddings/*
 !datasets/queries/.gitkeep
 # datasets/groundtruth/*
 !datasets/groundtruth/.gitkeep
+datasets/artifacts/*
 
 # Vector Indexes
 indexes/*

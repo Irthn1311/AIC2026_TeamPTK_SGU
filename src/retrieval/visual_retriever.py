@@ -271,6 +271,107 @@ class VisualRetriever(BaseRetriever):
         )
         return results
 
+    def retrieve_adaptive(
+        self,
+        query: str,
+        top_k: int = 100,
+        score_gate_ratio: float = 0.60,
+        max_per_video: int = 3,
+        max_batch_share: float = 0.35,
+    ) -> List[SearchResult]:
+        """
+        Adaptive score-gated retrieval — replaces balanced retrieval for accuracy.
+
+        Unlike retrieve_balanced() which forces equal slot allocation across batches
+        (diluting strong signals from large batches), this method:
+          1. Searches the full FAISS index for a large candidate pool
+          2. Applies a score gate: only keeps candidates with cosine ≥ max_score × gate_ratio
+          3. Soft batch cap: no batch can exceed max_batch_share of total slots
+          4. Video dedup: max N frames per video
+          5. Re-sorts by raw cosine score (preserving actual similarity signal)
+
+        Args:
+            query:          Natural language query (Vietnamese or English)
+            top_k:          Total candidates to return
+            score_gate_ratio: Minimum score as fraction of best score (default: 0.60)
+            max_per_video:  Max keyframes per video (default: 3)
+            max_batch_share: Max fraction of slots any single batch can take (default: 0.35)
+        """
+        # 1. Encode query
+        query_vec = self._encoder.encode_text(query, normalize=True)
+
+        # 2. Large FAISS search
+        n_total = self._faiss_db.total_vectors or 177321
+        search_k = min(n_total, max(top_k * 200, 30000))
+        faiss_ids, scores = self._faiss_db.search(query_vec, top_k=search_k)
+
+        # 3. Determine score gate threshold
+        valid_scores = [s for s in scores if s > 0]
+        if not valid_scores:
+            return []
+        max_score = max(valid_scores)
+        score_threshold = max_score * score_gate_ratio
+
+        # 4. Compute max absolute slots per batch
+        max_batch_slots = max(int(top_k * max_batch_share), 10)
+
+        # 5. Fill candidates with score gating + soft batch cap
+        results: List[SearchResult] = []
+        batch_counts: Dict[str, int] = defaultdict(int)
+        video_counts: Dict[str, int] = defaultdict(int)
+
+        for fid, score in zip(faiss_ids, scores):
+            if fid < 0:
+                continue
+            if float(score) < score_threshold:
+                continue  # Below score gate — stop (scores are sorted descending)
+
+            meta = self._meta_store.get_by_faiss_id(int(fid))
+            if meta is None:
+                continue
+
+            batch = meta.video_id.split("_")[0]
+
+            # Video dedup
+            if video_counts[meta.video_id] >= max_per_video:
+                continue
+
+            # Soft batch cap
+            if batch_counts[batch] >= max_batch_slots:
+                continue
+
+            batch_counts[batch] += 1
+            video_counts[meta.video_id] += 1
+
+            results.append(SearchResult(
+                keyframe_id=meta.keyframe_id,
+                video_id=meta.video_id,
+                n=meta.n,
+                frame_idx=meta.frame_idx,
+                pts_time=meta.pts_time,
+                score=float(score),
+                retriever_source=f"{self.name}_adaptive",
+                metadata={
+                    "topic_category": getattr(meta, "topic_category", ""),
+                    "clip_score": float(score),
+                },
+            ))
+
+            if len(results) >= top_k:
+                break
+
+        # Already sorted by FAISS (cosine descending), but ensure it
+        results.sort(key=lambda r: r.score, reverse=True)
+
+        filled = dict(batch_counts)
+        logger.info(
+            f"[{self.name}] Adaptive retrieval | search_k={search_k:,} | "
+            f"score_gate={score_threshold:.4f} (max={max_score:.4f}) | "
+            f"{len(results)} candidates from {len(filled)} batches | "
+            f"batch_fill={dict(list(filled.items())[:5])}{'...' if len(filled) > 5 else ''}"
+        )
+        return results
+
     def retrieve_by_vector(
         self,
         query_vec: np.ndarray,

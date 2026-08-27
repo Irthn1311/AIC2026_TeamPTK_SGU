@@ -55,6 +55,7 @@ from src.common.types import (
 from src.retrieval.visual_retriever import VisualRetriever
 from src.retrieval.text_retriever import TextRetriever
 from src.fusion.reciprocal_rank import ReciprocalRankFusion
+from src.fusion.normalized_score_fusion import NormalizedScoreFusion
 from src.evidence.frame_selector import FrameSelector
 from src.embeddings.visual.clip import CLIPEncoder
 from src.utils.logger import get_logger
@@ -117,7 +118,8 @@ class TRAKEPipeline:
         self._vis_ret    = visual_retriever
         self._encoder    = clip_encoder
         self._text_rets  = text_retrievers or []
-        self._rrf        = rrf or ReciprocalRankFusion(k=60)
+        self._rrf        = rrf or ReciprocalRankFusion(k=60)  # kept for fallback
+        self._nsf        = NormalizedScoreFusion()             # Trụ 3: video-level
         self._vlm        = vlm_client
         self._selector   = FrameSelector()
         self.enable_vlm_verify = enable_vlm_verify
@@ -300,8 +302,8 @@ class TRAKEPipeline:
                 all_lists.append(txt)
                 all_weights.append(0.6)
 
-        # Video-level RRF
-        video_ranked = self._rrf.fuse_video_level(
+        # Video-level NSF fusion (Trụ 3: preserves cosine signal vs RRF)
+        video_ranked = self._nsf.fuse_video_level(
             result_lists=all_lists,
             weights=all_weights,
             top_k=self.top_k_videos,
