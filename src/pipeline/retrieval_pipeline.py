@@ -468,6 +468,8 @@ class RetrievalPipeline:
                 f"Độ tin cậy CLIP={clip_conf:.4f}"
             )
             best_evidence.confidence = clip_conf
+            # Top 100 candidates cho BTC submission
+            best_evidence.top_results = fused[:100]
         logger.info(f"{'='*75}\n")
         return best_evidence
 
