@@ -580,10 +580,12 @@ def bind_temporal_visual_evidence(
 ) -> VisualVerificationResult:
     """Bind compact image-number evidence to absolute raw-video coordinates.
 
-    Count/layout predicates must share one context witness image. Action and
+    Count/layout predicates must share the retrieval-center image. Action and
     synchronization predicates must share one action witness image. The two witnesses
     may differ inside the bounded temporal window, which models a short video moment
-    without combining unrelated observations across frames.
+    without combining unrelated observations across frames. Requiring the context
+    witness to be the center prevents a neighboring action close-up from replacing the
+    full-frame evidence used for people and attribute counts.
     """
 
     if not candidate.image_frame_ids:
@@ -638,6 +640,8 @@ def bind_temporal_visual_evidence(
         return frame_by_image_number[int(next(iter(image_numbers)))]
 
     context_witness = coherent_witness(contextual)
+    if context_witness != candidate.absolute_frame_id:
+        context_witness = None
     action_witness = coherent_witness(actions)
     every_predicate_strict = all(
         predicate.strictly_satisfied for predicate in rebound_predicates
@@ -1465,7 +1469,8 @@ class HuggingFaceStructuredVisualVerifier:
             "exactly [\"U\",0,0]. Do not emit IDs, scores, explanations, observations, "
             "field names, or any other values. Verify the exact "
             "pose or motion in the requirement, not a related exercise. All count, person-"
-            "attribute, and spatial-layout requirements must cite the SAME single image. "
+            "attribute, and spatial-layout requirements must cite the retrieval-center "
+            "image identified above; never cite a neighboring image for those facts. "
             "All action and synchronization requirements must cite the SAME single image. "
             "Those two witness images may differ because they belong to one bounded video "
             "moment. Never add people or attributes across images. Code rejects incoherent "
