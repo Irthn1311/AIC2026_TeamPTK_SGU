@@ -47,6 +47,9 @@ class TeeLogger:
         self._stdout.flush()
         self._log.flush()
 
+    def isatty(self) -> bool:
+        return False
+
     def close(self) -> None:
         self._log.close()
 
