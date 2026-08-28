@@ -582,7 +582,7 @@ def run_p1_2_closure(runtime: OperationalKISRuntime) -> None:
     for rank, item in enumerate(all_frame_scores, start=1):
         item["global_rank"] = rank
 
-    # Call canonical production fuse_restricted_frames with FULL un-truncated depth to include 6171
+    # Call canonical production fuse_restricted_frames with standard production depth (top-100)
     selected_objects = [
         FusedVideoEvidence(
             video_id=item["video_id"],
@@ -597,38 +597,40 @@ def run_p1_2_closure(runtime: OperationalKISRuntime) -> None:
         for item in selected_videos
     ]
 
-    prod_full = fuse_restricted_frames(
+    prod_100 = fuse_restricted_frames(
         query_id=qid,
         variants=variants,
         restricted=restricted,
         selected_videos=selected_objects,
         weighted_rrf=runtime.weighted_rrf,
-        output_top_k=len(all_frame_scores),
+        output_top_k=100,
         rrf_constant=rrf_c,
     )
-    prod_full_map = {(c.video_id, c.frame_id): c for c in prod_full.ranked_candidates}
+    prod_100_map = {(c.video_id, c.frame_id): c for c in prod_100.ranked_candidates}
 
-    # Assert mathematical equivalence between manual decomposition and canonical production output for ALL target frames including 6171
-    print("  Asserting Mathematical Parity between Manual RRF and Canonical Production Pipeline:")
-    for fid in [6171, 8235, 27270, 8215]:
-        manual_item = next(x for x in all_frame_scores if x["video_id"] == target_vid and x["frame_id"] == fid)
-        prod_item = prod_full_map.get((target_vid, fid))
-        assert prod_item is not None, f"Frame {fid} missing in canonical production full ranking"
-        score_diff = abs(manual_item["fusion_score"] - prod_item.score)
-        print(f"    - Frame {fid:<5}: Manual Score={manual_item['fusion_score']:.6f} vs Prod Score={prod_item.score:.6f} (Diff={score_diff:.1e}) | Manual Rank #{manual_item['global_rank']} == Prod Rank #{prod_item.rank} ✅")
-        assert score_diff < 1e-6, f"Score mismatch on frame {fid}"
-        assert manual_item["global_rank"] == prod_item.rank, f"Rank mismatch on frame {fid}"
+    # Assert mathematical equivalence between manual decomposition and canonical production output for Top-100 candidates
+    print("  Asserting Mathematical Parity between Manual RRF and Canonical Production Top-100 Output:")
+    for prod_cand in prod_100.ranked_candidates:
+        m_item = all_frame_scores[prod_cand.rank - 1]
+        assert m_item["video_id"] == prod_cand.video_id, f"Video mismatch at rank #{prod_cand.rank}"
+        assert m_item["frame_id"] == prod_cand.frame_id, f"Frame mismatch at rank #{prod_cand.rank}"
+        score_diff = abs(m_item["fusion_score"] - prod_cand.score)
+        assert score_diff < 1e-6, f"Score mismatch at rank #{prod_cand.rank}: manual={m_item['fusion_score']} vs prod={prod_cand.score}"
+
+    print(f"  • Production Top-100 Parity Check: PASS ✅ (100% of Top-100 candidates have identical video_id, frame_id, rank, and score within 1e-6)\n")
 
     # Print decomposition for target frames
     target_frames_to_decompose = [6171, 8235, 27270, 8215]
-    print("\n  Mathematical Decomposition of RRF Formula: Score = sum(weight_i / (60 + rank_i))\n")
+    print("  Mathematical Decomposition of RRF Formula: Score = sum(weight_i / (60 + rank_i))\n")
 
     for fid in target_frames_to_decompose:
         item = next((x for x in all_frame_scores if x["video_id"] == target_vid and x["frame_id"] == fid), None)
         if not item:
             print(f"  Frame {fid} in {target_vid}: NOT FOUND in candidate pool")
             continue
-        print(f"  ● Frame {fid} (GLOBAL RANK #{item['global_rank']} | TOTAL SCORE: {item['fusion_score']:.6f}):")
+        in_prod_100 = (target_vid, fid) in prod_100_map
+        status_str = f"SURVIVED IN PRODUCTION TOP-100 (Prod Rank #{prod_100_map[(target_vid, fid)].rank})" if in_prod_100 else f"LOST_AT_TOP100 (Excluded by Top-100 Cutoff, Global Rank #{item['global_rank']})"
+        print(f"  ● Frame {fid} (GLOBAL CANDIDATE RANK #{item['global_rank']} | STATUS: {status_str} | TOTAL SCORE: {item['fusion_score']:.6f}):")
         for v in variants:
             r, w, contrib = item["contributions"][v.variant_id]
             cos = per_variant_cosines[v.variant_id].get((target_vid, fid), 0.0)
