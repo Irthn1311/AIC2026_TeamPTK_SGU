@@ -11,37 +11,37 @@
       "query_id": "query-p1-1-kis",
       "query_vi": "Cảnh quay một nhóm hơn 5 người xếp thành hàng tập thể dục, cùng thực hiện động tác hai tay chạm mũi chân. Trong nhóm chỉ có một người đeo kính và ba người đội nón có màu đỏ.",
       "target_video": "L30_V046",
-      "official_gt_frame": 2425,
-      "diagnostic_tolerance": 150
+      "diagnostic_tolerance": 150,
+      "locked_gt_frame": 2425
     },
     {
       "query_id": "query-p1-2-kis",
       "query_vi": "Đoạn phim bắt đầu bằng một bản đồ, trên đó một loại công trình thủy lợi lần lượt xuất hiện bốn lần. Sau đó chuyển sang cảnh một con đập được quay từ trên cao, tiếp đến là cảnh cận con đập dưới trời mưa.",
       "alternate_query_vi_fe04a5b": "Đoạn phim bắt đầu bằng một bản đồ, trên đó một loại công trình thủy lợi lần lượt xuất hiện bốn lần. Sau đó chuyển sang cảnh một công trình thủy lợi lớn đang mở cửa xả nước dưới trời mưa.",
       "target_video": "L29_V018",
-      "official_gt_frame": 6050,
-      "diagnostic_tolerance": 150
+      "diagnostic_tolerance": 150,
+      "locked_gt_frame": 6050
     },
     {
       "query_id": "query-p1-4-kis",
       "query_vi": "Một đàn sư tử đang nghỉ ngơi và leo trèo trên các bục gỗ trong khu nuôi dưỡng, phía trước có bảng thông tin của London Zoo phục vụ công tác theo dõi và bảo tồn động vật.. Sau đó có cảnh hai nhân viên mặc áo xanh lá đang cân và ghi nhận số liệu của một con vật trong khuôn viên sở thú.",
       "target_video": "L28_V012",
-      "official_gt_frame": 1375,
-      "diagnostic_tolerance": 150
+      "diagnostic_tolerance": 150,
+      "locked_gt_frame": 1375
     },
     {
       "query_id": "query-p1-5-kis",
       "query_vi": "Đoạn clip bắt đầu bằng việc đậu hà lan được bỏ vào với mực đang được xào trên chảo, bên cạnh là đĩa hành tây và ớt đỏ thái lát chuẩn bị cho vào món ăn. Đoạn clip kết thúc với khung quay chậm (slow motion) cảnh lắc chảo trên bếp lửa.",
       "target_video": "L30_V021",
-      "official_gt_frame": 3325,
-      "diagnostic_tolerance": 150
+      "diagnostic_tolerance": 150,
+      "locked_gt_frame": 3325
     },
     {
       "query_id": "query-p1-6-kis",
       "query_vi": "Mẩu tin bắt đầu với hình ảnh một người đàn ông mặc vest xanh đậm, sơ mi trắng và cà vạt, đang ngồi trên một chiếc ghế lớn. Ông cầm bằng hai tay một khối đá quý thô khá lớn, đưa lên gần mặt để quan sát. Bên phải là một phụ nữ mặc trang phục công sở màu đen và khăn trùm đầu màu hồng tím, đang đứng cạnh và mỉm cười. Tiếp theo có hình ảnh toàn cảnh từ trên cao của một mỏ đá quý lộ thiên quy mô lớn với hố khai thác sâu nhiều tầng và hệ thống đường vận chuyển bao quanh.",
       "target_video": "L27_V005",
-      "official_gt_frame": 1150,
-      "diagnostic_tolerance": 150
+      "diagnostic_tolerance": 150,
+      "locked_gt_frame": 1150
     }
   ]
 }

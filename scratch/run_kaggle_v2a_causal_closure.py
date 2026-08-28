@@ -376,20 +376,19 @@ def run_gt_index_coverage_audit(runtime: OperationalKISRuntime, input_root: Path
     manifest_path, manifest_sha, manifest_queries = load_canonical_frozen_manifest()
 
     targets = [
-        ("p1-1", manifest_queries["p1-1"]["target_video"], manifest_queries["p1-1"]["official_gt_frame"], manifest_queries["p1-1"]["diagnostic_tolerance"]),
-        ("p1-2", manifest_queries["p1-2"]["target_video"], manifest_queries["p1-2"]["official_gt_frame"], manifest_queries["p1-2"]["diagnostic_tolerance"]),
-        ("p1-4", manifest_queries["p1-4"]["target_video"], manifest_queries["p1-4"]["official_gt_frame"], manifest_queries["p1-4"]["diagnostic_tolerance"]),
-        ("p1-5", manifest_queries["p1-5"]["target_video"], manifest_queries["p1-5"]["official_gt_frame"], manifest_queries["p1-5"]["diagnostic_tolerance"]),
-        ("p1-6", manifest_queries["p1-6"]["target_video"], manifest_queries["p1-6"]["official_gt_frame"], manifest_queries["p1-6"]["diagnostic_tolerance"]),
+        ("p1-1", manifest_queries["p1-1"]["target_video"], manifest_queries["p1-1"].get("locked_gt_frame", manifest_queries["p1-1"].get("official_gt_frame")), manifest_queries["p1-1"]["diagnostic_tolerance"]),
+        ("p1-2", manifest_queries["p1-2"]["target_video"], manifest_queries["p1-2"].get("locked_gt_frame", manifest_queries["p1-2"].get("official_gt_frame")), manifest_queries["p1-2"]["diagnostic_tolerance"]),
+        ("p1-4", manifest_queries["p1-4"]["target_video"], manifest_queries["p1-4"].get("locked_gt_frame", manifest_queries["p1-4"].get("official_gt_frame")), manifest_queries["p1-4"]["diagnostic_tolerance"]),
+        ("p1-5", manifest_queries["p1-5"]["target_video"], manifest_queries["p1-5"].get("locked_gt_frame", manifest_queries["p1-5"].get("official_gt_frame")), manifest_queries["p1-5"]["diagnostic_tolerance"]),
+        ("p1-6", manifest_queries["p1-6"]["target_video"], manifest_queries["p1-6"].get("locked_gt_frame", manifest_queries["p1-6"].get("official_gt_frame")), manifest_queries["p1-6"]["diagnostic_tolerance"]),
     ]
 
     coverage_summary = {}
 
-
     for qid, vid, gt_fid, diag_tol in targets:
         gt_interval = (gt_fid - diag_tol, gt_fid + diag_tol)
         print(f"\n──────────────────────────────────────────────────────────────────────────────────────────────────", flush=True)
-        print(f"• Query [{qid}] | Target Video: {vid} | Official GT Frame: {gt_fid} | Diagnostic Neighborhood: [{gt_interval[0]}, {gt_interval[1]}]", flush=True)
+        print(f"• Query [{qid}] | Target Video: {vid} | Locked GT Frame: {gt_fid} | Diagnostic Neighborhood: [{gt_interval[0]}, {gt_interval[1]}]", flush=True)
         print(f"──────────────────────────────────────────────────────────────────────────────────────────────────", flush=True)
 
         try:
@@ -527,47 +526,49 @@ def run_gt_index_coverage_audit(runtime: OperationalKISRuntime, input_root: Path
 # ==============================================================================
 def run_p1_2_trace_and_raw_cosine_audit(runtime: OperationalKISRuntime) -> None:
     print("=" * 120, flush=True)
-    print("2. P1-2: EVIDENCE-POOL TO FINAL-EXPORT TRACE & DEV RAW COSINE AUDIT (CANONICAL PROVENANCE)", flush=True)
+    print("2. P1-2: EVIDENCE-POOL TO FINAL-EXPORT TRACE (PROJECT-FROZEN BENCHMARK AUDIT)", flush=True)
     print("=" * 120, flush=True)
 
     manifest_path, manifest_sha, manifest_queries = load_canonical_frozen_manifest()
     qid = "query-p1-2-kis"
     if qid not in manifest_queries:
-        raise RuntimeError(f"FROZEN_MANIFEST_PROVENANCE_UNRESOLVED: Query {qid} not found in canonical manifest!")
+        raise RuntimeError(f"FROZEN_MANIFEST_PROVENANCE_UNRESOLVED: Query {qid} not found in manifest!")
 
     manifest_record = manifest_queries[qid]
     q_vi = manifest_record["query_vi"]
     target_vid = manifest_record["target_video"]
-    official_gt_frame = manifest_record["official_gt_frame"]
+    locked_gt_frame = manifest_record.get("locked_gt_frame", manifest_record.get("official_gt_frame"))
     diag_tol = manifest_record["diagnostic_tolerance"]
-    gt_interval = (official_gt_frame - diag_tol, official_gt_frame + diag_tol)
+    gt_interval = (locked_gt_frame - diag_tol, locked_gt_frame + diag_tol)
 
     print("--- 2.0 BENCHMARK QUERY PROVENANCE AUDIT ---")
     print("• Provenance Classification : PROJECT_FROZEN_STRESS_QUERY (Externally supplied engineering benchmark, tracked in git)")
     print(f"• Manifest File Path        : {manifest_path}")
     print(f"• Manifest File SHA256      : {manifest_sha}")
     print(f"• Query Record ID           : {qid}")
-    print(f"• Upstream Git Commit Roots :")
-    print("  [1] Commit fe04a5b (2026-08-27): systems/system_tai/tests/test_temporal_decomposition_patterns.py")
-    print("      - Text: \"Đoạn phim bắt đầu bằng một bản đồ, trên đó một loại công trình thủy lợi lần lượt xuất hiện bốn lần. Sau đó chuyển sang cảnh một công trình thủy lợi lớn đang mở cửa xả nước dưới trời mưa.\"")
-    print("  [2] Commit aaf0649 (2026-08-28): scratch/run_kaggle_v2a_production_gate.py")
-    print("      - Text: \"Đoạn phim bắt đầu bằng một bản đồ, trên đó một loại công trình thủy lợi lần lượt xuất hiện bốn lần. Sau đó chuyển sang cảnh một con đập được quay từ trên cao, tiếp đến là cảnh cận con đập dưới trời mưa.\"")
+    print(f"• Upstream Git Provenance   :")
+    print("  - [1] Commit aaf0649 (2026-08-28): scratch/run_kaggle_v2a_production_gate.py")
+    print("        * Earliest recoverable repository gate record binding query-p1-2-kis -> L29_V018.")
+    print("        * Evaluated Text: \"Đoạn phim bắt đầu bằng một bản đồ, trên đó một loại công trình thủy lợi lần lượt xuất hiện bốn lần. Sau đó chuyển sang cảnh một con đập được quay từ trên cao, tiếp đến là cảnh cận con đập dưới trời mưa.\"")
+    print("  - [2] Commit fe04a5b (2026-08-27): systems/system_tai/tests/test_temporal_decomposition_patterns.py")
+    print("        * Earlier semantic/decomposition wording evidence in unit tests (does not bind query ID / GT).")
+    print("        * Alternate Text: \"Đoạn phim bắt đầu bằng một bản đồ, trên đó một loại công trình thủy lợi lần lượt xuất hiện bốn lần. Sau đó chuyển sang cảnh một công trình thủy lợi lớn đang mở cửa xả nước dưới trời mưa.\"")
     print("• Wording Discrepancy Diff  :")
     print("  - Clause 1: IDENTICAL (\"Đoạn phim bắt đầu bằng một bản đồ, trên đó một loại công trình thủy lợi lần lượt xuất hiện bốn lần.\")")
     print("  - Clause 2 (fe04a5b): \"Sau đó chuyển sang cảnh một công trình thủy lợi lớn đang mở cửa xả nước dưới trời mưa.\"")
     print("  - Clause 2 (aaf0649): \"Sau đó chuyển sang cảnh một con đập được quay từ trên cao, tiếp đến là cảnh cận con đập dưới trời mưa.\"")
     print(f"• Active Evaluated Text     : \"{q_vi}\"")
     print(f"• Target Video              : {target_vid}")
-    print(f"• Official GT Frame         : {official_gt_frame}")
+    print(f"• PROJECT_LOCKED_GT_FRAME   : {locked_gt_frame} (competition provenance unavailable)")
     print(f"• Diagnostic Tolerance      : +/- {diag_tol} frames -> gt_neighborhood_keyframes range: [{gt_interval[0]}, {gt_interval[1]}]")
 
     # Hard-assert exact record equality
     assert qid == "query-p1-2-kis", "Record ID mismatch"
     assert target_vid == "L29_V018", "Target video mismatch"
-    assert official_gt_frame == 6050, "Official GT frame mismatch"
+    assert locked_gt_frame == 6050, "Locked GT frame mismatch"
     assert diag_tol == 150, "Diagnostic tolerance mismatch"
     assert "thủy lợi" in q_vi and "bản đồ" in q_vi, "Vietnamese query semantics mismatch"
-    print("• Manifest Record Equality  : PASS ✅ (Exact record equality confirmed with project frozen manifest)\n", flush=True)
+    print("• Manifest Record Integrity : PASS ✅ (Exact record verified against project frozen manifest)\n", flush=True)
 
     # Corpus Provenance & Registry Integrity Audit
     stores = runtime.video_restricted_searcher.registry.stores
@@ -584,18 +585,20 @@ def run_p1_2_trace_and_raw_cosine_audit(runtime: OperationalKISRuntime) -> None:
     assert total_videos == 873, f"Corpus video count mismatch: {total_videos} != 873"
     assert total_rows == 177321, f"Corpus row count mismatch: {total_rows} != 177321"
     assert feat_dim == 512, f"Feature dimension mismatch: {feat_dim} != 512"
-    print("• Corpus Integrity Check    : PASS ✅ (Exact 873/177321/512 production corpus verified)\n", flush=True)
+    print("• Corpus Integrity Assertions: PASS ✅ (Exact 873/177321/512 production corpus verified)\n", flush=True)
 
-    # Effective Production V2-A Config and Historical Comparison
+    # Effective V2-A.3 Audit Config and Historical Comparison
     vf_cfg = runtime.config.kis_video_first_config
-    print("--- 2.2 CONFIGURATION PROVENANCE & HISTORICAL COMPARISON ---")
+    print("--- 2.2 EXPLICIT V2-A.3 AUDIT CONFIGURATION — NOT HISTORICAL V2-A CONFIG ---")
     print("• Config Factory Function   : scratch/run_kaggle_v2a_causal_closure.py::create_production_v2a_session_config")
     print("• Canonical Schema Source   : systems/system_tai/src/system_tai/kis/video_first.py::KISVideoFirstConfig")
+    print("• Historical Foundation     : Top-M M=3, weights=(0.6, 0.3, 0.1), selected_video_cap=32")
+    print("• Current Audit Override    : Top-M M=5, weights=(0.4, 0.25, 0.15, 0.1, 0.1), selected_video_cap=64")
     print("• Field-by-Field Origin Breakdown:")
     print(f"  - enabled                 : {vf_cfg.enabled:<6} [Explicit Audit True | Schema Default: False]")
     print(f"  - v2_adaptive_enabled     : {vf_cfg.v2_adaptive_enabled:<6} [Explicit Audit True | Schema Default: False]")
-    print(f"  - selected_video_cap (K)  : {vf_cfg.selected_video_cap:<6} [Audit Override: 64   | Schema Default: 32]")
-    print(f"  - top_m_evidence_cap (M)  : {vf_cfg.top_m_evidence_cap:<6} [Audit Override: 5    | Schema Default: 3]")
+    print(f"  - selected_video_cap (K)  : {vf_cfg.selected_video_cap:<6} [Audit Override: 64   | Historical Schema Default: 32]")
+    print(f"  - top_m_evidence_cap (M)  : {vf_cfg.top_m_evidence_cap:<6} [Audit Override: 5    | Historical Schema Default: 3]")
     print(f"  - top_m_weights           : {str(vf_cfg.top_m_weights):<22} [Audit Override: M5 (0.4, 0.25, 0.15, 0.1, 0.1) | Historical Schema Default: M3 (0.6, 0.3, 0.1)]")
     print(f"  - top_m_min_frame_gap     : {vf_cfg.top_m_min_frame_gap:<6} [Matches Schema Default: 60]")
     print(f"  - adaptive_budgets (B/M/H): ({vf_cfg.adaptive_budget_base}, {vf_cfg.adaptive_budget_medium}, {vf_cfg.adaptive_budget_high}) [Matches Schema Default: (32, 48, 64)]")
@@ -725,11 +728,11 @@ def run_p1_2_trace_and_raw_cosine_audit(runtime: OperationalKISRuntime) -> None:
 
     store = runtime.video_restricted_searcher.registry.get(target_vid)
     gt_neighborhood_keyframes = sorted([f.frame_id for f in store.mappings if gt_interval[0] <= f.frame_id <= gt_interval[1]])
-    nearest_f = min(store.mappings, key=lambda f: abs(f.frame_id - official_gt_frame))
+    nearest_f = min(store.mappings, key=lambda f: abs(f.frame_id - locked_gt_frame))
 
     print(f"• Groundtruth State for Target Video {target_vid}:")
-    print(f"  - Official Groundtruth Frame        : Frame {official_gt_frame} (PTS: {store.frame_for_row(store.rows_for_frame(nearest_f.frame_id)[0]).pts_time:.3f}s)")
-    print(f"  - Nearest Keyframe in Store         : Frame {nearest_f.frame_id} (Delta: {nearest_f.frame_id - official_gt_frame:+d} frames)")
+    print(f"  - PROJECT_LOCKED_GT_FRAME           : Frame {locked_gt_frame} (PTS: {store.frame_for_row(store.rows_for_frame(nearest_f.frame_id)[0]).pts_time:.3f}s)")
+    print(f"  - Nearest Keyframe in Store         : Frame {nearest_f.frame_id} (Delta: {nearest_f.frame_id - locked_gt_frame:+d} frames)")
     print(f"  - Keyframes in GT Neighborhood      : {len(gt_neighborhood_keyframes)} keyframes: {gt_neighborhood_keyframes}")
 
     # Reconstruct exact global restricted rankings per variant
@@ -780,7 +783,7 @@ def run_p1_2_trace_and_raw_cosine_audit(runtime: OperationalKISRuntime) -> None:
 
     print("\n" + "=" * 120)
     print("TABLE 1: GT-NEIGHBORHOOD KEYFRAMES AUDIT ACROSS PRODUCTION VARIANTS")
-    print(f"Target Video: {target_vid} | Total Store Keyframes: {len(store.mappings)} | Official GT Frame: {official_gt_frame} | Range: [{gt_interval[0]}, {gt_interval[1]}]")
+    print(f"Target Video: {target_vid} | Total Store Keyframes: {len(store.mappings)} | Locked GT Frame: {locked_gt_frame} | Range: [{gt_interval[0]}, {gt_interval[1]}]")
     print("=" * 120)
     print(f"| {'Frame ID':<8} | {'PTS (s)':<8} | {'Variant ID':<32} | {'Raw Cos':<8} | {'Intra Rank':<10} | {'Top-M Peak?':<12} | {'Evid Nbrhood?':<14} | {'Restricted?':<12} | {'Restr Rank':<12} |")
     print(f"| {'-'*8} | {'-'*8} | {'-'*32} | {'-'*8} | {'-'*10} | {'-'*12} | {'-'*14} | {'-'*12} | {'-'*12} |")
@@ -828,7 +831,7 @@ def run_p1_2_trace_and_raw_cosine_audit(runtime: OperationalKISRuntime) -> None:
                 "restr_global_rank": restr_global_rank,
             })
 
-            is_gt_marker = " (GT)" if fid == official_gt_frame else ""
+            is_gt_marker = " (GT)" if fid == locked_gt_frame else ""
             print(f"| {str(fid)+is_gt_marker:<8} | {pts:<8.3f} | {v.variant_id:<32} | {cos_val:<8.4f} | {f'#{intra_rank}/568':<10} | {'YES ★' if is_peak else 'NO':<12} | {'YES' if in_nbrhood else 'NO':<14} | {'YES' if is_retained else 'NO':<12} | {restr_rank_str:<12} |")
 
         frame_audit_records[fid] = {
@@ -875,7 +878,7 @@ def run_p1_2_trace_and_raw_cosine_audit(runtime: OperationalKISRuntime) -> None:
             rank_str = "NOT_A_FUSION_CANDIDATE"
             score_str = "0.000000"
 
-        is_gt_marker = " (GT)" if fid == official_gt_frame else ""
+        is_gt_marker = " (GT)" if fid == locked_gt_frame else ""
         print(f"| {str(fid)+is_gt_marker:<8} | {pts:<8.3f} | {'YES ★' if is_cand else 'NO':<18} | {contrib_str:<45} | {score_str:<12} | {rank_str:<20} | {'YES ✅' if in_top100 else 'NO ❌':<11} |")
 
     print("=" * 120 + "\n")
@@ -913,7 +916,7 @@ def run_p1_2_trace_and_raw_cosine_audit(runtime: OperationalKISRuntime) -> None:
                 cf_rank = next((idx for idx, h in enumerate(cf_hits, start=1) if h.frame_id == fid), None)
                 cf_rank_str = f"#{cf_rank}" if cf_rank else "OUTSIDE_CAP_10"
 
-                is_gt_marker = " (GT)" if fid == official_gt_frame else ""
+                is_gt_marker = " (GT)" if fid == locked_gt_frame else ""
                 print(f"| {str(fid)+is_gt_marker:<8} | {pts:<8.3f} | {v.variant_id:<32} | {cos_val:<8.4f} | {f'#{intra_rank}/568':<10} | {'YES ★' if cf_retained else 'NO':<24} | {cf_rank_str:<14} |")
 
         print("=" * 120 + "\n")
@@ -1094,14 +1097,14 @@ def print_final_summary_table(coverage_summary: dict[str, dict]) -> None:
 
     manifest_path, manifest_sha, manifest_queries = load_canonical_frozen_manifest()
 
-    print(f"| {'Query':<6} | {'Target Video':<12} | {'Official GT':<12} | {'GT Coverage':<15} | {'Source Parity':<14} | {'Causal Classification / Loss Stage':<45} |")
+    print(f"| {'Query':<6} | {'Target Video':<12} | {'Locked GT':<12} | {'GT Coverage':<15} | {'Source Parity':<14} | {'Causal Classification / Loss Stage':<45} |")
     print(f"| {'-'*6} | {'-'*12} | {'-'*12} | {'-'*15} | {'-'*14} | {'-'*45} |")
 
     for qid in ("p1-1", "p1-2", "p1-4", "p1-5", "p1-6"):
         entry = coverage_summary.get(qid)
         manifest_meta = manifest_queries.get(qid, {})
         vid = manifest_meta.get("target_video", "N/A")
-        gt_f = str(manifest_meta.get("official_gt_frame", "N/A"))
+        gt_f = str(manifest_meta.get("locked_gt_frame", manifest_meta.get("official_gt_frame", "N/A")))
 
         if entry is None:
             cov = "NOT_RUN"
@@ -1129,6 +1132,7 @@ def print_final_summary_table(coverage_summary: dict[str, dict]) -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 
