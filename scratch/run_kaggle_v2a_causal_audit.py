@@ -536,7 +536,10 @@ def run_p1_2_audit(runtime: OperationalKISRuntime) -> None:
             video_id=item["video_id"],
             rank=item["rank"],
             fusion_score=item["fusion_score"],
-            provenance=(),
+            variant_hit_count=item.get("variant_hit_count", 1),
+            primary_coverage_count=item.get("primary_coverage_count", 1),
+            best_individual_rank=item.get("best_individual_rank", item["rank"]),
+            per_variant=(),
             temporal_chain=None,
         )
         for item in selected_videos
