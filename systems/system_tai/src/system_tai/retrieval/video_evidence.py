@@ -36,6 +36,7 @@ class VideoMaximumHit:
     keyframe_order: int
     cosine_score: float
     rank: int
+    top_m_score: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,12 +223,22 @@ class VideoRestrictedFeatureSearcher:
         query_vectors: (
             Sequence[Sequence[float] | NDArray[np.number]] | NDArray[np.number]
         ),
+        top_m_evidence_cap: int = 1,
+        top_m_min_frame_gap: int = 60,
+        top_m_weights: Sequence[float] = (1.0,),
     ) -> FullCorpusVideoMaximaOutcome:
-        """Return every video's best keyframe for each query without global Top-K."""
+        """Return every video's best keyframe/Top-M evidence for each query without global Top-K."""
+
+        if type(top_m_evidence_cap) is not int or top_m_evidence_cap <= 0:
+            raise ValueError("top_m_evidence_cap must be a positive integer")
+        if type(top_m_min_frame_gap) is not int or top_m_min_frame_gap < 0:
+            raise ValueError("top_m_min_frame_gap must be a non-negative integer")
 
         by_query: dict[str, list[VideoMaximumHit]] = {
             query_id: [] for query_id in query_ids
         }
+        per_query_cap = max(1, top_m_evidence_cap * 5) if top_m_evidence_cap > 1 else 1
+
         for store in self.registry.stores:
             per_store = rank_store_frames(
                 store,
@@ -235,27 +246,55 @@ class VideoRestrictedFeatureSearcher:
                 query_vectors=query_vectors,
                 expected_dimension=self.registry.embedding_dimension,
                 chunk_size=self.chunk_size,
-                per_query_cap=1,
+                per_query_cap=per_query_cap,
             )
             for query_id in query_ids:
-                hit = per_store[query_id][0]
+                store_hits = per_store[query_id]
+                best_hit = store_hits[0]
+                if top_m_evidence_cap <= 1:
+                    top_m_val = float(best_hit.cosine_score)
+                else:
+                    selected_scores: list[float] = []
+                    selected_frames: list[int] = []
+                    for h in store_hits:
+                        if all(
+                            abs(h.frame_id - prev_f) >= top_m_min_frame_gap
+                            for prev_f in selected_frames
+                        ):
+                            selected_scores.append(float(h.cosine_score))
+                            selected_frames.append(h.frame_id)
+                            if len(selected_scores) >= top_m_evidence_cap:
+                                break
+                    weights = list(top_m_weights[:len(selected_scores)])
+                    w_sum = sum(weights)
+                    top_m_val = (
+                        sum(w * s for w, s in zip(weights, selected_scores)) / w_sum
+                        if w_sum > 0
+                        else float(best_hit.cosine_score)
+                    )
+
                 by_query[query_id].append(
                     VideoMaximumHit(
                         query_id=query_id,
-                        video_id=hit.video_id,
-                        frame_id=hit.frame_id,
-                        clip_row=hit.clip_row,
-                        keyframe_order=hit.keyframe_order,
-                        cosine_score=hit.cosine_score,
+                        video_id=best_hit.video_id,
+                        frame_id=best_hit.frame_id,
+                        clip_row=best_hit.clip_row,
+                        keyframe_order=best_hit.keyframe_order,
+                        cosine_score=best_hit.cosine_score,
                         rank=0,
+                        top_m_score=top_m_val,
                     )
                 )
 
         rankings: dict[str, tuple[VideoMaximumHit, ...]] = {}
         for query_id in query_ids:
+            # Sort by top_m_score if multi-evidence, else cosine_score
             ordered = sorted(
                 by_query[query_id],
-                key=lambda hit: (-hit.cosine_score, hit.video_id),
+                key=lambda hit: (
+                    -(hit.top_m_score if top_m_evidence_cap > 1 else hit.cosine_score),
+                    hit.video_id,
+                ),
             )
             rankings[query_id] = tuple(
                 VideoMaximumHit(
@@ -266,6 +305,7 @@ class VideoRestrictedFeatureSearcher:
                     keyframe_order=hit.keyframe_order,
                     cosine_score=hit.cosine_score,
                     rank=rank,
+                    top_m_score=hit.top_m_score,
                 )
                 for rank, hit in enumerate(ordered, start=1)
             )

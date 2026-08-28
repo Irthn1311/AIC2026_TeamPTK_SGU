@@ -19,16 +19,26 @@ KIS_SEMANTIC_VIDEO_FIRST = "KIS_SEMANTIC_VIDEO_FIRST"
 @dataclass(frozen=True, slots=True)
 class KISVideoFirstConfig:
     enabled: bool = False
+    v2_adaptive_enabled: bool = False
     selected_video_cap: int = 32
     video_nomination_depth: int = 100
     restricted_frames_per_video_per_variant: int = 10
     full_query_weight: float = 1.0
     primary_scene_weight: float = 1.0
     supporting_attribute_weight: float = 0.35
+    top_m_evidence_cap: int = 3
+    top_m_min_frame_gap: int = 60
+    top_m_weights: tuple[float, ...] = (0.6, 0.3, 0.1)
+    adaptive_budget_base: int = 32
+    adaptive_budget_medium: int = 48
+    adaptive_budget_high: int = 64
+    coverage_threshold: float = 0.75
 
     def __post_init__(self) -> None:
         if type(self.enabled) is not bool:
             raise ValueError("enabled must be a boolean")
+        if type(self.v2_adaptive_enabled) is not bool:
+            raise ValueError("v2_adaptive_enabled must be a boolean")
         if type(self.selected_video_cap) is not int or not (
             1 <= self.selected_video_cap <= 1000
         ):
@@ -46,9 +56,60 @@ class KISVideoFirstConfig:
             ("full_query_weight", self.full_query_weight),
             ("primary_scene_weight", self.primary_scene_weight),
             ("supporting_attribute_weight", self.supporting_attribute_weight),
+            ("coverage_threshold", self.coverage_threshold),
         ):
             if not math.isfinite(value) or value <= 0:
                 raise ValueError(f"{name} must be finite and positive")
+        if type(self.top_m_evidence_cap) is not int or self.top_m_evidence_cap <= 0:
+            raise ValueError("top_m_evidence_cap must be a positive integer")
+        if type(self.top_m_min_frame_gap) is not int or self.top_m_min_frame_gap < 0:
+            raise ValueError("top_m_min_frame_gap must be a non-negative integer")
+        if not self.top_m_weights or any(
+            not math.isfinite(w) or w <= 0 for w in self.top_m_weights
+        ):
+            raise ValueError("top_m_weights must contain positive finite floats")
+
+
+@dataclass(frozen=True, slots=True)
+class ClauseCoverageMetadata:
+    must_hit: int
+    must_total: int
+    strong_hit: int
+    strong_total: int
+    coverage_ratio: float
+    per_clause_hit: dict[str, bool]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "must_hit": self.must_hit,
+            "must_total": self.must_total,
+            "strong_hit": self.strong_hit,
+            "strong_total": self.strong_total,
+            "coverage_ratio": self.coverage_ratio,
+            "per_clause_hit": self.per_clause_hit,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class AdaptiveBudgetDiagnostic:
+    chosen_k: int
+    complexity_k: int
+    uncertainty_k: int
+    normalized_entropy: float
+    top1_top5_margin: float
+    top1_top16_margin: float
+    is_flat: bool
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "chosen_k": self.chosen_k,
+            "complexity_k": self.complexity_k,
+            "uncertainty_k": self.uncertainty_k,
+            "normalized_entropy": self.normalized_entropy,
+            "top1_top5_margin": self.top1_top5_margin,
+            "top1_top16_margin": self.top1_top16_margin,
+            "is_flat": self.is_flat,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +120,8 @@ class VariantVideoEvidence:
     maximum_frame_id: int
     maximum_clip_row: int
     maximum_cosine_score: float
+    top_m_score: float = 0.0
+    normalized_clause_score: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +133,7 @@ class FusedVideoEvidence:
     primary_coverage_count: int
     best_individual_rank: int
     per_variant: tuple[VariantVideoEvidence, ...]
+    coverage_metadata: ClauseCoverageMetadata | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,9 +144,10 @@ class KISVideoFirstOutcome:
     full_corpus_store_scan_count: int
     restricted_rows_scored: int
     restricted_store_scan_count: int
+    adaptive_diagnostic: AdaptiveBudgetDiagnostic | None = None
 
     def to_trace(self) -> dict[str, object]:
-        return {
+        trace: dict[str, object] = {
             "policy": KIS_SEMANTIC_VIDEO_FIRST,
             "enabled": True,
             "full_corpus_rows_scored": self.full_corpus_rows_scored,
@@ -98,6 +163,11 @@ class KISVideoFirstOutcome:
                     "variant_hit_count": item.variant_hit_count,
                     "primary_coverage_count": item.primary_coverage_count,
                     "best_individual_rank": item.best_individual_rank,
+                    "coverage": (
+                        item.coverage_metadata.to_dict()
+                        if item.coverage_metadata
+                        else None
+                    ),
                     "per_variant": [
                         {
                             "variant_id": hit.variant_id,
@@ -106,6 +176,8 @@ class KISVideoFirstOutcome:
                             "maximum_frame_id": hit.maximum_frame_id,
                             "maximum_clip_row_diagnostic": hit.maximum_clip_row,
                             "maximum_cosine_score_diagnostic": hit.maximum_cosine_score,
+                            "top_m_score": hit.top_m_score,
+                            "normalized_clause_score": hit.normalized_clause_score,
                         }
                         for hit in item.per_variant
                     ],
@@ -113,6 +185,9 @@ class KISVideoFirstOutcome:
                 for item in self.selected_videos
             ],
         }
+        if self.adaptive_diagnostic is not None:
+            trace["adaptive_budget"] = self.adaptive_diagnostic.to_dict()
+        return trace
 
 
 def fuse_video_maxima(
@@ -124,7 +199,7 @@ def fuse_video_maxima(
     nomination_depth: int,
     selected_video_cap: int,
 ) -> tuple[FusedVideoEvidence, ...]:
-    """Fuse one exact maximum per video and variant at `video_id` identity."""
+    """Fuse one exact maximum per video and variant at `video_id` identity (Legacy)."""
 
     variants = tuple(variants)
     if not variants:
@@ -164,6 +239,9 @@ def fuse_video_maxima(
                 ),
                 maximum_cosine_score=(
                     by_variant_video[variant.variant_id][video_id].cosine_score
+                ),
+                top_m_score=(
+                    by_variant_video[variant.variant_id][video_id].top_m_score
                 ),
             )
             for variant in sorted(variants, key=lambda item: item.variant_id)
@@ -210,6 +288,254 @@ def fuse_video_maxima(
         )
         for rank, item in enumerate(ordered, start=1)
     )
+
+
+def normalize_clause_scores(
+    raw_scores: Mapping[str, float],
+) -> dict[str, float]:
+    """Clause-local percentile/rank normalization mapping scores to (0, 1]."""
+    if not raw_scores:
+        return {}
+    n = len(raw_scores)
+    sorted_items = sorted(raw_scores.items(), key=lambda x: (-x[1], x[0]))
+    return {
+        vid: float((n - rank + 1) / n)
+        for rank, (vid, _) in enumerate(sorted_items, start=1)
+    }
+
+
+def compute_adaptive_video_budget_v2(
+    fused_scores: Sequence[float],
+    clause_count: int,
+    has_attributes: bool,
+    base_k: int = 32,
+    medium_k: int = 48,
+    high_k: int = 64,
+) -> tuple[int, AdaptiveBudgetDiagnostic]:
+    """Adaptive video budget strictly clamped to {32, 48, 64} (Expand-only in V2-A)."""
+    scores = sorted(fused_scores, reverse=True)[:32]
+    if len(scores) < 32:
+        return base_k, AdaptiveBudgetDiagnostic(
+            chosen_k=base_k,
+            complexity_k=base_k,
+            uncertainty_k=base_k,
+            normalized_entropy=0.0,
+            top1_top5_margin=0.0,
+            top1_top16_margin=0.0,
+            is_flat=False,
+        )
+
+    # 1. Normalized entropy calculation
+    max_s = scores[0]
+    exp_s = [math.exp((s - max_s) / 0.1) for s in scores]
+    sum_exp = sum(exp_s)
+    probs = [e / sum_exp for e in exp_s]
+    entropy = -sum(p * math.log(p + 1e-12) for p in probs)
+    h_norm = float(entropy / math.log(32))
+
+    # 2. Margins
+    delta_1_5 = float(scores[0] - scores[4])
+    delta_1_16 = float(scores[0] - scores[15])
+
+    # Complexity rule
+    k_complexity = base_k
+    if clause_count >= 4 or has_attributes:
+        k_complexity = max(k_complexity, medium_k)
+
+    # Uncertainty rule (Entropy + Margins)
+    is_highly_flat = (h_norm >= 0.85) or (delta_1_5 <= 0.05)
+    is_moderately_flat = (h_norm >= 0.70) or (delta_1_5 <= 0.10) or (delta_1_16 <= 0.20)
+
+    if is_highly_flat:
+        k_uncertainty = high_k
+    elif is_moderately_flat:
+        k_uncertainty = medium_k
+    else:
+        k_uncertainty = base_k
+
+    chosen_k = max(k_complexity, k_uncertainty)
+    if chosen_k > high_k:
+        chosen_k = high_k
+    elif chosen_k < base_k:
+        chosen_k = base_k
+
+    diagnostic = AdaptiveBudgetDiagnostic(
+        chosen_k=chosen_k,
+        complexity_k=k_complexity,
+        uncertainty_k=k_uncertainty,
+        normalized_entropy=h_norm,
+        top1_top5_margin=delta_1_5,
+        top1_top16_margin=delta_1_16,
+        is_flat=is_moderately_flat or is_highly_flat,
+    )
+    return chosen_k, diagnostic
+
+
+def fuse_video_maxima_v2(
+    *,
+    variants: Sequence[QueryVariant],
+    maxima: FullCorpusVideoMaximaOutcome,
+    primary_variant_ids: frozenset[str],
+    rrf_constant: float,
+    nomination_depth: int,
+    config: KISVideoFirstConfig,
+) -> tuple[tuple[FusedVideoEvidence, ...], AdaptiveBudgetDiagnostic]:
+    """V2-A Fusion: Diversity-Aware Top-M + Clause Normalization + Coverage + Adaptive Budget."""
+    variants = tuple(variants)
+    if not variants:
+        raise ValueError("variants must not be empty")
+    if len({variant.variant_id for variant in variants}) != len(variants):
+        raise ValueError("variant_id values must be unique")
+    if not math.isfinite(rrf_constant) or rrf_constant <= 0:
+        raise ValueError("rrf_constant must be finite and positive")
+    expected_ids = {variant.variant_id for variant in variants}
+    if set(maxima.rankings) != expected_ids:
+        raise ValueError("maxima must contain exactly one video ranking per variant")
+
+    by_variant_video = {
+        variant.variant_id: {
+            hit.video_id: hit for hit in maxima.rankings[variant.variant_id]
+        }
+        for variant in variants
+    }
+    video_sets = [set(items) for items in by_variant_video.values()]
+    if not video_sets or any(items != video_sets[0] for items in video_sets[1:]):
+        raise ValueError("variant video rankings must cover the same corpus videos")
+
+    all_videos = sorted(video_sets[0])
+
+    # 1. Compute clause-local normalization for each variant
+    normalized_clause_scores: dict[str, dict[str, float]] = {}
+    for variant in variants:
+        raw_map = {
+            vid: by_variant_video[variant.variant_id][vid].top_m_score
+            for vid in all_videos
+        }
+        normalized_clause_scores[variant.variant_id] = normalize_clause_scores(raw_map)
+
+    # 2. Stage evidence and compute fused scores
+    staged: list[FusedVideoEvidence] = []
+    fused_scores_list: list[float] = []
+
+    for video_id in all_videos:
+        provenance = tuple(
+            VariantVideoEvidence(
+                variant_id=variant.variant_id,
+                weight=float(variant.weight),
+                video_rank=by_variant_video[variant.variant_id][video_id].rank,
+                maximum_frame_id=(
+                    by_variant_video[variant.variant_id][video_id].frame_id
+                ),
+                maximum_clip_row=(
+                    by_variant_video[variant.variant_id][video_id].clip_row
+                ),
+                maximum_cosine_score=(
+                    by_variant_video[variant.variant_id][video_id].cosine_score
+                ),
+                top_m_score=(
+                    by_variant_video[variant.variant_id][video_id].top_m_score
+                ),
+                normalized_clause_score=(
+                    normalized_clause_scores[variant.variant_id][video_id]
+                ),
+            )
+            for variant in sorted(variants, key=lambda item: item.variant_id)
+        )
+
+        # Fused score combining RRF rank and normalized evidence
+        rrf_part = sum(
+            hit.weight / (rrf_constant + hit.video_rank) for hit in provenance
+        )
+        norm_part = sum(
+            hit.weight * hit.normalized_clause_score for hit in provenance
+        ) / sum(hit.weight for hit in provenance)
+
+        score = 0.5 * rrf_part + 0.5 * norm_part
+        fused_scores_list.append(score)
+
+        # Coverage evaluation
+        clause_hits = {
+            hit.variant_id: hit.normalized_clause_score >= config.coverage_threshold
+            for hit in provenance
+        }
+        must_hits = sum(
+            hit.variant_id in primary_variant_ids and clause_hits[hit.variant_id]
+            for hit in provenance
+        )
+        must_total = len(primary_variant_ids)
+        strong_hits = sum(
+            hit.variant_id not in primary_variant_ids and clause_hits[hit.variant_id]
+            for hit in provenance
+        )
+        strong_total = len(provenance) - must_total
+        coverage_ratio = (
+            (must_hits + strong_hits) / len(provenance) if provenance else 0.0
+        )
+
+        coverage_meta = ClauseCoverageMetadata(
+            must_hit=must_hits,
+            must_total=must_total,
+            strong_hit=strong_hits,
+            strong_total=strong_total,
+            coverage_ratio=coverage_ratio,
+            per_clause_hit=clause_hits,
+        )
+
+        staged.append(
+            FusedVideoEvidence(
+                video_id=video_id,
+                rank=0,
+                fusion_score=float(score),
+                variant_hit_count=sum(
+                    hit.video_rank <= nomination_depth for hit in provenance
+                ),
+                primary_coverage_count=sum(
+                    hit.variant_id in primary_variant_ids
+                    and hit.video_rank <= nomination_depth
+                    for hit in provenance
+                ),
+                best_individual_rank=min(hit.video_rank for hit in provenance),
+                per_variant=provenance,
+                coverage_metadata=coverage_meta,
+            )
+        )
+
+    # 3. Compute adaptive video budget K in {32, 48, 64}
+    has_attributes = len(variants) > len(primary_variant_ids)
+    chosen_k, adaptive_diag = compute_adaptive_video_budget_v2(
+        fused_scores=fused_scores_list,
+        clause_count=len(variants),
+        has_attributes=has_attributes,
+        base_k=config.adaptive_budget_base,
+        medium_k=config.adaptive_budget_medium,
+        high_k=config.adaptive_budget_high,
+    )
+
+    ordered = sorted(
+        staged,
+        key=lambda item: (
+            -item.fusion_score,
+            -item.primary_coverage_count,
+            -item.variant_hit_count,
+            item.best_individual_rank,
+            item.video_id,
+        ),
+    )[:chosen_k]
+
+    final_selected = tuple(
+        FusedVideoEvidence(
+            video_id=item.video_id,
+            rank=rank,
+            fusion_score=item.fusion_score,
+            variant_hit_count=item.variant_hit_count,
+            primary_coverage_count=item.primary_coverage_count,
+            best_individual_rank=item.best_individual_rank,
+            per_variant=item.per_variant,
+            coverage_metadata=item.coverage_metadata,
+        )
+        for rank, item in enumerate(ordered, start=1)
+    )
+    return final_selected, adaptive_diag
 
 
 def fuse_restricted_frames(
@@ -307,6 +633,7 @@ def build_kis_video_first_outcome(
     weighted_rrf: WeightedRRFRetriever,
     output_top_k: int,
     rrf_constant: float,
+    adaptive_diagnostic: AdaptiveBudgetDiagnostic | None = None,
 ) -> KISVideoFirstOutcome:
     result = fuse_restricted_frames(
         query_id=query_id,
@@ -324,4 +651,5 @@ def build_kis_video_first_outcome(
         full_corpus_store_scan_count=maxima.video_store_scan_count,
         restricted_rows_scored=restricted.physical_rows_scored,
         restricted_store_scan_count=restricted.video_store_scan_count,
+        adaptive_diagnostic=adaptive_diagnostic,
     )

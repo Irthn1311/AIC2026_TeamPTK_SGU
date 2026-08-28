@@ -48,6 +48,7 @@ from system_tai.kis.video_first import (
     KIS_SEMANTIC_VIDEO_FIRST,
     build_kis_video_first_outcome,
     fuse_video_maxima,
+    fuse_video_maxima_v2,
 )
 from system_tai.preliminary.runtime_bridge import (
     audit_runtime_top100_artifact,
@@ -600,26 +601,55 @@ class OperationalKISRuntime:
         selected_videos = ()
         if video_first_enabled:
             assert compiled_semantic_query is not None
+            v2_adaptive = self.config.kis_video_first_config.v2_adaptive_enabled
             maxima_started = self.clock()
-            maxima = self.video_restricted_searcher.search_video_maxima(
-                query_ids=tuple(variant.variant_id for variant in variants),
-                query_vectors=variant_embeddings,
-            )
+            if v2_adaptive:
+                maxima = self.video_restricted_searcher.search_video_maxima(
+                    query_ids=tuple(variant.variant_id for variant in variants),
+                    query_vectors=variant_embeddings,
+                    top_m_evidence_cap=(
+                        self.config.kis_video_first_config.top_m_evidence_cap
+                    ),
+                    top_m_min_frame_gap=(
+                        self.config.kis_video_first_config.top_m_min_frame_gap
+                    ),
+                    top_m_weights=(
+                        self.config.kis_video_first_config.top_m_weights
+                    ),
+                )
+            else:
+                maxima = self.video_restricted_searcher.search_video_maxima(
+                    query_ids=tuple(variant.variant_id for variant in variants),
+                    query_vectors=variant_embeddings,
+                )
             full_corpus_video_search_seconds = self.clock() - maxima_started
 
             video_fusion_started = self.clock()
-            selected_videos = fuse_video_maxima(
-                variants=variants,
-                maxima=maxima,
-                primary_variant_ids=compiled_semantic_query.primary_variant_ids,
-                rrf_constant=self.config.rrf_constant,
-                nomination_depth=(
-                    self.config.kis_video_first_config.video_nomination_depth
-                ),
-                selected_video_cap=(
-                    self.config.kis_video_first_config.selected_video_cap
-                ),
-            )
+            adaptive_diag = None
+            if v2_adaptive:
+                selected_videos, adaptive_diag = fuse_video_maxima_v2(
+                    variants=variants,
+                    maxima=maxima,
+                    primary_variant_ids=compiled_semantic_query.primary_variant_ids,
+                    rrf_constant=self.config.rrf_constant,
+                    nomination_depth=(
+                        self.config.kis_video_first_config.video_nomination_depth
+                    ),
+                    config=self.config.kis_video_first_config,
+                )
+            else:
+                selected_videos = fuse_video_maxima(
+                    variants=variants,
+                    maxima=maxima,
+                    primary_variant_ids=compiled_semantic_query.primary_variant_ids,
+                    rrf_constant=self.config.rrf_constant,
+                    nomination_depth=(
+                        self.config.kis_video_first_config.video_nomination_depth
+                    ),
+                    selected_video_cap=(
+                        self.config.kis_video_first_config.selected_video_cap
+                    ),
+                )
             video_fusion_seconds = self.clock() - video_fusion_started
 
             restricted_started = self.clock()
@@ -644,6 +674,7 @@ class OperationalKISRuntime:
                 weighted_rrf=self.weighted_rrf,
                 output_top_k=request.output_top_k,
                 rrf_constant=self.config.rrf_constant,
+                adaptive_diagnostic=adaptive_diag,
             )
             restricted_frame_fusion_seconds = self.clock() - frame_fusion_started
             fused_result = video_first_outcome.result

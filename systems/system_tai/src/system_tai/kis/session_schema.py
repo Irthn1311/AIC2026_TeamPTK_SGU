@@ -307,6 +307,10 @@ class SessionConfig:
             ),
             "kis_video_first_config": KISVideoFirstConfig(
                 enabled=kis_cfg.get("semantic_video_first", False),
+                v2_adaptive_enabled=kis_cfg.get(
+                    "kis_v2_adaptive_video_nomination",
+                    kis_cfg.get("v2_adaptive_enabled", False),
+                ),
                 selected_video_cap=kis_cfg.get("selected_video_cap", 32),
                 video_nomination_depth=kis_cfg.get("video_nomination_depth", 100),
                 restricted_frames_per_video_per_variant=kis_cfg.get(
@@ -319,6 +323,15 @@ class SessionConfig:
                     "supporting_attribute_weight",
                     0.35,
                 ),
+                top_m_evidence_cap=kis_cfg.get("top_m_evidence_cap", 3),
+                top_m_min_frame_gap=kis_cfg.get("top_m_min_frame_gap", 60),
+                top_m_weights=tuple(
+                    kis_cfg.get("top_m_weights", (0.6, 0.3, 0.1))
+                ),
+                adaptive_budget_base=kis_cfg.get("adaptive_budget_base", 32),
+                adaptive_budget_medium=kis_cfg.get("adaptive_budget_medium", 48),
+                adaptive_budget_high=kis_cfg.get("adaptive_budget_high", 64),
+                coverage_threshold=kis_cfg.get("coverage_threshold", 0.75),
             ),
         }
         kwargs.update(overrides)
