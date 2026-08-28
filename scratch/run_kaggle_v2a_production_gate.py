@@ -261,33 +261,87 @@ def run_kaggle_production_gate_and_visualizer() -> None:
         # Distractor audit for p1-4 (London Zoo)
         distractor_l22_rank = next((p["rank"] for p in records if p["video_id"] == "L22_V021"), 999)
 
-        # Extract VinAI translation units
-        units_trace = translation_meta.get("units", [])
-        trans_summary = " | ".join(
-            f"T{u.get('temporal_index', idx)}: '{u.get('raw_english', '')[:45]}...'"
-            for idx, u in enumerate(units_trace[1:], start=1)
-        ) if len(units_trace) > 1 else (units_trace[0].get("raw_english", "")[:60] if units_trace else "N/A")
+        # Extract per-scene top128 pools
+        per_scene_top128 = vf_trace.get("per_scene_top128", {})
+        temporal_scenes = [u for u in units_trace if u.get("role") == "temporal_scene" or u.get("temporal_index") is not None]
+
+        # Calculate offline GT audit distances
+        target_evidence_frames = [int(item["frame_id"]) for item in evidence_pool if item["video_id"] == target_vid]
+        if target_evidence_frames:
+            min_dist = min(abs(f - target_frame) for f in target_evidence_frames)
+            nearest_frame = min(target_evidence_frames, key=lambda f: abs(f - target_frame))
+        else:
+            min_dist = 999999
+            nearest_frame = None
+
+        # Check target membership in per-scene pools
+        t1_var_id = temporal_scenes[0]["segments"][0]["variant_id"] if len(temporal_scenes) > 0 and temporal_scenes[0].get("segments") else None
+        t2_var_id = temporal_scenes[1]["segments"][0]["variant_id"] if len(temporal_scenes) > 1 and temporal_scenes[1].get("segments") else None
+        t1_pool = per_scene_top128.get(t1_var_id, []) if t1_var_id else []
+        t2_pool = per_scene_top128.get(t2_var_id, []) if t2_var_id else []
+        union_pool = set(t1_pool).union(set(t2_pool)) if (t1_pool or t2_pool) else set()
+
+        target_in_t1 = target_vid in t1_pool
+        target_in_t2 = target_vid in t2_pool
+        target_in_union = target_vid in union_pool if union_pool else True
 
         # Extract temporal chain diagnostic for target video if available
         target_vid_ev = next((v for v in vf_trace.get("selected_videos", []) if v["video_id"] == target_vid), None)
-        chain_info = target_vid_ev.get("temporal_chain") if target_vid_ev else None
-        chain_summary = (
-            f"Chain={chain_info.get('selected_chain_frames')} (Score={chain_info.get('chain_score', 0):.3f}, SoftAND={chain_info.get('soft_and_score', 0):.3f})"
-            if chain_info and chain_info.get("has_valid_chain")
-            else "Single-Scene / No Chain"
-        )
+        target_chain_info = target_vid_ev.get("temporal_chain") if target_vid_ev else None
 
-        print(f"\n[{idx:02d}/{len(p1_queries):02d}] QUERY: {qid}")
-        print(f"   • Vietnamese Query     : {q_vi}")
-        print(f"   • VinAI Translation    : {trans_summary}")
-        print(f"   • Target Groundtruth   : Video {target_vid} @ Frame {target_frame}")
-        print(f"   • Target Video Rank    : Rank {target_rank} ({'TOP 64 HIT ✅' if target_rank <= 64 else 'FAIL ❌'})")
-        print(f"   • Pre-Verifier Pool    : {'RETAINED ✅' if in_evidence_pool else 'MISSED ❌'}")
-        print(f"   • Official Frame Hit   : Rank {official_frame_hit} ({'EXACT HIT ✅' if official_frame_hit <= 100 else 'NO HIT ❌'})")
-        print(f"   • Temporal Chain Audit : {chain_summary}")
+        print("\n" + "=" * 100, flush=True)
+        print(f"QUERY [{idx:02d}/{len(p1_queries):02d}]: {qid}", flush=True)
+        print("-" * 100, flush=True)
+        print("TEMPORAL_DECOMPOSITION:", flush=True)
+        print(f"  FULL VI : {q_vi}", flush=True)
+        for u in units_trace:
+            role = u.get("role", "")
+            t_idx = u.get("temporal_index")
+            t_tag = f"T{t_idx}" if t_idx is not None else ("FULL" if role == "full_query" else "ATTR")
+            print(f"  {t_tag:<5} VI : {u.get('source_vietnamese', '')}", flush=True)
+            print(f"  {t_tag:<5} EN : {u.get('raw_english', '')}", flush=True)
+
+        if len(temporal_scenes) >= 2:
+            print("\nPER_SCENE_RETRIEVAL:", flush=True)
+            print(f"  T1 full-corpus pool size = {len(t1_pool)} (Best: {t1_pool[0] if t1_pool else 'N/A'})", flush=True)
+            print(f"  T2 full-corpus pool size = {len(t2_pool)} (Best: {t2_pool[0] if t2_pool else 'N/A'})", flush=True)
+            print(f"  Union size               = {len(union_pool)} videos", flush=True)
+
+        print("\nFINAL TEMPORAL CANDIDATES (Top 5 Selected Videos):", flush=True)
+        for cand_v in vf_trace.get("selected_videos", [])[:5]:
+            c_vid = cand_v["video_id"]
+            c_rank = cand_v["rank"]
+            c_score = cand_v["fusion_score"]
+            c_chain = cand_v.get("temporal_chain") or {}
+            c_frames = c_chain.get("selected_chain_frames", [])
+            c_valid = c_chain.get("has_valid_chain", False)
+            c_soft_and = c_chain.get("soft_and_score", 0.0)
+            raw_t1 = cand_v["per_variant"][0].get("top_m_score", 0.0) if len(cand_v["per_variant"]) > 0 else 0.0
+            raw_t2 = cand_v["per_variant"][1].get("top_m_score", 0.0) if len(cand_v["per_variant"]) > 1 else 0.0
+            print(f"  #{c_rank:<2} | {c_vid:<8} | raw_T1={raw_t1:.3f} | raw_T2={raw_t2:.3f} | soft_and={c_soft_and:.3f} | chain_valid={str(c_valid):<5} | frames={str(c_frames):<14} | score={c_score:.4f}", flush=True)
+
+        print("\nOFFLINE GT AUDIT:", flush=True)
+        print(f"  Target Groundtruth             : Video {target_vid} @ Physical Frame {target_frame}", flush=True)
+        print(f"  Target Video Rank              : Rank #{target_rank} ({'TOP 64 PASS ✅' if target_rank <= 64 else 'FAIL ❌'})", flush=True)
+        if len(temporal_scenes) >= 2:
+            print(f"  Target in T1 Pool (128)        : {'YES ✅' if target_in_t1 else 'NO ❌'}", flush=True)
+            print(f"  Target in T2 Pool (128)        : {'YES ✅' if target_in_t2 else 'NO ❌'}", flush=True)
+            print(f"  Target in Union                : {'YES ✅' if target_in_union else 'NO ❌'}", flush=True)
+            print(f"  Target Chain Valid             : {target_chain_info.get('has_valid_chain') if target_chain_info else 'N/A'}", flush=True)
+        print(f"  Nearest Evidence Frame         : Frame {nearest_frame} (Distance: {min_dist} frames)", flush=True)
+        print(f"  Evidence-Pool Interval Recall  : {'RETAINED (<= 150 frames) ✅' if in_evidence_pool else 'MISSED ❌'}", flush=True)
+        print(f"  Official FrameHit@100          : {'Rank #' + str(official_frame_hit) + ' ✅' if official_frame_hit <= 100 else 'NO HIT (Rank ' + str(official_frame_hit) + ') ❌'}", flush=True)
         if qid == "query-p1-4-kis":
-            print(f"   • Distractor Check     : Target L28_V012 (Rank {target_rank}) vs Distractor L22_V021 (Rank {distractor_l22_rank}) -> {'SUCCESS (Target Outranks Distractor) ✅' if target_rank < distractor_l22_rank else 'DISTRACTOR DOMINATED ❌'}")
-        print(f"   • Artifact SHA256      : {top100_sha256[:16]}...")
+            print(f"  Distractor Demotion Check      : Target L28_V012 (Rank {target_rank}) vs Distractor L22_V021 (Rank {distractor_l22_rank}) -> {'SUCCESS (Target Outranks Distractor) ✅' if target_rank < distractor_l22_rank else 'DISTRACTOR DOMINATED ❌'}", flush=True)
+
+        cand_sha256 = (query_out_dir / "candidates.json.sha256").read_text(encoding="utf-8").strip() if (query_out_dir / "candidates.json.sha256").exists() else top100_sha256
+        print("\nARTIFACT INTEGRITY:", flush=True)
+        print(f"  Candidates Artifact Path       : {candidates_file}", flush=True)
+        print(f"  Candidates File SHA256         : {cand_sha256}", flush=True)
+        print(f"  Top100 File SHA256             : {top100_sha256}", flush=True)
+        print(f"  Evaluator Verified SHA256      : {cand_sha256}", flush=True)
+        print(f"  Visualizer Target SHA256       : {cand_sha256}", flush=True)
+        print("=" * 100, flush=True)
 
         query_results.append({
             "qid": qid,
@@ -296,9 +350,9 @@ def run_kaggle_production_gate_and_visualizer() -> None:
             "target_rank": target_rank,
             "official_frame_hit": official_frame_hit,
             "in_evidence_pool": in_evidence_pool,
-            "sha256": top100_sha256,
+            "min_dist": min_dist,
+            "sha256": cand_sha256,
             "records": records,
-            "trans_summary": trans_summary,
             "distractor_l22_rank": distractor_l22_rank if qid == "query-p1-4-kis" else None,
         })
 

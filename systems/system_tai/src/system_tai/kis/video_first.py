@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from types import MappingProxyType
 
 from system_tai.common.schemas import CandidateFrame, KISResult
 from system_tai.retrieval.multi_query import QueryVariant, WeightedRRFRetriever
@@ -173,6 +174,7 @@ class KISVideoFirstOutcome:
     restricted_rows_scored: int
     restricted_store_scan_count: int
     adaptive_diagnostic: AdaptiveBudgetDiagnostic | None = None
+    per_scene_top128: Mapping[str, tuple[str, ...]] = MappingProxyType({})
 
     def to_trace(self) -> dict[str, object]:
         trace: dict[str, object] = {
@@ -183,6 +185,7 @@ class KISVideoFirstOutcome:
             "restricted_rows_scored": self.restricted_rows_scored,
             "restricted_store_scan_count": self.restricted_store_scan_count,
             "selected_video_count": len(self.selected_videos),
+            "per_scene_top128": {k: list(v) for k, v in self.per_scene_top128.items()},
             "selected_videos": [
                 {
                     "rank": item.rank,
@@ -867,6 +870,10 @@ def build_kis_video_first_outcome(
         output_top_k=output_top_k,
         rrf_constant=rrf_constant,
     )
+    per_scene_top128 = {
+        var_id: tuple(hit.video_id for hit in hits[:128])
+        for var_id, hits in maxima.rankings.items()
+    }
     return KISVideoFirstOutcome(
         result=result,
         selected_videos=tuple(selected_videos),
@@ -875,4 +882,5 @@ def build_kis_video_first_outcome(
         restricted_rows_scored=restricted.physical_rows_scored,
         restricted_store_scan_count=restricted.video_store_scan_count,
         adaptive_diagnostic=adaptive_diagnostic,
+        per_scene_top128=per_scene_top128,
     )

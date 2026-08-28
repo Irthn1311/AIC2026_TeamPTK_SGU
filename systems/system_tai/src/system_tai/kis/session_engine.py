@@ -836,7 +836,11 @@ class OperationalKISRuntime:
                 for candidate in conditioned_result.ranked_candidates
             ],
         }
-        candidates_json.write_text(json.dumps(candidates_data, indent=2) + "\n", encoding="utf-8")
+        cand_bytes = (json.dumps(candidates_data, indent=2) + "\n").encode("utf-8")
+        candidates_json.write_bytes(cand_bytes)
+        candidates_sha256 = hashlib.sha256(cand_bytes).hexdigest()
+        (query_dir / "candidates.json.sha256").write_text(candidates_sha256 + "\n", encoding="utf-8")
+        (query_dir / "top100.jsonl.sha256").write_text(top100_sha256 + "\n", encoding="utf-8")
         retrieval_export_seconds = self.clock() - export_start
 
         retrieval_val_start = self.clock()
