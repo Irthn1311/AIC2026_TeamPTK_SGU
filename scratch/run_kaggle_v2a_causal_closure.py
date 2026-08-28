@@ -434,7 +434,7 @@ def run_p1_2_closure(runtime: OperationalKISRuntime) -> None:
     # Part A: Keyframe Sampling around GT 6050 & Canonical DEV Evaluator Match
     print("--- PART A: CANONICAL DEV EVALUATOR & GROUNDTRUTH 6050 MATCHING ---", flush=True)
     store = runtime.video_restricted_searcher.registry.get(target_vid)
-    all_frames = [store.frame_for_row(r) for r in range(store.row_count)]
+    all_frames = list(store.mappings)
     all_frames.sort(key=lambda x: x.frame_id)
 
     nearest_frames = sorted(all_frames, key=lambda x: abs(x.frame_id - gt_frame))[:6]
@@ -683,7 +683,7 @@ def run_p1_5_closure(runtime: OperationalKISRuntime) -> None:
 
     # 2. Inspect store of target video L30_V021
     store = runtime.video_restricted_searcher.registry.get(target_vid)
-    all_frames = [store.frame_for_row(r) for r in range(store.row_count)]
+    all_frames = list(store.mappings)
     all_frames.sort(key=lambda x: x.frame_id)
 
     nearest_frames = sorted(all_frames, key=lambda x: abs(x.frame_id - gt_frame))[:5]
@@ -696,13 +696,13 @@ def run_p1_5_closure(runtime: OperationalKISRuntime) -> None:
         print(f"  Keyframe Order: {kf.keyframe_order:<3} | Physical Frame: {kf.frame_id:<5} | Delta: {delta:<+5} frames | PTS: {kf.pts_time:.3f}s")
 
     # Compute raw cosine matrix for target video rows with query embeddings
-    features = store.feature_matrix  # (N, D)
+    features = store.matrix  # (N, D)
     cos_matrix = features @ embeddings.T  # (N, 6)
     nearest_row = nearest_frames[0].clip_row
     nearest_fid = nearest_frames[0].frame_id
 
-    # 3. Compute GLOBAL raw-frame rank of near-GT keyframe across ALL frames in ALL 1532 videos
-    total_corpus_frames = sum(s.row_count for s in runtime.video_restricted_searcher.registry.stores.values())
+    # 3. Compute GLOBAL raw-frame rank of near-GT keyframe across ALL frames in ALL corpus videos
+    total_corpus_frames = sum(len(s.mappings) for s in runtime.video_restricted_searcher.registry.stores.values())
     global_raw_ranks = []
     corpus_global_best_frames = []
 
@@ -716,13 +716,13 @@ def run_p1_5_closure(runtime: OperationalKISRuntime) -> None:
         best_fid = -1
 
         for v_id, s in runtime.video_restricted_searcher.registry.stores.items():
-            v_cos = s.feature_matrix @ q_vec  # (N_v,)
+            v_cos = s.matrix @ q_vec  # (N_v,)
             higher_count += int((v_cos > target_cos).sum())
             max_idx = int(np.argmax(v_cos))
             if float(v_cos[max_idx]) > best_c:
                 best_c = float(v_cos[max_idx])
                 best_vid = v_id
-                best_fid = s.frame_for_row(max_idx).frame_id
+                best_fid = s.mappings[max_idx].frame_id
 
         global_raw_rank = higher_count + 1
         global_raw_ranks.append(global_raw_rank)
