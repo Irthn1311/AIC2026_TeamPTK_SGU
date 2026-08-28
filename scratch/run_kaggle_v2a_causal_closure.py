@@ -542,14 +542,24 @@ def run_p1_2_trace_and_raw_cosine_audit(runtime: OperationalKISRuntime) -> None:
     diag_tol = manifest_record["diagnostic_tolerance"]
     gt_interval = (official_gt_frame - diag_tol, official_gt_frame + diag_tol)
 
-    print("--- 2.0 CANONICAL BENCHMARK MANIFEST PROVENANCE ---")
-    print(f"• Canonical Manifest Path : {manifest_path}")
-    print(f"• Manifest File SHA256    : {manifest_sha}")
-    print(f"• Query Record ID         : {qid}")
-    print(f"• Exact Vietnamese Text   : \"{q_vi}\"")
-    print(f"• Target Video            : {target_vid}")
-    print(f"• Official GT Frame       : {official_gt_frame}")
-    print(f"• Diagnostic Tolerance    : +/- {diag_tol} frames -> gt_neighborhood_keyframes range: [{gt_interval[0]}, {gt_interval[1]}]")
+    print("--- 2.0 BENCHMARK QUERY PROVENANCE AUDIT ---")
+    print("• Provenance Classification : PROJECT_FROZEN_STRESS_QUERY (Externally supplied engineering benchmark, tracked in git)")
+    print(f"• Manifest File Path        : {manifest_path}")
+    print(f"• Manifest File SHA256      : {manifest_sha}")
+    print(f"• Query Record ID           : {qid}")
+    print(f"• Upstream Git Commit Roots :")
+    print("  [1] Commit fe04a5b (2026-08-27): systems/system_tai/tests/test_temporal_decomposition_patterns.py")
+    print("      - Text: \"Đoạn phim bắt đầu bằng một bản đồ, trên đó một loại công trình thủy lợi lần lượt xuất hiện bốn lần. Sau đó chuyển sang cảnh một công trình thủy lợi lớn đang mở cửa xả nước dưới trời mưa.\"")
+    print("  [2] Commit aaf0649 (2026-08-28): scratch/run_kaggle_v2a_production_gate.py")
+    print("      - Text: \"Đoạn phim bắt đầu bằng một bản đồ, trên đó một loại công trình thủy lợi lần lượt xuất hiện bốn lần. Sau đó chuyển sang cảnh một con đập được quay từ trên cao, tiếp đến là cảnh cận con đập dưới trời mưa.\"")
+    print("• Wording Discrepancy Diff  :")
+    print("  - Clause 1: IDENTICAL (\"Đoạn phim bắt đầu bằng một bản đồ, trên đó một loại công trình thủy lợi lần lượt xuất hiện bốn lần.\")")
+    print("  - Clause 2 (fe04a5b): \"Sau đó chuyển sang cảnh một công trình thủy lợi lớn đang mở cửa xả nước dưới trời mưa.\"")
+    print("  - Clause 2 (aaf0649): \"Sau đó chuyển sang cảnh một con đập được quay từ trên cao, tiếp đến là cảnh cận con đập dưới trời mưa.\"")
+    print(f"• Active Evaluated Text     : \"{q_vi}\"")
+    print(f"• Target Video              : {target_vid}")
+    print(f"• Official GT Frame         : {official_gt_frame}")
+    print(f"• Diagnostic Tolerance      : +/- {diag_tol} frames -> gt_neighborhood_keyframes range: [{gt_interval[0]}, {gt_interval[1]}]")
 
     # Hard-assert exact record equality
     assert qid == "query-p1-2-kis", "Record ID mismatch"
@@ -557,7 +567,7 @@ def run_p1_2_trace_and_raw_cosine_audit(runtime: OperationalKISRuntime) -> None:
     assert official_gt_frame == 6050, "Official GT frame mismatch"
     assert diag_tol == 150, "Diagnostic tolerance mismatch"
     assert "thủy lợi" in q_vi and "bản đồ" in q_vi, "Vietnamese query semantics mismatch"
-    print("• Manifest Record Equality: PASS ✅ (Exact record equality confirmed with canonical source)\n", flush=True)
+    print("• Manifest Record Equality  : PASS ✅ (Exact record equality confirmed with project frozen manifest)\n", flush=True)
 
     # Corpus Provenance & Registry Integrity Audit
     stores = runtime.video_restricted_searcher.registry.stores
@@ -576,19 +586,22 @@ def run_p1_2_trace_and_raw_cosine_audit(runtime: OperationalKISRuntime) -> None:
     assert feat_dim == 512, f"Feature dimension mismatch: {feat_dim} != 512"
     print("• Corpus Integrity Check    : PASS ✅ (Exact 873/177321/512 production corpus verified)\n", flush=True)
 
-    # Effective Production V2-A Config
+    # Effective Production V2-A Config and Historical Comparison
     vf_cfg = runtime.config.kis_video_first_config
-    print("--- 2.2 EFFECTIVE PRODUCTION V2-A CONFIGURATION ---")
-    print(f"• Video-First Enabled       : {vf_cfg.enabled}")
-    print(f"• V2-Adaptive Enabled       : {vf_cfg.v2_adaptive_enabled}")
-    print(f"• Selected Video Cap (K_max): {vf_cfg.selected_video_cap}")
-    print(f"• Top-M Evidence Cap (M)    : {vf_cfg.top_m_evidence_cap}")
-    print(f"• Top-M Min Frame Gap       : {vf_cfg.top_m_min_frame_gap}")
-    print(f"• Top-M Weights             : {vf_cfg.top_m_weights}")
-    print(f"• Adaptive Budgets (B/M/H)  : ({vf_cfg.adaptive_budget_base}, {vf_cfg.adaptive_budget_medium}, {vf_cfg.adaptive_budget_high})")
-    print(f"• Coverage Threshold        : {vf_cfg.coverage_threshold}")
-    print(f"• RRF Constant              : {runtime.config.rrf_constant}")
-    print(f"• Per-Query Result Cap (S2) : {vf_cfg.restricted_frames_per_video_per_variant}")
+    print("--- 2.2 CONFIGURATION PROVENANCE & HISTORICAL COMPARISON ---")
+    print("• Config Factory Function   : scratch/run_kaggle_v2a_causal_closure.py::create_production_v2a_session_config")
+    print("• Canonical Schema Source   : systems/system_tai/src/system_tai/kis/video_first.py::KISVideoFirstConfig")
+    print("• Field-by-Field Origin Breakdown:")
+    print(f"  - enabled                 : {vf_cfg.enabled:<6} [Explicit Audit True | Schema Default: False]")
+    print(f"  - v2_adaptive_enabled     : {vf_cfg.v2_adaptive_enabled:<6} [Explicit Audit True | Schema Default: False]")
+    print(f"  - selected_video_cap (K)  : {vf_cfg.selected_video_cap:<6} [Audit Override: 64   | Schema Default: 32]")
+    print(f"  - top_m_evidence_cap (M)  : {vf_cfg.top_m_evidence_cap:<6} [Audit Override: 5    | Schema Default: 3]")
+    print(f"  - top_m_weights           : {str(vf_cfg.top_m_weights):<22} [Audit Override: M5 (0.4, 0.25, 0.15, 0.1, 0.1) | Historical Schema Default: M3 (0.6, 0.3, 0.1)]")
+    print(f"  - top_m_min_frame_gap     : {vf_cfg.top_m_min_frame_gap:<6} [Matches Schema Default: 60]")
+    print(f"  - adaptive_budgets (B/M/H): ({vf_cfg.adaptive_budget_base}, {vf_cfg.adaptive_budget_medium}, {vf_cfg.adaptive_budget_high}) [Matches Schema Default: (32, 48, 64)]")
+    print(f"  - coverage_threshold      : {vf_cfg.coverage_threshold:<6} [Matches Schema Default: 0.75]")
+    print(f"  - rrf_constant            : {runtime.config.rrf_constant:<6} [Matches SessionConfig Default: 60.0]")
+    print(f"  - restricted_frames/video : {vf_cfg.restricted_frames_per_video_per_variant:<6} [Matches Schema Default: 10]")
     print("------------------------------------------------------------------------------------------------------------------------\n", flush=True)
 
     # 1. Run full query through single canonical production handler

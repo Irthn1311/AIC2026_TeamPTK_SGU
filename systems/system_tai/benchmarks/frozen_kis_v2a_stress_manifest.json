@@ -1,7 +1,11 @@
 {
   "schema_version": 1,
-  "benchmark_id": "frozen_kis_v2a_stress_manifest_v1",
-  "provenance_description": "Canonical frozen benchmark manifest for AIC2026 Preliminary KIS V2-A stress test suite (5 queries)",
+  "benchmark_id": "project_frozen_kis_v2a_stress_manifest_v1",
+  "provenance_description": "PROJECT_FROZEN_STRESS_QUERY: Internal engineering stress test suite (5 queries), locked in repository commits aaf0649 and fe04a5b",
+  "upstream_commits": {
+    "fe04a5b": "systems/system_tai/tests/test_temporal_decomposition_patterns.py (Unit Test Provenance)",
+    "aaf0649": "scratch/run_kaggle_v2a_production_gate.py (Production Gate Provenance)"
+  },
   "queries": [
     {
       "query_id": "query-p1-1-kis",
@@ -13,6 +17,7 @@
     {
       "query_id": "query-p1-2-kis",
       "query_vi": "Đoạn phim bắt đầu bằng một bản đồ, trên đó một loại công trình thủy lợi lần lượt xuất hiện bốn lần. Sau đó chuyển sang cảnh một con đập được quay từ trên cao, tiếp đến là cảnh cận con đập dưới trời mưa.",
+      "alternate_query_vi_fe04a5b": "Đoạn phim bắt đầu bằng một bản đồ, trên đó một loại công trình thủy lợi lần lượt xuất hiện bốn lần. Sau đó chuyển sang cảnh một công trình thủy lợi lớn đang mở cửa xả nước dưới trời mưa.",
       "target_video": "L29_V018",
       "official_gt_frame": 6050,
       "diagnostic_tolerance": 150
