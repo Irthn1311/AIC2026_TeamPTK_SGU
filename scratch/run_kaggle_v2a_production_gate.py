@@ -97,10 +97,14 @@ def run_kaggle_production_gate() -> None:
 
     # Setup base config with 100% Dynamic VinAI Translation
     base_out = Path("/kaggle/working/output/production_gate") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "production_gate"
+    manifest_cache_path = None if reuse_manifest_path is not None else (
+        Path("/kaggle/working/manifest_cache.json") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "manifest_cache.json"
+    )
+
     config = SessionConfig(
         input_root=input_root,
         reuse_manifest=reuse_manifest_path,
-        manifest_cache=Path("/kaggle/working/manifest_cache.json") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "manifest_cache.json",
+        manifest_cache=manifest_cache_path,
         output_root=base_out,
         device="auto",
         allow_model_download=True,
