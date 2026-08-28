@@ -28,10 +28,11 @@ from system_tai.kis.session_schema import (
     QueryRequest,
     QueryVariant,
     QueryVariantType,
-    SemanticQueryConfig,
     SessionConfig,
 )
+from system_tai.retrieval.semantic_query import SemanticQueryConfig
 from system_tai.kis.video_first import (
+    FusedVideoEvidence,
     build_kis_video_first_outcome,
     fuse_restricted_frames,
     fuse_video_maxima_v2,
@@ -530,7 +531,6 @@ def run_p1_2_audit(runtime: OperationalKISRuntime) -> None:
         per_query_result_cap=runtime.config.kis_video_first_config.restricted_frames_per_video_per_variant,
     )
 
-    from system_tai.kis.video_first import FusedVideoEvidence
     selected_objects = [
         FusedVideoEvidence(
             video_id=item["video_id"],
