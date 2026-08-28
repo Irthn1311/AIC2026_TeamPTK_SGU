@@ -167,8 +167,8 @@ def run_kaggle_production_gate() -> None:
         target_frame = q["target_frame"]
         q_vi = q["source_vi"]
 
-        req = QueryRequest(
-            request_id=f"gate-{qid}",
+        req_leg = QueryRequest(
+            request_id=f"gate-leg-{qid}",
             query_id=qid,
             query_vi=q_vi,
             query_en=None,  # 100% Pure Vietnamese -> Dynamic VinAI Translation
@@ -190,7 +190,7 @@ def run_kaggle_production_gate() -> None:
             ),
         )
         t_start = time.perf_counter()
-        leg_out = runtime.handle_query(req)
+        leg_out = runtime.handle_query(req_leg)
         t_leg = (time.perf_counter() - t_start) * 1000
         latencies_leg.append(t_leg)
 
@@ -203,6 +203,15 @@ def run_kaggle_production_gate() -> None:
         leg_first_hit = next((p["rank"] for p in leg_preds if p["video_id"] == target_vid and abs(p["frame_id"] - target_frame) <= 150), 999)
 
         # B. V2-A.1 ADAPTIVE RUN
+        req_v2 = QueryRequest(
+            request_id=f"gate-v2a-{qid}",
+            query_id=qid,
+            query_vi=q_vi,
+            query_en=None,  # 100% Pure Vietnamese -> Dynamic VinAI Translation
+            include_vi_variant=True,
+            output_top_k=100,
+            refine_top_n=0,
+        )
         runtime.config = replace(
             runtime.config,
             kis_video_first_config=KISVideoFirstConfig(
@@ -219,7 +228,7 @@ def run_kaggle_production_gate() -> None:
             ),
         )
         t_start = time.perf_counter()
-        v2_out = runtime.handle_query(req)
+        v2_out = runtime.handle_query(req_v2)
         t_v2 = (time.perf_counter() - t_start) * 1000
         latencies_v2.append(t_v2)
 
