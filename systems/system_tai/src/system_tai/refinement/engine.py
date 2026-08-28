@@ -466,13 +466,12 @@ def rank_visually_verified_timeline_frames(
 ) -> tuple[LocalFrameFusion, ...]:
     """Promote strict VLM conjunctions without destroying the full CLIP ranking.
 
-    VLM and raw CLIP score scales are never added or compared numerically. Strictly
-    verified conjunctions form the leading partition. If and only if none exists,
-    contract-validated partial observations form a deterministic fallback partition,
-    ordered lexicographically by grounded center/action evidence and predicate coverage.
-    This makes the verifier useful on hard conjunctions without pretending that a partial
-    match is fully verified. Failed candidates and non-discriminative positive plateaus
-    retain their original CLIP order after those partitions.
+    VLM and raw CLIP score scales are never added or compared numerically. A partial
+    result set is valid: discriminative verified frames form the leading partition while
+    failed candidates and non-discriminative positive plateaus retain their original CLIP
+    order in the fallback partition. Within the verified partition, the weakest visible
+    predicate precedes aggregate coverage and match score so one missing count, attribute,
+    action, or relation cannot be hidden by a strong broad-scene match.
     """
     by_frame = {item.absolute_frame_id: item for item in ranked}
     result_by_frame = {item.absolute_frame_id: item for item in results}
@@ -507,114 +506,12 @@ def rank_visually_verified_timeline_frames(
             item.absolute_frame_id,
         ),
     )
-    partial_result_by_frame: dict[int, VisualVerificationResult] = {}
-    if not trusted_result_by_frame:
-        partial_result_by_frame = {
-            frame_id: result
-            for frame_id, result in result_by_frame.items()
-            if (
-                frame_id not in plateau_frame_ids
-                and result.contract_validated
-                and not result.eligible_for_promotion
-                and any(
-                    predicate.evidence_grounded
-                    for predicate in result.predicates
-                )
-            )
-        }
-
-    def partial_preference(
-        item: LocalFrameFusion,
-    ) -> tuple[int, int, int, int, int, float, float, float, int]:
-        result = partial_result_by_frame[item.absolute_frame_id]
-        comparison_predicates = tuple(
-            predicate
-            for predicate in result.predicates
-            if predicate.comparison is not None
-        )
-        action_predicates = tuple(
-            predicate
-            for predicate in result.predicates
-            if predicate.predicate_id.startswith(
-                ("primary_action_", "synchronized_action_")
-            )
-        )
-        return (
-            int(
-                result.temporal_context_witness_frame_id
-                == result.source_candidate_frame_id
-                and result.temporal_context_witness_frame_id is not None
-            ),
-            int(result.temporal_action_witness_frame_id is not None),
-            sum(
-                predicate.strictly_satisfied
-                for predicate in comparison_predicates
-            ),
-            sum(
-                predicate.strictly_satisfied for predicate in action_predicates
-            ),
-            sum(
-                predicate.strictly_satisfied for predicate in result.predicates
-            ),
-            result.requirement_coverage,
-            result.match_score,
-            item.fusion_score,
-            -item.absolute_frame_id,
-        )
-
-    partials = sorted(
-        (
-            item
-            for item in ranked
-            if item.absolute_frame_id in partial_result_by_frame
-        ),
-        key=partial_preference,
-        reverse=True,
-    )
-    promoted_frame_ids = {
-        *trusted_result_by_frame,
-        *partial_result_by_frame,
-    }
     fallbacks = [
         item
         for item in ranked
-        if item.absolute_frame_id not in promoted_frame_ids
+        if item.absolute_frame_id not in trusted_result_by_frame
     ]
-    ordered = [*verified, *partials, *fallbacks]
-
-    def visual_provenance(item: LocalFrameFusion) -> Mapping[str, Any]:
-        frame_id = item.absolute_frame_id
-        if frame_id in trusted_result_by_frame:
-            return {
-                "visual_verification": dict(result_by_frame[frame_id].to_trace())
-            }
-        if frame_id in partial_result_by_frame:
-            return {
-                "visual_verification": {
-                    **dict(partial_result_by_frame[frame_id].to_trace()),
-                    "calibration_status": "PARTIAL_CONJUNCTION_FALLBACK",
-                }
-            }
-        if frame_id in plateau_frame_ids:
-            return {
-                "visual_verification": {
-                    **dict(result_by_frame[frame_id].to_trace()),
-                    "calibration_status": (
-                        "ABSTAIN_NON_DISCRIMINATIVE_POSITIVE_PLATEAU"
-                    ),
-                }
-            }
-        return {
-            "visual_verification": {
-                "status": "UNVERIFIED_PRESERVE_CLIP",
-                "reason": (
-                    "PREDICATE_CONTRACT_NOT_SATISFIED"
-                    if frame_id in result_by_frame
-                    else "VERIFIER_DID_NOT_RETURN_RESULT"
-                ),
-            }
-        }
-
+    ordered = [*verified, *fallbacks]
     return tuple(
         LocalFrameFusion(
             absolute_frame_id=item.absolute_frame_id,
@@ -627,7 +524,37 @@ def rank_visually_verified_timeline_frames(
             best_individual_rank=item.best_individual_rank,
             per_variant_provenance=(
                 *item.per_variant_provenance,
-                visual_provenance(item),
+                (
+                    {
+                        "visual_verification": dict(
+                            result_by_frame[item.absolute_frame_id].to_trace()
+                        )
+                    }
+                    if item.absolute_frame_id in trusted_result_by_frame
+                    else (
+                        {
+                            "visual_verification": {
+                                **dict(
+                                    result_by_frame[item.absolute_frame_id].to_trace()
+                                ),
+                                "calibration_status": (
+                                    "ABSTAIN_NON_DISCRIMINATIVE_POSITIVE_PLATEAU"
+                                ),
+                            }
+                        }
+                        if item.absolute_frame_id in plateau_frame_ids
+                        else {
+                            "visual_verification": {
+                                "status": "UNVERIFIED_PRESERVE_CLIP",
+                                "reason": (
+                                    "PREDICATE_CONTRACT_NOT_SATISFIED"
+                                    if item.absolute_frame_id in result_by_frame
+                                    else "VERIFIER_DID_NOT_RETURN_RESULT"
+                                ),
+                            }
+                        }
+                    )
+                ),
             ),
         )
         for item in ordered

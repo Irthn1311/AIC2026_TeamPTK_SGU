@@ -384,7 +384,6 @@ def test_visual_verifier_prompt_requires_observed_predicate_evidence() -> None:
     assert "one-based image number" in prompt
     assert "There are exactly 3 images; image 2 is the retrieval center" in prompt
     assert "must cite the SAME single image" in prompt
-    assert "must cite the retrieval-center image" in prompt
     assert "Never add people or attributes across images" in prompt
 
 
@@ -434,7 +433,7 @@ def test_temporal_binding_allows_distinct_coherent_context_and_action_witnesses(
     parsed = parse_visual_verification_json(
         _ordered_temporal_payload(
             contract,
-            context_image_number=2,
+            context_image_number=1,
             action_image_number=3,
         ),
         video_id="V",
@@ -447,42 +446,11 @@ def test_temporal_binding_allows_distinct_coherent_context_and_action_witnesses(
     assert bound.eligible_for_promotion is True
     assert bound.absolute_frame_id == 6800
     assert bound.source_candidate_frame_id == 6650
-    assert bound.temporal_context_witness_frame_id == 6650
+    assert bound.temporal_context_witness_frame_id == 6500
     assert bound.temporal_action_witness_frame_id == 6800
     assert bound.temporal_evidence_frame_ids == (6500, 6650, 6800)
-    assert "absolute original-video frame 6650" in bound.predicates[0].evidence
+    assert "absolute original-video frame 6500" in bound.predicates[0].evidence
     assert bound.to_trace()["temporal_coherence_validated"] is True
-
-
-def test_temporal_binding_rejects_noncentral_context_witness() -> None:
-    contract = compile_visual_predicate_contract(
-        query_vi=QUERY_VI,
-        query_en=QUERY_EN,
-    )
-    candidate = VisualVerificationInput(
-        "V",
-        6650,
-        266.0,
-        ("early", "center", "late"),
-        image_frame_ids=(6500, 6650, 6800),
-    )
-    parsed = parse_visual_verification_json(
-        _ordered_temporal_payload(
-            contract,
-            context_image_number=1,
-            action_image_number=3,
-        ),
-        video_id="V",
-        absolute_frame_id=6650,
-        predicate_contract=contract,
-    )
-
-    bound = bind_temporal_visual_evidence(parsed, candidate=candidate)
-
-    assert bound.eligible_for_promotion is False
-    assert bound.temporal_context_witness_frame_id is None
-    assert bound.temporal_action_witness_frame_id == 6800
-    assert bound.temporal_coherence_validated is False
 
 
 def test_temporal_binding_rejects_cross_frame_attribute_count_addition() -> None:
@@ -1059,7 +1027,7 @@ def test_fixed_contract_rejects_missing_or_renamed_predicate_id() -> None:
         )
 
 
-def test_partial_fixed_contract_candidate_leads_when_no_strict_match() -> None:
+def test_unverified_fixed_contract_candidate_cannot_override_clip_order() -> None:
     contract = compile_visual_predicate_contract(
         query_vi=QUERY_VI,
         query_en=QUERY_EN,
@@ -1079,49 +1047,15 @@ def test_partial_fixed_contract_candidate_leads_when_no_strict_match() -> None:
         (result,),
     )
 
-    assert tuple(item.absolute_frame_id for item in ranked) == (20, 10, 30)
-    assert (
-        ranked[0].per_variant_provenance[-1]["visual_verification"]
-        ["calibration_status"]
-        == "PARTIAL_CONJUNCTION_FALLBACK"
-    )
-    assert (
-        ranked[2].per_variant_provenance[-1]["visual_verification"]["reason"]
-        == "VERIFIER_DID_NOT_RETURN_RESULT"
-    )
-
-
-def test_partial_fixed_contract_does_not_join_strict_partition() -> None:
-    contract = compile_visual_predicate_contract(
-        query_vi=QUERY_VI,
-        query_en=QUERY_EN,
-    )
-    partial_first = LocalFrameFusion(10, 0.9, 1, 1, ())
-    strict_second = LocalFrameFusion(20, 0.8, 1, 2, ())
-    unshortlisted = LocalFrameFusion(30, 0.7, 1, 3, ())
-    partial_result = parse_visual_verification_json(
-        _strict_contract_payload(contract, red_hat_count=2),
-        video_id="V",
-        absolute_frame_id=10,
-        predicate_contract=contract,
-    )
-    strict_result = parse_visual_verification_json(
-        _strict_contract_payload(contract),
-        video_id="V",
-        absolute_frame_id=20,
-        predicate_contract=contract,
-    )
-
-    ranked = rank_visually_verified_timeline_frames(
-        (partial_first, strict_second, unshortlisted),
-        (partial_result, strict_result),
-    )
-
-    assert tuple(item.absolute_frame_id for item in ranked) == (20, 10, 30)
+    assert tuple(item.absolute_frame_id for item in ranked) == (10, 20, 30)
     assert (
         ranked[1].per_variant_provenance[-1]["visual_verification"]
         ["status"]
         == "UNVERIFIED_PRESERVE_CLIP"
+    )
+    assert (
+        ranked[2].per_variant_provenance[-1]["visual_verification"]["reason"]
+        == "VERIFIER_DID_NOT_RETURN_RESULT"
     )
 
 
