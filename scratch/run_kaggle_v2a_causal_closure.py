@@ -591,17 +591,22 @@ def run_p1_2_trace_and_raw_cosine_audit(runtime: OperationalKISRuntime) -> None:
     store = runtime.video_restricted_searcher.registry.get(target_vid)
     official_keyframes = sorted([f.frame_id for f in store.mappings if gt_interval[0] <= f.frame_id <= gt_interval[1]])
 
-    print(f"\n• Production Retrieval Execution Parameters:")
-    print(f"  - Nominated Selected Video Count (K) : {len(selected_videos)}")
+    print(f"\n• Production Retrieval Execution Parameters & Restricted Ranking Structure:")
+    print(f"  - selected_video_count              : {len(selected_videos)}")
     if target_sel_entry:
         print(f"  - Target Video {target_vid} Nominated?        : YES (Rank #{target_sel_entry['rank']}, Fusion Score: {target_sel_entry['fusion_score']:.6f})")
     else:
         print(f"  - Target Video {target_vid} Nominated?        : NO ❌")
-    print(f"  - Restricted Frames per Video per Variant : per_query_result_cap = {per_query_cap}")
+    print(f"  - per_query_result_cap              : {per_query_cap} (frames per video per variant)")
     for v in variants:
         per_vid_map = restricted.rankings.get(v.variant_id, {})
         total_retained_frames = sum(len(hits) for hits in per_vid_map.values())
-        print(f"  - restricted.rankings['{v.variant_id}'] : {total_retained_frames} total frames across {len(per_vid_map)} videos")
+        unique_vids = len(per_vid_map)
+        max_f_per_vid = max((len(hits) for hits in per_vid_map.values()), default=0)
+        print(f"  - Variant [{v.variant_id}]:")
+        print(f"    * len(restricted.rankings[variant]) : {total_retained_frames}")
+        print(f"    * number_of_unique_videos_in_ranking: {unique_vids}")
+        print(f"    * max_frames_per_video_in_ranking   : {max_f_per_vid}")
 
     # Reconstruct exact global restricted rankings per variant
     selected_ids = {item["video_id"] for item in selected_videos}
