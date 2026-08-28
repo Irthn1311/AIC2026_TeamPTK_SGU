@@ -175,6 +175,7 @@ class KISVideoFirstOutcome:
     restricted_store_scan_count: int
     adaptive_diagnostic: AdaptiveBudgetDiagnostic | None = None
     per_scene_top128: Mapping[str, tuple[str, ...]] = MappingProxyType({})
+    per_scene_ranks: Mapping[str, Mapping[str, int]] = MappingProxyType({})
 
     def to_trace(self) -> dict[str, object]:
         trace: dict[str, object] = {
@@ -186,6 +187,7 @@ class KISVideoFirstOutcome:
             "restricted_store_scan_count": self.restricted_store_scan_count,
             "selected_video_count": len(self.selected_videos),
             "per_scene_top128": {k: list(v) for k, v in self.per_scene_top128.items()},
+            "per_scene_ranks": {k: dict(v) for k, v in self.per_scene_ranks.items()},
             "selected_videos": [
                 {
                     "rank": item.rank,
@@ -874,6 +876,10 @@ def build_kis_video_first_outcome(
         var_id: tuple(hit.video_id for hit in hits[:128])
         for var_id, hits in maxima.rankings.items()
     }
+    per_scene_ranks = {
+        var_id: {hit.video_id: hit.rank for hit in hits}
+        for var_id, hits in maxima.rankings.items()
+    }
     return KISVideoFirstOutcome(
         result=result,
         selected_videos=tuple(selected_videos),
@@ -883,4 +889,5 @@ def build_kis_video_first_outcome(
         restricted_store_scan_count=restricted.video_store_scan_count,
         adaptive_diagnostic=adaptive_diagnostic,
         per_scene_top128=per_scene_top128,
+        per_scene_ranks=per_scene_ranks,
     )

@@ -180,7 +180,11 @@ def run_kaggle_production_gate_and_visualizer() -> None:
     print(f"• Python Version                : {sys.version.split()[0]}", flush=True)
     try:
         import torch
-        print(f"• PyTorch Version               : {torch.__version__} (CUDA: {torch.cuda.is_available()})", flush=True)
+        cuda_avail = torch.cuda.is_available()
+        dev_name = torch.cuda.get_device_name(0) if cuda_avail else "CPU"
+        print(f"• PyTorch Version               : {torch.__version__}", flush=True)
+        print(f"• CUDA Available                : {cuda_avail}", flush=True)
+        print(f"• Accelerator Device            : {dev_name}", flush=True)
     except ImportError:
         pass
     print(f"• Input Root                    : {config.input_root}", flush=True)
@@ -242,6 +246,7 @@ def run_kaggle_production_gate_and_visualizer() -> None:
         records = cand_data.get("records", [])
         evidence_pool = cand_data.get("evidence_frame_pool", [])
         translation_meta = cand_data.get("translation", {})
+        units_trace = translation_meta.get("units", [])
         vf_trace = cand_data.get("video_first", {})
         adaptive_diag = vf_trace.get("adaptive_budget", {})
 
@@ -261,8 +266,9 @@ def run_kaggle_production_gate_and_visualizer() -> None:
         # Distractor audit for p1-4 (London Zoo)
         distractor_l22_rank = next((p["rank"] for p in records if p["video_id"] == "L22_V021"), 999)
 
-        # Extract per-scene top128 pools
+        # Extract per-scene top128 pools & exact ranks
         per_scene_top128 = vf_trace.get("per_scene_top128", {})
+        per_scene_ranks = vf_trace.get("per_scene_ranks", {})
         temporal_scenes = [u for u in units_trace if u.get("role") == "temporal_scene" or u.get("temporal_index") is not None]
 
         # Calculate offline GT audit distances
@@ -274,20 +280,28 @@ def run_kaggle_production_gate_and_visualizer() -> None:
             min_dist = 999999
             nearest_frame = None
 
-        # Check target membership in per-scene pools
+        # Check target membership & exact ranks in per-scene pools
         t1_var_id = temporal_scenes[0]["segments"][0]["variant_id"] if len(temporal_scenes) > 0 and temporal_scenes[0].get("segments") else None
         t2_var_id = temporal_scenes[1]["segments"][0]["variant_id"] if len(temporal_scenes) > 1 and temporal_scenes[1].get("segments") else None
         t1_pool = per_scene_top128.get(t1_var_id, []) if t1_var_id else []
         t2_pool = per_scene_top128.get(t2_var_id, []) if t2_var_id else []
         union_pool = set(t1_pool).union(set(t2_pool)) if (t1_pool or t2_pool) else set()
 
+        t1_exact_rank = per_scene_ranks.get(t1_var_id, {}).get(target_vid, 999) if t1_var_id else 999
+        t2_exact_rank = per_scene_ranks.get(t2_var_id, {}).get(target_vid, 999) if t2_var_id else 999
         target_in_t1 = target_vid in t1_pool
         target_in_t2 = target_vid in t2_pool
         target_in_union = target_vid in union_pool if union_pool else True
 
-        # Extract temporal chain diagnostic for target video if available
+        # Extract temporal chain diagnostic and topM peaks for target video
         target_vid_ev = next((v for v in vf_trace.get("selected_videos", []) if v["video_id"] == target_vid), None)
         target_chain_info = target_vid_ev.get("temporal_chain") if target_vid_ev else None
+        target_topM_t1 = target_vid_ev["per_variant"][0].get("top_m_peaks", []) if target_vid_ev and len(target_vid_ev["per_variant"]) > 0 else []
+        target_topM_t2 = target_vid_ev["per_variant"][1].get("top_m_peaks", []) if target_vid_ev and len(target_vid_ev["per_variant"]) > 1 else []
+        raw_t1_val = target_vid_ev["per_variant"][0].get("top_m_score", 0.0) if target_vid_ev and len(target_vid_ev["per_variant"]) > 0 else 0.0
+        raw_t2_val = target_vid_ev["per_variant"][1].get("top_m_score", 0.0) if target_vid_ev and len(target_vid_ev["per_variant"]) > 1 else 0.0
+        tau_gate = 0.15
+        target_gate_pass = (min(raw_t1_val, raw_t2_val) >= tau_gate) if len(temporal_scenes) >= 2 else (raw_t1_val >= tau_gate)
 
         print("\n" + "=" * 100, flush=True)
         print(f"QUERY [{idx:02d}/{len(p1_queries):02d}]: {qid}", flush=True)
@@ -324,10 +338,13 @@ def run_kaggle_production_gate_and_visualizer() -> None:
         print(f"  Target Groundtruth             : Video {target_vid} @ Physical Frame {target_frame}", flush=True)
         print(f"  Target Video Rank              : Rank #{target_rank} ({'TOP 64 PASS ✅' if target_rank <= 64 else 'FAIL ❌'})", flush=True)
         if len(temporal_scenes) >= 2:
-            print(f"  Target in T1 Pool (128)        : {'YES ✅' if target_in_t1 else 'NO ❌'}", flush=True)
-            print(f"  Target in T2 Pool (128)        : {'YES ✅' if target_in_t2 else 'NO ❌'}", flush=True)
-            print(f"  Target in Union                : {'YES ✅' if target_in_union else 'NO ❌'}", flush=True)
-            print(f"  Target Chain Valid             : {target_chain_info.get('has_valid_chain') if target_chain_info else 'N/A'}", flush=True)
+            print(f"  Target Scene Rank T1           : Rank #{t1_exact_rank} (In Top128 Pool: {'YES ✅' if target_in_t1 else 'NO ❌'})", flush=True)
+            print(f"  Target Scene Rank T2           : Rank #{t2_exact_rank} (In Top128 Pool: {'YES ✅' if target_in_t2 else 'NO ❌'})", flush=True)
+            print(f"  Target in Union (Top128 U)     : {'YES ✅' if target_in_union else 'NO ❌'}", flush=True)
+            print(f"  Raw Gate Threshold (tau_gate)  : {tau_gate} (Target Pass: {'YES ✅' if target_gate_pass else 'NO ❌'})", flush=True)
+            print(f"  Target Top-M Peaks T1          : {target_topM_t1}", flush=True)
+            print(f"  Target Top-M Peaks T2          : {target_topM_t2}", flush=True)
+            print(f"  Target Chain Valid             : {target_chain_info.get('has_valid_chain') if target_chain_info else 'N/A'} (Frames: {target_chain_info.get('selected_chain_frames') if target_chain_info else 'N/A'})", flush=True)
         print(f"  Nearest Evidence Frame         : Frame {nearest_frame} (Distance: {min_dist} frames)", flush=True)
         print(f"  Evidence-Pool Interval Recall  : {'RETAINED (<= 150 frames) ✅' if in_evidence_pool else 'MISSED ❌'}", flush=True)
         print(f"  Official FrameHit@100          : {'Rank #' + str(official_frame_hit) + ' ✅' if official_frame_hit <= 100 else 'NO HIT (Rank ' + str(official_frame_hit) + ') ❌'}", flush=True)
@@ -336,7 +353,8 @@ def run_kaggle_production_gate_and_visualizer() -> None:
 
         cand_sha256 = (query_out_dir / "candidates.json.sha256").read_text(encoding="utf-8").strip() if (query_out_dir / "candidates.json.sha256").exists() else top100_sha256
         print("\nARTIFACT INTEGRITY:", flush=True)
-        print(f"  Candidates Artifact Path       : {candidates_file}", flush=True)
+        print(f"  Artifact Path (Evaluator)      : {candidates_file}", flush=True)
+        print(f"  Artifact Path (Visualizer)     : {candidates_file}", flush=True)
         print(f"  Candidates File SHA256         : {cand_sha256}", flush=True)
         print(f"  Top100 File SHA256             : {top100_sha256}", flush=True)
         print(f"  Evaluator Verified SHA256      : {cand_sha256}", flush=True)
@@ -360,7 +378,7 @@ def run_kaggle_production_gate_and_visualizer() -> None:
     # 2. PROMOTION GATE AUDIT TABLE
     # =========================================================================
     print("\n" + "=" * 120, flush=True)
-    print("KIS V2-A.2 OFFICIAL PROMOTION GATE EVALUATION (N=5)", flush=True)
+    print("KIS V2-A.2 3-TIER RECALL METRICS SUMMARY (N=5)", flush=True)
     print("=" * 120, flush=True)
 
     n_queries = len(query_results)
@@ -369,10 +387,10 @@ def run_kaggle_production_gate_and_visualizer() -> None:
     ev_pool_count = sum(1 for r in query_results if r["in_evidence_pool"])
     frame100_count = sum(1 for r in query_results if r["official_frame_hit"] <= 100)
 
-    print(f"• Primary Target Video Top64 Recall : {top64_count}/{n_queries} ({top64_count/n_queries*100:.1f}%) [CRITERIA: 5/5]")
-    print(f"• Pre-Verifier Evidence Pool Recall : {ev_pool_count}/{n_queries} ({ev_pool_count/n_queries*100:.1f}%)")
+    print(f"• Tier 1: Target Video Hit@64       : {top64_count}/{n_queries} ({top64_count/n_queries*100:.1f}%) [CRITERIA: 5/5]")
+    print(f"• Tier 2: Evidence Pool Interval Hit: {ev_pool_count}/{n_queries} ({ev_pool_count/n_queries*100:.1f}%)")
+    print(f"• Tier 3: Final Top100 Frame Hit    : {frame100_count}/{n_queries} ({frame100_count/n_queries*100:.1f}%)")
     print(f"• Target Video Top32 Recall (Diag)  : {top32_count}/{n_queries} ({top32_count/n_queries*100:.1f}%)")
-    print(f"• Official Physical Frame R@100     : {frame100_count}/{n_queries} ({frame100_count/n_queries*100:.1f}%)")
 
     # Audit individual queries
     p1_5 = next(r for r in query_results if r["qid"] == "query-p1-5-kis")
