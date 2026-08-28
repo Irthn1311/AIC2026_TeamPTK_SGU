@@ -29,6 +29,30 @@ import numpy as np
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 
+
+class TeeLogger:
+    """Write to both stdout and a log file simultaneously."""
+
+    def __init__(self, log_path: str) -> None:
+        self._stdout = sys.stdout
+        self._log = open(log_path, "w", encoding="utf-8")
+
+    def write(self, text: str) -> int:
+        self._stdout.write(text)
+        self._log.write(text)
+        self._log.flush()
+        return len(text)
+
+    def flush(self) -> None:
+        self._stdout.flush()
+        self._log.flush()
+
+    def close(self) -> None:
+        self._log.close()
+
+
+LOG_PATH = "/kaggle/working/v2a2_full_log.txt" if Path("/kaggle/working").exists() else str(Path(__file__).resolve().parents[1] / "scratch" / "v2a2_full_log.txt")
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SYSTEM_TAI_SRC = REPO_ROOT / "systems" / "system_tai" / "src"
 if str(SYSTEM_TAI_SRC) not in sys.path:
@@ -91,6 +115,22 @@ def locate_keyframe_path(dataset_root: Path, video_id: str, frame_id: int) -> Pa
 
 
 def run_kaggle_production_gate_and_visualizer() -> None:
+    tee = TeeLogger(LOG_PATH)
+    sys.stdout = tee
+    print(f"📝 Full log will be saved to: {LOG_PATH}", flush=True)
+    try:
+        _run_gate_inner()
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+    finally:
+        sys.stdout = tee._stdout
+        tee.close()
+        print(f"\n📝 Full log saved to: {LOG_PATH}")
+        print(f"   Run: !cat {LOG_PATH}")
+
+
+def _run_gate_inner() -> None:
     # 5 Official Preliminary Round KIS Queries (100% Pure Vietnamese)
     # Groundtruth targets (Evaluator-Only: strictly offline assessment)
     p1_queries = [
@@ -216,6 +256,7 @@ def run_kaggle_production_gate_and_visualizer() -> None:
     latencies = []
 
     for idx, q in enumerate(p1_queries, start=1):
+      try:
         qid = q["query_id"]
         target_vid = q["target_vid"]
         target_frame = q["target_frame"]
@@ -373,6 +414,11 @@ def run_kaggle_production_gate_and_visualizer() -> None:
             "records": records,
             "distractor_l22_rank": distractor_l22_rank if qid == "query-p1-4-kis" else None,
         })
+      except Exception as exc:
+        import traceback
+        print(f"\n❌ ERROR processing query {q.get('query_id', idx)}: {exc}", flush=True)
+        traceback.print_exc()
+        print("Continuing to next query...\n", flush=True)
 
     # =========================================================================
     # 2. PROMOTION GATE AUDIT TABLE
