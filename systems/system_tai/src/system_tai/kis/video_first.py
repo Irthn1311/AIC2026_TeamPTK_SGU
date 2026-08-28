@@ -314,7 +314,7 @@ def compute_adaptive_video_budget_v2(
     medium_k: int = 48,
     high_k: int = 64,
 ) -> tuple[int, AdaptiveBudgetDiagnostic]:
-    """Adaptive video budget strictly clamped to {32, 48, 64} (Expand-only in V2-A)."""
+    """Adaptive video budget strictly clamped to {32, 48, 64} with robust gap-preserving standardization."""
     scores = sorted(fused_scores, reverse=True)[:32]
     reasons: list[str] = []
     if len(scores) < 32:
@@ -329,11 +329,18 @@ def compute_adaptive_video_budget_v2(
             adaptive_reasons=("insufficient_candidates_for_entropy",),
         )
 
-    # 1. Normalized entropy calculation
+    # 1. Robust Median / MAD standardization
+    med = float(scores[len(scores) // 2])
+    abs_devs = sorted(abs(s - med) for s in scores)
+    mad = float(abs_devs[len(abs_devs) // 2])
+    mad_scale = max(mad * 1.4826, 0.01)
+
+    # Standardized score difference from maximum
     max_s = scores[0]
-    exp_s = [math.exp((s - max_s) / 0.1) for s in scores]
-    sum_exp = sum(exp_s)
-    probs = [e / sum_exp for e in exp_s]
+    z_scores = [(s - max_s) / mad_scale for s in scores]
+    exp_z = [math.exp(max(z, -30.0)) for z in z_scores]
+    sum_exp = sum(exp_z)
+    probs = [e / sum_exp for e in exp_z]
     entropy = -sum(p * math.log(p + 1e-12) for p in probs)
     h_norm = float(entropy / math.log(32))
 
@@ -341,27 +348,27 @@ def compute_adaptive_video_budget_v2(
     delta_1_5 = float(scores[0] - scores[4])
     delta_1_16 = float(scores[0] - scores[15])
 
-    # Complexity rule (reachability check)
+    # Complexity rule (attribute/count sensitive queries)
     k_complexity = base_k
-    if clause_count >= 3 or has_attributes:
+    if has_attributes:
         k_complexity = max(k_complexity, medium_k)
-        if clause_count >= 4:
-            reasons.append(f"complexity: high_clause_count({clause_count}>=4)")
-        elif has_attributes:
-            reasons.append("complexity: has_supporting_attributes")
-        else:
-            reasons.append(f"complexity: multi_clause({clause_count}>=3)")
+        reasons.append("complexity: has_supporting_attributes")
+    elif clause_count >= 4:
+        k_complexity = max(k_complexity, medium_k)
+        reasons.append(f"complexity: high_clause_count({clause_count}>=4)")
 
-    # Uncertainty rule (Entropy + Margins)
-    is_highly_flat = (h_norm >= 0.85) or (delta_1_5 <= 0.05)
-    is_moderately_flat = (h_norm >= 0.70) or (delta_1_5 <= 0.10) or (delta_1_16 <= 0.20)
+    # Uncertainty rule (Strong Agreement between Entropy & Margins)
+    # K=64 requires strong agreement: high entropy AND tight margin
+    is_strongly_uncertain = (h_norm >= 0.80 and delta_1_5 <= 0.05) or (delta_1_5 <= 0.03 and delta_1_16 <= 0.08)
+    # K=48 requires moderate uncertainty
+    is_moderately_uncertain = (h_norm >= 0.65) or (delta_1_5 <= 0.08) or (delta_1_16 <= 0.15)
 
-    if is_highly_flat:
+    if is_strongly_uncertain:
         k_uncertainty = high_k
-        reasons.append(f"uncertainty: highly_flat(entropy={h_norm:.2f}, delta1_5={delta_1_5:.3f})")
-    elif is_moderately_flat:
+        reasons.append(f"uncertainty: strong_agreement(entropy={h_norm:.2f}, delta1_5={delta_1_5:.3f})")
+    elif is_moderately_uncertain:
         k_uncertainty = medium_k
-        reasons.append(f"uncertainty: moderately_flat(entropy={h_norm:.2f}, delta1_5={delta_1_5:.3f})")
+        reasons.append(f"uncertainty: moderate(entropy={h_norm:.2f}, delta1_5={delta_1_5:.3f})")
     else:
         k_uncertainty = base_k
         reasons.append(f"uncertainty: confident_peak(entropy={h_norm:.2f}, delta1_5={delta_1_5:.3f})")
@@ -379,7 +386,7 @@ def compute_adaptive_video_budget_v2(
         normalized_entropy=h_norm,
         top1_top5_margin=delta_1_5,
         top1_top16_margin=delta_1_16,
-        is_flat=is_moderately_flat or is_highly_flat,
+        is_flat=is_moderately_uncertain or is_strongly_uncertain,
         adaptive_reasons=tuple(reasons),
     )
     return chosen_k, diagnostic
