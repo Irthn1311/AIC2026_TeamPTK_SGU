@@ -143,75 +143,75 @@ def get_git_head() -> str:
         return "UNKNOWN_COMMIT"
 
 
+_SEARCH_DIRS_CACHE: list[Path] | None = None
+
+
+def get_candidate_search_dirs(dataset_root: Path) -> list[Path]:
+    global _SEARCH_DIRS_CACHE
+    if _SEARCH_DIRS_CACHE is not None:
+        return _SEARCH_DIRS_CACHE
+
+    dirs = set()
+    roots_to_scan = [dataset_root]
+    if Path("/kaggle/input").exists():
+        roots_to_scan.append(Path("/kaggle/input"))
+
+    for r in roots_to_scan:
+        if r.exists():
+            dirs.add(r)
+            try:
+                for entry in os.scandir(r):
+                    if entry.is_dir():
+                        dirs.add(Path(entry.path))
+                        # Scan 1 level deeper (depth 2)
+                        try:
+                            for sub in os.scandir(entry.path):
+                                if sub.is_dir():
+                                    dirs.add(Path(sub.path))
+                        except (PermissionError, OSError):
+                            pass
+            except (PermissionError, OSError):
+                pass
+    _SEARCH_DIRS_CACHE = list(dirs)
+    return _SEARCH_DIRS_CACHE
+
+
 def find_source_video_file(dataset_root: Path, video_id: str) -> Path | None:
-    patterns = [
-        dataset_root / "videos" / f"{video_id}.mp4",
-        dataset_root / "video" / f"{video_id}.mp4",
-        dataset_root / f"{video_id}.mp4",
-        dataset_root / "videos" / f"{video_id}.mkv",
-        dataset_root / f"{video_id}.mkv",
-        dataset_root / "videos" / f"{video_id}.avi",
-        dataset_root / f"{video_id}.avi",
-    ]
-    for p in patterns:
-        if p.is_file():
-            return p
-    # Search recursively in dataset root subdirectories
-    search_dirs = [dataset_root]
-    if dataset_root.parent.exists() and dataset_root.parent != dataset_root:
-        search_dirs.append(dataset_root.parent)
+    search_dirs = get_candidate_search_dirs(dataset_root)
     for sdir in search_dirs:
         for ext in ("mp4", "mkv", "avi"):
-            for match in sdir.glob(f"**/{video_id}.{ext}"):
-                if match.is_file():
-                    return match
+            for sub in ("", "videos", "video", "Videos", "Video"):
+                cand = sdir / sub / f"{video_id}.{ext}" if sub else sdir / f"{video_id}.{ext}"
+                if cand.is_file():
+                    return cand
     return None
 
 
 def find_keyframe_image(dataset_root: Path, video_id: str, frame_id: int, keyframe_order: int | None = None) -> Path | None:
-    patterns = []
+    search_dirs = get_candidate_search_dirs(dataset_root)
+    names_to_try = [
+        f"{frame_id:06d}.jpg",
+        f"{frame_id:05d}.jpg",
+        f"{frame_id:04d}.jpg",
+        f"{frame_id}.jpg",
+    ]
     if keyframe_order is not None:
-        patterns.extend([
-            dataset_root / "keyframes" / video_id / f"{keyframe_order:06d}.jpg",
-            dataset_root / "keyframes" / video_id / f"{keyframe_order:05d}.jpg",
-            dataset_root / "keyframes" / video_id / f"{keyframe_order:04d}.jpg",
-            dataset_root / "keyframes" / video_id / f"{keyframe_order:03d}.jpg",
-            dataset_root / "keyframes" / video_id / f"{keyframe_order}.jpg",
-            dataset_root / video_id / f"{keyframe_order:06d}.jpg",
-            dataset_root / video_id / f"{keyframe_order:05d}.jpg",
-            dataset_root / video_id / f"{keyframe_order:04d}.jpg",
-            dataset_root / video_id / f"{keyframe_order:03d}.jpg",
-            dataset_root / video_id / f"{keyframe_order}.jpg",
+        names_to_try.extend([
+            f"{keyframe_order:06d}.jpg",
+            f"{keyframe_order:05d}.jpg",
+            f"{keyframe_order:04d}.jpg",
+            f"{keyframe_order:03d}.jpg",
+            f"{keyframe_order}.jpg",
         ])
-    patterns.extend([
-        dataset_root / "keyframes" / video_id / f"{frame_id:06d}.jpg",
-        dataset_root / "keyframes" / video_id / f"{frame_id:05d}.jpg",
-        dataset_root / "keyframes" / video_id / f"{frame_id}.jpg",
-        dataset_root / video_id / f"{frame_id:06d}.jpg",
-        dataset_root / video_id / f"{frame_id:05d}.jpg",
-        dataset_root / video_id / f"{frame_id}.jpg",
-    ])
-    for p in patterns:
-        if p.is_file():
-            return p
-    # Search in dataset root subdirectories
-    search_dirs = [dataset_root]
-    if dataset_root.parent.exists() and dataset_root.parent != dataset_root:
-        search_dirs.append(dataset_root.parent)
+
     for sdir in search_dirs:
-        for match in sdir.glob(f"**/{video_id}/{frame_id:06d}.jpg"):
-            if match.is_file():
-                return match
-        for match in sdir.glob(f"**/{video_id}/{frame_id}.jpg"):
-            if match.is_file():
-                return match
-        if keyframe_order is not None:
-            for match in sdir.glob(f"**/{video_id}/{keyframe_order:06d}.jpg"):
-                if match.is_file():
-                    return match
-            for match in sdir.glob(f"**/{video_id}/{keyframe_order}.jpg"):
-                if match.is_file():
-                    return match
+        for folder_sub in ("", "keyframes", "Keyframes"):
+            base_folder = sdir / folder_sub / video_id if folder_sub else sdir / video_id
+            if base_folder.is_dir():
+                for name in names_to_try:
+                    cand = base_folder / name
+                    if cand.is_file():
+                        return cand
     return None
 
 
