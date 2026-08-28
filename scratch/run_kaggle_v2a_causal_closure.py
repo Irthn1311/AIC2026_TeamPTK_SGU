@@ -655,7 +655,7 @@ def run_p1_2_trace_and_raw_cosine_audit(runtime: OperationalKISRuntime) -> None:
         supporting_variant_ids=compiled_sq.supporting_variant_ids,
         temporal_variants=tuple(item.query_variant for item in compiled_sq.temporal_scene_variants),
         rrf_constant=runtime.config.rrf_constant,
-        nomination_depth=len(runtime.video_restricted_searcher.registry),
+        nomination_depth=len(runtime.video_restricted_searcher.registry.stores),
         config=vf_cfg,
     )
 
