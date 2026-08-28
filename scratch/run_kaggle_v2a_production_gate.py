@@ -48,42 +48,37 @@ def get_git_head() -> str:
 
 
 def run_kaggle_production_gate() -> None:
-    # 5 Official Preliminary Phase 1 KIS Queries
+    # 5 Official Preliminary Phase 1 KIS Queries (100% Pure Vietnamese)
     p1_queries = [
         {
             "query_id": "query-p1-1-kis",
             "source_vi": "Cảnh quay một nhóm hơn 5 người xếp thành hàng tập thể dục, cùng thực hiện động tác hai tay chạm mũi chân. Trong nhóm chỉ có một người đeo kính và ba người đội nón có màu đỏ.",
             "target_vid": "L30_V046",
             "target_frame": 2425,  # Keyframe 097
-            "translation_en": "A scene of a group of more than 5 people in a line exercising together touching toes with both hands, only one person wearing glasses and three people wearing red hats.",
         },
         {
             "query_id": "query-p1-2-kis",
             "source_vi": "Đoạn phim bắt đầu bằng một bản đồ, trên đó một loại công trình thủy lợi lần lượt xuất hiện bốn lần. Sau đó chuyển sang cảnh một con đập được quay từ trên cao, tiếp đến là cảnh cận con đập dưới trời mưa.",
             "target_vid": "L29_V018",
             "target_frame": 1250,
-            "translation_en": "The video starts with a map showing an irrigation construction appearing four times. Then shifts to an aerial view of a dam, followed by a close-up of the dam in the rain.",
         },
         {
             "query_id": "query-p1-4-kis",
             "source_vi": "Một đàn sư tử đang nghỉ ngơi và leo trèo trên các bục gỗ trong khu nuôi dưỡng, phía trước có bảng thông tin của London Zoo phục vụ công tác theo dõi và bảo tồn động vật.. Sau đó có cảnh hai nhân viên mặc áo xanh lá đang cân và ghi nhận số liệu của một con vật trong khuôn viên sở thú.",
             "target_vid": "L28_V012",
             "target_frame": 3500,
-            "translation_en": "A pride of lions resting and climbing on wooden platforms in enclosure with London Zoo sign board. Then two zookeepers in green shirts weighing and recording data of an animal in the zoo.",
         },
         {
             "query_id": "query-p1-5-kis",
             "source_vi": "Đoạn clip bắt đầu bằng việc đậu hà lan được bỏ vào với mực đang được xào trên chảo, bên cạnh là đĩa hành tây và ớt đỏ thái lát chuẩn bị cho vào món ăn. Đoạn clip kết thúc với khung quay chậm (slow motion) cảnh lắc chảo trên bếp lửa.",
             "target_vid": "L30_V021",
             "target_frame": 1800,
-            "translation_en": "The clip begins with peas being added to squid stir-frying in a pan, next to a plate of sliced onions and red peppers. The clip ends with a slow motion scene of tossing the pan over stove fire flame.",
         },
         {
             "query_id": "query-p1-6-kis",
             "source_vi": "Mẩu tin bắt đầu với hình ảnh nột người đàn ông mặc vest xanh đậm, sơ mi trắng và cà vạt, đang ngồi trên một chiếc ghế lớn. Ông cầm bằng hai tay một khối đá quý thô khá lớn, đưa lên gần mặt để quan sát. Bên phải là một phụ nữ mặc trang phục công sở màu đen và khăn trùm đầu màu hồng tím, đang đứng cạnh và mỉm cười. Tiếp theo có hình ảnh toàn cảnh từ trên cao của một mỏ đá quý lộ thiên quy mô lớn với hố khai thác sâu nhiều tầng và hệ thống đường vận chuyển bao quanh.",
             "target_vid": "L27_V005",
             "target_frame": 4200,
-            "translation_en": "The news starts with a man in dark blue suit white shirt and tie sitting in a large chair holding a large rough gemstone inspecting close to face. To the right is a woman in black business outfit with purple-pink hijab smiling. Then an aerial view of a large open-pit gemstone mine with terraced quarry pit.",
         },
     ]
 
@@ -100,7 +95,7 @@ def run_kaggle_production_gate() -> None:
             reuse_manifest_path = p
             break
 
-    # Setup base config
+    # Setup base config with 100% Dynamic VinAI Translation
     base_out = Path("/kaggle/working/output/production_gate") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "production_gate"
     config = SessionConfig(
         input_root=input_root,
@@ -109,13 +104,18 @@ def run_kaggle_production_gate() -> None:
         output_root=base_out,
         device="auto",
         allow_model_download=True,
+        enable_dynamic_translation=True,  # 100% Dynamic VinAI Translation
+        translation_model_name="vinai/vinai-translate-vi2en-v2",
+        translation_device="auto",
+        translation_allow_model_download=True,
+        translation_max_clip_tokens=75,
         default_output_top_k=100,
         default_refine_top_n=0,  # Pure retrieval gate: Verifier/refinement OFF
         rrf_constant=60.0,
     )
 
     print("=" * 120, flush=True)
-    print("KIS V2-A.1 — 5 OFFICIAL PRELIMINARY ROUND (SƠ TUYỂN ĐỢT 1) KAGGLE GATE", flush=True)
+    print("KIS V2-A.1 — 5 OFFICIAL PRELIMINARY ROUND (SƠ TUYỂN ĐỢT 1) PURE VIETNAMESE GATE", flush=True)
     print("=" * 120, flush=True)
     print(f"• Git Commit SHA                : {get_git_head()}", flush=True)
     print(f"• Python Version                : {sys.version.split()[0]}", flush=True)
@@ -125,7 +125,8 @@ def run_kaggle_production_gate() -> None:
     except ImportError:
         pass
     print(f"• Input Root                    : {config.input_root}", flush=True)
-    print(f"• Manifest Source               : {reuse_manifest_path or 'Auto-discovered'}", flush=True)
+    print(f"• Dynamic VinAI Translation     : ENABLED (vinai/vinai-translate-vi2en-v2 on {config.translation_device})", flush=True)
+    print(f"• Pure Vietnamese Queries       : 100% (Zero hardcoded English prompts)", flush=True)
     print(f"• Gemini / Visual Verifier      : OFF (Pure Retrieval Foundation Gate)", flush=True)
 
     # Bootstrap runtime
@@ -160,13 +161,12 @@ def run_kaggle_production_gate() -> None:
         target_vid = q["target_vid"]
         target_frame = q["target_frame"]
         q_vi = q["source_vi"]
-        q_en = q.get("translation_en")
 
         req = QueryRequest(
             request_id=f"gate-{qid}",
             query_id=qid,
             query_vi=q_vi,
-            query_en=q_en,
+            query_en=None,  # 100% Pure Vietnamese -> Dynamic VinAI Translation
             include_vi_variant=True,
             output_top_k=100,
             refine_top_n=0,
