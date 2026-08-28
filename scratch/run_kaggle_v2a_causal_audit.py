@@ -17,7 +17,6 @@ if str(REPO_ROOT) not in sys.path:
 if str(SYSTEM_TAI_SRC) not in sys.path:
     sys.path.insert(0, str(SYSTEM_TAI_SRC))
 
-from system_tai.kis.contest_schema import KISQuery, QueryVariant
 from system_tai.kis.session_engine import (
     OperationalKISRuntime,
     compile_vietnamese_semantic_query,
@@ -25,7 +24,10 @@ from system_tai.kis.session_engine import (
 )
 from system_tai.kis.session_schema import (
     KISVideoFirstConfig,
+    QueryLanguage,
     QueryRequest,
+    QueryVariant,
+    QueryVariantType,
     SemanticQueryConfig,
     SessionConfig,
 )
@@ -256,8 +258,8 @@ def run_p1_5_audit(runtime: OperationalKISRuntime) -> None:
         QueryVariant(
             variant_id=f"p1_5_arm_{i:02d}",
             text=text,
-            language="en",
-            variant_type="diagnostic",
+            language=QueryLanguage.ENGLISH,
+            variant_type=QueryVariantType.ENGLISH_TRANSLATION,
             weight=1.0,
         )
         for i, (_, text) in enumerate(prompts, start=1)
