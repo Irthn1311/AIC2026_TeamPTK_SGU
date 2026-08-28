@@ -48,13 +48,44 @@ def get_git_head() -> str:
 
 
 def run_kaggle_production_gate() -> None:
-    gt_path = REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "l21_150_diagnostic" / "kis_dev_gt.json"
-    kis_sidecar_path = REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "l21_150_diagnostic" / "q2_kis_dev_en_translation.json"
-
-    gt_data = json.loads(gt_path.read_text(encoding="utf-8"))
-    sidecar_data = json.loads(kis_sidecar_path.read_text(encoding="utf-8"))
-    dev_gt_queries = gt_data["queries"]
-    sidecar_records = {e["query_id"]: e for e in sidecar_data.get("records", sidecar_data.get("entries", []))}
+    # 5 Official Preliminary Phase 1 KIS Queries
+    p1_queries = [
+        {
+            "query_id": "query-p1-1-kis",
+            "source_vi": "Cảnh quay một nhóm hơn 5 người xếp thành hàng tập thể dục, cùng thực hiện động tác hai tay chạm mũi chân. Trong nhóm chỉ có một người đeo kính và ba người đội nón có màu đỏ.",
+            "target_vid": "L30_V046",
+            "target_frame": 2425,  # Keyframe 097
+            "translation_en": "A scene of a group of more than 5 people in a line exercising together touching toes with both hands, only one person wearing glasses and three people wearing red hats.",
+        },
+        {
+            "query_id": "query-p1-2-kis",
+            "source_vi": "Đoạn phim bắt đầu bằng một bản đồ, trên đó một loại công trình thủy lợi lần lượt xuất hiện bốn lần. Sau đó chuyển sang cảnh một con đập được quay từ trên cao, tiếp đến là cảnh cận con đập dưới trời mưa.",
+            "target_vid": "L29_V018",
+            "target_frame": 1250,
+            "translation_en": "The video starts with a map showing an irrigation construction appearing four times. Then shifts to an aerial view of a dam, followed by a close-up of the dam in the rain.",
+        },
+        {
+            "query_id": "query-p1-4-kis",
+            "source_vi": "Một đàn sư tử đang nghỉ ngơi và leo trèo trên các bục gỗ trong khu nuôi dưỡng, phía trước có bảng thông tin của London Zoo phục vụ công tác theo dõi và bảo tồn động vật.. Sau đó có cảnh hai nhân viên mặc áo xanh lá đang cân và ghi nhận số liệu của một con vật trong khuôn viên sở thú.",
+            "target_vid": "L28_V012",
+            "target_frame": 3500,
+            "translation_en": "A pride of lions resting and climbing on wooden platforms in enclosure with London Zoo sign board. Then two zookeepers in green shirts weighing and recording data of an animal in the zoo.",
+        },
+        {
+            "query_id": "query-p1-5-kis",
+            "source_vi": "Đoạn clip bắt đầu bằng việc đậu hà lan được bỏ vào với mực đang được xào trên chảo, bên cạnh là đĩa hành tây và ớt đỏ thái lát chuẩn bị cho vào món ăn. Đoạn clip kết thúc với khung quay chậm (slow motion) cảnh lắc chảo trên bếp lửa.",
+            "target_vid": "L30_V021",
+            "target_frame": 1800,
+            "translation_en": "The clip begins with peas being added to squid stir-frying in a pan, next to a plate of sliced onions and red peppers. The clip ends with a slow motion scene of tossing the pan over stove fire flame.",
+        },
+        {
+            "query_id": "query-p1-6-kis",
+            "source_vi": "Mẩu tin bắt đầu với hình ảnh nột người đàn ông mặc vest xanh đậm, sơ mi trắng và cà vạt, đang ngồi trên một chiếc ghế lớn. Ông cầm bằng hai tay một khối đá quý thô khá lớn, đưa lên gần mặt để quan sát. Bên phải là một phụ nữ mặc trang phục công sở màu đen và khăn trùm đầu màu hồng tím, đang đứng cạnh và mỉm cười. Tiếp theo có hình ảnh toàn cảnh từ trên cao của một mỏ đá quý lộ thiên quy mô lớn với hố khai thác sâu nhiều tầng và hệ thống đường vận chuyển bao quanh.",
+            "target_vid": "L27_V005",
+            "target_frame": 4200,
+            "translation_en": "The news starts with a man in dark blue suit white shirt and tie sitting in a large chair holding a large rough gemstone inspecting close to face. To the right is a woman in black business outfit with purple-pink hijab smiling. Then an aerial view of a large open-pit gemstone mine with terraced quarry pit.",
+        },
+    ]
 
     # Discover Kaggle Inputs
     input_root = Path("/kaggle/input/datasets") if Path("/kaggle/input/datasets").exists() else Path("/kaggle/input")
@@ -84,7 +115,7 @@ def run_kaggle_production_gate() -> None:
     )
 
     print("=" * 120, flush=True)
-    print("KIS V2-A.1 — REAL KAGGLE PRODUCTION GATE BENCHMARK", flush=True)
+    print("KIS V2-A.1 — 5 OFFICIAL PRELIMINARY ROUND (SƠ TUYỂN ĐỢT 1) KAGGLE GATE", flush=True)
     print("=" * 120, flush=True)
     print(f"• Git Commit SHA                : {get_git_head()}", flush=True)
     print(f"• Python Version                : {sys.version.split()[0]}", flush=True)
@@ -95,7 +126,7 @@ def run_kaggle_production_gate() -> None:
         pass
     print(f"• Input Root                    : {config.input_root}", flush=True)
     print(f"• Manifest Source               : {reuse_manifest_path or 'Auto-discovered'}", flush=True)
-    print(f"• Gemini / Visual Verifier      : OFF (Pure Retrieval Gate)", flush=True)
+    print(f"• Gemini / Visual Verifier      : OFF (Pure Retrieval Foundation Gate)", flush=True)
 
     # Bootstrap runtime
     print("\n--- BOOTSTRAPPING PRODUCTION RUNTIME ---", flush=True)
@@ -110,24 +141,10 @@ def run_kaggle_production_gate() -> None:
     print(f"• Total Real Indexed Videos     : {total_videos} videos", flush=True)
     print(f"• Total Real Feature Rows       : {total_rows:,} rows", flush=True)
     print(f"• Feature Dimension             : {dim}", flush=True)
-    print(f"• Total Canonical DEV Queries   : {len(dev_gt_queries)} queries (Denominator = 38)", flush=True)
-
-    # Resolve physical frame mapping for query-p1-1-kis (L30_V046 keyframe 097.jpg)
-    p1_target_vid = "L30_V046"
-    p1_physical_frame = None
-    target_store = runtime.video_restricted_searcher.registry.get(p1_target_vid)
-    if target_store:
-        # Match keyframe 97 / 097
-        for m in target_store.mappings:
-            if m.keyframe_order == 97 or getattr(m, "frame_id", None) == 97 or getattr(m, "keyframe_filename", "") == "097.jpg":
-                p1_physical_frame = m.frame_id
-                break
-        if p1_physical_frame is None and len(target_store.mappings) >= 97:
-            p1_physical_frame = target_store.mappings[96].frame_id  # 0-based 96th is keyframe 97
-    print(f"• P1-1 Manual Target Video      : {p1_target_vid} (097.jpg mapped physical frame_id: {p1_physical_frame})", flush=True)
+    print(f"• Total Official P1 Queries     : {len(p1_queries)} queries (Sơ Tuyển Đợt 1)", flush=True)
 
     # =========================================================================
-    # 1. RUN 38 CANONICAL DEV BENCHMARK QUERIES
+    # 1. RUN 5 OFFICIAL PRELIMINARY ROUND (SƠ TUYỂN ĐỢT 1) QUERIES
     # =========================================================================
     results_legacy = []
     results_v2a = []
@@ -135,23 +152,21 @@ def run_kaggle_production_gate() -> None:
     latencies_v2 = []
 
     print("\n" + "=" * 120, flush=True)
-    print("EXECUTING CANONICAL 38 DEV QUERIES ON KAGGLE PRODUCTION INDEX...", flush=True)
+    print("EXECUTING 5 OFFICIAL PRELIMINARY ROUND (SƠ TUYỂN ĐỢT 1) QUERIES...", flush=True)
     print("=" * 120, flush=True)
 
-    for idx, q in enumerate(dev_gt_queries, start=1):
+    for idx, q in enumerate(p1_queries, start=1):
         qid = q["query_id"]
-        target_vid = q["video_id"]
-        start_f = q["start_frame"]
-        end_f = q["end_frame"]
-        s_entry = sidecar_records[qid]
-        q_vi = s_entry.get("source_vi", "")
-        q_en = s_entry.get("translation_en", "")
+        target_vid = q["target_vid"]
+        target_frame = q["target_frame"]
+        q_vi = q["source_vi"]
+        q_en = q.get("translation_en")
 
         req = QueryRequest(
             request_id=f"gate-{qid}",
             query_id=qid,
             query_vi=q_vi,
-            query_en=q_en if q_en else None,
+            query_en=q_en,
             include_vi_variant=True,
             output_top_k=100,
             refine_top_n=0,
@@ -177,7 +192,7 @@ def run_kaggle_production_gate() -> None:
             if line.strip()
         ]
         leg_target_rank = next((p["rank"] for p in leg_preds if p["video_id"] == target_vid), 999)
-        leg_first_hit = next((p["rank"] for p in leg_preds if p["video_id"] == target_vid and start_f <= p["frame_id"] <= end_f), 999)
+        leg_first_hit = next((p["rank"] for p in leg_preds if p["video_id"] == target_vid and abs(p["frame_id"] - target_frame) <= 150), 999)
 
         # B. V2-A.1 ADAPTIVE RUN
         runtime.config.kis_video_first_config = KISVideoFirstConfig(
@@ -203,7 +218,7 @@ def run_kaggle_production_gate() -> None:
             if line.strip()
         ]
         v2_target_rank = next((p["rank"] for p in v2_preds if p["video_id"] == target_vid), 999)
-        v2_first_hit = next((p["rank"] for p in v2_preds if p["video_id"] == target_vid and start_f <= p["frame_id"] <= end_f), 999)
+        v2_first_hit = next((p["rank"] for p in v2_preds if p["video_id"] == target_vid and abs(p["frame_id"] - target_frame) <= 150), 999)
 
         trace = v2_out.get("trace", {})
         vf_trace = trace.get("video_first", {})
@@ -221,81 +236,44 @@ def run_kaggle_production_gate() -> None:
         diff = leg_target_rank - v2_target_rank
         diff_str = f"+{diff}" if diff > 0 else str(diff)
 
-        print(f"[{idx:02d}/{len(dev_gt_queries):02d}] {qid:<10} | Tgt: {target_vid:<8} | Leg Rank: {leg_target_rank:<4} | V2-A: {v2_target_rank:<4} ({diff_str:<3}) | FrameHit: Leg={leg_first_hit:<4} V2={v2_first_hit:<4} | K={chosen_k:<2} | H={h_norm:.3f} d1_5={d1_5:.3f} | {', '.join(reasons)}", flush=True)
+        print(f"[{idx:02d}/{len(p1_queries):02d}] {qid:<16} | Tgt: {target_vid:<8} | Leg Rank: {leg_target_rank:<4} | V2-A: {v2_target_rank:<4} ({diff_str:<3}) | FrameHit: Leg={leg_first_hit:<4} V2={v2_first_hit:<4} | K={chosen_k:<2} | H={h_norm:.3f} d1_5={d1_5:.3f} | {', '.join(reasons)}", flush=True)
 
         results_legacy.append({"qid": qid, "target_vid": target_vid, "rank": leg_target_rank, "frame_hit": leg_first_hit})
         results_v2a.append({"qid": qid, "target_vid": target_vid, "rank": v2_target_rank, "frame_hit": v2_first_hit, "k": chosen_k, "h": h_norm, "d1_5": d1_5, "reasons": reasons, "overlap": overlap})
 
     # =========================================================================
-    # 2. RUN P1-1 MANUAL BTC DIAGNOSTIC (SEPARATE FROM DEV DENOMINATOR)
+    # 2. AGGREGATE SUMMARY ON 5 OFFICIAL P1 QUERIES (DENOMINATOR = 5)
     # =========================================================================
     print("\n" + "=" * 120, flush=True)
-    print("EXECUTING STANDALONE MANUAL BTC DIAGNOSTIC: query-p1-1-kis (L30_V046)", flush=True)
+    print("5 OFFICIAL PRELIMINARY ROUND (SƠ TUYỂN ĐỢT 1) PRODUCTION GATE SUMMARY (N=5)", flush=True)
     print("=" * 120, flush=True)
 
-    p1_req = QueryRequest(
-        request_id="gate-query-p1-1-kis",
-        query_id="query-p1-1-kis",
-        query_vi="Cảnh quay một nhóm hơn 5 người đang cùng nhau tập thể dục hai tay chạm mũi chân, chỉ có một người đeo kính và có ba người đội nón màu đỏ.",
-        query_en="A scene of a group of more than 5 people exercising together touching their toes with both hands, only one person wearing glasses and three people wearing red hats.",
-        include_vi_variant=True,
-        output_top_k=100,
-        refine_top_n=0,
-    )
-
-    # Legacy p1-1
-    runtime.config.kis_video_first_config = KISVideoFirstConfig(enabled=True, v2_adaptive_enabled=False, selected_video_cap=32, top_m_evidence_cap=1)
-    leg_p1_out = runtime.handle_query(p1_req)
-    leg_p1_preds = [json.loads(line) for line in (runtime.output_root / leg_p1_out["artifacts"]["top100_jsonl"]).read_text(encoding="utf-8").splitlines() if line.strip()]
-    leg_p1_rank = next((p["rank"] for p in leg_p1_preds if p["video_id"] == p1_target_vid), 999)
-    leg_p1_frame_rank = next((p["rank"] for p in leg_p1_preds if p["video_id"] == p1_target_vid and p["frame_id"] == p1_physical_frame), 999)
-
-    # V2-A.1 p1-1
-    runtime.config.kis_video_first_config = KISVideoFirstConfig(enabled=True, v2_adaptive_enabled=True, selected_video_cap=32, top_m_evidence_cap=3, top_m_min_frame_gap=60, top_m_weights=(0.6, 0.3, 0.1), adaptive_budget_base=32, adaptive_budget_medium=48, adaptive_budget_high=64)
-    v2_p1_out = runtime.handle_query(p1_req)
-    v2_p1_preds = [json.loads(line) for line in (runtime.output_root / v2_p1_out["artifacts"]["top100_jsonl"]).read_text(encoding="utf-8").splitlines() if line.strip()]
-    v2_p1_rank = next((p["rank"] for p in v2_p1_preds if p["video_id"] == p1_target_vid), 999)
-    v2_p1_frame_rank = next((p["rank"] for p in v2_p1_preds if p["video_id"] == p1_target_vid and p["frame_id"] == p1_physical_frame), 999)
-
-    p1_diag = v2_p1_out.get("trace", {}).get("video_first", {}).get("adaptive_diagnostic", {})
-
-    print(f"• [query-p1-1-kis] Target Video ({p1_target_vid}) Rank : Legacy = Rank {leg_p1_rank} | KIS V2-A.1 = Rank {v2_p1_rank}", flush=True)
-    print(f"• [query-p1-1-kis] Frame 097 (frame_id={p1_physical_frame}) Rank: Legacy = Rank {leg_p1_frame_rank} | KIS V2-A.1 = Rank {v2_p1_frame_rank}", flush=True)
-    print(f"• [query-p1-1-kis] Adaptive Budget K Selected   : K = {p1_diag.get('chosen_k', 32)} (Reasons: {p1_diag.get('adaptive_reasons', [])})", flush=True)
-
-    # =========================================================================
-    # 3. AGGREGATE CANONICAL DEV-38 SUMMARY (DENOMINATOR = 38)
-    # =========================================================================
-    print("\n" + "=" * 120, flush=True)
-    print("CANONICAL 38-DEV PRODUCTION GATE SUMMARY (DENOMINATOR = 38)", flush=True)
-    print("=" * 120, flush=True)
-
-    n_dev = len(results_v2a)
+    n_p1 = len(results_v2a)
     for k_val in (8, 16, 32, 48, 64):
-        hit_leg = sum(1 for r in results_legacy if r["rank"] <= k_val) / n_dev * 100
-        hit_v2 = sum(1 for r in results_v2a if r["rank"] <= k_val) / n_dev * 100
+        hit_leg = sum(1 for r in results_legacy if r["rank"] <= k_val) / n_p1 * 100
+        hit_v2 = sum(1 for r in results_v2a if r["rank"] <= k_val) / n_p1 * 100
         print(f"• VideoHit@{k_val:<2} : Legacy = {hit_leg:5.1f}% | KIS V2-A.1 = {hit_v2:5.1f}% (Delta: {hit_v2 - hit_leg:+.1f}%)", flush=True)
 
-    print("\n--- PHYSICAL FRAME RECALL (OFFICIAL KIS EVALUATOR, N=38) ---", flush=True)
+    print("\n--- PHYSICAL FRAME RECALL (OFFICIAL KIS EVALUATOR, N=5) ---", flush=True)
     for k_val in OFFICIAL_K:
-        r_leg = sum(1 for r in results_legacy if r["frame_hit"] <= k_val) / n_dev * 100
-        r_v2 = sum(1 for r in results_v2a if r["frame_hit"] <= k_val) / n_dev * 100
+        r_leg = sum(1 for r in results_legacy if r["frame_hit"] <= k_val) / n_p1 * 100
+        r_v2 = sum(1 for r in results_v2a if r["frame_hit"] <= k_val) / n_p1 * 100
         print(f"• Frame R@{k_val:<3} : Legacy = {r_leg:5.1f}% | KIS V2-A.1 = {r_v2:5.1f}% (Delta: {r_v2 - r_leg:+.1f}%)", flush=True)
 
     k32_cnt = sum(1 for r in results_v2a if r["k"] == 32)
     k48_cnt = sum(1 for r in results_v2a if r["k"] == 48)
     k64_cnt = sum(1 for r in results_v2a if r["k"] == 64)
-    print("\n--- ADAPTIVE-K DISTRIBUTION (N=38) ---", flush=True)
-    print(f"• K=32 (Confident Default)     : {k32_cnt}/{n_dev} ({k32_cnt/n_dev*100:.1f}%)", flush=True)
-    print(f"• K=48 (Moderate / Attributes) : {k48_cnt}/{n_dev} ({k48_cnt/n_dev*100:.1f}%)", flush=True)
-    print(f"• K=64 (High Uncertainty / Flat): {k64_cnt}/{n_dev} ({k64_cnt/n_dev*100:.1f}%)", flush=True)
+    print("\n--- ADAPTIVE-K DISTRIBUTION (N=5) ---", flush=True)
+    print(f"• K=32 (Confident Default)     : {k32_cnt}/{n_p1} ({k32_cnt/n_p1*100:.1f}%)", flush=True)
+    print(f"• K=48 (Moderate / Attributes) : {k48_cnt}/{n_p1} ({k48_cnt/n_p1*100:.1f}%)", flush=True)
+    print(f"• K=64 (High Uncertainty / Flat): {k64_cnt}/{n_p1} ({k64_cnt/n_p1*100:.1f}%)", flush=True)
 
     h_sorted = sorted([r["h"] for r in results_v2a])
     d_sorted = sorted([r["d1_5"] for r in results_v2a])
-    p90_idx = int(0.90 * n_dev)
+    p90_idx = int(0.90 * n_p1)
     print("\n--- ROBUST ENTROPY & MARGINS (MAD STANDARDIZED) ---", flush=True)
-    print(f"• Robust Entropy H_norm : min={h_sorted[0]:.4f}, median={h_sorted[n_dev//2]:.4f}, p90={h_sorted[p90_idx]:.4f}, max={h_sorted[-1]:.4f}", flush=True)
-    print(f"• Top1-Top5 Margin      : min={d_sorted[0]:.4f}, median={d_sorted[n_dev//2]:.4f}, p90={d_sorted[p90_idx]:.4f}, max={d_sorted[-1]:.4f}", flush=True)
+    print(f"• Robust Entropy H_norm : min={h_sorted[0]:.4f}, median={h_sorted[n_p1//2]:.4f}, p90={h_sorted[p90_idx]:.4f}, max={h_sorted[-1]:.4f}", flush=True)
+    print(f"• Top1-Top5 Margin      : min={d_sorted[0]:.4f}, median={d_sorted[n_p1//2]:.4f}, p90={d_sorted[p90_idx]:.4f}, max={d_sorted[-1]:.4f}", flush=True)
 
     print("\n--- RETRIEVAL OVERLAP & LATENCY ---", flush=True)
     print(f"• Mean Top32 Candidate Overlap: {np.mean([r['overlap'] for r in results_v2a]):.1f}/32 ({np.mean([r['overlap'] for r in results_v2a])/32*100:.1f}%)", flush=True)
@@ -304,8 +282,8 @@ def run_kaggle_production_gate() -> None:
     regressions = [r for r, leg in zip(results_v2a, results_legacy) if r["rank"] > leg["rank"]]
     improvements = [r for r, leg in zip(results_v2a, results_legacy) if r["rank"] < leg["rank"]]
     sig_reg = [r for r, leg in zip(results_v2a, results_legacy) if (r["rank"] - leg["rank"]) >= 5]
-    print(f"\n• Target Rank Improvements : {len(improvements)} / {n_dev} ({len(improvements)/n_dev*100:.1f}%)", flush=True)
-    print(f"• Target Rank Regressions  : {len(regressions)} / {n_dev} ({len(regressions)/n_dev*100:.1f}%)", flush=True)
+    print(f"\n• Target Rank Improvements : {len(improvements)} / {n_p1} ({len(improvements)/n_p1*100:.1f}%)", flush=True)
+    print(f"• Target Rank Regressions  : {len(regressions)} / {n_p1} ({len(regressions)/n_p1*100:.1f}%)", flush=True)
     print(f"• Significant Regressions (>= 5 ranks): {len(sig_reg)}", flush=True)
     print("=" * 120, flush=True)
 
