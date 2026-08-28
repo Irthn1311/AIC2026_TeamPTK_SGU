@@ -32,10 +32,6 @@ from system_tai.kis.session_schema import (
 )
 from system_tai.retrieval.semantic_query import SemanticQueryConfig
 from system_tai.kis.video_first import (
-    FusedVideoEvidence,
-    build_kis_video_first_outcome,
-    fuse_restricted_frames,
-    fuse_video_maxima_v2,
     solve_temporal_chain,
 )
 
@@ -531,33 +527,42 @@ def run_p1_2_audit(runtime: OperationalKISRuntime) -> None:
         per_query_result_cap=runtime.config.kis_video_first_config.restricted_frames_per_video_per_variant,
     )
 
-    selected_objects = [
-        FusedVideoEvidence(
-            video_id=item["video_id"],
-            rank=item["rank"],
-            fusion_score=item["fusion_score"],
-            variant_hit_count=item.get("variant_hit_count", 1),
-            primary_coverage_count=item.get("primary_coverage_count", 1),
-            best_individual_rank=item.get("best_individual_rank", item["rank"]),
-            per_variant=(),
-            temporal_chain=None,
-        )
-        for item in selected_videos
-    ]
+    by_identity = {}
+    selected_ids = sorted(item["video_id"] for item in selected_videos)
+    for variant in variants:
+        per_video = restricted.rankings.get(variant.variant_id, {})
+        hits = [hit for vid in selected_ids for hit in per_video.get(vid, ())]
+        ordered = sorted(hits, key=lambda h: (-h.cosine_score, h.video_id, h.frame_id, h.clip_row))
+        best_for_variant = {}
+        for rank, h in enumerate(ordered, start=1):
+            ident = (h.video_id, h.frame_id)
+            if ident not in best_for_variant:
+                best_for_variant[ident] = (rank, h)
+        for ident, (rank, h) in best_for_variant.items():
+            by_identity.setdefault(ident, []).append((float(variant.weight), rank, h))
 
-    full_fused = fuse_restricted_frames(
-        query_id=qid,
-        variants=variants,
-        restricted=restricted,
-        selected_videos=selected_objects,
-        weighted_rrf=runtime.weighted_rrf,
-        output_top_k=99999,
-        rrf_constant=runtime.config.rrf_constant,
-    )
+    rrf_c = runtime.config.rrf_constant
+    all_fused = []
+    for (vid, fid), vhits in by_identity.items():
+        score = sum(w / (rrf_c + r) for w, r, h in vhits)
+        best_rank = min(r for w, r, h in vhits)
+        first_h = vhits[0][2]
+        all_fused.append({
+            "video_id": vid,
+            "frame_id": fid,
+            "score": score,
+            "best_rank": best_rank,
+            "clip_row": first_h.clip_row,
+            "keyframe_order": first_h.keyframe_order,
+        })
 
-    fused_6171 = next((f for f in full_fused.ranked_candidates if f.video_id == target_vid and f.frame_id == evidence_frame), None)
+    all_fused.sort(key=lambda x: (-x["score"], x["best_rank"], x["video_id"], x["frame_id"], x["clip_row"]))
+    for rank, c in enumerate(all_fused, start=1):
+        c["global_fused_rank"] = rank
+
+    fused_6171 = next((c for c in all_fused if c["video_id"] == target_vid and c["frame_id"] == evidence_frame), None)
     if fused_6171:
-        print(f"  Stage 3 (Frame Fusion RRF)  : Frame {evidence_frame} Fused Score={fused_6171.score:.6f} | GLOBAL FUSED RANK = #{fused_6171.rank}", flush=True)
+        print(f"  Stage 3 (Frame Fusion RRF)  : Frame {evidence_frame} Fused Score={fused_6171['score']:.6f} | GLOBAL FUSED RANK = #{fused_6171['global_fused_rank']} (out of {len(all_fused)} candidate frames)", flush=True)
     else:
         print(f"  Stage 3 (Frame Fusion RRF)  : Frame {evidence_frame} not scored in restricted set ❌", flush=True)
 
@@ -578,7 +583,7 @@ def run_p1_2_audit(runtime: OperationalKISRuntime) -> None:
         verdict = "LOST_AT_RESTRICTED_SEARCH"
     elif not fused_6171:
         verdict = "LOST_AT_FRAME_FUSION"
-    elif fused_6171.rank > 100 and not top100_hit:
+    elif fused_6171["global_fused_rank"] > 100 and not top100_hit:
         verdict = "LOST_AT_TOP100"
     elif top100_hit:
         verdict = "SURVIVED"
@@ -587,7 +592,7 @@ def run_p1_2_audit(runtime: OperationalKISRuntime) -> None:
 
     print(f"  FINAL VERDICT: 【 {verdict} 】", flush=True)
     if verdict == "LOST_AT_TOP100":
-        print(f"  -> Explanation: Evidence frame 6171 was successfully nominated and retained in evidence pool, but its global RRF frame score placed it at Rank #{fused_6171.rank}, so it was cut off by output_top_k=100.", flush=True)
+        print(f"  -> Explanation: Evidence frame 6171 was successfully nominated and retained in evidence pool, but its global RRF frame score placed it at Rank #{fused_6171['global_fused_rank']} (out of {len(all_fused)} candidate frames), so it was cut off by output_top_k=100.", flush=True)
     print("=" * 100 + "\n", flush=True)
 
 
