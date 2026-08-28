@@ -33,32 +33,99 @@ import numpy as np
 from PIL import Image
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO_ROOT / "systems" / "system_tai" / "src"))
+SYSTEM_TAI_SRC = REPO_ROOT / "systems" / "system_tai" / "src"
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+if str(SYSTEM_TAI_SRC) not in sys.path:
+    sys.path.insert(0, str(SYSTEM_TAI_SRC))
 
 from system_tai.common.schemas import (
     CandidateFrame,
-    ClipFeatureDescriptor,
     FrameMappingRecord,
-    FusedVideoEvidence,
-    KISGroundTruth,
-    KISPrediction,
     KISResult,
-    QueryRequest,
-    VariantVideoEvidence,
     VideoFeatureStore,
 )
 from system_tai.features.btc_clip_store import FeatureStoreRegistry, LoadedVideoFeatureStore
-from system_tai.kis.runtime import OperationalKISRuntime
+from system_tai.kis.session_engine import (
+    OperationalKISRuntime,
+    compile_vietnamese_semantic_query,
+)
+from system_tai.kis.session_schema import (
+    KISVideoFirstConfig,
+    QueryLanguage,
+    QueryRequest,
+    QueryVariant,
+    QueryVariantType,
+    SessionConfig,
+)
+from system_tai.preliminary.scoring import (
+    KISGroundTruth,
+    KISPrediction,
+    score_kis_prediction,
+)
+from system_tai.retrieval.semantic_query import SemanticQueryConfig
 from system_tai.kis.video_first import (
-    VideoFirstCandidateState,
+    ClauseCoverageMetadata,
+    FusedVideoEvidence,
+    TemporalChainDiagnostic,
+    VariantVideoEvidence,
+    compute_adaptive_video_budget_v2,
+    compute_soft_and_joint_score,
     fuse_restricted_frames,
     fuse_video_maxima_v2,
     normalize_clause_scores,
     solve_temporal_chain,
 )
-from system_tai.preliminary.scoring import score_kis_prediction
-from system_tai.query.semantic_compiler import SemanticQueryConfig, compile_vietnamese_semantic_query
-from system_tai.server.session import create_production_v2a_session_config
+
+
+def create_production_v2a_session_config(
+    input_root: Path,
+    reuse_manifest_path: Path | None,
+    manifest_cache_path: Path | None,
+    output_root: Path,
+) -> SessionConfig:
+    """Canonical production V2-A configuration factory matching production gate."""
+    config = SessionConfig(
+        input_root=input_root,
+        reuse_manifest=reuse_manifest_path,
+        manifest_cache=manifest_cache_path,
+        output_root=output_root,
+        device="auto",
+        allow_model_download=True,
+        enable_dynamic_translation=True,
+        translation_model_name="vinai/vinai-translate-vi2en-v2",
+        translation_device="auto",
+        translation_allow_model_download=True,
+        translation_max_clip_tokens=75,
+        default_output_top_k=100,
+        default_refine_top_n=0,
+        rrf_constant=60.0,
+        kis_video_first_config=KISVideoFirstConfig(
+            enabled=True,
+            v2_adaptive_enabled=True,
+            selected_video_cap=64,
+            top_m_evidence_cap=5,
+            top_m_min_frame_gap=60,
+            top_m_weights=(0.4, 0.25, 0.15, 0.1, 0.1),
+            adaptive_budget_base=32,
+            adaptive_budget_medium=48,
+            adaptive_budget_high=64,
+            coverage_threshold=0.75,
+        ),
+    )
+    # Field-by-field production gate contract assertions
+    assert config.rrf_constant == 60.0, "rrf_constant must be 60.0"
+    assert config.default_output_top_k == 100, "output_top_k must be 100"
+    vf = config.kis_video_first_config
+    assert vf.enabled is True, "video_first must be enabled"
+    assert vf.v2_adaptive_enabled is True, "v2_adaptive must be enabled"
+    assert vf.selected_video_cap == 64, "selected_video_cap must be 64"
+    assert vf.top_m_evidence_cap == 5, "top_m_evidence_cap must be 5"
+    assert vf.top_m_min_frame_gap == 60, "top_m_min_frame_gap must be 60"
+    assert vf.top_m_weights == (0.4, 0.25, 0.15, 0.1, 0.1), "top_m_weights mismatch"
+    assert (vf.adaptive_budget_base, vf.adaptive_budget_medium, vf.adaptive_budget_high) == (32, 48, 64), "adaptive budget mismatch"
+    assert vf.coverage_threshold == 0.75, "coverage_threshold mismatch"
+    return config
 
 
 def get_git_head() -> str:
