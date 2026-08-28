@@ -721,7 +721,7 @@ def run_p1_5_closure(runtime: OperationalKISRuntime) -> None:
     nearest_fid = nearest_frames[0].frame_id
 
     # 3. Compute GLOBAL raw-frame rank of near-GT keyframe across ALL frames in ALL corpus videos
-    total_corpus_frames = sum(len(s.mappings) for s in runtime.video_restricted_searcher.registry.stores.values())
+    total_corpus_frames = sum(len(s.mappings) for s in runtime.video_restricted_searcher.registry.stores)
     global_raw_ranks = []
     corpus_global_best_frames = []
 
@@ -734,7 +734,8 @@ def run_p1_5_closure(runtime: OperationalKISRuntime) -> None:
         best_vid = ""
         best_fid = -1
 
-        for v_id, s in runtime.video_restricted_searcher.registry.stores.items():
+        for s in runtime.video_restricted_searcher.registry.stores:
+            v_id = s.descriptor.video_id
             v_cos = s.matrix @ q_vec  # (N_v,)
             higher_count += int((v_cos > target_cos).sum())
             max_idx = int(np.argmax(v_cos))
