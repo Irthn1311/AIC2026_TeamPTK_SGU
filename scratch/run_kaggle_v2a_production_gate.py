@@ -22,6 +22,7 @@ import shutil
 import subprocess
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 import numpy as np
 
@@ -177,13 +178,16 @@ def run_kaggle_production_gate() -> None:
         )
 
         # A. LEGACY RUN
-        runtime.config.kis_video_first_config = KISVideoFirstConfig(
-            enabled=True,
-            v2_adaptive_enabled=False,
-            selected_video_cap=32,
-            top_m_evidence_cap=1,
-            top_m_min_frame_gap=60,
-            top_m_weights=(0.6, 0.3, 0.1),
+        runtime.config = replace(
+            runtime.config,
+            kis_video_first_config=KISVideoFirstConfig(
+                enabled=True,
+                v2_adaptive_enabled=False,
+                selected_video_cap=32,
+                top_m_evidence_cap=1,
+                top_m_min_frame_gap=60,
+                top_m_weights=(0.6, 0.3, 0.1),
+            ),
         )
         t_start = time.perf_counter()
         leg_out = runtime.handle_query(req)
@@ -199,17 +203,20 @@ def run_kaggle_production_gate() -> None:
         leg_first_hit = next((p["rank"] for p in leg_preds if p["video_id"] == target_vid and abs(p["frame_id"] - target_frame) <= 150), 999)
 
         # B. V2-A.1 ADAPTIVE RUN
-        runtime.config.kis_video_first_config = KISVideoFirstConfig(
-            enabled=True,
-            v2_adaptive_enabled=True,
-            selected_video_cap=32,
-            top_m_evidence_cap=3,
-            top_m_min_frame_gap=60,
-            top_m_weights=(0.6, 0.3, 0.1),
-            adaptive_budget_base=32,
-            adaptive_budget_medium=48,
-            adaptive_budget_high=64,
-            coverage_threshold=0.75,
+        runtime.config = replace(
+            runtime.config,
+            kis_video_first_config=KISVideoFirstConfig(
+                enabled=True,
+                v2_adaptive_enabled=True,
+                selected_video_cap=32,
+                top_m_evidence_cap=3,
+                top_m_min_frame_gap=60,
+                top_m_weights=(0.6, 0.3, 0.1),
+                adaptive_budget_base=32,
+                adaptive_budget_medium=48,
+                adaptive_budget_high=64,
+                coverage_threshold=0.75,
+            ),
         )
         t_start = time.perf_counter()
         v2_out = runtime.handle_query(req)
