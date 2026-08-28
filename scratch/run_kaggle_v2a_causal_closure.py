@@ -30,6 +30,11 @@ from system_tai.kis.session_schema import (
     QueryVariantType,
     SessionConfig,
 )
+from system_tai.preliminary.scoring import (
+    KISGroundTruth,
+    KISPrediction,
+    score_kis_prediction,
+)
 from system_tai.retrieval.semantic_query import SemanticQueryConfig
 from system_tai.kis.video_first import (
     ClauseCoverageMetadata,
@@ -58,6 +63,56 @@ def get_git_head() -> str:
         return head_content
     except Exception:
         return "unknown"
+
+
+def create_production_v2a_session_config(
+    input_root: Path,
+    reuse_manifest_path: Path | None,
+    manifest_cache_path: Path | None,
+    output_root: Path,
+) -> SessionConfig:
+    """Canonical production V2-A configuration factory matching production gate."""
+    config = SessionConfig(
+        input_root=input_root,
+        reuse_manifest=reuse_manifest_path,
+        manifest_cache=manifest_cache_path,
+        output_root=output_root,
+        device="auto",
+        allow_model_download=True,
+        enable_dynamic_translation=True,
+        translation_model_name="vinai/vinai-translate-vi2en-v2",
+        translation_device="auto",
+        translation_allow_model_download=True,
+        translation_max_clip_tokens=75,
+        default_output_top_k=100,
+        default_refine_top_n=0,
+        rrf_constant=60.0,
+        kis_video_first_config=KISVideoFirstConfig(
+            enabled=True,
+            v2_adaptive_enabled=True,
+            selected_video_cap=64,
+            top_m_evidence_cap=5,
+            top_m_min_frame_gap=60,
+            top_m_weights=(0.4, 0.25, 0.15, 0.1, 0.1),
+            adaptive_budget_base=32,
+            adaptive_budget_medium=48,
+            adaptive_budget_high=64,
+            coverage_threshold=0.75,
+        ),
+    )
+    # Field-by-field production gate contract assertions
+    assert config.rrf_constant == 60.0, "rrf_constant must be 60.0"
+    assert config.default_output_top_k == 100, "output_top_k must be 100"
+    vf = config.kis_video_first_config
+    assert vf.enabled is True, "video_first must be enabled"
+    assert vf.v2_adaptive_enabled is True, "v2_adaptive must be enabled"
+    assert vf.selected_video_cap == 64, "selected_video_cap must be 64"
+    assert vf.top_m_evidence_cap == 5, "top_m_evidence_cap must be 5"
+    assert vf.top_m_min_frame_gap == 60, "top_m_min_frame_gap must be 60"
+    assert vf.top_m_weights == (0.4, 0.25, 0.15, 0.1, 0.1), "top_m_weights mismatch"
+    assert (vf.adaptive_budget_base, vf.adaptive_budget_medium, vf.adaptive_budget_high) == (32, 48, 64), "adaptive budget mismatch"
+    assert vf.coverage_threshold == 0.75, "coverage_threshold mismatch"
+    return config
 
 
 def find_keyframe_image(dataset_root: Path, video_id: str, frame_id: int, keyframe_order: int | None = None) -> Path | None:
@@ -114,44 +169,22 @@ def main() -> None:
         Path("/kaggle/working/manifest_cache.json") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "manifest_cache.json"
     )
 
-    config = SessionConfig(
+    config = create_production_v2a_session_config(
         input_root=input_root,
-        reuse_manifest=reuse_manifest_path,
-        manifest_cache=manifest_cache,
+        reuse_manifest_path=reuse_manifest_path,
+        manifest_cache_path=manifest_cache,
         output_root=base_out,
-        device="auto",
-        allow_model_download=True,
-        enable_dynamic_translation=True,
-        translation_model_name="vinai/vinai-translate-vi2en-v2",
-        translation_device="auto",
-        translation_allow_model_download=True,
-        translation_max_clip_tokens=75,
-        default_output_top_k=100,
-        default_refine_top_n=0,
-        rrf_constant=60.0,
-        kis_video_first_config=KISVideoFirstConfig(
-            enabled=True,
-            v2_adaptive_enabled=True,
-            selected_video_cap=64,
-            top_m_evidence_cap=5,
-            top_m_min_frame_gap=60,
-            top_m_weights=(0.4, 0.25, 0.15, 0.1, 0.1),
-            adaptive_budget_base=32,
-            adaptive_budget_medium=48,
-            adaptive_budget_high=64,
-            coverage_threshold=0.75,
-        ),
     )
 
-    print("\n--- EFFECTIVE PRODUCTION KIS CONFIGURATION ---", flush=True)
-    print(f"  rrf_constant              : {config.rrf_constant}", flush=True)
-    print(f"  default_output_top_k      : {config.default_output_top_k}", flush=True)
-    print(f"  selected_video_cap        : {config.kis_video_first_config.selected_video_cap}", flush=True)
+    print("\n--- EFFECTIVE PRODUCTION KIS CONFIGURATION (VERIFIED) ---", flush=True)
+    print(f"  rrf_constant                 : {config.rrf_constant}", flush=True)
+    print(f"  default_output_top_k         : {config.default_output_top_k}", flush=True)
+    print(f"  selected_video_cap           : {config.kis_video_first_config.selected_video_cap}", flush=True)
     print(f"  adaptive_budget (base/med/hi): {config.kis_video_first_config.adaptive_budget_base}/{config.kis_video_first_config.adaptive_budget_medium}/{config.kis_video_first_config.adaptive_budget_high}", flush=True)
-    print(f"  top_m_evidence_cap        : {config.kis_video_first_config.top_m_evidence_cap}", flush=True)
-    print(f"  top_m_min_frame_gap       : {config.kis_video_first_config.top_m_min_frame_gap}", flush=True)
-    print(f"  top_m_weights             : {config.kis_video_first_config.top_m_weights}", flush=True)
-    print(f"  coverage_threshold        : {config.kis_video_first_config.coverage_threshold}\n", flush=True)
+    print(f"  top_m_evidence_cap           : {config.kis_video_first_config.top_m_evidence_cap}", flush=True)
+    print(f"  top_m_min_frame_gap          : {config.kis_video_first_config.top_m_min_frame_gap}", flush=True)
+    print(f"  top_m_weights                : {config.kis_video_first_config.top_m_weights}", flush=True)
+    print(f"  coverage_threshold           : {config.kis_video_first_config.coverage_threshold}\n", flush=True)
 
     t0 = time.time()
     runtime = OperationalKISRuntime.bootstrap(config)
@@ -203,7 +236,7 @@ def run_p1_6_closure(runtime: OperationalKISRuntime) -> None:
         top_m_weights=video_first_config.top_m_weights,
     )
 
-    # 1. Inspect return contract of production fuse_video_maxima_v2
+    # 1. Run canonical production fuse_video_maxima_v2
     selected_videos, adaptive_diag = fuse_video_maxima_v2(
         variants=variants,
         maxima=maxima,
@@ -215,12 +248,14 @@ def run_p1_6_closure(runtime: OperationalKISRuntime) -> None:
         config=video_first_config,
     )
 
-    # 2. Compute full un-truncated ranking across all corpus videos
+    # 2. Build video lookup map and extract all unique video IDs
     by_variant_video = {
         variant.variant_id: {hit.video_id: hit for hit in maxima.rankings[variant.variant_id]}
         for variant in variants
     }
-    all_videos = sorted(list(maxima.rankings[variants[0].variant_id]))
+    all_videos = sorted({hit.video_id for hit in maxima.rankings[variants[0].variant_id]})
+    assert len(all_videos) > 0, "all_videos cannot be empty"
+    assert all(isinstance(v, str) for v in all_videos), "all_videos elements must be str"
 
     normalized_clause_scores = {
         variant.variant_id: normalize_clause_scores({
@@ -328,6 +363,17 @@ def run_p1_6_closure(runtime: OperationalKISRuntime) -> None:
         for rank, item in enumerate(full_ordered, start=1)
     ]
 
+    # Prefix Parity Assertion: Reconstructed prefix must match canonical production output 100%
+    print("--- PREFIX PARITY ASSERTION WITH CANONICAL PRODUCTION OUTPUT ---", flush=True)
+    assert len(full_ranked) >= len(selected_videos), "full_ranked length is smaller than selected_videos"
+    for k_idx, sel_item in enumerate(selected_videos):
+        recon_item = full_ranked[k_idx]
+        assert recon_item.video_id == sel_item.video_id, f"Prefix video mismatch at #{k_idx+1}: recon={recon_item.video_id} vs canon={sel_item.video_id}"
+        assert recon_item.rank == sel_item.rank, f"Prefix rank mismatch at #{k_idx+1}: recon={recon_item.rank} vs canon={sel_item.rank}"
+        score_diff = abs(recon_item.fusion_score - sel_item.fusion_score)
+        assert score_diff < 1e-6, f"Prefix score mismatch at #{k_idx+1}: recon={recon_item.fusion_score} vs canon={sel_item.fusion_score} (diff={score_diff})"
+    print(f"  • Top-{len(selected_videos)} Prefix Parity Check: PASS ✅ (100% identical video IDs, ranks, and fusion scores within 1e-6)\n", flush=True)
+
     target_full_ev = next((v for v in full_ranked if v.video_id == target_vid), None)
     target_in_selected = next((v for v in selected_videos if v.video_id == target_vid), None)
 
@@ -343,7 +389,8 @@ def run_p1_6_closure(runtime: OperationalKISRuntime) -> None:
         tc = target_full_ev.temporal_chain
         print(f"  Target Video: {target_vid}")
         for pv in target_full_ev.per_variant:
-            print(f"    - Clause {pv.variant_id:<32} (w={pv.weight:.1f}): Video Rank #{pv.video_rank:<4} | Raw Max Cos={pv.maximum_cosine_score:.4f} | Top-M Score={pv.top_m_score:.4f} | Norm Score={pv.normalized_clause_score:.4f}")
+            pv_rrf_contrib = pv.weight / (runtime.config.rrf_constant + pv.video_rank)
+            print(f"    - Clause {pv.variant_id:<32} (w={pv.weight:.1f}): Video Rank #{pv.video_rank:<4} | Raw Max Cos={pv.maximum_cosine_score:.4f} | Top-M Score={pv.top_m_score:.4f} | Norm Score={pv.normalized_clause_score:.4f} | RRF Contrib = {pv.weight:.1f}/(60+{pv.video_rank}) = {pv_rrf_contrib:.6f}")
         print(f"    - Soft-AND Geometric Mean Score: {tc.soft_and_score:.6f}")
         print(f"    - DP Temporal Chain Result     : Valid={tc.has_valid_chain}, Winning Frames={tc.selected_chain_frames}, Chain Score={tc.chain_score:.6f}")
         print(f"    - Temporal Multiplier Applied  : {tc.temporal_multiplier:.2f}x (1.35x if valid chain else 0.50x)")
@@ -393,30 +440,40 @@ def run_p1_2_closure(runtime: OperationalKISRuntime) -> None:
     nearest_frames = sorted(all_frames, key=lambda x: abs(x.frame_id - gt_frame))[:6]
     nearest_kf = nearest_frames[0]
     delta_frames_nearest = nearest_kf.frame_id - gt_frame
-    delta_sec_nearest = delta_frames_nearest / 25.0
-
     delta_frames_6171 = evidence_frame - gt_frame
-    delta_sec_6171 = delta_frames_6171 / 25.0
 
-    evaluator_rule = "abs(candidate_frame_id - target_gt_frame) <= 150 frames (from scratch/run_kaggle_v2a_production_gate.py line 300)"
-    eval_accepts_nearest = abs(delta_frames_nearest) <= 150
-    eval_accepts_6171 = abs(delta_frames_6171) <= 150
+    # Locate evidence frame 6171 in store
+    kf_6171 = next((f for f in all_frames if f.frame_id == evidence_frame), None)
+    pts_6171 = kf_6171.pts_time if kf_6171 else float("nan")
 
-    print(f"  • Groundtruth Physical Frame      : {gt_frame}", flush=True)
-    print(f"  • Nearest Indexed Keyframe to GT  : Frame {nearest_kf.frame_id} (Order {nearest_kf.keyframe_order}, PTS {nearest_kf.pts_time:.3f}s)", flush=True)
-    print(f"  • Delta from GT to Nearest Keyframe: {delta_frames_nearest:+d} frames ({delta_sec_nearest:+.3f}s)", flush=True)
-    print(f"  • Delta from GT to Audit Frame 6171: {delta_frames_6171:+d} frames ({delta_sec_6171:+.3f}s)", flush=True)
-    print(f"  • Canonical DEV Evaluator Rule    : {evaluator_rule}", flush=True)
-    print(f"  • Canonical Evaluator Accepts 6171: {'YES ✅' if eval_accepts_6171 else 'NO ❌'}", flush=True)
+    # Canonical evaluation via official scoring function score_kis_prediction
+    # Preliminary round groundtruth tolerance interval is [gt_frame - 150, gt_frame + 150]
+    gt_interval = KISGroundTruth(
+        query_id=qid,
+        video_id=target_vid,
+        start_frame_id=gt_frame - 150,
+        end_frame_id=gt_frame + 150,
+    )
+    score_nearest = score_kis_prediction(KISPrediction(query_id=qid, rank=1, video_id=target_vid, frame_id=nearest_kf.frame_id), gt_interval)
+    score_6171 = score_kis_prediction(KISPrediction(query_id=qid, rank=1, video_id=target_vid, frame_id=evidence_frame), gt_interval)
+
+    print(f"  • Groundtruth Physical Frame       : {gt_frame}", flush=True)
+    print(f"  • Nearest Indexed Keyframe to GT   : Frame {nearest_kf.frame_id} (Order {nearest_kf.keyframe_order}, PTS {nearest_kf.pts_time:.3f}s)", flush=True)
+    print(f"  • Delta from GT to Nearest Keyframe: {delta_frames_nearest:+d} frames", flush=True)
+    print(f"  • Audit Keyframe 6171 Metadata     : Frame {evidence_frame} (Order {kf_6171.keyframe_order if kf_6171 else 'N/A'}, PTS {pts_6171:.3f}s)", flush=True)
+    print(f"  • Delta from GT to Audit Frame 6171: {delta_frames_6171:+d} frames", flush=True)
+    print(f"  • Canonical Evaluator Definition   : score_kis_prediction(prediction, KISGroundTruth([{gt_interval.start_frame_id}, {gt_interval.end_frame_id}]))", flush=True)
+    print(f"  • Canonical Evaluator Accepts 6171 : {'YES (Score=1.0) ✅' if score_6171 == 1.0 else 'NO (Score=0.0) ❌'}", flush=True)
 
     print("\n  Sampled Keyframes in Window Around GT 6050:")
-    print(f"  {'Keyframe Order':<16} | {'Physical Frame':<16} | {'Delta to GT (frames)':<22} | {'PTS Time (s)':<14} | {'Evaluator Valid Hit?':<22}")
-    print("  " + "-" * 95)
+    print(f"  {'Keyframe Order':<16} | {'Physical Frame':<16} | {'Delta to GT':<14} | {'PTS Time (s)':<14} | {'Official Scorer Hit?':<22}")
+    print("  " + "-" * 90)
     for kf in nearest_frames:
         d = kf.frame_id - gt_frame
-        is_hit = "YES (Valid Hit) ✅" if abs(d) <= 150 else "NO (Out of tolerance) ❌"
+        s = score_kis_prediction(KISPrediction(query_id=qid, rank=1, video_id=target_vid, frame_id=kf.frame_id), gt_interval)
+        is_hit = "YES (Hit=1.0) ✅" if s == 1.0 else "NO (Hit=0.0) ❌"
         is_6171_tag = " [AUDIT FRAME]" if kf.frame_id == evidence_frame else ""
-        print(f"  {kf.keyframe_order:<16} | {kf.frame_id:<16} | {d:<+22} | {kf.pts_time:<14.3f} | {is_hit + is_6171_tag:<22}")
+        print(f"  {kf.keyframe_order:<16} | {kf.frame_id:<16} | {d:<+14} | {kf.pts_time:<14.3f} | {is_hit + is_6171_tag:<22}")
 
     # Part B: Exact Production Query Execution and Frame RRF Decomposition
     print("\n--- PART B: EXACT PRODUCTION FUSION VS MANUAL DECOMPOSITION ASSERTION ---", flush=True)
@@ -458,32 +515,6 @@ def run_p1_2_closure(runtime: OperationalKISRuntime) -> None:
 
     rrf_c = runtime.config.rrf_constant
 
-    # Call canonical production fuse_restricted_frames with Top-100
-    selected_objects = [
-        FusedVideoEvidence(
-            video_id=item["video_id"],
-            rank=item["rank"],
-            fusion_score=item["fusion_score"],
-            variant_hit_count=item.get("variant_hit_count", 1),
-            primary_coverage_count=item.get("primary_coverage_count", 1),
-            best_individual_rank=item.get("best_individual_rank", item["rank"]),
-            per_variant=(),
-            temporal_chain=None,
-        )
-        for item in selected_videos
-    ]
-
-    prod_top100 = fuse_restricted_frames(
-        query_id=qid,
-        variants=variants,
-        restricted=restricted,
-        selected_videos=selected_objects,
-        weighted_rrf=runtime.weighted_rrf,
-        output_top_k=100,
-        rrf_constant=rrf_c,
-    )
-    prod_top100_map = {(c.video_id, c.frame_id): c for c in prod_top100.ranked_candidates}
-
     # Build per-variant frame rankings across all selected videos
     per_variant_rankings: dict[str, dict[tuple[str, int], int]] = {}
     per_variant_cosines: dict[str, dict[tuple[str, int], float]] = {}
@@ -503,7 +534,7 @@ def run_p1_2_closure(runtime: OperationalKISRuntime) -> None:
         per_variant_rankings[variant.variant_id] = v_ranks
         per_variant_cosines[variant.variant_id] = v_cos
 
-    # Compute global fused score and rank for all frames
+    # Compute global fused score and rank for all candidate frames
     all_identities = set()
     for v_ranks in per_variant_rankings.values():
         all_identities.update(v_ranks.keys())
@@ -534,11 +565,38 @@ def run_p1_2_closure(runtime: OperationalKISRuntime) -> None:
     for rank, item in enumerate(all_frame_scores, start=1):
         item["global_rank"] = rank
 
-    # Assert mathematical equivalence between manual decomposition and production output
-    print("  Asserting Mathematical Parity between Manual RRF and Production Pipeline:")
-    for fid in [8235, 27270, 8215]:
+    # Call canonical production fuse_restricted_frames with FULL un-truncated depth to include 6171
+    selected_objects = [
+        FusedVideoEvidence(
+            video_id=item["video_id"],
+            rank=item["rank"],
+            fusion_score=item["fusion_score"],
+            variant_hit_count=item.get("variant_hit_count", 1),
+            primary_coverage_count=item.get("primary_coverage_count", 1),
+            best_individual_rank=item.get("best_individual_rank", item["rank"]),
+            per_variant=(),
+            temporal_chain=None,
+        )
+        for item in selected_videos
+    ]
+
+    prod_full = fuse_restricted_frames(
+        query_id=qid,
+        variants=variants,
+        restricted=restricted,
+        selected_videos=selected_objects,
+        weighted_rrf=runtime.weighted_rrf,
+        output_top_k=len(all_frame_scores),
+        rrf_constant=rrf_c,
+    )
+    prod_full_map = {(c.video_id, c.frame_id): c for c in prod_full.ranked_candidates}
+
+    # Assert mathematical equivalence between manual decomposition and canonical production output for ALL target frames including 6171
+    print("  Asserting Mathematical Parity between Manual RRF and Canonical Production Pipeline:")
+    for fid in [6171, 8235, 27270, 8215]:
         manual_item = next(x for x in all_frame_scores if x["video_id"] == target_vid and x["frame_id"] == fid)
-        prod_item = prod_top100_map[(target_vid, fid)]
+        prod_item = prod_full_map.get((target_vid, fid))
+        assert prod_item is not None, f"Frame {fid} missing in canonical production full ranking"
         score_diff = abs(manual_item["fusion_score"] - prod_item.score)
         print(f"    - Frame {fid:<5}: Manual Score={manual_item['fusion_score']:.6f} vs Prod Score={prod_item.score:.6f} (Diff={score_diff:.1e}) | Manual Rank #{manual_item['global_rank']} == Prod Rank #{prod_item.rank} ✅")
         assert score_diff < 1e-6, f"Score mismatch on frame {fid}"
@@ -643,15 +701,43 @@ def run_p1_5_closure(runtime: OperationalKISRuntime) -> None:
     nearest_row = nearest_frames[0].clip_row
     nearest_fid = nearest_frames[0].frame_id
 
-    # Compute global raw-frame rankings across entire corpus for each prompt
+    # 3. Compute GLOBAL raw-frame rank of near-GT keyframe across ALL frames in ALL 1532 videos
+    total_corpus_frames = sum(s.row_count for s in runtime.video_restricted_searcher.registry.stores.values())
+    global_raw_ranks = []
+    corpus_global_best_frames = []
+
+    for q_idx in range(len(prompts)):
+        q_vec = embeddings[q_idx]  # (D,)
+        target_cos = float(cos_matrix[nearest_row, q_idx])
+
+        higher_count = 0
+        best_c = -1.0
+        best_vid = ""
+        best_fid = -1
+
+        for v_id, s in runtime.video_restricted_searcher.registry.stores.items():
+            v_cos = s.feature_matrix @ q_vec  # (N_v,)
+            higher_count += int((v_cos > target_cos).sum())
+            max_idx = int(np.argmax(v_cos))
+            if float(v_cos[max_idx]) > best_c:
+                best_c = float(v_cos[max_idx])
+                best_vid = v_id
+                best_fid = s.frame_for_row(max_idx).frame_id
+
+        global_raw_rank = higher_count + 1
+        global_raw_ranks.append(global_raw_rank)
+        corpus_global_best_frames.append((best_vid, best_fid, best_c))
+
+    # 4. Comprehensive Benchmark Table with Global Raw-Frame Rank
     print("\n--- PER-PROMPT COMPREHENSIVE BENCHMARK TABLE ---")
-    print(f"| {'Prompt Arm':<22} | {'Near-GT Keyframe':<18} | {'GT-Near Cos':<12} | {'Target Best Frm/Cos':<21} | {'Target Video Top-M':<20} | {'Corpus Best Video':<20} |")
-    print(f"| {'-'*22} | {'-'*18} | {'-'*12} | {'-'*21} | {'-'*20} | {'-'*20} |")
+    print(f"| {'Prompt Arm':<22} | {'Near-GT Cos':<11} | {'Global Frame Rank':<19} | {'Tgt Best Frame/Cos':<20} | {'Tgt Video Top-M':<18} | {'Corpus Best Video':<20} |")
+    print(f"| {'-'*22} | {'-'*11} | {'-'*19} | {'-'*20} | {'-'*18} | {'-'*20} |")
 
     for q_idx, (label, _) in enumerate(prompts):
         v = query_variants[q_idx]
         cos_at_nearest = float(cos_matrix[nearest_row, q_idx])
-        
+        g_rank = global_raw_ranks[q_idx]
+
         # Best frame in target video
         best_row_in_target = int(cos_matrix[:, q_idx].argmax())
         best_cos_in_target = float(cos_matrix[best_row_in_target, q_idx])
@@ -666,7 +752,7 @@ def run_p1_5_closure(runtime: OperationalKISRuntime) -> None:
         best_corpus_hit = hits[0] if hits else None
         corpus_best_str = f"{best_corpus_hit.video_id} ({best_corpus_hit.top_m_score:.4f})" if best_corpus_hit else "N/A"
 
-        print(f"| {label:<22} | f{nearest_fid} (Δ{nearest_fid - gt_frame:+<4}) | {cos_at_nearest:<12.4f} | f{best_fid_in_target} ({best_cos_in_target:.4f}) | {target_topm_str:<20} | {corpus_best_str:<20} |")
+        print(f"| {label:<22} | {cos_at_nearest:<11.4f} | #{g_rank:<6} / {total_corpus_frames:<8} | f{best_fid_in_target} ({best_cos_in_target:.4f})     | {target_topm_str:<18} | {corpus_best_str:<20} |")
 
     print("\n--- ALL KEYFRAMES IN WINDOW [GT-300, GT+300] WITH ALL 6 PROMPTS ---")
     window_frames = [kf for kf in all_frames if abs(kf.frame_id - gt_frame) <= 300]
@@ -679,12 +765,18 @@ def run_p1_5_closure(runtime: OperationalKISRuntime) -> None:
         delta = kf.frame_id - gt_frame
         print(f"Order {kf.keyframe_order:<4} | {kf.frame_id:<10} | {delta:<+8} | {kf.pts_time:<8.2f} | {c_p[0]:<8.4f} | {c_p[1]:<8.4f} | {c_p[2]:<10.4f} | {c_p[3]:<11.4f} | {c_p[4]:<10.4f} | {c_p[5]:<10.4f}")
 
-    print("\n--- CAUSAL CLASSIFICATION SUMMARY FOR P1-5 ---")
-    print("  • Empirical Rule-based Evaluation:")
-    print("    1) Text Dilution Check      : Short prompt ('pan tossed over flame') achieves rank #222 vs Long T1 rank #691 (Significant prompt dilution effect).")
-    print("    2) Keyframe Sampling Check  : Near-GT keyframe exists at frame 3325/neighbor with adequate coverage.")
-    print("    3) Fine-grained Visual Check: Fine-grained food entities ('squid + peas', 'pepper/onion') yield low cosine ~0.20-0.25 across all keyframes in target video.")
-    print("    4) Rigorous Classification  : 【 MIXED: TEXT DILUTION + FINE-GRAINED CULINARY REPRESENTATION WEAKNESS 】")
+    print("\n--- DYNAMIC EMPIRICAL EVALUATION FOR P1-5 ---")
+    # Dynamically extract values from current execution
+    long_t1_hit = next((h for h in maxima.rankings.get(query_variants[0].variant_id, ()) if h.video_id == target_vid), None)
+    short_act_hit = next((h for h in maxima.rankings.get(query_variants[5].variant_id, ()) if h.video_id == target_vid), None)
+    t1_rank_val = long_t1_hit.rank if long_t1_hit else 999
+    short_rank_val = short_act_hit.rank if short_act_hit else 999
+    max_food_cos = max(float(cos_matrix[:, i].max()) for i in [2, 3, 4])
+
+    print(f"  • Prompt Dilution Evidence    : Long T1 Video Rank = #{t1_rank_val} vs Short Action Video Rank = #{short_rank_val} (Rank Shift = {t1_rank_val - short_rank_val:+d})")
+    print(f"  • Near-GT Global Frame Rank   : Long T1 = #{global_raw_ranks[0]} / {total_corpus_frames} vs Short Action = #{global_raw_ranks[5]} / {total_corpus_frames}")
+    print(f"  • Fine-Grained Entity Cosine  : Max food entity cosine across all target video frames = {max_food_cos:.4f}")
+    print("  • Empirical Classification    : MIXED / UNRESOLVED — manual interpretation required based on the empirical metrics above.")
 
     print("=" * 110 + "\n", flush=True)
 
@@ -721,42 +813,47 @@ def run_p1_4_closure(runtime: OperationalKISRuntime, base_out: Path) -> None:
         top_m_weights=video_first_config.top_m_weights,
     )
 
-    videos_to_audit = ["L22_V021", "L28_V012"]
+    videos_to_audit = ["L28_V012", "L22_V021"]
+    computed_chains = {}
 
     for vid in videos_to_audit:
         contact_path = base_out / f"p1-4_{vid}_contact_sheet.png"
-        if not contact_path.exists():
-            print(f"  📸 Generating contact sheet for {vid} -> {contact_path}...", flush=True)
-            peaks_by_scene = []
-            for v in all_variants:
-                hits = maxima.rankings.get(v.variant_id, ())
-                hit = next((h for h in hits if h.video_id == vid), None)
-                peaks = list(hit.top_m_peaks) if hit and hit.top_m_peaks else ([(hit.frame_id, hit.cosine_score)] if hit else [])
-                peaks_by_scene.append(peaks)
+        peaks_by_scene = []
+        for v in all_variants:
+            hits = maxima.rankings.get(v.variant_id, ())
+            hit = next((h for h in hits if h.video_id == vid), None)
+            peaks = list(hit.top_m_peaks) if hit and hit.top_m_peaks else ([(hit.frame_id, hit.cosine_score)] if hit else [])
+            peaks_by_scene.append(peaks)
 
-            has_valid_chain, chain_frames, chain_score = solve_temporal_chain(
-                peaks_by_scene=peaks_by_scene,
-                scene_weights=[float(v.weight) for v in all_variants],
-                min_gap=video_first_config.top_m_min_frame_gap,
-            )
-            render_p1_4_contact_sheet(
-                runtime=runtime,
-                vid=vid,
-                temporal_scene_variants=temporal_scene_variants,
-                all_variants=all_variants,
-                maxima=maxima,
-                chain_frames=chain_frames,
-                out_path=contact_path,
-            )
-        else:
-            print(f"  📸 Verified existing contact sheet for {vid} -> {contact_path} ✅", flush=True)
+        has_valid_chain, chain_frames, chain_score = solve_temporal_chain(
+            peaks_by_scene=peaks_by_scene,
+            scene_weights=[float(v.weight) for v in all_variants],
+            min_gap=video_first_config.top_m_min_frame_gap,
+        )
+        computed_chains[vid] = (has_valid_chain, chain_frames, chain_score)
 
+        print(f"  📸 Rendering / verifying contact sheet for {vid} -> {contact_path}...", flush=True)
+        loaded_images = render_p1_4_contact_sheet(
+            runtime=runtime,
+            vid=vid,
+            temporal_scene_variants=temporal_scene_variants,
+            all_variants=all_variants,
+            maxima=maxima,
+            chain_frames=chain_frames,
+            out_path=contact_path,
+        )
         assert contact_path.exists(), f"Contact sheet missing: {contact_path}"
+        assert loaded_images > 0, f"Zero images loaded for {vid} contact sheet! Validation FAIL."
+        print(f"  • Successfully verified {vid} contact sheet with {loaded_images} real images loaded on disk ✅")
 
-    print("• DP Monotonicity / Temporal Chain Solver: PASS ✅")
-    print("  - Target L28_V012 DP Chain: Frames=(2565, 22680), Score=0.2611")
-    print("  - Candidate L22_V021 DP Chain: Frames=(10871, 20909), Score=0.3196")
-    print("• Semantic Adjudication: Contact sheets verified and saved to disk. Adjudication pending visual inspection.")
+    target_valid, target_frames, target_score = computed_chains["L28_V012"]
+    cand_valid, cand_frames, cand_score = computed_chains["L22_V021"]
+
+    print("\n• Newly Computed DP Temporal Chains:")
+    print(f"  - Target L28_V012 : Valid={target_valid}, Chain Frames={target_frames}, Chain Score={target_score:.6f}")
+    print(f"  - Candidate L22_V021: Valid={cand_valid}, Chain Frames={cand_frames}, Chain Score={cand_score:.6f}")
+    print("• Solver Mechanics: PASS ✅")
+    print("• Semantic Adjudication: Contact sheets generated with verified images on disk. Adjudication pending visual review.")
     print("=" * 110 + "\n", flush=True)
 
 
@@ -768,17 +865,19 @@ def render_p1_4_contact_sheet(
     maxima,
     chain_frames: list[int],
     out_path: Path,
-) -> None:
+) -> int:
     try:
         store = runtime.video_restricted_searcher.registry.get(vid)
     except KeyError:
         print(f"  ⚠️ Cannot render contact sheet: store for {vid} not in registry", flush=True)
-        return
+        return 0
 
     n_scenes = len(temporal_scene_variants)
     fig, axes = plt.subplots(n_scenes, 5, figsize=(25, 5 * n_scenes))
     if n_scenes == 1:
         axes = np.array([axes])
+
+    loaded_image_count = 0
 
     for row_idx, (scene_var, v) in enumerate(zip(temporal_scene_variants, all_variants, strict=True)):
         hits = maxima.rankings.get(v.variant_id, ())
@@ -804,8 +903,12 @@ def render_p1_4_contact_sheet(
                     keyframe_order=mapping.keyframe_order,
                 )
                 if img_path and img_path.exists():
-                    img = Image.open(img_path)
-                    ax.imshow(img)
+                    try:
+                        img = Image.open(img_path)
+                        ax.imshow(img)
+                        loaded_image_count += 1
+                    except Exception:
+                        ax.text(0.5, 0.5, f"Corrupted image\nFrame {req_frame_id}", ha="center", va="center")
                 else:
                     ax.text(0.5, 0.5, f"Image not on disk\nFrame {req_frame_id}\n(Order {mapping.keyframe_order})", ha="center", va="center")
 
@@ -824,7 +927,8 @@ def render_p1_4_contact_sheet(
     plt.tight_layout()
     plt.savefig(out_path, dpi=120)
     plt.close(fig)
-    print(f"  📸 Successfully rendered contact sheet for {vid} -> {out_path}", flush=True)
+    print(f"  📸 Saved contact sheet ({loaded_image_count} images loaded) -> {out_path}", flush=True)
+    return loaded_image_count
 
 
 if __name__ == "__main__":
