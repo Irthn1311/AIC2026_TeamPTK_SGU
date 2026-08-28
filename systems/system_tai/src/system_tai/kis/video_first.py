@@ -99,6 +99,7 @@ class AdaptiveBudgetDiagnostic:
     top1_top5_margin: float
     top1_top16_margin: float
     is_flat: bool
+    adaptive_reasons: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -109,6 +110,7 @@ class AdaptiveBudgetDiagnostic:
             "top1_top5_margin": self.top1_top5_margin,
             "top1_top16_margin": self.top1_top16_margin,
             "is_flat": self.is_flat,
+            "adaptive_reasons": list(self.adaptive_reasons),
         }
 
 
@@ -314,6 +316,7 @@ def compute_adaptive_video_budget_v2(
 ) -> tuple[int, AdaptiveBudgetDiagnostic]:
     """Adaptive video budget strictly clamped to {32, 48, 64} (Expand-only in V2-A)."""
     scores = sorted(fused_scores, reverse=True)[:32]
+    reasons: list[str] = []
     if len(scores) < 32:
         return base_k, AdaptiveBudgetDiagnostic(
             chosen_k=base_k,
@@ -323,6 +326,7 @@ def compute_adaptive_video_budget_v2(
             top1_top5_margin=0.0,
             top1_top16_margin=0.0,
             is_flat=False,
+            adaptive_reasons=("insufficient_candidates_for_entropy",),
         )
 
     # 1. Normalized entropy calculation
@@ -337,10 +341,16 @@ def compute_adaptive_video_budget_v2(
     delta_1_5 = float(scores[0] - scores[4])
     delta_1_16 = float(scores[0] - scores[15])
 
-    # Complexity rule
+    # Complexity rule (reachability check)
     k_complexity = base_k
-    if clause_count >= 4 or has_attributes:
+    if clause_count >= 3 or has_attributes:
         k_complexity = max(k_complexity, medium_k)
+        if clause_count >= 4:
+            reasons.append(f"complexity: high_clause_count({clause_count}>=4)")
+        elif has_attributes:
+            reasons.append("complexity: has_supporting_attributes")
+        else:
+            reasons.append(f"complexity: multi_clause({clause_count}>=3)")
 
     # Uncertainty rule (Entropy + Margins)
     is_highly_flat = (h_norm >= 0.85) or (delta_1_5 <= 0.05)
@@ -348,10 +358,13 @@ def compute_adaptive_video_budget_v2(
 
     if is_highly_flat:
         k_uncertainty = high_k
+        reasons.append(f"uncertainty: highly_flat(entropy={h_norm:.2f}, delta1_5={delta_1_5:.3f})")
     elif is_moderately_flat:
         k_uncertainty = medium_k
+        reasons.append(f"uncertainty: moderately_flat(entropy={h_norm:.2f}, delta1_5={delta_1_5:.3f})")
     else:
         k_uncertainty = base_k
+        reasons.append(f"uncertainty: confident_peak(entropy={h_norm:.2f}, delta1_5={delta_1_5:.3f})")
 
     chosen_k = max(k_complexity, k_uncertainty)
     if chosen_k > high_k:
@@ -367,6 +380,7 @@ def compute_adaptive_video_budget_v2(
         top1_top5_margin=delta_1_5,
         top1_top16_margin=delta_1_16,
         is_flat=is_moderately_flat or is_highly_flat,
+        adaptive_reasons=tuple(reasons),
     )
     return chosen_k, diagnostic
 
@@ -415,7 +429,7 @@ def fuse_video_maxima_v2(
 
     # 2. Stage evidence and compute fused scores
     staged: list[FusedVideoEvidence] = []
-    fused_scores_list: list[float] = []
+    raw_evidence_scores_list: list[float] = []
 
     for video_id in all_videos:
         provenance = tuple(
@@ -442,6 +456,12 @@ def fuse_video_maxima_v2(
             for variant in sorted(variants, key=lambda item: item.variant_id)
         )
 
+        # Gap-preserving raw evidence score stream for entropy/margins
+        raw_evidence_score = sum(
+            hit.weight * hit.top_m_score for hit in provenance
+        ) / sum(hit.weight for hit in provenance)
+        raw_evidence_scores_list.append(raw_evidence_score)
+
         # Fused score combining RRF rank and normalized evidence
         rrf_part = sum(
             hit.weight / (rrf_constant + hit.video_rank) for hit in provenance
@@ -451,9 +471,8 @@ def fuse_video_maxima_v2(
         ) / sum(hit.weight for hit in provenance)
 
         score = 0.5 * rrf_part + 0.5 * norm_part
-        fused_scores_list.append(score)
 
-        # Coverage evaluation
+        # Coverage evaluation (diagnostic only)
         clause_hits = {
             hit.variant_id: hit.normalized_clause_score >= config.coverage_threshold
             for hit in provenance
@@ -500,10 +519,10 @@ def fuse_video_maxima_v2(
             )
         )
 
-    # 3. Compute adaptive video budget K in {32, 48, 64}
+    # 3. Compute adaptive video budget K in {32, 48, 64} on gap-preserving raw scores
     has_attributes = len(variants) > len(primary_variant_ids)
     chosen_k, adaptive_diag = compute_adaptive_video_budget_v2(
-        fused_scores=fused_scores_list,
+        fused_scores=raw_evidence_scores_list,
         clause_count=len(variants),
         has_attributes=has_attributes,
         base_k=config.adaptive_budget_base,
