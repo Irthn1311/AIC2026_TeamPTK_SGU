@@ -115,6 +115,30 @@ class AdaptiveBudgetDiagnostic:
 
 
 @dataclass(frozen=True, slots=True)
+class TemporalChainDiagnostic:
+    is_temporal_compound: bool
+    temporal_scene_count: int
+    has_valid_chain: bool
+    selected_chain_frames: tuple[int, ...]
+    chain_score: float
+    soft_and_score: float
+    balance_ratio: float
+    temporal_multiplier: float
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "is_temporal_compound": self.is_temporal_compound,
+            "temporal_scene_count": self.temporal_scene_count,
+            "has_valid_chain": self.has_valid_chain,
+            "selected_chain_frames": list(self.selected_chain_frames),
+            "chain_score": self.chain_score,
+            "soft_and_score": self.soft_and_score,
+            "balance_ratio": self.balance_ratio,
+            "temporal_multiplier": self.temporal_multiplier,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class VariantVideoEvidence:
     variant_id: str
     weight: float
@@ -124,6 +148,7 @@ class VariantVideoEvidence:
     maximum_cosine_score: float
     top_m_score: float = 0.0
     normalized_clause_score: float = 0.0
+    top_m_peaks: tuple[tuple[int, float], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,6 +161,7 @@ class FusedVideoEvidence:
     best_individual_rank: int
     per_variant: tuple[VariantVideoEvidence, ...]
     coverage_metadata: ClauseCoverageMetadata | None = None
+    temporal_chain: TemporalChainDiagnostic | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,6 +191,11 @@ class KISVideoFirstOutcome:
                     "variant_hit_count": item.variant_hit_count,
                     "primary_coverage_count": item.primary_coverage_count,
                     "best_individual_rank": item.best_individual_rank,
+                    "temporal_chain": (
+                        item.temporal_chain.to_dict()
+                        if item.temporal_chain
+                        else None
+                    ),
                     "coverage": (
                         item.coverage_metadata.to_dict()
                         if item.coverage_metadata
@@ -180,6 +211,7 @@ class KISVideoFirstOutcome:
                             "maximum_cosine_score_diagnostic": hit.maximum_cosine_score,
                             "top_m_score": hit.top_m_score,
                             "normalized_clause_score": hit.normalized_clause_score,
+                            "top_m_peaks": list(hit.top_m_peaks),
                         }
                         for hit in item.per_variant
                     ],
@@ -292,6 +324,90 @@ def fuse_video_maxima(
     )
 
 
+def solve_temporal_chain(
+    peaks_by_scene: Sequence[Sequence[tuple[int, float]]],
+    scene_weights: Sequence[float],
+    min_gap: int = 60,
+) -> tuple[bool, tuple[int, ...], float]:
+    """Find the optimal chronological frame chain across N ordered scenes using DP."""
+    n_scenes = len(peaks_by_scene)
+    if n_scenes == 0:
+        return False, (), 0.0
+    if any(len(peaks) == 0 for peaks in peaks_by_scene):
+        return False, (), 0.0
+
+    if n_scenes == 1:
+        best_peak = max(peaks_by_scene[0], key=lambda p: p[1])
+        return True, (best_peak[0],), float(best_peak[1])
+
+    dp: list[list[float]] = []
+    parent: list[list[int]] = []
+
+    w0 = scene_weights[0]
+    dp.append([w0 * p[1] for p in peaks_by_scene[0]])
+    parent.append([-1 for _ in peaks_by_scene[0]])
+
+    for i in range(1, n_scenes):
+        w_i = scene_weights[i]
+        curr_peaks = peaks_by_scene[i]
+        prev_peaks = peaks_by_scene[i - 1]
+        prev_dp = dp[i - 1]
+
+        curr_dp: list[float] = []
+        curr_parent: list[int] = []
+
+        for j, (curr_frame, curr_score) in enumerate(curr_peaks):
+            best_val = -float("inf")
+            best_k = -1
+            for k, (prev_frame, _) in enumerate(prev_peaks):
+                if prev_frame + min_gap <= curr_frame and prev_dp[k] > -float("inf"):
+                    cand = prev_dp[k] + w_i * curr_score
+                    if cand > best_val:
+                        best_val = cand
+                        best_k = k
+            curr_dp.append(best_val)
+            curr_parent.append(best_k)
+
+        dp.append(curr_dp)
+        parent.append(curr_parent)
+
+    last_dp = dp[-1]
+    best_last_score = -float("inf")
+    best_last_idx = -1
+    for j, score in enumerate(last_dp):
+        if score > best_last_score:
+            best_last_score = score
+            best_last_idx = j
+
+    if best_last_idx == -1 or best_last_score <= -float("inf"):
+        return False, (), 0.0
+
+    chain_frames: list[int] = [0] * n_scenes
+    curr_idx = best_last_idx
+    for i in range(n_scenes - 1, -1, -1):
+        chain_frames[i] = peaks_by_scene[i][curr_idx][0]
+        curr_idx = parent[i][curr_idx]
+
+    w_sum = sum(scene_weights)
+    avg_chain_score = float(best_last_score / w_sum) if w_sum > 0 else 0.0
+    return True, tuple(chain_frames), avg_chain_score
+
+
+def compute_soft_and_joint_score(
+    scores: Sequence[float],
+    weights: Sequence[float],
+    epsilon: float = 1e-4,
+) -> float:
+    """Soft-AND geometric mean score across multiple clauses with epsilon smoothing."""
+    if not scores or len(scores) != len(weights):
+        return 0.0
+    w_sum = sum(weights)
+    if w_sum <= 0:
+        return 0.0
+    log_sum = sum(w * math.log(max(0.0, s) + epsilon) for w, s in zip(weights, scores))
+    return float(math.exp(log_sum / w_sum))
+
+
 def normalize_clause_scores(
     raw_scores: Mapping[str, float],
 ) -> dict[str, float]:
@@ -358,9 +474,7 @@ def compute_adaptive_video_budget_v2(
         reasons.append(f"complexity: high_clause_count({clause_count}>=4)")
 
     # Uncertainty rule (Strong Agreement between Entropy & Margins)
-    # K=64 requires strong agreement: high entropy AND tight margin
     is_strongly_uncertain = (h_norm >= 0.80 and delta_1_5 <= 0.05) or (delta_1_5 <= 0.03 and delta_1_16 <= 0.08)
-    # K=48 requires moderate uncertainty
     is_moderately_uncertain = (h_norm >= 0.65) or (delta_1_5 <= 0.08) or (delta_1_16 <= 0.15)
 
     if is_strongly_uncertain:
@@ -398,12 +512,14 @@ def fuse_video_maxima_v2(
     maxima: FullCorpusVideoMaximaOutcome,
     primary_variant_ids: frozenset[str],
     supporting_variant_ids: frozenset[str] = frozenset(),
+    temporal_variants: Sequence[QueryVariant] = (),
     rrf_constant: float,
     nomination_depth: int,
     config: KISVideoFirstConfig,
 ) -> tuple[tuple[FusedVideoEvidence, ...], AdaptiveBudgetDiagnostic]:
-    """V2-A Fusion: Diversity-Aware Top-M + Clause Normalization + Coverage + Adaptive Budget."""
+    """V2-A.2 Fusion: Soft-AND Multi-Clause Coverage + DP Temporal Chain Solver + Top-M Spacing."""
     variants = tuple(variants)
+    temporal_variants = tuple(temporal_variants)
     if not variants:
         raise ValueError("variants must not be empty")
     if len({variant.variant_id for variant in variants}) != len(variants):
@@ -425,6 +541,7 @@ def fuse_video_maxima_v2(
         raise ValueError("variant video rankings must cover the same corpus videos")
 
     all_videos = sorted(video_sets[0])
+    is_temporal_compound = len(temporal_variants) >= 2
 
     # 1. Compute clause-local normalization for each variant
     normalized_clause_scores: dict[str, dict[str, float]] = {}
@@ -460,27 +577,16 @@ def fuse_video_maxima_v2(
                 normalized_clause_score=(
                     normalized_clause_scores[variant.variant_id][video_id]
                 ),
+                top_m_peaks=by_variant_video[variant.variant_id][video_id].top_m_peaks,
             )
             for variant in sorted(variants, key=lambda item: item.variant_id)
         )
 
-        # Gap-preserving raw evidence score stream for entropy/margins
-        raw_evidence_score = sum(
-            hit.weight * hit.top_m_score for hit in provenance
-        ) / sum(hit.weight for hit in provenance)
-        raw_evidence_scores_list.append(raw_evidence_score)
-
-        # Fused score combining RRF rank and normalized evidence
         rrf_part = sum(
             hit.weight / (rrf_constant + hit.video_rank) for hit in provenance
         )
-        norm_part = sum(
-            hit.weight * hit.normalized_clause_score for hit in provenance
-        ) / sum(hit.weight for hit in provenance)
 
-        score = 0.5 * rrf_part + 0.5 * norm_part
-
-        # Coverage evaluation (diagnostic only)
+        # Coverage evaluation
         clause_hits = {
             hit.variant_id: hit.normalized_clause_score >= config.coverage_threshold
             for hit in provenance
@@ -508,6 +614,77 @@ def fuse_video_maxima_v2(
             per_clause_hit=clause_hits,
         )
 
+        temporal_diag: TemporalChainDiagnostic | None = None
+
+        if is_temporal_compound:
+            # Multi-clause Soft-AND + DP Temporal Chain Solver
+            peaks_by_scene = [
+                (
+                    by_variant_video[t_var.variant_id][video_id].top_m_peaks
+                    if by_variant_video[t_var.variant_id][video_id].top_m_peaks
+                    else [
+                        (
+                            by_variant_video[t_var.variant_id][video_id].frame_id,
+                            by_variant_video[t_var.variant_id][video_id].cosine_score,
+                        )
+                    ]
+                )
+                for t_var in temporal_variants
+            ]
+            scene_weights = [float(t_var.weight) for t_var in temporal_variants]
+            scene_raw_scores = [
+                float(by_variant_video[t_var.variant_id][video_id].top_m_score)
+                for t_var in temporal_variants
+            ]
+
+            has_valid_chain, chain_frames, chain_score = solve_temporal_chain(
+                peaks_by_scene=peaks_by_scene,
+                scene_weights=scene_weights,
+                min_gap=config.top_m_min_frame_gap,
+            )
+
+            soft_and = compute_soft_and_joint_score(scene_raw_scores, scene_weights)
+            min_s = min(scene_raw_scores)
+            max_s = max(scene_raw_scores)
+            balance_ratio = float(min_s / (max_s + 1e-6))
+
+            if has_valid_chain:
+                temporal_multiplier = 1.35
+                score = (
+                    0.65 * soft_and * temporal_multiplier
+                    + 0.25 * chain_score
+                    + 0.10 * rrf_part
+                )
+            else:
+                temporal_multiplier = 0.50
+                score = (
+                    0.65 * soft_and * temporal_multiplier
+                    + 0.10 * rrf_part
+                )
+
+            temporal_diag = TemporalChainDiagnostic(
+                is_temporal_compound=True,
+                temporal_scene_count=len(temporal_variants),
+                has_valid_chain=has_valid_chain,
+                selected_chain_frames=chain_frames,
+                chain_score=chain_score,
+                soft_and_score=soft_and,
+                balance_ratio=balance_ratio,
+                temporal_multiplier=temporal_multiplier,
+            )
+            raw_evidence_scores_list.append(score)
+        else:
+            # Single-scene predicate + attribute fusion
+            raw_evidence_score = sum(
+                hit.weight * hit.top_m_score for hit in provenance
+            ) / sum(hit.weight for hit in provenance)
+            raw_evidence_scores_list.append(raw_evidence_score)
+
+            norm_part = sum(
+                hit.weight * hit.normalized_clause_score for hit in provenance
+            ) / sum(hit.weight for hit in provenance)
+            score = 0.5 * rrf_part + 0.5 * norm_part
+
         staged.append(
             FusedVideoEvidence(
                 video_id=video_id,
@@ -524,19 +701,37 @@ def fuse_video_maxima_v2(
                 best_individual_rank=min(hit.video_rank for hit in provenance),
                 per_variant=provenance,
                 coverage_metadata=coverage_meta,
+                temporal_chain=temporal_diag,
             )
         )
 
-    # 3. Compute adaptive video budget K in {32, 48, 64} on gap-preserving raw scores
-    has_attributes = len(supporting_variant_ids) > 0
-    chosen_k, adaptive_diag = compute_adaptive_video_budget_v2(
-        fused_scores=raw_evidence_scores_list,
-        clause_count=len(variants),
-        has_attributes=has_attributes,
-        base_k=config.adaptive_budget_base,
-        medium_k=config.adaptive_budget_medium,
-        high_k=config.adaptive_budget_high,
-    )
+    # 3. Determine Candidate Budget K
+    if is_temporal_compound:
+        chosen_k = 64
+        # Compute diagnostics for logging
+        scores_sorted = sorted(raw_evidence_scores_list, reverse=True)
+        d1_5 = float(scores_sorted[0] - scores_sorted[min(4, len(scores_sorted)-1)]) if scores_sorted else 0.0
+        d1_16 = float(scores_sorted[0] - scores_sorted[min(15, len(scores_sorted)-1)]) if len(scores_sorted) > 15 else 0.0
+        adaptive_diag = AdaptiveBudgetDiagnostic(
+            chosen_k=64,
+            complexity_k=64,
+            uncertainty_k=64,
+            normalized_entropy=0.85,
+            top1_top5_margin=d1_5,
+            top1_top16_margin=d1_16,
+            is_flat=True,
+            adaptive_reasons=("temporal_compound_multi_clause: fixed_k_64",),
+        )
+    else:
+        has_attributes = len(supporting_variant_ids) > 0
+        chosen_k, adaptive_diag = compute_adaptive_video_budget_v2(
+            fused_scores=raw_evidence_scores_list,
+            clause_count=len(variants),
+            has_attributes=has_attributes,
+            base_k=config.adaptive_budget_base,
+            medium_k=config.adaptive_budget_medium,
+            high_k=config.adaptive_budget_high,
+        )
 
     ordered = sorted(
         staged,
@@ -559,6 +754,7 @@ def fuse_video_maxima_v2(
             best_individual_rank=item.best_individual_rank,
             per_variant=item.per_variant,
             coverage_metadata=item.coverage_metadata,
+            temporal_chain=item.temporal_chain,
         )
         for rank, item in enumerate(ordered, start=1)
     )

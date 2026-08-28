@@ -37,6 +37,7 @@ class VideoMaximumHit:
     cosine_score: float
     rank: int
     top_m_score: float = 0.0
+    top_m_peaks: tuple[tuple[int, float], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,11 +252,13 @@ class VideoRestrictedFeatureSearcher:
             for query_id in query_ids:
                 store_hits = per_store[query_id]
                 best_hit = store_hits[0]
+                selected_scores: list[float] = []
+                selected_frames: list[int] = []
+                selected_peaks: list[tuple[int, float]] = []
                 if top_m_evidence_cap <= 1:
                     top_m_val = float(best_hit.cosine_score)
+                    selected_peaks = [(best_hit.frame_id, float(best_hit.cosine_score))]
                 else:
-                    selected_scores: list[float] = []
-                    selected_frames: list[int] = []
                     for h in store_hits:
                         if all(
                             abs(h.frame_id - prev_f) >= top_m_min_frame_gap
@@ -263,6 +266,7 @@ class VideoRestrictedFeatureSearcher:
                         ):
                             selected_scores.append(float(h.cosine_score))
                             selected_frames.append(h.frame_id)
+                            selected_peaks.append((h.frame_id, float(h.cosine_score)))
                             if len(selected_scores) >= top_m_evidence_cap:
                                 break
                     weights = list(top_m_weights[:len(selected_scores)])
@@ -283,6 +287,7 @@ class VideoRestrictedFeatureSearcher:
                         cosine_score=best_hit.cosine_score,
                         rank=0,
                         top_m_score=top_m_val,
+                        top_m_peaks=tuple(selected_peaks),
                     )
                 )
 
@@ -306,6 +311,7 @@ class VideoRestrictedFeatureSearcher:
                     cosine_score=hit.cosine_score,
                     rank=rank,
                     top_m_score=hit.top_m_score,
+                    top_m_peaks=hit.top_m_peaks,
                 )
                 for rank, hit in enumerate(ordered, start=1)
             )

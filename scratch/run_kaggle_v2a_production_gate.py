@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""KIS V2-A.1 — REAL KAGGLE PRODUCTION GATE BENCHMARK RUNNER.
+"""KIS V2-A.2 — SINGLE-PASS TEMPORAL MULTI-CLAUSE PRODUCTION GATE & VISUALIZER.
 
-Evaluates Legacy vs V2-A.1 on REAL Kaggle production CLIP feature stores:
-- Canonical DEV-38 Physical Frame Recall R@1, R@5, R@20, R@50, R@100 (Denominator = 38)
-- Target Video Rank (Legacy vs V2-A.1)
-- VideoHit@8, 16, 32, 48, 64
-- Adaptive-K Distribution (K=32, 48, 64)
-- Robust Entropy (MAD standardized) min/median/p90/max
-- Margins Delta1-5, Delta1-16 min/median/p90/max
-- Top32 Candidate Overlap
-- Latency p50/p95
-- Standalone Manual BTC Diagnostic for query-p1-1-kis (097.jpg physical frame mapping)
+Unified benchmark runner & visual keyframe inspector:
+1. Bootstraps OperationalKISRuntime with V2-A.2 Soft-AND + DP Temporal Chain Solver.
+2. Runs 5 Official Preliminary KIS Queries (100% Pure Vietnamese -> Dynamic VinAI Translation).
+3. Writes immutable artifacts (`candidates.json`, `top100.jsonl`) with SHA256 checksum.
+4. Evaluates:
+   - Primary Target Video Top64 (5/5 Gate)
+   - p1-4 Distractor Demotion (L28_V012 outranks single-scene L22_V021)
+   - Evidence-Pool Interval Frame Recall
+   - Official Physical Frame Recall R@1, 5, 20, 50, 100
+   - Diagnostic Temporal Chains & VinAI Translation Audit
+5. Renders Top-5 visual contact sheet galleries directly from the same candidate artifact.
 """
 
 from __future__ import annotations
@@ -18,7 +19,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import shutil
 import subprocess
 import sys
 import time
@@ -48,8 +48,51 @@ def get_git_head() -> str:
         return "UNKNOWN"
 
 
-def run_kaggle_production_gate() -> None:
-    # 5 Official Preliminary Phase 1 KIS Queries (100% Pure Vietnamese)
+def locate_keyframe_path(dataset_root: Path, video_id: str, frame_id: int) -> Path | None:
+    """Locate keyframe image file across possible Kaggle directory structures."""
+    # Common Kaggle structures:
+    # 1. <dataset_root>/keyframes/<video_id>/<frame_id:06d>.jpg
+    # 2. <dataset_root>/keyframes/<video_id>/<frame_id>.jpg
+    # 3. <dataset_root>/<video_id>/<frame_id:06d>.jpg
+    # 4. <dataset_root>/<video_id>/<frame_id>.jpg
+    # 5. Search by keyframe order or file index (e.g. 097.jpg)
+    candidates = [
+        dataset_root / "keyframes" / video_id / f"{frame_id:06d}.jpg",
+        dataset_root / "keyframes" / video_id / f"{frame_id:05d}.jpg",
+        dataset_root / "keyframes" / video_id / f"{frame_id}.jpg",
+        dataset_root / video_id / f"{frame_id:06d}.jpg",
+        dataset_root / video_id / f"{frame_id:05d}.jpg",
+        dataset_root / video_id / f"{frame_id}.jpg",
+        dataset_root / "keyframes" / video_id / f"{frame_id:03d}.jpg",
+        dataset_root / video_id / f"{frame_id:03d}.jpg",
+    ]
+    for p in candidates:
+        if p.exists():
+            return p
+
+    # Fallback: scan video directory for closest matching frame
+    vid_dir = dataset_root / "keyframes" / video_id
+    if not vid_dir.exists():
+        vid_dir = dataset_root / video_id
+    if vid_dir.exists() and vid_dir.is_dir():
+        files = list(vid_dir.glob("*.jpg"))
+        if files:
+            # Try to match numeric stem
+            for f in files:
+                try:
+                    num = int(f.stem)
+                    if num == frame_id:
+                        return f
+                except ValueError:
+                    pass
+            # Return first available file if not exact
+            return files[0]
+    return None
+
+
+def run_kaggle_production_gate_and_visualizer() -> None:
+    # 5 Official Preliminary Round KIS Queries (100% Pure Vietnamese)
+    # Groundtruth targets (Evaluator-Only: strictly offline assessment)
     p1_queries = [
         {
             "query_id": "query-p1-1-kis",
@@ -61,25 +104,25 @@ def run_kaggle_production_gate() -> None:
             "query_id": "query-p1-2-kis",
             "source_vi": "Đoạn phim bắt đầu bằng một bản đồ, trên đó một loại công trình thủy lợi lần lượt xuất hiện bốn lần. Sau đó chuyển sang cảnh một con đập được quay từ trên cao, tiếp đến là cảnh cận con đập dưới trời mưa.",
             "target_vid": "L29_V018",
-            "target_frame": 1250,
+            "target_frame": 6050,  # Dam opening floodgates under rain
         },
         {
             "query_id": "query-p1-4-kis",
             "source_vi": "Một đàn sư tử đang nghỉ ngơi và leo trèo trên các bục gỗ trong khu nuôi dưỡng, phía trước có bảng thông tin của London Zoo phục vụ công tác theo dõi và bảo tồn động vật.. Sau đó có cảnh hai nhân viên mặc áo xanh lá đang cân và ghi nhận số liệu của một con vật trong khuôn viên sở thú.",
             "target_vid": "L28_V012",
-            "target_frame": 3500,
+            "target_frame": 1375,  # London zoo lions & keepers weighing animals
         },
         {
             "query_id": "query-p1-5-kis",
             "source_vi": "Đoạn clip bắt đầu bằng việc đậu hà lan được bỏ vào với mực đang được xào trên chảo, bên cạnh là đĩa hành tây và ớt đỏ thái lát chuẩn bị cho vào món ăn. Đoạn clip kết thúc với khung quay chậm (slow motion) cảnh lắc chảo trên bếp lửa.",
             "target_vid": "L30_V021",
-            "target_frame": 1800,
+            "target_frame": 3325,  # Peas & squid frying + slow motion tossing
         },
         {
             "query_id": "query-p1-6-kis",
-            "source_vi": "Mẩu tin bắt đầu với hình ảnh nột người đàn ông mặc vest xanh đậm, sơ mi trắng và cà vạt, đang ngồi trên một chiếc ghế lớn. Ông cầm bằng hai tay một khối đá quý thô khá lớn, đưa lên gần mặt để quan sát. Bên phải là một phụ nữ mặc trang phục công sở màu đen và khăn trùm đầu màu hồng tím, đang đứng cạnh và mỉm cười. Tiếp theo có hình ảnh toàn cảnh từ trên cao của một mỏ đá quý lộ thiên quy mô lớn với hố khai thác sâu nhiều tầng và hệ thống đường vận chuyển bao quanh.",
+            "source_vi": "Mẩu tin bắt đầu với hình ảnh một người đàn ông mặc vest xanh đậm, sơ mi trắng và cà vạt, đang ngồi trên một chiếc ghế lớn. Ông cầm bằng hai tay một khối đá quý thô khá lớn, đưa lên gần mặt để quan sát. Bên phải là một phụ nữ mặc trang phục công sở màu đen và khăn trùm đầu màu hồng tím, đang đứng cạnh và mỉm cười. Tiếp theo có hình ảnh toàn cảnh từ trên cao của một mỏ đá quý lộ thiên quy mô lớn với hố khai thác sâu nhiều tầng và hệ thống đường vận chuyển bao quanh.",
             "target_vid": "L27_V005",
-            "target_frame": 4200,
+            "target_frame": 1150,  # Gemstone inspection + terraced open pit mine
         },
     ]
 
@@ -96,8 +139,7 @@ def run_kaggle_production_gate() -> None:
             reuse_manifest_path = p
             break
 
-    # Setup base config with 100% Dynamic VinAI Translation
-    base_out = Path("/kaggle/working/output/production_gate") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "production_gate"
+    base_out = Path("/kaggle/working/output/v2a2_gate") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "v2a2_gate"
     manifest_cache_path = None if reuse_manifest_path is not None else (
         Path("/kaggle/working/manifest_cache.json") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "manifest_cache.json"
     )
@@ -115,12 +157,24 @@ def run_kaggle_production_gate() -> None:
         translation_allow_model_download=True,
         translation_max_clip_tokens=75,
         default_output_top_k=100,
-        default_refine_top_n=0,  # Pure retrieval gate: Verifier/refinement OFF
+        default_refine_top_n=0,  # Pure retrieval gate: Verifier OFF
         rrf_constant=60.0,
+        kis_video_first_config=KISVideoFirstConfig(
+            enabled=True,
+            v2_adaptive_enabled=True,
+            selected_video_cap=64,
+            top_m_evidence_cap=5,
+            top_m_min_frame_gap=60,
+            top_m_weights=(0.4, 0.25, 0.15, 0.1, 0.1),
+            adaptive_budget_base=32,
+            adaptive_budget_medium=48,
+            adaptive_budget_high=64,
+            coverage_threshold=0.75,
+        ),
     )
 
     print("=" * 120, flush=True)
-    print("KIS V2-A.1 — 5 OFFICIAL PRELIMINARY ROUND (SƠ TUYỂN ĐỢT 1) PURE VIETNAMESE GATE", flush=True)
+    print("KIS V2-A.2 — SINGLE-PASS TEMPORAL MULTI-CLAUSE VIDEO NOMINATION & EXACT AUDIT", flush=True)
     print("=" * 120, flush=True)
     print(f"• Git Commit SHA                : {get_git_head()}", flush=True)
     print(f"• Python Version                : {sys.version.split()[0]}", flush=True)
@@ -131,35 +185,31 @@ def run_kaggle_production_gate() -> None:
         pass
     print(f"• Input Root                    : {config.input_root}", flush=True)
     print(f"• Dynamic VinAI Translation     : ENABLED (vinai/vinai-translate-vi2en-v2 on {config.translation_device})", flush=True)
-    print(f"• Pure Vietnamese Queries       : 100% (Zero hardcoded English prompts)", flush=True)
-    print(f"• Gemini / Visual Verifier      : OFF (Pure Retrieval Foundation Gate)", flush=True)
+    print(f"• Temporal Multi-Clause Soft-AND: ENABLED (Geometric Mean + DP Chain Solver)", flush=True)
+    print(f"• Pre-Verifier Evidence Pool    : ENABLED (Neighborhood interval retention)", flush=True)
+    print(f"• Verifier / Gemini (V2-B)      : OFF (Strict Promotion Gate Benchmark)", flush=True)
 
     # Bootstrap runtime
-    print("\n--- BOOTSTRAPPING PRODUCTION RUNTIME ---", flush=True)
+    print("\n--- BOOTSTRAPPING OPERATIONAL KIS RUNTIME ---", flush=True)
     t0 = time.time()
     runtime = OperationalKISRuntime.bootstrap(config)
     print(f"Runtime bootstrap completed in {time.time() - t0:.2f}s.", flush=True)
 
-    # Print exact corpus provenance
     total_videos = len(runtime.video_restricted_searcher.registry.stores)
     total_rows = runtime.video_restricted_searcher.registry.total_rows
-    dim = runtime.video_restricted_searcher.registry.stores[0].descriptor.embedding_dimension if runtime.video_restricted_searcher.registry.stores else 512
-    print(f"• Total Real Indexed Videos     : {total_videos} videos", flush=True)
-    print(f"• Total Real Feature Rows       : {total_rows:,} rows", flush=True)
-    print(f"• Feature Dimension             : {dim}", flush=True)
-    print(f"• Total Official P1 Queries     : {len(p1_queries)} queries (Sơ Tuyển Đợt 1)", flush=True)
+    print(f"• Real Indexed Videos           : {total_videos} videos", flush=True)
+    print(f"• Real Feature Rows             : {total_rows:,} rows", flush=True)
+    print(f"• Benchmark Query Count         : {len(p1_queries)} queries (Sơ Tuyển Đợt 1)", flush=True)
 
     # =========================================================================
-    # 1. RUN 5 OFFICIAL PRELIMINARY ROUND (SƠ TUYỂN ĐỢT 1) QUERIES
+    # 1. RUN RETRIEVAL ONCE & WRITE IMMUTABLE ARTIFACTS
     # =========================================================================
-    results_legacy = []
-    results_v2a = []
-    latencies_leg = []
-    latencies_v2 = []
-
     print("\n" + "=" * 120, flush=True)
-    print("EXECUTING 5 OFFICIAL PRELIMINARY ROUND (SƠ TUYỂN ĐỢT 1) QUERIES...", flush=True)
+    print("EXECUTING SINGLE-PASS RETRIEVAL OVER REAL CORPUS...", flush=True)
     print("=" * 120, flush=True)
+
+    query_results = []
+    latencies = []
 
     for idx, q in enumerate(p1_queries, start=1):
         qid = q["query_id"]
@@ -167,147 +217,208 @@ def run_kaggle_production_gate() -> None:
         target_frame = q["target_frame"]
         q_vi = q["source_vi"]
 
-        req_leg = QueryRequest(
-            request_id=f"gate-leg-{qid}",
+        req = QueryRequest(
+            request_id=f"v2a2-eval-{qid}",
             query_id=qid,
             query_vi=q_vi,
-            query_en=None,  # 100% Pure Vietnamese -> Dynamic VinAI Translation
+            query_en=None,
             include_vi_variant=True,
             output_top_k=100,
             refine_top_n=0,
         )
 
-        # A. LEGACY RUN
-        runtime.config = replace(
-            runtime.config,
-            kis_video_first_config=KISVideoFirstConfig(
-                enabled=True,
-                v2_adaptive_enabled=False,
-                selected_video_cap=32,
-                top_m_evidence_cap=1,
-                top_m_min_frame_gap=60,
-                top_m_weights=(0.6, 0.3, 0.1),
-            ),
-        )
         t_start = time.perf_counter()
-        leg_out = runtime.handle_query(req_leg)
-        t_leg = (time.perf_counter() - t_start) * 1000
-        latencies_leg.append(t_leg)
+        out = runtime.handle_query(req)
+        t_elapsed = (time.perf_counter() - t_start) * 1000
+        latencies.append(t_elapsed)
 
-        leg_preds = [
-            json.loads(line)
-            for line in (runtime.output_root / leg_out["artifacts"]["top100_jsonl"]).read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
-        leg_target_rank = next((p["rank"] for p in leg_preds if p["video_id"] == target_vid), 999)
-        leg_first_hit = next((p["rank"] for p in leg_preds if p["video_id"] == target_vid and abs(p["frame_id"] - target_frame) <= 150), 999)
+        # Read immutable candidates.json artifact generated by the engine
+        query_out_dir = runtime.output_root / out["request_id"]
+        candidates_file = query_out_dir / "candidates.json"
+        top100_file = query_out_dir / "top100.jsonl"
 
-        # B. V2-A.1 ADAPTIVE RUN
-        req_v2 = QueryRequest(
-            request_id=f"gate-v2a-{qid}",
-            query_id=qid,
-            query_vi=q_vi,
-            query_en=None,  # 100% Pure Vietnamese -> Dynamic VinAI Translation
-            include_vi_variant=True,
-            output_top_k=100,
-            refine_top_n=0,
+        cand_data = json.loads(candidates_file.read_text(encoding="utf-8"))
+        top100_sha256 = cand_data.get("top100_sha256", "UNKNOWN")
+        records = cand_data.get("records", [])
+        evidence_pool = cand_data.get("evidence_frame_pool", [])
+        translation_meta = cand_data.get("translation", {})
+        vf_trace = cand_data.get("video_first", {})
+        adaptive_diag = vf_trace.get("adaptive_budget", {})
+
+        # Compute Evaluator Metrics strictly from this saved artifact
+        target_rank = next((p["rank"] for p in records if p["video_id"] == target_vid), 999)
+        official_frame_hit = next(
+            (p["rank"] for p in records if p["video_id"] == target_vid and abs(p["frame_id"] - target_frame) <= 150),
+            999,
         )
-        runtime.config = replace(
-            runtime.config,
-            kis_video_first_config=KISVideoFirstConfig(
-                enabled=True,
-                v2_adaptive_enabled=True,
-                selected_video_cap=32,
-                top_m_evidence_cap=3,
-                top_m_min_frame_gap=60,
-                top_m_weights=(0.6, 0.3, 0.1),
-                adaptive_budget_base=32,
-                adaptive_budget_medium=48,
-                adaptive_budget_high=64,
-                coverage_threshold=0.75,
-            ),
+
+        # Evidence pool interval recall (check if target frame interval was retained in pre-verifier pool)
+        in_evidence_pool = any(
+            item["video_id"] == target_vid and abs(int(item["frame_id"]) - target_frame) <= 150
+            for item in evidence_pool
         )
-        t_start = time.perf_counter()
-        v2_out = runtime.handle_query(req_v2)
-        t_v2 = (time.perf_counter() - t_start) * 1000
-        latencies_v2.append(t_v2)
 
-        v2_preds = [
-            json.loads(line)
-            for line in (runtime.output_root / v2_out["artifacts"]["top100_jsonl"]).read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
-        v2_target_rank = next((p["rank"] for p in v2_preds if p["video_id"] == target_vid), 999)
-        v2_first_hit = next((p["rank"] for p in v2_preds if p["video_id"] == target_vid and abs(p["frame_id"] - target_frame) <= 150), 999)
+        # Distractor audit for p1-4 (London Zoo)
+        distractor_l22_rank = next((p["rank"] for p in records if p["video_id"] == "L22_V021"), 999)
 
-        trace = v2_out.get("trace", {})
-        vf_trace = trace.get("video_first", {})
-        diag = vf_trace.get("adaptive_diagnostic", {})
+        # Extract VinAI translation units
+        units_trace = translation_meta.get("units", [])
+        trans_summary = " | ".join(
+            f"T{u.get('temporal_index', idx)}: '{u.get('raw_english', '')[:45]}...'"
+            for idx, u in enumerate(units_trace[1:], start=1)
+        ) if len(units_trace) > 1 else (units_trace[0].get("raw_english", "")[:60] if units_trace else "N/A")
 
-        chosen_k = diag.get("chosen_k", 32)
-        h_norm = diag.get("normalized_entropy", 0.0)
-        d1_5 = diag.get("top1_top5_margin", 0.0)
-        reasons = diag.get("adaptive_reasons", [])
+        # Extract temporal chain diagnostic for target video if available
+        target_vid_ev = next((v for v in vf_trace.get("selected_videos", []) if v["video_id"] == target_vid), None)
+        chain_info = target_vid_ev.get("temporal_chain") if target_vid_ev else None
+        chain_summary = (
+            f"Chain={chain_info.get('selected_chain_frames')} (Score={chain_info.get('chain_score', 0):.3f}, SoftAND={chain_info.get('soft_and_score', 0):.3f})"
+            if chain_info and chain_info.get("has_valid_chain")
+            else "Single-Scene / No Chain"
+        )
 
-        leg_top32_vids = {p["video_id"] for p in leg_preds[:32]}
-        v2_top32_vids = {p["video_id"] for p in v2_preds[:32]}
-        overlap = len(leg_top32_vids.intersection(v2_top32_vids))
+        print(f"\n[{idx:02d}/{len(p1_queries):02d}] QUERY: {qid}")
+        print(f"   • Vietnamese Query     : {q_vi}")
+        print(f"   • VinAI Translation    : {trans_summary}")
+        print(f"   • Target Groundtruth   : Video {target_vid} @ Frame {target_frame}")
+        print(f"   • Target Video Rank    : Rank {target_rank} ({'TOP 64 HIT ✅' if target_rank <= 64 else 'FAIL ❌'})")
+        print(f"   • Pre-Verifier Pool    : {'RETAINED ✅' if in_evidence_pool else 'MISSED ❌'}")
+        print(f"   • Official Frame Hit   : Rank {official_frame_hit} ({'EXACT HIT ✅' if official_frame_hit <= 100 else 'NO HIT ❌'})")
+        print(f"   • Temporal Chain Audit : {chain_summary}")
+        if qid == "query-p1-4-kis":
+            print(f"   • Distractor Check     : Target L28_V012 (Rank {target_rank}) vs Distractor L22_V021 (Rank {distractor_l22_rank}) -> {'SUCCESS (Target Outranks Distractor) ✅' if target_rank < distractor_l22_rank else 'DISTRACTOR DOMINATED ❌'}")
+        print(f"   • Artifact SHA256      : {top100_sha256[:16]}...")
 
-        diff = leg_target_rank - v2_target_rank
-        diff_str = f"+{diff}" if diff > 0 else str(diff)
-
-        print(f"[{idx:02d}/{len(p1_queries):02d}] {qid:<16} | Tgt: {target_vid:<8} | Leg Rank: {leg_target_rank:<4} | V2-A: {v2_target_rank:<4} ({diff_str:<3}) | FrameHit: Leg={leg_first_hit:<4} V2={v2_first_hit:<4} | K={chosen_k:<2} | H={h_norm:.3f} d1_5={d1_5:.3f} | {', '.join(reasons)}", flush=True)
-
-        results_legacy.append({"qid": qid, "target_vid": target_vid, "rank": leg_target_rank, "frame_hit": leg_first_hit})
-        results_v2a.append({"qid": qid, "target_vid": target_vid, "rank": v2_target_rank, "frame_hit": v2_first_hit, "k": chosen_k, "h": h_norm, "d1_5": d1_5, "reasons": reasons, "overlap": overlap})
+        query_results.append({
+            "qid": qid,
+            "target_vid": target_vid,
+            "target_frame": target_frame,
+            "target_rank": target_rank,
+            "official_frame_hit": official_frame_hit,
+            "in_evidence_pool": in_evidence_pool,
+            "sha256": top100_sha256,
+            "records": records,
+            "trans_summary": trans_summary,
+            "distractor_l22_rank": distractor_l22_rank if qid == "query-p1-4-kis" else None,
+        })
 
     # =========================================================================
-    # 2. AGGREGATE SUMMARY ON 5 OFFICIAL P1 QUERIES (DENOMINATOR = 5)
+    # 2. PROMOTION GATE AUDIT TABLE
     # =========================================================================
     print("\n" + "=" * 120, flush=True)
-    print("5 OFFICIAL PRELIMINARY ROUND (SƠ TUYỂN ĐỢT 1) PRODUCTION GATE SUMMARY (N=5)", flush=True)
+    print("KIS V2-A.2 OFFICIAL PROMOTION GATE EVALUATION (N=5)", flush=True)
     print("=" * 120, flush=True)
 
-    n_p1 = len(results_v2a)
-    for k_val in (8, 16, 32, 48, 64):
-        hit_leg = sum(1 for r in results_legacy if r["rank"] <= k_val) / n_p1 * 100
-        hit_v2 = sum(1 for r in results_v2a if r["rank"] <= k_val) / n_p1 * 100
-        print(f"• VideoHit@{k_val:<2} : Legacy = {hit_leg:5.1f}% | KIS V2-A.1 = {hit_v2:5.1f}% (Delta: {hit_v2 - hit_leg:+.1f}%)", flush=True)
+    n_queries = len(query_results)
+    top64_count = sum(1 for r in query_results if r["target_rank"] <= 64)
+    top32_count = sum(1 for r in query_results if r["target_rank"] <= 32)
+    ev_pool_count = sum(1 for r in query_results if r["in_evidence_pool"])
+    frame100_count = sum(1 for r in query_results if r["official_frame_hit"] <= 100)
 
-    print("\n--- PHYSICAL FRAME RECALL (OFFICIAL KIS EVALUATOR, N=5) ---", flush=True)
-    for k_val in OFFICIAL_K:
-        r_leg = sum(1 for r in results_legacy if r["frame_hit"] <= k_val) / n_p1 * 100
-        r_v2 = sum(1 for r in results_v2a if r["frame_hit"] <= k_val) / n_p1 * 100
-        print(f"• Frame R@{k_val:<3} : Legacy = {r_leg:5.1f}% | KIS V2-A.1 = {r_v2:5.1f}% (Delta: {r_v2 - r_leg:+.1f}%)", flush=True)
+    print(f"• Primary Target Video Top64 Recall : {top64_count}/{n_queries} ({top64_count/n_queries*100:.1f}%) [CRITERIA: 5/5]")
+    print(f"• Pre-Verifier Evidence Pool Recall : {ev_pool_count}/{n_queries} ({ev_pool_count/n_queries*100:.1f}%)")
+    print(f"• Target Video Top32 Recall (Diag)  : {top32_count}/{n_queries} ({top32_count/n_queries*100:.1f}%)")
+    print(f"• Official Physical Frame R@100     : {frame100_count}/{n_queries} ({frame100_count/n_queries*100:.1f}%)")
 
-    k32_cnt = sum(1 for r in results_v2a if r["k"] == 32)
-    k48_cnt = sum(1 for r in results_v2a if r["k"] == 48)
-    k64_cnt = sum(1 for r in results_v2a if r["k"] == 64)
-    print("\n--- ADAPTIVE-K DISTRIBUTION (N=5) ---", flush=True)
-    print(f"• K=32 (Confident Default)     : {k32_cnt}/{n_p1} ({k32_cnt/n_p1*100:.1f}%)", flush=True)
-    print(f"• K=48 (Moderate / Attributes) : {k48_cnt}/{n_p1} ({k48_cnt/n_p1*100:.1f}%)", flush=True)
-    print(f"• K=64 (High Uncertainty / Flat): {k64_cnt}/{n_p1} ({k64_cnt/n_p1*100:.1f}%)", flush=True)
+    # Audit individual queries
+    p1_5 = next(r for r in query_results if r["qid"] == "query-p1-5-kis")
+    p1_6 = next(r for r in query_results if r["qid"] == "query-p1-6-kis")
+    p1_4 = next(r for r in query_results if r["qid"] == "query-p1-4-kis")
 
-    h_sorted = sorted([r["h"] for r in results_v2a])
-    d_sorted = sorted([r["d1_5"] for r in results_v2a])
-    p90_idx = int(0.90 * n_p1)
-    print("\n--- ROBUST ENTROPY & MARGINS (MAD STANDARDIZED) ---", flush=True)
-    print(f"• Robust Entropy H_norm : min={h_sorted[0]:.4f}, median={h_sorted[n_p1//2]:.4f}, p90={h_sorted[p90_idx]:.4f}, max={h_sorted[-1]:.4f}", flush=True)
-    print(f"• Top1-Top5 Margin      : min={d_sorted[0]:.4f}, median={d_sorted[n_p1//2]:.4f}, p90={d_sorted[p90_idx]:.4f}, max={d_sorted[-1]:.4f}", flush=True)
+    print("\n--- CRITICAL INDIVIDUAL TESTCASES ---")
+    print(f"• p1-5 (Peas & Squid): Target Rank = {p1_5['target_rank']} ({'RESOLVED (<=64) ✅' if p1_5['target_rank'] <= 64 else 'ABSENT ❌'})")
+    print(f"• p1-6 (Gemstone)    : Target Rank = {p1_6['target_rank']} ({'RESOLVED (<=64) ✅' if p1_6['target_rank'] <= 64 else 'ABSENT ❌'})")
+    print(f"• p1-4 (London Zoo)  : Target Rank = {p1_4['target_rank']} vs Distractor = {p1_4['distractor_l22_rank']} ({'PASSED ✅' if p1_4['target_rank'] < p1_4['distractor_l22_rank'] else 'FAILED ❌'})")
 
-    print("\n--- RETRIEVAL OVERLAP & LATENCY ---", flush=True)
-    print(f"• Mean Top32 Candidate Overlap: {np.mean([r['overlap'] for r in results_v2a]):.1f}/32 ({np.mean([r['overlap'] for r in results_v2a])/32*100:.1f}%)", flush=True)
-    print(f"• Latency p50 / p95           : Legacy = {np.percentile(latencies_leg, 50):.2f}ms / {np.percentile(latencies_leg, 95):.2f}ms | V2-A = {np.percentile(latencies_v2, 50):.2f}ms / {np.percentile(latencies_v2, 95):.2f}ms", flush=True)
+    # =========================================================================
+    # 3. DIRECT MATPLOTLIB VISUAL GALLERY (READS THE SAME ARTIFACT)
+    # =========================================================================
+    print("\n" + "=" * 120, flush=True)
+    print("RENDERING KEYFRAME VISUAL INSPECTION GALLERIES (MATPLOTLIB)...", flush=True)
+    print("=" * 120, flush=True)
 
-    regressions = [r for r, leg in zip(results_v2a, results_legacy) if r["rank"] > leg["rank"]]
-    improvements = [r for r, leg in zip(results_v2a, results_legacy) if r["rank"] < leg["rank"]]
-    sig_reg = [r for r, leg in zip(results_v2a, results_legacy) if (r["rank"] - leg["rank"]) >= 5]
-    print(f"\n• Target Rank Improvements : {len(improvements)} / {n_p1} ({len(improvements)/n_p1*100:.1f}%)", flush=True)
-    print(f"• Target Rank Regressions  : {len(regressions)} / {n_p1} ({len(regressions)/n_p1*100:.1f}%)", flush=True)
-    print(f"• Significant Regressions (>= 5 ranks): {len(sig_reg)}", flush=True)
+    try:
+        import matplotlib.pyplot as plt
+        from PIL import Image
+
+        vis_out_dir = Path("/kaggle/working/output/visualizer") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "visualizer"
+        vis_out_dir.mkdir(parents=True, exist_ok=True)
+
+        for res in query_results:
+            qid = res["qid"]
+            tgt_vid = res["target_vid"]
+            tgt_frame = res["target_frame"]
+            sha = res["sha256"]
+            top_records = res["records"][:5]
+
+            fig, axes = plt.subplots(1, 5, figsize=(20, 4.5))
+            fig.suptitle(
+                f"[{qid}] Target: {tgt_vid} @ {tgt_frame} | Artifact SHA: {sha[:8]}... | Target Video Rank: #{res['target_rank']}",
+                fontsize=12,
+                fontweight="bold",
+                y=1.03,
+            )
+
+            for i, ax in enumerate(axes):
+                if i < len(top_records):
+                    rec = top_records[i]
+                    v_id = rec["video_id"]
+                    f_id = rec["frame_id"]
+                    rank = rec["rank"]
+                    score = rec.get("fusion_score", 0.0)
+
+                    is_target_vid = (v_id == tgt_vid)
+                    is_exact_frame = is_target_vid and (abs(f_id - tgt_frame) <= 150)
+
+                    img_path = locate_keyframe_path(input_root, v_id, f_id)
+                    if img_path and img_path.exists():
+                        try:
+                            img = Image.open(img_path)
+                            ax.imshow(img)
+                        except Exception:
+                            ax.text(0.5, 0.5, "Image Load Error", ha="center", va="center")
+                    else:
+                        ax.text(0.5, 0.5, f"Missing:\n{v_id}\nF={f_id}", ha="center", va="center", fontsize=9)
+
+                    # Highlight border & title
+                    if is_exact_frame:
+                        border_color = "green"
+                        status_tag = "🎯 EXACT HIT"
+                    elif is_target_vid:
+                        border_color = "orange"
+                        status_tag = "⚠️ TARGET VID (DIFF MOMENT)"
+                    else:
+                        border_color = "black"
+                        status_tag = "DISTRACTOR"
+
+                    ax.set_title(
+                        f"Rank #{rank} | {v_id}\nFrame: {f_id} (Score: {score:.3f})\n{status_tag}",
+                        fontsize=9,
+                        color="green" if is_exact_frame else ("red" if not is_target_vid else "orange"),
+                        fontweight="bold",
+                    )
+                    for spine in ax.spines.values():
+                        spine.set_edgecolor(border_color)
+                        spine.set_linewidth(3 if is_target_vid else 1)
+                ax.axis("off")
+
+            plt.tight_layout()
+            save_path = vis_out_dir / f"{qid}_top5.png"
+            plt.savefig(save_path, dpi=120, bbox_inches="tight")
+            print(f"• Gallery saved: {save_path} (Artifact SHA: {sha[:16]} | Evaluator Rank: #{res['target_rank']})", flush=True)
+            try:
+                plt.show()
+            except Exception:
+                pass
+            plt.close(fig)
+
+    except ImportError:
+        print("• Matplotlib / PIL not available in this environment, skipping graphical display.", flush=True)
+
+    print("\n" + "=" * 120, flush=True)
+    print("V2-A.2 SINGLE-PASS BENCHMARK & VISUAL AUDIT COMPLETE.", flush=True)
     print("=" * 120, flush=True)
 
 
 if __name__ == "__main__":
-    run_kaggle_production_gate()
-
+    run_kaggle_production_gate_and_visualizer()

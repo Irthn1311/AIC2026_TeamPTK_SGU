@@ -632,6 +632,7 @@ class OperationalKISRuntime:
                     maxima=maxima,
                     primary_variant_ids=compiled_semantic_query.primary_variant_ids,
                     supporting_variant_ids=compiled_semantic_query.supporting_variant_ids,
+                    temporal_variants=tuple(item.query_variant for item in compiled_semantic_query.temporal_scene_variants),
                     rrf_constant=self.config.rrf_constant,
                     nomination_depth=(
                         self.config.kis_video_first_config.video_nomination_depth
@@ -788,10 +789,30 @@ class OperationalKISRuntime:
                 q3_trace,
             )
 
+        top100_bytes = top100_jsonl.read_bytes()
+        top100_sha256 = hashlib.sha256(top100_bytes).hexdigest()
+
+        evidence_frame_pool: list[dict[str, object]] = []
+        if video_first_outcome is not None and restricted is not None:
+            for vid_evidence in video_first_outcome.selected_videos:
+                vid = vid_evidence.video_id
+                frames_for_video: set[int] = set()
+                if vid_evidence.temporal_chain and vid_evidence.temporal_chain.selected_chain_frames:
+                    for cf in vid_evidence.temporal_chain.selected_chain_frames:
+                        frames_for_video.add(cf)
+                for var in variants:
+                    per_v = restricted.rankings.get(var.variant_id, {}).get(vid, ())
+                    for rf in per_v[:6]:
+                        frames_for_video.add(rf.frame_id)
+                for fid in sorted(frames_for_video):
+                    evidence_frame_pool.append({"video_id": vid, "frame_id": fid})
+
         candidates_json = query_dir / "candidates.json"
         candidates_data = {
             "query_id": request.query_id,
             "request_id": request.request_id,
+            "top100_sha256": top100_sha256,
+            "evidence_frame_pool": evidence_frame_pool,
             "translation": translation_metadata,
             "video_first": video_first_trace,
             "records": [

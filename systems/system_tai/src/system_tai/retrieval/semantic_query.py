@@ -18,6 +18,7 @@ from system_tai.retrieval.multi_query import (
 
 class SemanticUnitRole(StrEnum):
     FULL_QUERY = "full_query"
+    TEMPORAL_SCENE = "temporal_scene"
     PRIMARY_SCENE = "primary_scene"
     SUPPORTING_ATTRIBUTE = "supporting_attribute"
 
@@ -44,6 +45,7 @@ class VietnameseSemanticUnit:
     text: str
     role: SemanticUnitRole
     weight: float
+    temporal_index: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +58,7 @@ class CompiledSemanticVariant:
     segment_index: int
     segment_count: int
     clip_token_count: int
+    temporal_index: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,8 +78,24 @@ class CompiledSemanticQuery:
         return frozenset(
             item.query_variant.variant_id
             for item in self.variants
-            if item.semantic_role is SemanticUnitRole.PRIMARY_SCENE
+            if item.semantic_role in (SemanticUnitRole.PRIMARY_SCENE, SemanticUnitRole.TEMPORAL_SCENE)
         )
+
+    @property
+    def temporal_scene_variants(self) -> tuple[CompiledSemanticVariant, ...]:
+        return tuple(
+            item for item in self.variants
+            if item.semantic_role is SemanticUnitRole.TEMPORAL_SCENE
+        )
+
+    @property
+    def is_temporal_compound(self) -> bool:
+        temporal_indices = {
+            item.temporal_index
+            for item in self.variants
+            if item.semantic_role is SemanticUnitRole.TEMPORAL_SCENE and item.temporal_index is not None
+        }
+        return len(temporal_indices) >= 2
 
     @property
     def supporting_variant_ids(self) -> frozenset[str]:
@@ -103,6 +122,7 @@ class CompiledSemanticQuery:
             "semantic_clause_compilation_enabled": True,
             "provider": self.provider_name,
             "source_vietnamese": self.source_vietnamese,
+            "is_temporal_compound": self.is_temporal_compound,
             "unit_count": len(self.units),
             "segment_count": len(self.variants),
             "lossless_segmentation": True,
@@ -111,6 +131,7 @@ class CompiledSemanticQuery:
                 {
                     "unit_id": unit.unit_id,
                     "role": unit.role.value,
+                    "temporal_index": unit.temporal_index,
                     "weight": unit.weight,
                     "source_vietnamese": unit.text,
                     "raw_english": next(
@@ -125,6 +146,7 @@ class CompiledSemanticQuery:
                             "weight": variant.query_variant.weight,
                             "clip_token_count": variant.clip_token_count,
                             "segment_index": variant.segment_index,
+                            "temporal_index": variant.temporal_index,
                         }
                         for variant in self.variants
                         if variant.semantic_unit_id == unit.unit_id
@@ -213,24 +235,41 @@ def decompose_vietnamese_semantic_units(
             text=source,
             role=SemanticUnitRole.FULL_QUERY,
             weight=config.full_query_weight,
+            temporal_index=None,
         )
     ]
     clauses = _split_semantic_clauses(source)
     if len(clauses) == 1 and clauses[0] == source:
         return tuple(units)
-    for index, clause in enumerate(clauses, start=1):
-        role = _classify_clause(clause)
-        weight = (
-            config.primary_scene_weight
-            if role is SemanticUnitRole.PRIMARY_SCENE
-            else config.supporting_attribute_weight
-        )
+
+    # Pre-classify clauses
+    classified = [(_classify_clause(clause), clause) for clause in clauses]
+    scene_clause_count = sum(1 for role, _ in classified if role is not SemanticUnitRole.SUPPORTING_ATTRIBUTE)
+    is_temporal = scene_clause_count >= 2
+
+    current_temporal_idx = 1
+    for index, (initial_role, clause) in enumerate(classified, start=1):
+        if initial_role is SemanticUnitRole.SUPPORTING_ATTRIBUTE:
+            role = SemanticUnitRole.SUPPORTING_ATTRIBUTE
+            weight = config.supporting_attribute_weight
+            temp_idx = None
+        elif is_temporal:
+            role = SemanticUnitRole.TEMPORAL_SCENE
+            weight = config.primary_scene_weight
+            temp_idx = current_temporal_idx
+            current_temporal_idx += 1
+        else:
+            role = SemanticUnitRole.PRIMARY_SCENE
+            weight = config.primary_scene_weight
+            temp_idx = None
+
         units.append(
             VietnameseSemanticUnit(
                 unit_id=f"{query_id}::clause_{index:02d}",
                 text=clause,
                 role=role,
                 weight=weight,
+                temporal_index=temp_idx,
             )
         )
     return tuple(units)
@@ -289,6 +328,7 @@ def compile_vietnamese_semantic_query(
                     segment_index=segment_index,
                     segment_count=len(segments),
                     clip_token_count=token_budget_guard.count_tokens(segment),
+                    temporal_index=unit.temporal_index,
                 )
             )
     return CompiledSemanticQuery(
