@@ -79,6 +79,21 @@ class CompiledSemanticQuery:
         )
 
     @property
+    def supporting_variant_ids(self) -> frozenset[str]:
+        return frozenset(
+            item.query_variant.variant_id
+            for item in self.variants
+            if item.semantic_role is SemanticUnitRole.SUPPORTING_ATTRIBUTE
+        )
+
+    @property
+    def has_supporting_attributes(self) -> bool:
+        return any(
+            item.semantic_role is SemanticUnitRole.SUPPORTING_ATTRIBUTE
+            for item in self.variants
+        )
+
+    @property
     def full_query_variant_id(self) -> str:
         return self.variants[0].query_variant.variant_id
 

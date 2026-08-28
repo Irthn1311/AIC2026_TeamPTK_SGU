@@ -397,6 +397,7 @@ def fuse_video_maxima_v2(
     variants: Sequence[QueryVariant],
     maxima: FullCorpusVideoMaximaOutcome,
     primary_variant_ids: frozenset[str],
+    supporting_variant_ids: frozenset[str] = frozenset(),
     rrf_constant: float,
     nomination_depth: int,
     config: KISVideoFirstConfig,
@@ -527,7 +528,7 @@ def fuse_video_maxima_v2(
         )
 
     # 3. Compute adaptive video budget K in {32, 48, 64} on gap-preserving raw scores
-    has_attributes = len(variants) > len(primary_variant_ids)
+    has_attributes = len(supporting_variant_ids) > 0
     chosen_k, adaptive_diag = compute_adaptive_video_budget_v2(
         fused_scores=raw_evidence_scores_list,
         clause_count=len(variants),

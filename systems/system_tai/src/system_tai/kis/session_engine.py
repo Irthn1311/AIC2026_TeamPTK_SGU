@@ -631,6 +631,7 @@ class OperationalKISRuntime:
                     variants=variants,
                     maxima=maxima,
                     primary_variant_ids=compiled_semantic_query.primary_variant_ids,
+                    supporting_variant_ids=compiled_semantic_query.supporting_variant_ids,
                     rrf_constant=self.config.rrf_constant,
                     nomination_depth=(
                         self.config.kis_video_first_config.video_nomination_depth
