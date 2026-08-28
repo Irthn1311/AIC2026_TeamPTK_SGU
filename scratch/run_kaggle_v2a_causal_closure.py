@@ -78,49 +78,37 @@ from system_tai.kis.video_first import (
     solve_temporal_chain,
 )
 
-# Canonical Frozen Benchmark Query Manifest for KIS Quality Audits
-FROZEN_BENCHMARK_MANIFEST: dict[str, dict[str, Any]] = {
-    "p1-1": {
-        "query_id": "query-p1-1-kis",
-        "query_vi": "Cảnh quay một nhóm hơn 5 người xếp thành hàng tập thể dục, cùng thực hiện động tác hai tay chạm mũi chân. Trong nhóm chỉ có một người đeo kính và ba người đội nón có màu đỏ.",
-        "target_video": "L30_V046",
-        "official_gt_frame": 2425,
-        "diagnostic_tolerance": 150,
-        "expected_keywords": ("tập thể dục", "mũi chân", "nón có màu đỏ"),
-    },
-    "p1-2": {
-        "query_id": "query-p1-2-kis",
-        "query_vi": "Đoạn phim bắt đầu bằng một bản đồ, trên đó một loại công trình thủy lợi lần lượt xuất hiện bốn lần. Sau đó chuyển sang cảnh một con đập được quay từ trên cao, tiếp đến là cảnh cận con đập dưới trời mưa.",
-        "target_video": "L29_V018",
-        "official_gt_frame": 6050,
-        "diagnostic_tolerance": 150,
-        "expected_keywords": ("bản đồ", "thủy lợi", "con đập"),
-    },
-    "p1-4": {
-        "query_id": "query-p1-4-kis",
-        "query_vi": "Một đàn sư tử đang nghỉ ngơi và leo trèo trên các bục gỗ trong khu nuôi dưỡng, phía trước có bảng thông tin của London Zoo phục vụ công tác theo dõi và bảo tồn động vật.. Sau đó có cảnh hai nhân viên mặc áo xanh lá đang cân và ghi nhận số liệu của một con vật trong khuôn viên sở thú.",
-        "target_video": "L28_V012",
-        "official_gt_frame": 1375,
-        "diagnostic_tolerance": 150,
-        "expected_keywords": ("sư tử", "London Zoo", "áo xanh lá"),
-    },
-    "p1-5": {
-        "query_id": "query-p1-5-kis",
-        "query_vi": "Đoạn clip bắt đầu bằng việc đậu hà lan được bỏ vào với mực đang được xào trên chảo, bên cạnh là đĩa hành tây và ớt đỏ thái lát chuẩn bị cho vào món ăn. Đoạn clip kết thúc với khung quay chậm (slow motion) cảnh lắc chảo trên bếp lửa.",
-        "target_video": "L30_V021",
-        "official_gt_frame": 3325,
-        "diagnostic_tolerance": 150,
-        "expected_keywords": ("đậu hà lan", "mực", "lắc chảo"),
-    },
-    "p1-6": {
-        "query_id": "query-p1-6-kis",
-        "query_vi": "Mẩu tin bắt đầu với hình ảnh nột người đàn ông mặc vest xanh đậm, sơ mi trắng và cà vạt, đang ngồi trên một chiếc ghế lớn. Ông cầm bằng hai tay một khối đá quý thô khá lớn, đưa lên gần mặt để quan sát. Bên phải là một phụ nữ mặc trang phục công sở màu đen và khăn trùm đầu màu hồng tím, đang đứng cạnh và mỉm cười. Tiếp theo có hình ảnh toàn cảnh từ trên cao của một mỏ đá quý lộ thiên quy mô lớn với hố khai thác sâu nhiều tầng và hệ thống đường vận chuyển bao quanh.",
-        "target_video": "L27_V005",
-        "official_gt_frame": 1150,
-        "diagnostic_tolerance": 150,
-        "expected_keywords": ("đá quý", "vest xanh", "mỏ đá quý"),
-    },
-}
+def load_canonical_frozen_manifest() -> tuple[Path, str, dict[str, dict[str, Any]]]:
+    """Load canonical frozen stress benchmark manifest directly from repository files."""
+    possible_paths = [
+        SYSTEM_TAI_SRC.parent / "benchmarks" / "frozen_kis_v2a_stress_manifest.json",
+        REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "frozen_kis_v2a_stress_manifest.json",
+        Path("/kaggle/working/AIC2026_TeamPTK_SGU/systems/system_tai/benchmarks/frozen_kis_v2a_stress_manifest.json"),
+    ]
+    manifest_path = None
+    for p in possible_paths:
+        if p.is_file():
+            manifest_path = p.resolve()
+            break
+
+    if manifest_path is None:
+        raise RuntimeError("FROZEN_MANIFEST_PROVENANCE_UNRESOLVED: Canonical manifest file not found in repository!")
+
+    content_bytes = manifest_path.read_bytes()
+    manifest_sha = hashlib.sha256(content_bytes).hexdigest()
+
+    data = json.loads(content_bytes.decode("utf-8"))
+    queries = {q["query_id"]: q for q in data.get("queries", [])}
+    # Provide short name aliases ("p1-1", "p1-2", ...)
+    short_map: dict[str, dict[str, Any]] = {}
+    for qid, q in queries.items():
+        parts = qid.split("-")
+        if len(parts) >= 3 and parts[0] == "query" and parts[1].startswith("p1"):
+            short_map[f"{parts[1]}-{parts[2]}"] = q
+        short_map[qid] = q
+
+    return manifest_path, manifest_sha, short_map
+
 
 
 def create_production_v2a_session_config(
@@ -385,12 +373,18 @@ def run_gt_index_coverage_audit(runtime: OperationalKISRuntime, input_root: Path
     print("1. GT INDEX COVERAGE & SOURCE ↔ MAPPING FRAME-SPACE PARITY AUDIT (ALL 5 TARGETS)", flush=True)
     print("=" * 120, flush=True)
 
+    manifest_path, manifest_sha, manifest_queries = load_canonical_frozen_manifest()
+
     targets = [
-        (qid, meta["target_video"], meta["official_gt_frame"], meta["diagnostic_tolerance"])
-        for qid, meta in FROZEN_BENCHMARK_MANIFEST.items()
+        ("p1-1", manifest_queries["p1-1"]["target_video"], manifest_queries["p1-1"]["official_gt_frame"], manifest_queries["p1-1"]["diagnostic_tolerance"]),
+        ("p1-2", manifest_queries["p1-2"]["target_video"], manifest_queries["p1-2"]["official_gt_frame"], manifest_queries["p1-2"]["diagnostic_tolerance"]),
+        ("p1-4", manifest_queries["p1-4"]["target_video"], manifest_queries["p1-4"]["official_gt_frame"], manifest_queries["p1-4"]["diagnostic_tolerance"]),
+        ("p1-5", manifest_queries["p1-5"]["target_video"], manifest_queries["p1-5"]["official_gt_frame"], manifest_queries["p1-5"]["diagnostic_tolerance"]),
+        ("p1-6", manifest_queries["p1-6"]["target_video"], manifest_queries["p1-6"]["official_gt_frame"], manifest_queries["p1-6"]["diagnostic_tolerance"]),
     ]
 
     coverage_summary = {}
+
 
     for qid, vid, gt_fid, diag_tol in targets:
         gt_interval = (gt_fid - diag_tol, gt_fid + diag_tol)
@@ -533,43 +527,68 @@ def run_gt_index_coverage_audit(runtime: OperationalKISRuntime, input_root: Path
 # ==============================================================================
 def run_p1_2_trace_and_raw_cosine_audit(runtime: OperationalKISRuntime) -> None:
     print("=" * 120, flush=True)
-    print("2. P1-2: EVIDENCE-POOL TO FINAL-EXPORT TRACE & DEV RAW COSINE AUDIT (TRUE FROZEN QUERY)", flush=True)
+    print("2. P1-2: EVIDENCE-POOL TO FINAL-EXPORT TRACE & DEV RAW COSINE AUDIT (CANONICAL PROVENANCE)", flush=True)
     print("=" * 120, flush=True)
 
-    manifest_entry = FROZEN_BENCHMARK_MANIFEST["p1-2"]
-    manifest_bytes = json.dumps(manifest_entry, sort_keys=True).encode("utf-8")
-    manifest_sha = hashlib.sha256(manifest_bytes).hexdigest()[:12]
+    manifest_path, manifest_sha, manifest_queries = load_canonical_frozen_manifest()
+    qid = "query-p1-2-kis"
+    if qid not in manifest_queries:
+        raise RuntimeError(f"FROZEN_MANIFEST_PROVENANCE_UNRESOLVED: Query {qid} not found in canonical manifest!")
 
-    qid = manifest_entry["query_id"]
-    q_vi = manifest_entry["query_vi"]
-    target_vid = manifest_entry["target_video"]
-    official_gt_frame = manifest_entry["official_gt_frame"]
-    diag_tol = manifest_entry["diagnostic_tolerance"]
+    manifest_record = manifest_queries[qid]
+    q_vi = manifest_record["query_vi"]
+    target_vid = manifest_record["target_video"]
+    official_gt_frame = manifest_record["official_gt_frame"]
+    diag_tol = manifest_record["diagnostic_tolerance"]
     gt_interval = (official_gt_frame - diag_tol, official_gt_frame + diag_tol)
 
-    print("--- 2.0 FROZEN QUERY PROVENANCE AUDIT ---")
-    print(f"• Manifest Query ID       : {qid}")
-    print(f"• Manifest Entry SHA256   : {manifest_sha}")
+    print("--- 2.0 CANONICAL BENCHMARK MANIFEST PROVENANCE ---")
+    print(f"• Canonical Manifest Path : {manifest_path}")
+    print(f"• Manifest File SHA256    : {manifest_sha}")
+    print(f"• Query Record ID         : {qid}")
+    print(f"• Exact Vietnamese Text   : \"{q_vi}\"")
     print(f"• Target Video            : {target_vid}")
     print(f"• Official GT Frame       : {official_gt_frame}")
     print(f"• Diagnostic Tolerance    : +/- {diag_tol} frames -> gt_neighborhood_keyframes range: [{gt_interval[0]}, {gt_interval[1]}]")
-    print(f"• Verbatim Vietnamese Text: \"{q_vi}\"")
 
-    # Fast validation: assert query semantics
-    for kw in manifest_entry["expected_keywords"]:
-        if kw not in q_vi:
-            raise RuntimeError(f"QUERY_GT_PROVENANCE_MISMATCH: Missing expected keyword '{kw}' in query_vi!")
-    if "áo sơ mi tím" in q_vi or "tai nạn giao thông" in q_vi or "đường ray" in q_vi:
-        raise RuntimeError("QUERY_GT_PROVENANCE_MISMATCH: Presenter/Train collision text detected in P1-2!")
-    print("• Provenance Integrity    : PASS ✅ (True irrigation/dam query confirmed)\n", flush=True)
+    # Hard-assert exact record equality
+    assert qid == "query-p1-2-kis", "Record ID mismatch"
+    assert target_vid == "L29_V018", "Target video mismatch"
+    assert official_gt_frame == 6050, "Official GT frame mismatch"
+    assert diag_tol == 150, "Diagnostic tolerance mismatch"
+    assert "thủy lợi" in q_vi and "bản đồ" in q_vi, "Vietnamese query semantics mismatch"
+    print("• Manifest Record Equality: PASS ✅ (Exact record equality confirmed with canonical source)\n", flush=True)
 
-    print("--- 2.1 CANONICAL TERMINOLOGY DEFINITIONS ---")
-    print("• top_m_peaks           : Top M=5 local cosine maxima per video with spacing >= 60 frames, used in Video Nomination (Stage 1).")
-    print("• evidence_neighborhood : Temporal window (+/- 60 frames) around any top-M peak within the video.")
-    print("• evidence_pool         : The aggregate collection of top_m_peaks across variants for all nominated candidate videos.")
-    print("• restricted.rankings   : The restricted frame retrieval rankings per variant on the selected K=64 videos, capped at")
-    print("                          per_query_result_cap (10) frames per video and sorted globally by cosine similarity.")
-    print("• gt_neighborhood_keyframes: Keyframes located within [GT-150, GT+150] used for diagnostic recall evaluation.")
+    # Corpus Provenance & Registry Integrity Audit
+    stores = runtime.video_restricted_searcher.registry.stores
+    total_videos = len(stores)
+    total_rows = sum(len(s.mappings) for s in stores)
+    feat_dim = stores[0].matrix.shape[1] if total_videos > 0 else 0
+
+    print("--- 2.1 CORPUS PROVENANCE & REGISTRY INTEGRITY AUDIT ---")
+    print(f"• Total Video Stores Loaded : {total_videos} (Required Target: 873)")
+    print(f"• Total Feature Rows Loaded : {total_rows} (Required Target: 177321)")
+    print(f"• Feature Embedding Dim     : {feat_dim} (Required Target: 512)")
+    print(f"• Target Store Keyframe Rows: {len(runtime.video_restricted_searcher.registry.get(target_vid).mappings)} mappings for {target_vid}")
+
+    assert total_videos == 873, f"Corpus video count mismatch: {total_videos} != 873"
+    assert total_rows == 177321, f"Corpus row count mismatch: {total_rows} != 177321"
+    assert feat_dim == 512, f"Feature dimension mismatch: {feat_dim} != 512"
+    print("• Corpus Integrity Check    : PASS ✅ (Exact 873/177321/512 production corpus verified)\n", flush=True)
+
+    # Effective Production V2-A Config
+    vf_cfg = runtime.config.kis_video_first_config
+    print("--- 2.2 EFFECTIVE PRODUCTION V2-A CONFIGURATION ---")
+    print(f"• Video-First Enabled       : {vf_cfg.enabled}")
+    print(f"• V2-Adaptive Enabled       : {vf_cfg.v2_adaptive_enabled}")
+    print(f"• Selected Video Cap (K_max): {vf_cfg.selected_video_cap}")
+    print(f"• Top-M Evidence Cap (M)    : {vf_cfg.top_m_evidence_cap}")
+    print(f"• Top-M Min Frame Gap       : {vf_cfg.top_m_min_frame_gap}")
+    print(f"• Top-M Weights             : {vf_cfg.top_m_weights}")
+    print(f"• Adaptive Budgets (B/M/H)  : ({vf_cfg.adaptive_budget_base}, {vf_cfg.adaptive_budget_medium}, {vf_cfg.adaptive_budget_high})")
+    print(f"• Coverage Threshold        : {vf_cfg.coverage_threshold}")
+    print(f"• RRF Constant              : {runtime.config.rrf_constant}")
+    print(f"• Per-Query Result Cap (S2) : {vf_cfg.restricted_frames_per_video_per_variant}")
     print("------------------------------------------------------------------------------------------------------------------------\n", flush=True)
 
     # 1. Run full query through single canonical production handler
@@ -595,35 +614,24 @@ def run_p1_2_trace_and_raw_cosine_audit(runtime: OperationalKISRuntime) -> None:
         provider=runtime.translation_provider,
         token_budget_guard=runtime.token_budget_guard,
         config=SemanticQueryConfig(
-            full_query_weight=runtime.config.kis_video_first_config.full_query_weight,
-            primary_scene_weight=runtime.config.kis_video_first_config.primary_scene_weight,
-            supporting_attribute_weight=runtime.config.kis_video_first_config.supporting_attribute_weight,
+            full_query_weight=vf_cfg.full_query_weight,
+            primary_scene_weight=vf_cfg.primary_scene_weight,
+            supporting_attribute_weight=vf_cfg.supporting_attribute_weight,
         ),
     )
     variants = compiled_sq.query_variants
     embeddings = runtime.shared_encoder.encode_texts([v.text for v in variants])
 
-    # Print exact production decomposition from real compiler
-    print("• Production Compiler Decomposition & Translation:")
-    print(f"  - Full Query Text        : \"{compiled_sq.full_query_variant.text}\"")
-    for s_idx, s_var in enumerate(compiled_sq.temporal_scene_variants, start=1):
-        print(f"  - Temporal Scene T{s_idx:<6} : \"{s_var.query_variant.text}\" (Weight: {float(s_var.query_variant.weight):.2f})")
-    for idx, (v, emb) in enumerate(zip(variants, embeddings, strict=True), start=1):
-        emb_bytes = emb.astype(np.float32).tobytes()
-        checksum = hashlib.sha256(emb_bytes).hexdigest()[:12]
-        norm = float(np.linalg.norm(emb))
-        print(f"  [{idx}] Variant ID : {v.variant_id} | Norm = {norm:.4f} | SHA256 Checksum = {checksum}")
-
-    # Stage 1: Search video maxima across entire corpus
+    # Stage 1: Search video maxima across all 873 videos
     maxima = runtime.video_restricted_searcher.search_video_maxima(
         query_ids=tuple(v.variant_id for v in variants),
         query_vectors=embeddings,
-        top_m_evidence_cap=runtime.config.kis_video_first_config.top_m_evidence_cap,
-        top_m_min_frame_gap=runtime.config.kis_video_first_config.top_m_min_frame_gap,
-        top_m_weights=runtime.config.kis_video_first_config.top_m_weights,
+        top_m_evidence_cap=vf_cfg.top_m_evidence_cap,
+        top_m_min_frame_gap=vf_cfg.top_m_min_frame_gap,
+        top_m_weights=vf_cfg.top_m_weights,
     )
 
-    # Compute video fusion across all 873 videos to get exact global rank of target video
+    # Call canonical production video-fusion function directly
     all_fused_videos, adaptive_diag = fuse_video_maxima_v2(
         variants=variants,
         maxima=maxima,
@@ -632,30 +640,66 @@ def run_p1_2_trace_and_raw_cosine_audit(runtime: OperationalKISRuntime) -> None:
         temporal_variants=tuple(item.query_variant for item in compiled_sq.temporal_scene_variants),
         rrf_constant=runtime.config.rrf_constant,
         nomination_depth=len(runtime.video_restricted_searcher.registry),
-        config=runtime.config.kis_video_first_config,
+        config=vf_cfg,
     )
+
+    # Parity assertion: direct canonical fusion matches runtime session output
+    prod_prefix = [(v["video_id"], round(v["fusion_score"], 6)) for v in selected_videos]
+    direct_prefix = [(v.video_id, round(v.fusion_score, 6)) for v in all_fused_videos[:adaptive_diag.chosen_k]]
+    assert prod_prefix == direct_prefix, "Direct fuse_video_maxima_v2 prefix mismatch with session output!"
+
     target_all_fused = next((v for v in all_fused_videos if v.video_id == target_vid), None)
-    total_corpus_videos = len(runtime.video_restricted_searcher.registry)
     target_fused_rank = target_all_fused.rank if target_all_fused else "NOT_FOUND"
     target_fused_score = target_all_fused.fusion_score if target_all_fused else 0.0
 
-    print(f"\n• Stage 1 Video Nomination Trace for Target {target_vid}:")
-    print(f"  - Total Corpus Videos Scored        : {total_corpus_videos}")
-    print(f"  - Exact Global Fused Video Rank     : #{target_fused_rank} / {total_corpus_videos}")
-    print(f"  - Video Nomination Budget (K)       : {len(selected_videos)} (Adaptive chosen K: {adaptive_diag.chosen_k})")
-    print(f"  - Target Video Nominated in Top-K?  : {'YES ✅' if target_sel_entry else 'NO ❌'}")
-    print(f"  - Target Video Fused Score          : {target_fused_score:.6f}")
+    print("--- 2.3 COMPILED QUERY VARIANTS & PER-VARIANT SCORE BREAKDOWN ---")
+    for idx, v in enumerate(variants, start=1):
+        emb = embeddings[idx - 1]
+        emb_bytes = emb.astype(np.float32).tobytes()
+        checksum = hashlib.sha256(emb_bytes).hexdigest()[:12]
 
-    print(f"  - Per-Variant Target Video Stats for {target_vid}:")
-    for v in variants:
+        if v.variant_id == compiled_sq.full_query_variant.variant_id:
+            role_str = "FULL_QUERY"
+            t_idx_str = "None"
+            vi_text = q_vi
+        else:
+            scene_match = next((s for s in compiled_sq.temporal_scene_variants if s.query_variant.variant_id == v.variant_id), None)
+            if scene_match:
+                role_str = "TEMPORAL_SCENE"
+                t_idx_str = str(scene_match.temporal_index)
+                vi_text = scene_match.raw_unit.text
+            else:
+                role_str = "SUPPORTING_ATTRIBUTE"
+                t_idx_str = "None"
+                vi_text = "N/A"
+
         hits = maxima.rankings.get(v.variant_id, ())
-        v_rank = next((idx for idx, h in enumerate(hits, start=1) if h.video_id == target_vid), None)
+        hits_by_raw = sorted(hits, key=lambda h: -h.cosine_score)
+        raw_max_rank = next((r for r, h in enumerate(hits_by_raw, start=1) if h.video_id == target_vid), None)
+        top_m_rank = next((r for r, h in enumerate(hits, start=1) if h.video_id == target_vid), None)
+
         t_hit = next((h for h in hits if h.video_id == target_vid), None)
-        raw_max = t_hit.cosine_score if t_hit else 0.0
-        top_m_score = t_hit.top_m_score if t_hit else 0.0
+        target_raw_max = t_hit.cosine_score if t_hit else 0.0
+        target_top_m = t_hit.top_m_score if t_hit else 0.0
         peaks = list(t_hit.top_m_peaks) if t_hit and t_hit.top_m_peaks else []
         peaks_str = ", ".join(f"f{fid}:{cos:.4f}" for fid, cos in peaks)
-        print(f"    * Variant [{v.variant_id:<32}]: Video Rank #{v_rank}/{len(hits)} | Raw Max: {raw_max:.4f} | Top-M Score: {top_m_score:.4f} | Peaks: [{peaks_str}]")
+
+        print(f"• Variant [{idx}] ID: {v.variant_id} (Weight: {float(v.weight):.2f})")
+        print(f"  - Role / Temporal Idx : {role_str} (Temporal Index: {t_idx_str})")
+        print(f"  - VI Text             : \"{vi_text}\"")
+        print(f"  - VinAI EN Text       : \"{v.text}\"")
+        print(f"  - Embedding SHA256    : {checksum} (Norm: {float(np.linalg.norm(emb)):.4f})")
+        print(f"  - Target Raw-Max Score: {target_raw_max:.4f} | Raw-Max Video Rank: #{raw_max_rank} / {total_videos}")
+        print(f"  - Target Top-M Score  : {target_top_m:.4f} | Top-M Video Rank  : #{top_m_rank} / {total_videos}")
+        print(f"  - Target Top-M Peaks  : [{peaks_str}]\n")
+
+    print("--- 2.4 CANONICAL STAGE-1 FUSED VIDEO NOMINATION OUTCOME ---")
+    print(f"• Total Corpus Videos Scored       : {total_videos}")
+    print(f"• Canonical Fused Video Rank       : #{target_fused_rank} / {total_videos}")
+    print(f"• Canonical Video Nomination Budget: K = {len(selected_videos)} (Adaptive chosen K: {adaptive_diag.chosen_k})")
+    print(f"• Target Video Nominated (Top-K)?  : {'YES ✅' if target_sel_entry else 'NO ❌'}")
+    print(f"• Target Video Fused Score         : {target_fused_score:.6f}")
+    print("------------------------------------------------------------------------------------------------------------------------\n", flush=True)
 
     # Stage 2: Production Restricted frame search
     per_query_cap = runtime.config.kis_video_first_config.restricted_frames_per_video_per_variant
@@ -670,7 +714,7 @@ def run_p1_2_trace_and_raw_cosine_audit(runtime: OperationalKISRuntime) -> None:
     gt_neighborhood_keyframes = sorted([f.frame_id for f in store.mappings if gt_interval[0] <= f.frame_id <= gt_interval[1]])
     nearest_f = min(store.mappings, key=lambda f: abs(f.frame_id - official_gt_frame))
 
-    print(f"\n• Groundtruth State for Target Video {target_vid}:")
+    print(f"• Groundtruth State for Target Video {target_vid}:")
     print(f"  - Official Groundtruth Frame        : Frame {official_gt_frame} (PTS: {store.frame_for_row(store.rows_for_frame(nearest_f.frame_id)[0]).pts_time:.3f}s)")
     print(f"  - Nearest Keyframe in Store         : Frame {nearest_f.frame_id} (Delta: {nearest_f.frame_id - official_gt_frame:+d} frames)")
     print(f"  - Keyframes in GT Neighborhood      : {len(gt_neighborhood_keyframes)} keyframes: {gt_neighborhood_keyframes}")
@@ -826,7 +870,7 @@ def run_p1_2_trace_and_raw_cosine_audit(runtime: OperationalKISRuntime) -> None:
     # 3. COUNTERFACTUAL TARGET-FORCED RESTRICTED AUDIT (ONLY IF TARGET WAS NOT NOMINATED)
     if target_sel_entry is None:
         print("=" * 120)
-        print("--- 2.2 COUNTERFACTUAL TARGET-FORCED RESTRICTED AUDIT (OFFLINE DIAGNOSTIC ONLY — NOT PRODUCTION) ---")
+        print("--- 2.5 COUNTERFACTUAL TARGET-FORCED RESTRICTED AUDIT (OFFLINE DIAGNOSTIC ONLY — NOT PRODUCTION) ---")
         print("=" * 120)
         print(f"Goal: Determine whether GT-neighborhood keyframes survive restricted search cap ({per_query_cap} frames) IF {target_vid} is forced into selected videos.")
 
@@ -861,7 +905,7 @@ def run_p1_2_trace_and_raw_cosine_audit(runtime: OperationalKISRuntime) -> None:
 
         print("=" * 120 + "\n")
 
-    print("--- 2.3 CAUSAL LOSS STAGE SUMMARY FOR TRUE FROZEN P1-2 ---")
+    print("--- 2.6 CAUSAL LOSS STAGE SUMMARY FOR TRUE FROZEN P1-2 ---")
     if target_sel_entry is None:
         print(f"• Production Causal Loss Stage: STAGE 1 — VIDEO_NOMINATION_FAILURE ❌")
         print(f"  - Target Video {target_vid} global fused rank was #{target_fused_rank} / {total_corpus_videos} (Nomination Budget K={len(selected_videos)}).")
@@ -888,7 +932,8 @@ def run_p1_4_real_image_adjudication(
     print("3. P1-4: PTS-AWARE REAL IMAGE RESOLUTION & DP SEMANTIC ADJUDICATION (2-SCENE CHAIN T1 < T2)", flush=True)
     print("=" * 120, flush=True)
 
-    manifest_entry = FROZEN_BENCHMARK_MANIFEST["p1-4"]
+    manifest_path, manifest_sha, manifest_queries = load_canonical_frozen_manifest()
+    manifest_entry = manifest_queries["p1-4"]
     qid = manifest_entry["query_id"]
     q_vi = manifest_entry["query_vi"]
 
@@ -1034,12 +1079,14 @@ def print_final_summary_table(coverage_summary: dict[str, dict]) -> None:
     print("4. FINAL FOUNDATION CLOSURE SUMMARY TABLE", flush=True)
     print("=" * 120, flush=True)
 
+    manifest_path, manifest_sha, manifest_queries = load_canonical_frozen_manifest()
+
     print(f"| {'Query':<6} | {'Target Video':<12} | {'Official GT':<12} | {'GT Coverage':<15} | {'Source Parity':<14} | {'Causal Classification / Loss Stage':<45} |")
     print(f"| {'-'*6} | {'-'*12} | {'-'*12} | {'-'*15} | {'-'*14} | {'-'*45} |")
 
     for qid in ("p1-1", "p1-2", "p1-4", "p1-5", "p1-6"):
         entry = coverage_summary.get(qid)
-        manifest_meta = FROZEN_BENCHMARK_MANIFEST.get(qid, {})
+        manifest_meta = manifest_queries.get(qid, {})
         vid = manifest_meta.get("target_video", "N/A")
         gt_f = str(manifest_meta.get("official_gt_frame", "N/A"))
 
@@ -1069,5 +1116,6 @@ def print_final_summary_table(coverage_summary: dict[str, dict]) -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
