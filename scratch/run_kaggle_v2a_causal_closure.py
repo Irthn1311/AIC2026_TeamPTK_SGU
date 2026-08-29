@@ -179,72 +179,159 @@ def get_git_head() -> str:
 _SEARCH_DIRS_CACHE: list[Path] | None = None
 
 
-def get_candidate_search_dirs(dataset_root: Path) -> list[Path]:
-    global _SEARCH_DIRS_CACHE
-    if _SEARCH_DIRS_CACHE is not None:
-        return _SEARCH_DIRS_CACHE
+_GLOBAL_DIR_CACHE: dict[str, list[Path]] | None = None
+_GLOBAL_FILE_CACHE: dict[str, list[Path]] | None = None
+_GLOBAL_KEYFRAME_FILES_CACHE: dict[str, list[Path]] | None = None
 
-    dirs = set()
-    roots_to_scan = [dataset_root]
+
+def build_global_dataset_index(dataset_root: Path) -> None:
+    global _GLOBAL_DIR_CACHE, _GLOBAL_FILE_CACHE, _GLOBAL_KEYFRAME_FILES_CACHE
+    if _GLOBAL_DIR_CACHE is not None:
+        return
+    _GLOBAL_DIR_CACHE = {}
+    _GLOBAL_FILE_CACHE = {}
+    _GLOBAL_KEYFRAME_FILES_CACHE = {}
+
+    roots = [dataset_root]
     if Path("/kaggle/input").exists():
-        roots_to_scan.append(Path("/kaggle/input"))
+        roots.append(Path("/kaggle/input"))
+    if REPO_ROOT.exists():
+        roots.append(REPO_ROOT)
 
-    for r in roots_to_scan:
-        if r.exists():
-            dirs.add(r)
+    indexed_dirs = 0
+    indexed_files = 0
+    t0 = time.time()
+    for r in roots:
+        if not r.exists():
+            continue
+        try:
+            for root, dirs, files in os.walk(r):
+                root_path = Path(root)
+                d_name = root_path.name.casefold()
+                _GLOBAL_DIR_CACHE.setdefault(d_name, []).append(root_path)
+                indexed_dirs += 1
+
+                img_files = []
+                for f in files:
+                    f_lower = f.casefold()
+                    _GLOBAL_FILE_CACHE.setdefault(f_lower, []).append(root_path / f)
+                    indexed_files += 1
+                    if f_lower.endswith((".jpg", ".jpeg", ".png", ".webp")):
+                        img_files.append(root_path / f)
+
+                if img_files:
+                    _GLOBAL_KEYFRAME_FILES_CACHE.setdefault(d_name, []).extend(img_files)
+        except Exception as exc:
+            print(f"[Warning] Error during global dataset indexing: {exc}", flush=True)
+
+    print(
+        f"• Global Dataset Index Built in {time.time() - t0:.2f}s: "
+        f"{len(_GLOBAL_DIR_CACHE)} unique dirnames ({indexed_dirs} visited), "
+        f"{len(_GLOBAL_FILE_CACHE)} unique filenames ({indexed_files} visited).",
+        flush=True,
+    )
+
+
+def find_keyframe_image(
+    dataset_root: Path,
+    video_id: str,
+    frame_id: int,
+    keyframe_order: int | None = None,
+    runtime: Any = None,
+) -> Path | None:
+    build_global_dataset_index(dataset_root)
+
+    # 1. Try runtime manifest keyframe_directory if available
+    manifest_dirs: list[Path] = []
+    if runtime is not None and hasattr(runtime, "manifest") and runtime.manifest is not None:
+        for v in getattr(runtime.manifest, "videos", ()):
+            if getattr(v, "video_id", None) == video_id:
+                kdir = getattr(v, "keyframe_directory", None)
+                if kdir:
+                    pk = Path(kdir)
+                    if pk.is_dir():
+                        manifest_dirs.append(pk)
+                break
+
+    # 2. Add globally discovered directories matching video_id
+    candidate_dirs = list(manifest_dirs)
+    vid_lower = video_id.casefold()
+    if _GLOBAL_DIR_CACHE and vid_lower in _GLOBAL_DIR_CACHE:
+        for d in _GLOBAL_DIR_CACHE[vid_lower]:
+            if d not in candidate_dirs:
+                candidate_dirs.append(d)
+
+    # 3. Test exact filename patterns in all candidate directories
+    names_to_try: list[str] = []
+    if keyframe_order is not None:
+        for fmt in (f"{keyframe_order:06d}", f"{keyframe_order:05d}", f"{keyframe_order:04d}", f"{keyframe_order:03d}", f"{keyframe_order}"):
+            names_to_try.extend([f"{fmt}.jpg", f"{fmt}.jpeg", f"{fmt}.png", f"frame_{fmt}.jpg", f"frame_{fmt}.png", f"shot_{fmt}.jpg"])
+        # Also try 0-indexed vs 1-indexed shift
+        for ko_shifted in (keyframe_order + 1, keyframe_order - 1):
+            if ko_shifted >= 0:
+                for fmt in (f"{ko_shifted:06d}", f"{ko_shifted:05d}", f"{ko_shifted:04d}", f"{ko_shifted}"):
+                    names_to_try.extend([f"{fmt}.jpg", f"{fmt}.png"])
+
+    for fmt in (f"{frame_id:06d}", f"{frame_id:05d}", f"{frame_id:04d}", f"{frame_id:03d}", f"{frame_id}"):
+        names_to_try.extend([f"{fmt}.jpg", f"{fmt}.jpeg", f"{fmt}.png", f"frame_{fmt}.jpg", f"frame_{fmt}.png"])
+
+    for cdir in candidate_dirs:
+        for name in names_to_try:
+            cand = cdir / name
+            if cand.is_file():
+                return cand
+
+    # 4. If exact name lookup misses, match by sorted image file position in folder
+    for cdir in candidate_dirs:
+        c_name = cdir.name.casefold()
+        img_list = _GLOBAL_KEYFRAME_FILES_CACHE.get(c_name, []) if _GLOBAL_KEYFRAME_FILES_CACHE else []
+        if not img_list:
             try:
-                for entry in os.scandir(r):
-                    if entry.is_dir():
-                        dirs.add(Path(entry.path))
-                        # Scan 1 level deeper (depth 2)
-                        try:
-                            for sub in os.scandir(entry.path):
-                                if sub.is_dir():
-                                    dirs.add(Path(sub.path))
-                        except (PermissionError, OSError):
-                            pass
-            except (PermissionError, OSError):
+                img_list = sorted([p for p in cdir.iterdir() if p.suffix.casefold() in (".jpg", ".jpeg", ".png", ".webp")])
+            except Exception:
                 pass
-    _SEARCH_DIRS_CACHE = list(dirs)
-    return _SEARCH_DIRS_CACHE
+        if img_list and keyframe_order is not None:
+            # Try 1-based index (order 1 -> img_list[0])
+            if 1 <= keyframe_order <= len(img_list):
+                return img_list[keyframe_order - 1]
+            # Try 0-based index
+            if 0 <= keyframe_order < len(img_list):
+                return img_list[keyframe_order]
 
-
-def find_source_video_file(dataset_root: Path, video_id: str) -> Path | None:
-    search_dirs = get_candidate_search_dirs(dataset_root)
-    for sdir in search_dirs:
-        for ext in ("mp4", "mkv", "avi"):
-            for sub in ("", "videos", "video", "Videos", "Video"):
-                cand = sdir / sub / f"{video_id}.{ext}" if sub else sdir / f"{video_id}.{ext}"
-                if cand.is_file():
-                    return cand
     return None
 
 
-def find_keyframe_image(dataset_root: Path, video_id: str, frame_id: int, keyframe_order: int | None = None) -> Path | None:
-    search_dirs = get_candidate_search_dirs(dataset_root)
-    names_to_try = [
-        f"{frame_id:06d}.jpg",
-        f"{frame_id:05d}.jpg",
-        f"{frame_id:04d}.jpg",
-        f"{frame_id}.jpg",
-    ]
-    if keyframe_order is not None:
-        names_to_try.extend([
-            f"{keyframe_order:06d}.jpg",
-            f"{keyframe_order:05d}.jpg",
-            f"{keyframe_order:04d}.jpg",
-            f"{keyframe_order:03d}.jpg",
-            f"{keyframe_order}.jpg",
-        ])
+def find_source_video_file(
+    dataset_root: Path,
+    video_id: str,
+    runtime: Any = None,
+) -> Path | None:
+    # 1. Try runtime raw_video_registry / manifest
+    if runtime is not None:
+        if hasattr(runtime, "raw_video_registry") and runtime.raw_video_registry is not None:
+            try:
+                rec = runtime.raw_video_registry.get(video_id)
+                if rec and getattr(rec, "raw_video_path", None) and Path(rec.raw_video_path).is_file():
+                    return Path(rec.raw_video_path)
+            except Exception:
+                pass
+        if hasattr(runtime, "manifest") and runtime.manifest is not None:
+            for v in getattr(runtime.manifest, "videos", ()):
+                if getattr(v, "video_id", None) == video_id:
+                    rv = getattr(v, "raw_video_path", None)
+                    if rv and Path(rv).is_file():
+                        return Path(rv)
 
-    for sdir in search_dirs:
-        for folder_sub in ("", "keyframes", "Keyframes"):
-            base_folder = sdir / folder_sub / video_id if folder_sub else sdir / video_id
-            if base_folder.is_dir():
-                for name in names_to_try:
-                    cand = base_folder / name
-                    if cand.is_file():
-                        return cand
+    # 2. Check global file cache
+    build_global_dataset_index(dataset_root)
+    vid_lower = video_id.casefold()
+    for ext in ("mp4", "mkv", "avi", "mov", "ts"):
+        target_name = f"{vid_lower}.{ext}"
+        if _GLOBAL_FILE_CACHE and target_name in _GLOBAL_FILE_CACHE:
+            files = _GLOBAL_FILE_CACHE[target_name]
+            if files and files[0].is_file():
+                return files[0]
+
     return None
 
 
@@ -256,9 +343,10 @@ def extract_image_for_frame(
     pts_time: float | None = None,
     source_fps: float | None = None,
     parity_passed: bool = False,
+    runtime: Any = None,
 ) -> tuple[Image.Image | None, str]:
     # 1. Try finding keyframe image file first
-    img_path = find_keyframe_image(dataset_root, video_id, frame_id, keyframe_order)
+    img_path = find_keyframe_image(dataset_root, video_id, frame_id, keyframe_order, runtime=runtime)
     if img_path and img_path.is_file():
         try:
             return Image.open(img_path), f"KEYFRAME_FILE ({img_path.name})"
@@ -266,7 +354,7 @@ def extract_image_for_frame(
             pass
 
     # 2. Try decoding directly from source video file using cv2
-    vid_path = find_source_video_file(dataset_root, video_id)
+    vid_path = find_source_video_file(dataset_root, video_id, runtime=runtime)
     if vid_path and vid_path.is_file():
         try:
             import cv2
@@ -282,8 +370,8 @@ def extract_image_for_frame(
                         frame = f
                         mode = f"CV2_PTS ({pts_time:.2f}s)"
 
-                # If PTS seek was not used or failed, and frame-index seek is allowed
-                if frame is None and (parity_passed or pts_time is None):
+                # If PTS seek was not used or failed, try frame-index seek
+                if frame is None:
                     cap.set(cv2.CAP_PROP_POS_FRAMES, frame_id)
                     ret, f = cap.read()
                     if ret and f is not None:
@@ -426,7 +514,7 @@ def run_gt_index_coverage_audit(runtime: OperationalKISRuntime, input_root: Path
         print(f"    - Keyframes in Neighborhood : {count_in_window} frames -> Coverage Pass: {'YES ✅' if coverage_pass else 'NO ❌'}", flush=True)
 
         # Source video inspection and frame-space parity verification
-        vid_file = find_source_video_file(input_root, vid)
+        vid_file = find_source_video_file(input_root, vid, runtime=runtime)
         src_info = {}
         parity_passed = False
         median_residual = float("nan")
@@ -1014,6 +1102,7 @@ def run_p1_2_visual_benchmark_adjudication(
                 frame_id=fid,
                 keyframe_order=kf_order,
                 pts_time=pts_time,
+                runtime=runtime,
             )
 
             is_decode_ok = img is not None
@@ -1101,6 +1190,7 @@ def run_p1_2_visual_benchmark_adjudication(
             frame_id=fid,
             keyframe_order=kf_order,
             pts_time=pts_time,
+            runtime=runtime,
         )
 
         is_decode_ok = img is not None
@@ -1307,6 +1397,7 @@ def run_p1_2_visual_benchmark_adjudication(
                     frame_id=fid,
                     keyframe_order=kf_order,
                     pts_time=pts_time,
+                    runtime=runtime,
                 )
 
                 is_decode_ok = img is not None
@@ -1357,6 +1448,7 @@ def run_p1_2_visual_benchmark_adjudication(
                     frame_id=fid,
                     keyframe_order=kf_order,
                     pts_time=pts_time,
+                    runtime=runtime,
                 )
 
                 is_decode_ok = img is not None
@@ -1407,6 +1499,7 @@ def run_p1_2_visual_benchmark_adjudication(
                     frame_id=fid,
                     keyframe_order=kf_order,
                     pts_time=pts_time,
+                    runtime=runtime,
                 )
 
                 is_decode_ok = img is not None
@@ -1697,6 +1790,7 @@ def run_p1_4_real_image_adjudication(
                         pts_time=pts_time,
                         source_fps=src_fps,
                         parity_passed=parity_passed,
+                        runtime=runtime,
                     )
 
                     if img is not None:
