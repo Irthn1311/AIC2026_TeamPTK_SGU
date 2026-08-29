@@ -2169,11 +2169,11 @@ def run_all_5_queries_top100_visual_export(
         )
 
         resp = runtime.handle_query(req)
+        artifacts = resp.get("artifacts", {})
         
         # 1. Print Semantic Decomposition & English Translation Breakdown
-        query_dir = runtime.output_root / "requests" / req_id
-        trace_file = query_dir / "kis_video_first_trace.json"
-        req_manifest_file = query_dir / "request_manifest.json"
+        trace_rel = artifacts.get("kis_video_first_trace_json")
+        trace_file = (runtime.output_root / trace_rel) if trace_rel else (runtime.output_root / "requests" / req_id / "kis_video_first_trace.json")
 
         print(f"  • 🌐 Phân Tích Dịch Thuật & Phân Rã Ngữ Nghĩa (Semantic Decomposition):", flush=True)
         if trace_file.exists():
@@ -2194,35 +2194,27 @@ def run_all_5_queries_top100_visual_export(
                     print(f"    └─ 🇬🇧 [CLIP Variant {v_id}] (Weight: {v_weight:.2f}, Tokens: {v_tokens}): \"{v_en}\"", flush=True)
             except Exception:
                 pass
-        else:
-            variants = resp.get("variants", [])
-            for v in variants:
-                v_text = getattr(v, "text", v.get("text", "") if isinstance(v, dict) else "")
-                v_type = getattr(v, "variant_type", v.get("variant_type", "") if isinstance(v, dict) else "")
-                print(f"    └─ 🇬🇧 [{v_type}]: \"{v_text}\"", flush=True)
 
-        artifacts = resp.get("artifacts", {})
-        rel_top100 = artifacts.get("refined_top100_jsonl") or artifacts.get("top100_jsonl")
-        if rel_top100:
-            top100_path = runtime.output_root / rel_top100
-        else:
-            top100_path = runtime.output_root / "requests" / req_id / "top100.jsonl"
-
-        # Read candidates from response records if available to get actual scores
+        # 2. Load candidates with REAL fusion scores from internal CSV
+        top100_csv_rel = artifacts.get("refined_top100_csv")
+        top100_csv_path = (runtime.output_root / top100_csv_rel) if top100_csv_rel else (runtime.output_root / "requests" / req_id / "top100.csv")
+        
         candidates = []
-        resp_records = resp.get("records", [])
-        if resp_records:
-            for r_idx, rec in enumerate(resp_records, 1):
-                candidates.append({
-                    "rank": getattr(rec, "rank", r_idx),
-                    "video_id": getattr(rec, "video_id", ""),
-                    "frame_id": getattr(rec, "frame_id", 0),
-                    "score": float(getattr(rec, "score", 0.0)),
-                    "pts_time": float(getattr(rec, "pts_time", 0.0) or 0.0),
-                    "keyframe_order": getattr(rec, "keyframe_order", None),
-                })
-        elif top100_path.exists():
-            with top100_path.open("r", encoding="utf-8") as f:
+        if top100_csv_path.exists():
+            import csv as csv_module
+            with top100_csv_path.open("r", encoding="utf-8") as f:
+                reader = csv_module.DictReader(f)
+                for row in reader:
+                    candidates.append({
+                        "rank": int(row.get("rank", 0)),
+                        "video_id": row.get("video_id", ""),
+                        "frame_id": int(row.get("frame_id", 0)),
+                        "score": float(row.get("fusion_score", row.get("score", 0.0))),
+                        "pts_time": float(row.get("pts_time", 0.0) or 0.0),
+                    })
+        elif artifacts.get("refined_top100_jsonl"):
+            top100_jsonl = runtime.output_root / artifacts["refined_top100_jsonl"]
+            with top100_jsonl.open("r", encoding="utf-8") as f:
                 for line in f:
                     if line.strip():
                         candidates.append(json.loads(line.strip()))
