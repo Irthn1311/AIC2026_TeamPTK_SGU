@@ -196,3 +196,105 @@ def test_invariant_5_adaptive_k_monotonicity() -> None:
     assert k_complex in {48, 64}
 
     assert k_flat >= k_conf
+
+
+def test_invariant_6_compulsory_dp_frame_preservation() -> None:
+    """Winning DP chain frames outside per-query cap must be preserved and boosted in restricted search."""
+    from pathlib import Path
+    from system_tai.common.schemas import FrameMappingRecord, VideoFeatureStore
+    from system_tai.features.btc_clip_store import FeatureStoreRegistry, LoadedVideoFeatureStore
+    from system_tai.retrieval.video_evidence import VideoRestrictedFeatureSearcher
+    import numpy as np
+
+    mappings = tuple(
+        FrameMappingRecord(clip_row=i, keyframe_order=i+1, frame_id=i*100, pts_time=float(i)*4.0, fps=25.0)
+        for i in range(20)
+    )
+    matrix = np.zeros((20, 4), dtype=np.float32)
+    for i in range(20):
+        matrix[i, 0] = 1.0 - (0.04 * i)
+    matrix[:, 1:] = 0.0
+
+    store = LoadedVideoFeatureStore(
+        descriptor=VideoFeatureStore(video_id="video_chain", mapping_csv_path=Path("m.csv"), clip_npy_path=Path("c.npy"), row_count=20, embedding_dimension=4, normalized=True),
+        matrix=matrix,
+        mappings=mappings,
+    )
+    registry = FeatureStoreRegistry(stores=(store,))
+    searcher = VideoRestrictedFeatureSearcher(registry=registry)
+
+    outcome = searcher.search_selected_videos(
+        video_ids=("video_chain",),
+        query_ids=("q1",),
+        query_vectors=np.array([[1.0, 0.0, 0.0, 0.0]], dtype=np.float32),
+        per_query_result_cap=5,
+        compulsory_frame_ids_by_video={"video_chain": [1500]},
+    )
+
+    hits = outcome.rankings["q1"]["video_chain"]
+    retained_fids = [h.frame_id for h in hits]
+    assert 1500 in retained_fids
+    assert len(retained_fids) == 6
+
+
+def test_invariant_7_temporal_frame_gap_diversity() -> None:
+    """Restricted frame fusion enforces minimum frame gap between same-video candidates unless chain winner."""
+    from system_tai.common.schemas import KISResult
+    from system_tai.kis.video_first import (
+        FusedVideoEvidence,
+        TemporalChainDiagnostic,
+        fuse_restricted_frames,
+    )
+    from system_tai.retrieval.multi_query import QueryVariant, QueryVariantType, QueryLanguage, WeightedRRFRetriever
+    from system_tai.retrieval.video_evidence import VideoRestrictedSearchOutcome, RestrictedFrameHit
+
+    var = QueryVariant(variant_id="v1", weight=1.0, variant_type=QueryVariantType.VIETNAMESE_DIRECT, language=QueryLanguage.VIETNAMESE, text="query")
+    hits = (
+        RestrictedFrameHit(video_id="vid_1", frame_id=100, clip_row=0, keyframe_order=1, pts_time=4.0, cosine_score=0.90, rank=1),
+        RestrictedFrameHit(video_id="vid_1", frame_id=110, clip_row=1, keyframe_order=2, pts_time=4.4, cosine_score=0.88, rank=2),
+        RestrictedFrameHit(video_id="vid_1", frame_id=120, clip_row=2, keyframe_order=3, pts_time=4.8, cosine_score=0.85, rank=3),
+        RestrictedFrameHit(video_id="vid_1", frame_id=800, clip_row=4, keyframe_order=5, pts_time=32.0, cosine_score=0.70, rank=4),
+    )
+    restricted = VideoRestrictedSearchOutcome(
+        rankings={"v1": {"vid_1": hits}},
+        physical_rows_scored=4,
+        video_store_scan_count=1,
+    )
+    diag = TemporalChainDiagnostic(
+        is_temporal_compound=True,
+        temporal_scene_count=2,
+        has_valid_chain=True,
+        selected_chain_frames=(100, 800),
+        chain_score=0.80,
+        soft_and_score=0.80,
+        balance_ratio=1.0,
+        temporal_multiplier=1.35,
+    )
+    selected_videos = (
+        FusedVideoEvidence(
+            video_id="vid_1",
+            rank=1,
+            fusion_score=0.95,
+            variant_hit_count=1,
+            primary_coverage_count=1,
+            best_individual_rank=1,
+            per_variant=(),
+            temporal_chain=diag,
+        ),
+    )
+    res = fuse_restricted_frames(
+        query_id="q1",
+        variants=(var,),
+        restricted=restricted,
+        selected_videos=selected_videos,
+        weighted_rrf=WeightedRRFRetriever(object()),
+        output_top_k=10,
+        rrf_constant=60.0,
+        temporal_chain_bonus=0.05,
+        min_frame_gap=50,
+    )
+    fids = [c.frame_id for c in res.ranked_candidates]
+    assert 100 in fids
+    assert 800 in fids
+    assert 110 not in fids
+    assert 120 not in fids

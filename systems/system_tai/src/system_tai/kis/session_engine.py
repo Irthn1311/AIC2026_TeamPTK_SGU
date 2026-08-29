@@ -655,6 +655,17 @@ class OperationalKISRuntime:
             video_fusion_seconds = self.clock() - video_fusion_started
 
             restricted_started = self.clock()
+            compulsory_by_video: dict[str, list[int]] = {}
+            for item in selected_videos:
+                if (
+                    item.temporal_chain
+                    and item.temporal_chain.has_valid_chain
+                    and item.temporal_chain.selected_chain_frames
+                ):
+                    compulsory_by_video[item.video_id] = list(
+                        item.temporal_chain.selected_chain_frames
+                    )
+
             restricted = self.video_restricted_searcher.search_selected_videos(
                 video_ids=tuple(item.video_id for item in selected_videos),
                 query_ids=tuple(variant.variant_id for variant in variants),
@@ -663,6 +674,7 @@ class OperationalKISRuntime:
                     self.config.kis_video_first_config
                     .restricted_frames_per_video_per_variant
                 ),
+                compulsory_frame_ids_by_video=compulsory_by_video if v2_adaptive else None,
             )
             restricted_frame_search_seconds = self.clock() - restricted_started
 
@@ -677,6 +689,7 @@ class OperationalKISRuntime:
                 output_top_k=request.output_top_k,
                 rrf_constant=self.config.rrf_constant,
                 adaptive_diagnostic=adaptive_diag,
+                config=self.config.kis_video_first_config,
             )
             restricted_frame_fusion_seconds = self.clock() - frame_fusion_started
             fused_result = video_first_outcome.result

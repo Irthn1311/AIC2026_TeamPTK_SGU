@@ -119,6 +119,7 @@ def rank_store_frames(
     chunk_size: int,
     per_query_cap: int | None = None,
     query_vectors_are_normalized: bool = False,
+    compulsory_frame_ids: Sequence[int] | None = None,
 ) -> dict[str, tuple[RestrictedFrameHit, ...]]:
     """Rank distinct absolute frames for several vectors in one store traversal."""
 
@@ -186,13 +187,25 @@ def rank_store_frames(
                     best_by_query_frame[query_index][hit.frame_id] = hit
 
     rankings: dict[str, tuple[RestrictedFrameHit, ...]] = {}
+    compulsory_set = set(compulsory_frame_ids or ())
     for query_index, query_id in enumerate(query_ids):
-        ordered = sorted(
+        all_ordered = sorted(
             best_by_query_frame[query_index].values(),
             key=_frame_sort_key,
         )
         if per_query_cap is not None:
-            ordered = ordered[:per_query_cap]
+            capped = all_ordered[:per_query_cap]
+            if compulsory_set:
+                capped_fids = {hit.frame_id for hit in capped}
+                missing_compulsory = [
+                    hit for hit in all_ordered[per_query_cap:]
+                    if hit.frame_id in compulsory_set and hit.frame_id not in capped_fids
+                ]
+                ordered = capped + missing_compulsory
+            else:
+                ordered = capped
+        else:
+            ordered = all_ordered
         rankings[query_id] = tuple(
             RestrictedFrameHit(
                 video_id=hit.video_id,
@@ -330,6 +343,7 @@ class VideoRestrictedFeatureSearcher:
             Sequence[Sequence[float] | NDArray[np.number]] | NDArray[np.number]
         ),
         per_query_result_cap: int,
+        compulsory_frame_ids_by_video: Mapping[str, Sequence[int]] | None = None,
     ) -> VideoRestrictedSearchOutcome:
         if not video_ids:
             raise ValueError("video_ids must not be empty")
@@ -343,6 +357,7 @@ class VideoRestrictedFeatureSearcher:
             query_id: {} for query_id in query_ids
         }
         rows_scored = 0
+        compulsory_map = compulsory_frame_ids_by_video or {}
         for video_id in selected:
             store = self.registry.get(video_id)
             per_store = rank_store_frames(
@@ -352,6 +367,7 @@ class VideoRestrictedFeatureSearcher:
                 expected_dimension=self.registry.embedding_dimension,
                 chunk_size=self.chunk_size,
                 per_query_cap=per_query_result_cap,
+                compulsory_frame_ids=compulsory_map.get(video_id),
             )
             rows_scored += store.descriptor.row_count
             for query_id in query_ids:

@@ -34,6 +34,9 @@ class KISVideoFirstConfig:
     adaptive_budget_medium: int = 48
     adaptive_budget_high: int = 64
     coverage_threshold: float = 0.75
+    temporal_chain_frame_bonus: float = 0.05
+    restricted_frame_min_gap: int = 0
+    max_restricted_candidates_per_video: int | None = None
 
     def __post_init__(self) -> None:
         if type(self.enabled) is not bool:
@@ -69,6 +72,21 @@ class KISVideoFirstConfig:
             not math.isfinite(w) or w <= 0 for w in self.top_m_weights
         ):
             raise ValueError("top_m_weights must contain positive finite floats")
+        if (
+            not math.isfinite(self.temporal_chain_frame_bonus)
+            or self.temporal_chain_frame_bonus < 0
+        ):
+            raise ValueError("temporal_chain_frame_bonus must be finite and non-negative")
+        if type(self.restricted_frame_min_gap) is not int or self.restricted_frame_min_gap < 0:
+            raise ValueError("restricted_frame_min_gap must be a non-negative integer")
+        if (
+            self.max_restricted_candidates_per_video is not None
+            and (
+                type(self.max_restricted_candidates_per_video) is not int
+                or self.max_restricted_candidates_per_video <= 0
+            )
+        ):
+            raise ValueError("max_restricted_candidates_per_video must be a positive integer")
 
 
 @dataclass(frozen=True, slots=True)
@@ -775,6 +793,9 @@ def fuse_restricted_frames(
     weighted_rrf: WeightedRRFRetriever,
     output_top_k: int,
     rrf_constant: float,
+    temporal_chain_bonus: float = 0.0,
+    min_frame_gap: int = 0,
+    max_candidates_per_video: int | None = None,
 ) -> KISResult:
     """Globally rank restricted frames per variant, then apply frame-identity RRF."""
 
@@ -820,35 +841,108 @@ def fuse_restricted_frames(
             ),
         )
 
+    fused_top_k = min(output_top_k, 100)
+
     fused = weighted_rrf.fuse_rankings(
         query_id=query_id,
         variants=variants,
         rankings=rankings,
-        output_top_k=output_top_k,
+        output_top_k=fused_top_k,
         rrf_constant=rrf_constant,
     )
     video_by_id = {item.video_id: item for item in selected_videos}
-    enriched = tuple(
-        CandidateFrame(
-            video_id=item.video_id,
-            frame_id=item.frame_id,
-            clip_row=item.clip_row,
-            keyframe_order=item.keyframe_order,
-            score=item.score,
-            rank=item.rank,
-            source="kis_semantic_video_first",
-            diagnostic_metadata={
-                **dict(item.diagnostic_metadata or {}),
-                "video_nomination_rank": video_by_id[item.video_id].rank,
-                "video_fusion_score": video_by_id[item.video_id].fusion_score,
-                "video_primary_coverage_count": (
-                    video_by_id[item.video_id].primary_coverage_count
-                ),
-            },
+
+    # Extract winning DP chain frames by video
+    chain_frames_by_video: dict[str, set[int]] = {}
+    for item in selected_videos:
+        if (
+            item.temporal_chain
+            and item.temporal_chain.has_valid_chain
+            and item.temporal_chain.selected_chain_frames
+        ):
+            chain_frames_by_video[item.video_id] = set(
+                item.temporal_chain.selected_chain_frames
+            )
+
+    enriched_list: list[CandidateFrame] = []
+    for item in fused.ranked_candidates:
+        is_chain_winner = item.frame_id in chain_frames_by_video.get(item.video_id, ())
+        # Additive bonus if this frame is a winning DP sequence frame
+        final_score = item.score + (temporal_chain_bonus if is_chain_winner else 0.0)
+
+        diag = {
+            **dict(item.diagnostic_metadata or {}),
+            "video_nomination_rank": video_by_id[item.video_id].rank,
+            "video_fusion_score": video_by_id[item.video_id].fusion_score,
+            "video_primary_coverage_count": (
+                video_by_id[item.video_id].primary_coverage_count
+            ),
+            "is_temporal_chain_winner": is_chain_winner,
+        }
+        enriched_list.append(
+            CandidateFrame(
+                video_id=item.video_id,
+                frame_id=item.frame_id,
+                clip_row=item.clip_row,
+                keyframe_order=item.keyframe_order,
+                score=float(final_score),
+                rank=item.rank,
+                source="kis_semantic_video_first",
+                diagnostic_metadata=diag,
+            )
         )
-        for item in fused.ranked_candidates
+
+    # Sort candidates by boosted score
+    enriched_sorted = sorted(
+        enriched_list,
+        key=lambda c: (-c.score, c.video_id, c.frame_id),
     )
-    return KISResult(query_id=query_id, ranked_candidates=enriched)
+
+    # Apply temporal suppression / diversity if configured
+    if min_frame_gap > 0 or max_candidates_per_video is not None:
+        selected_candidates: list[CandidateFrame] = []
+        selected_frames: dict[str, list[int]] = {}
+        selected_counts: dict[str, int] = {}
+        for cand in enriched_sorted:
+            vid = cand.video_id
+            if (
+                max_candidates_per_video is not None
+                and selected_counts.get(vid, 0) >= max_candidates_per_video
+            ):
+                continue
+            is_chain_winner = cand.diagnostic_metadata.get(
+                "is_temporal_chain_winner", False
+            )
+            # If not a chain winner, enforce minimum frame gap within the same video
+            if not is_chain_winner and min_frame_gap > 0:
+                if any(
+                    abs(cand.frame_id - existing) < min_frame_gap
+                    for existing in selected_frames.get(vid, [])
+                ):
+                    continue
+            selected_candidates.append(cand)
+            selected_frames.setdefault(vid, []).append(cand.frame_id)
+            selected_counts[vid] = selected_counts.get(vid, 0) + 1
+            if len(selected_candidates) >= output_top_k:
+                break
+        final_candidates = selected_candidates
+    else:
+        final_candidates = enriched_sorted[:output_top_k]
+
+    reranked = tuple(
+        CandidateFrame(
+            video_id=cand.video_id,
+            frame_id=cand.frame_id,
+            clip_row=cand.clip_row,
+            keyframe_order=cand.keyframe_order,
+            score=cand.score,
+            rank=rank,
+            source=cand.source,
+            diagnostic_metadata=cand.diagnostic_metadata,
+        )
+        for rank, cand in enumerate(final_candidates, start=1)
+    )
+    return KISResult(query_id=query_id, ranked_candidates=reranked)
 
 
 def build_kis_video_first_outcome(
@@ -862,7 +956,12 @@ def build_kis_video_first_outcome(
     output_top_k: int,
     rrf_constant: float,
     adaptive_diagnostic: AdaptiveBudgetDiagnostic | None = None,
+    config: KISVideoFirstConfig | None = None,
 ) -> KISVideoFirstOutcome:
+    chain_bonus = config.temporal_chain_frame_bonus if config else 0.0
+    min_gap = config.restricted_frame_min_gap if config else 0
+    max_cands = config.max_restricted_candidates_per_video if config else None
+
     result = fuse_restricted_frames(
         query_id=query_id,
         variants=variants,
@@ -871,6 +970,9 @@ def build_kis_video_first_outcome(
         weighted_rrf=weighted_rrf,
         output_top_k=output_top_k,
         rrf_constant=rrf_constant,
+        temporal_chain_bonus=chain_bonus,
+        min_frame_gap=min_gap,
+        max_candidates_per_video=max_cands,
     )
     per_scene_top128 = {
         var_id: tuple(hit.video_id for hit in hits[:128])
