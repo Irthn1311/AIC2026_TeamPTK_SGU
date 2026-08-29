@@ -786,16 +786,23 @@ def run_p1_2_trace_and_raw_cosine_audit(
         key: rank for rank, key in enumerate(sorted_all_candidates, start=1)
     }
 
+    # 2.4.1 RESTRICTED CANDIDATE POOL SIZES ACROSS NOMINATED VIDEOS
+    print("--- 2.4.1 RESTRICTED CANDIDATE POOL SIZES ACROSS NOMINATED VIDEOS ---")
+    for v in variants:
+        actual_size = len(restricted_rank_lookup[v.variant_id])
+        print(f"• Variant [{v.variant_id.split('::')[-1]}]: Actual Global Pool Size = {actual_size} retained candidate frames (Nominated videos: {len(selected_videos)}, Cap: {per_query_cap}/vid)")
+    print("------------------------------------------------------------------------------------------------------------------------\n", flush=True)
+
     # Pre-calculate target video cosine matrix
     target_all_cos = store.matrix @ embeddings.T  # (N, n_variants)
 
-    print("\n" + "=" * 120)
+    print("=" * 120)
     print("TABLE 1: GT-NEIGHBORHOOD KEYFRAMES AUDIT ACROSS PRODUCTION VARIANTS")
     print(f"Target Video: {target_vid} | Total Store Keyframes: {len(store.mappings)} | Locked GT Frame: {locked_gt_frame} | Range: [{gt_interval[0]}, {gt_interval[1]}]")
-    print("  * Semantic Note: 'Retained in Top-10?' = Per-video retention cap (top 10 frames within this video for that variant).")
-    print("  * Semantic Note: 'Global Pool Rank'    = Rank across all 640 candidate frames from all 64 nominated videos (64 * 10 = 640).")
+    print("  * Semantic Note: 'Retained by Variant?' = Per-video retention cap (top 10 frames within this video for that variant).")
+    print("  * Semantic Note: 'Global Pool Rank'     = Rank within this variant's actual candidate pool size across all nominated videos.")
     print("=" * 120)
-    print(f"| {'Frame ID':<8} | {'PTS (s)':<8} | {'Variant ID':<32} | {'Raw Cos':<8} | {'Intra Rank':<10} | {'Top-M Peak?':<12} | {'Evid Nbrhood?':<14} | {'Top-10 Retained?':<18} | {'Global Pool Rank':<18} |")
+    print(f"| {'Frame ID':<8} | {'PTS (s)':<8} | {'Variant ID':<32} | {'Raw Cos':<8} | {'Intra Rank':<10} | {'Top-M Peak?':<12} | {'Evid Nbrhood?':<14} | {'Retained by Var?':<18} | {'Global Pool Rank':<18} |")
     print(f"| {'-'*8} | {'-'*8} | {'-'*32} | {'-'*8} | {'-'*10} | {'-'*12} | {'-'*14} | {'-'*18} | {'-'*18} |")
 
     frame_audit_records = {}
@@ -829,7 +836,8 @@ def run_p1_2_trace_and_raw_cosine_audit(
             t_restricted = per_vid.get(target_vid, ())
             is_retained = any(h.frame_id == fid for h in t_restricted)
             restr_global_rank = restricted_rank_lookup[v.variant_id].get((target_vid, fid))
-            restr_rank_str = f"#{restr_global_rank} / {len(restricted_rank_lookup[v.variant_id])}" if restr_global_rank else "OUTSIDE_TOP10_CAP"
+            actual_pool_size = len(restricted_rank_lookup[v.variant_id])
+            restr_rank_str = f"#{restr_global_rank} / {actual_pool_size}" if restr_global_rank else "OUTSIDE_TOP10_CAP"
 
             frame_records.append({
                 "variant_id": v.variant_id,
@@ -839,6 +847,7 @@ def run_p1_2_trace_and_raw_cosine_audit(
                 "in_nbrhood": in_nbrhood,
                 "is_retained": is_retained,
                 "restr_global_rank": restr_global_rank,
+                "actual_pool_size": actual_pool_size,
             })
 
             is_gt_marker = " (GT)" if fid == locked_gt_frame else ""
@@ -891,6 +900,8 @@ def run_p1_2_trace_and_raw_cosine_audit(
         is_gt_marker = " (GT)" if fid == locked_gt_frame else ""
         print(f"| {str(fid)+is_gt_marker:<8} | {pts:<8.3f} | {'YES ★' if is_cand else 'NO':<18} | {contrib_str:<45} | {score_str:<12} | {rank_str:<20} | {'YES ✅' if in_top100 else 'NO ❌':<11} |")
 
+    print("=" * 120 + "\n")
+
     # 3. DUAL-VERDICT CAUSAL LOSS REPORT
     print("--- 2.5 DUAL-VERDICT CAUSAL LOSS REPORT FOR TRUE FROZEN P1-2 ---")
     print(f"• [1] Nearest Locked GT Frame (Frame {nearest_gt_keyframe} / PTS {nearest_gt_keyframe/25.0:.2f}s, Delta {nearest_gt_keyframe - locked_gt_frame} frames from {locked_gt_frame}):")
@@ -902,7 +913,7 @@ def run_p1_2_trace_and_raw_cosine_audit(
             print(f"      - Causal Loss Stage : NONE (Survives into Top-100 export at Rank #{best_rank}) ✅")
         else:
             print(f"      - Causal Loss Stage : STAGE 3 — FRAME_RRF_CUTOFF (Global Fusion Rank #{best_rank} > 100) ❌")
-            print(f"      - Root Cause        : Frame {best_frame} was retained on Variant 1 (global pool #{restricted_rank_lookup[variants[0].variant_id].get((target_vid, best_frame))}/640), but single-variant RRF score ({best_score:.6f}) was overtaken by multi-variant candidates.")
+            print(f"      - Root Cause        : Frame {best_frame} was retained on Variant 1 (global pool #{restricted_rank_lookup[variants[0].variant_id].get((target_vid, best_frame))}/{len(restricted_rank_lookup[variants[0].variant_id])}), but single-variant RRF score ({best_score:.6f}) was overtaken by multi-variant candidates.")
     else:
         print("• [2] GT±150 Tolerance Neighborhood [5900, 6200] Best Surviving Frame: NONE")
         print("      - Causal Loss Stage : STAGE 2 — RESTRICTED_FRAME_SEARCH_TRUNCATION ❌")
@@ -910,7 +921,7 @@ def run_p1_2_trace_and_raw_cosine_audit(
     print("      - Status            : BENCHMARK_PROVENANCE_SUSPECT / VISUAL_ADJUDICATION_REQUIRED ⚠️")
     print("      - Visual Rule       : Machine metrics provide structural trace, but human visual review of contact sheets is mandatory to adjudicate target sequence matching.\n", flush=True)
 
-    # 4. VISUAL BENCHMARK ADJUDICATION: TIMELINE SAMPLING, PEAKS & BROAD CANDIDATE DISCOVERY
+    # 4. VISUAL BENCHMARK ADJUDICATION: FULL 568 KEYFRAME PAGINATION & BROAD CANDIDATE DISCOVERY
     visual_records = run_p1_2_visual_benchmark_adjudication(
         runtime=runtime,
         input_root=input_root,
@@ -959,31 +970,106 @@ def run_p1_2_visual_benchmark_adjudication(
     maxima: Any,
 ) -> list[dict[str, Any]]:
     print("=" * 120, flush=True)
-    print("2.6 P1-2 VISUAL BENCHMARK ADJUDICATION (IMAGE RENDERING & BROAD CANDIDATE DISCOVERY)", flush=True)
+    print("2.6 P1-2 VISUAL BENCHMARK ADJUDICATION (FULL 568 KEYFRAMES & BROAD CANDIDATE DISCOVERY)", flush=True)
     print("=" * 120, flush=True)
 
     manifest_entries: list[dict[str, Any]] = []
+    total_requested_tiles = 0
+    total_decoded_tiles = 0
+    total_failed_tiles = 0
 
-    # -------------------------------------------------------------------------
-    # PART A: RENDER L29_V018 TIMELINE & COMPULSORY RETRIEVAL PEAKS
-    # -------------------------------------------------------------------------
     all_mappings = store.mappings
     total_kfs = len(all_mappings)
-
-    # 1. Uniform timeline sampling (20 keyframes)
-    uniform_indices = np.linspace(0, total_kfs - 1, 20, dtype=int)
-    uniform_fids = [all_mappings[i].frame_id for i in uniform_indices]
-
-    # 2. Compulsory retrieval peaks from all variants
     compulsory_peaks = [905, 1145, 4995, 6171, 8215, 8235, 9749, 16335, 25325, 27135, 27270]
 
-    # Combine unique frames
+    # -------------------------------------------------------------------------
+    # PART A1: RENDER ALL 568 INDEXED KEYFRAMES OF L29_V018 (PAGINATED CONTACT SHEETS)
+    # -------------------------------------------------------------------------
+    page_size = 64
+    total_pages = math.ceil(total_kfs / page_size)
+    print(f"\n• [A1] Rendering ALL {total_kfs} indexed keyframes of {target_vid} into {total_pages} paginated contact sheets (64 frames/page)...", flush=True)
+
+    all_page_paths = []
+    for page_idx in range(total_pages):
+        start_idx = page_idx * page_size
+        end_idx = min(start_idx + page_size, total_kfs)
+        page_mappings = all_mappings[start_idx:end_idx]
+        n_page_tiles = len(page_mappings)
+
+        fig, axes = plt.subplots(8, 8, figsize=(28, 28))
+        axes_flat = axes.flatten()
+
+        page_file = base_out / f"p1-2_{target_vid}_all_keyframes_page_{page_idx+1:02d}.png"
+        all_page_paths.append(page_file)
+
+        for tile_idx, mapping in enumerate(page_mappings):
+            ax = axes_flat[tile_idx]
+            fid = mapping.frame_id
+            kf_order = mapping.keyframe_order
+            pts_time = mapping.pts_time
+
+            img, decode_mode = extract_image_for_frame(
+                dataset_root=input_root,
+                video_id=target_vid,
+                frame_id=fid,
+                keyframe_order=kf_order,
+                pts_time=pts_time,
+            )
+
+            is_decode_ok = img is not None
+            if is_decode_ok:
+                ax.imshow(img)
+                total_decoded_tiles += 1
+            else:
+                ax.text(0.5, 0.5, f"IMAGE NOT FOUND\nFrame: {fid}\n({decode_mode})", ha="center", va="center", fontsize=7)
+                total_failed_tiles += 1
+            total_requested_tiles += 1
+
+            is_locked_gt = (fid == locked_gt_frame or fid == 6048)
+            is_peak = fid in compulsory_peaks
+            is_gt_nbrhood = fid in gt_neighborhood_keyframes
+
+            border_color = "red" if is_locked_gt else ("green" if is_peak else ("blue" if is_gt_nbrhood else "gray"))
+            for spine in ax.spines.values():
+                spine.set_color(border_color)
+                spine.set_linewidth(3 if (is_locked_gt or is_peak or is_gt_nbrhood) else 0.5)
+
+            marker_str = " (LOCKED GT ★)" if is_locked_gt else (" (PEAK)" if is_peak else (" (GT NBRHOOD)" if is_gt_nbrhood else ""))
+            ax.set_title(f"f{fid} | {pts_time:.2f}s | #{kf_order}{marker_str}", fontsize=7, color=border_color if border_color != "gray" else "black", pad=3)
+
+            manifest_entries.append({
+                "contact_sheet_file": page_file.name,
+                "video_id": target_vid,
+                "frame_id": fid,
+                "keyframe_order": kf_order,
+                "pts_time": pts_time,
+                "is_locked_gt": is_locked_gt,
+                "is_retrieval_peak": is_peak,
+                "is_gt_nbrhood": is_gt_nbrhood,
+                "decode_ok": is_decode_ok,
+                "source_path": str(input_root),
+                "decode_mode": decode_mode,
+            })
+
+        for tile_idx in range(n_page_tiles, 64):
+            axes_flat[tile_idx].axis("off")
+
+        page_file.parent.mkdir(parents=True, exist_ok=True)
+        plt.tight_layout()
+        plt.savefig(page_file, dpi=100)
+        plt.close(fig)
+        print(f"  📸 Page [{page_idx+1:02d}/{total_pages:02d}]: Saved {n_page_tiles} keyframes -> {page_file.name} ✅", flush=True)
+
+    # -------------------------------------------------------------------------
+    # PART A2: RENDER TIMELINE SUMMARY CONTACT SHEET
+    # -------------------------------------------------------------------------
+    uniform_indices = np.linspace(0, total_kfs - 1, 20, dtype=int)
+    uniform_fids = [all_mappings[i].frame_id for i in uniform_indices]
     timeline_fids = sorted(set(uniform_fids + compulsory_peaks + gt_neighborhood_keyframes + [locked_gt_frame]))
-    # Filter only those that exist in store mappings
     store_fid_set = {m.frame_id for m in all_mappings}
     timeline_fids = [fid for fid in timeline_fids if fid in store_fid_set]
 
-    print(f"• Generating Timeline Contact Sheet for {target_vid} ({len(timeline_fids)} keyframes sampled across full timeline)...", flush=True)
+    print(f"\n• [A2] Generating Timeline Summary Contact Sheet for {target_vid} ({len(timeline_fids)} keyframes)...", flush=True)
 
     n_tiles = len(timeline_fids)
     cols = 5
@@ -996,7 +1082,7 @@ def run_p1_2_visual_benchmark_adjudication(
     elif cols == 1:
         axes = axes.reshape(-1, 1)
 
-    timeline_sheet_path = base_out / f"p1-2_{target_vid}_timeline_audit.png"
+    timeline_sheet_path = base_out / f"p1-2_{target_vid}_timeline_summary.png"
 
     for idx, fid in enumerate(timeline_fids):
         r_idx = idx // cols
@@ -1016,24 +1102,26 @@ def run_p1_2_visual_benchmark_adjudication(
             pts_time=pts_time,
         )
 
-        if img is not None:
+        is_decode_ok = img is not None
+        if is_decode_ok:
             ax.imshow(img)
+            total_decoded_tiles += 1
         else:
-            ax.text(0.5, 0.5, f"IMAGE NOT FOUND ON DISK\nVideo: {target_vid}\nFrame: {fid}\n(Mode: {decode_mode})", ha="center", va="center", fontsize=8)
+            ax.text(0.5, 0.5, f"IMAGE NOT FOUND\nFrame: {fid}\n({decode_mode})", ha="center", va="center", fontsize=8)
+            total_failed_tiles += 1
+        total_requested_tiles += 1
 
-        # Categorize tag
         tags = []
         if fid == locked_gt_frame or fid == 6048:
             tags.append("LOCKED_GT")
         if fid in compulsory_peaks:
-            tags.append("RETRIEVAL_PEAK")
+            tags.append("PEAK")
         if fid in gt_neighborhood_keyframes:
             tags.append("GT_NBRHOOD")
         if not tags:
-            tags.append("UNIFORM_SAMPLE")
+            tags.append("UNIFORM")
         tag_str = " | ".join(tags)
 
-        # Compute cosine with full query and scenes
         feat = store.matrix[row_indices[0]] if row_indices else np.zeros(512)
         cos_v1 = float(feat @ embeddings[0])
         cos_v2 = float(feat @ embeddings[1])
@@ -1041,10 +1129,10 @@ def run_p1_2_visual_benchmark_adjudication(
 
         is_gt = "LOCKED_GT" in tags
         caption = (
-            f"Video: {target_vid} | Frame: {fid} (Order: {kf_order if kf_order else 'N/A'})\n"
+            f"Video: {target_vid} | Frame: {fid} (#{kf_order if kf_order else 'N/A'})\n"
             f"PTS: {pts_time:.2f}s | Tags: {tag_str}\n"
             f"Cos: Full={cos_v1:.3f} | T1(Map)={cos_v2:.3f} | T2(Dam)={cos_v3:.3f}\n"
-            f"Decode: {decode_mode}"
+            f"Mode: {decode_mode}"
         )
         ax.set_title(caption, fontsize=8, color="red" if is_gt else "black", pad=6)
 
@@ -1058,10 +1146,10 @@ def run_p1_2_visual_benchmark_adjudication(
             "cosine_full": cos_v1,
             "cosine_scene1": cos_v2,
             "cosine_scene2": cos_v3,
-            "decode_status": decode_mode,
+            "decode_ok": is_decode_ok,
+            "decode_mode": decode_mode,
         })
 
-    # Hide unused subplots
     for idx in range(n_tiles, rows * cols):
         r_idx = idx // cols
         c_idx = idx % cols
@@ -1071,15 +1159,13 @@ def run_p1_2_visual_benchmark_adjudication(
     plt.tight_layout()
     plt.savefig(timeline_sheet_path, dpi=120)
     plt.close(fig)
-    print(f"  📸 Saved timeline contact sheet -> {timeline_sheet_path} ✅", flush=True)
+    print(f"  📸 Saved timeline summary contact sheet -> {timeline_sheet_path.name} ✅", flush=True)
 
     # -------------------------------------------------------------------------
     # PART B: BROAD CANDIDATE DISCOVERY ACROSS ALL 873 CORPUS VIDEOS
     # -------------------------------------------------------------------------
-    print("\n• Scanning all 873 videos for Scene 1 (Map) and Scene 2 (Dam) Temporal Candidates...", flush=True)
+    print("\n• [B] Scanning all 873 videos for Scene 1 (Map) and Scene 2 (Dam) Temporal Candidates...", flush=True)
 
-    s1_var = variants[1]  # Temporal scene 1 (Map)
-    s2_var = variants[2]  # Temporal scene 2 (Dam)
     s1_emb = embeddings[1]
     s2_emb = embeddings[2]
 
@@ -1091,22 +1177,18 @@ def run_p1_2_visual_benchmark_adjudication(
         if len(st.mappings) == 0:
             continue
 
-        # Cosine for Scene 1 & Scene 2
         cos_s1 = st.matrix @ s1_emb
         cos_s2 = st.matrix @ s2_emb
 
         max_s1 = float(np.max(cos_s1))
         max_s2 = float(np.max(cos_s2))
 
-        # Top-5 peaks for Scene 1
         s1_peak_indices = np.argsort(-cos_s1)[:5]
         s1_peaks = [(st.mappings[i].frame_id, float(cos_s1[i])) for i in s1_peak_indices]
 
-        # Top-5 peaks for Scene 2
         s2_peak_indices = np.argsort(-cos_s2)[:5]
         s2_peaks = [(st.mappings[i].frame_id, float(cos_s2[i])) for i in s2_peak_indices]
 
-        # Solve DP Temporal Chain (T1 < T2, Gap >= 60 frames)
         has_valid_chain, chain_frames, chain_score = solve_temporal_chain(
             peaks_by_scene=[s1_peaks, s2_peaks],
             scene_weights=[1.0, 1.0],
@@ -1125,7 +1207,6 @@ def run_p1_2_visual_benchmark_adjudication(
             "store": st,
         })
 
-    # Sort candidates
     by_s1 = sorted(candidate_pool, key=lambda x: -x["max_s1"])
     by_s2 = sorted(candidate_pool, key=lambda x: -x["max_s2"])
     by_dp = sorted(candidate_pool, key=lambda x: (-int(x["has_valid_chain"]), -x["chain_score"]))
@@ -1138,14 +1219,16 @@ def run_p1_2_visual_benchmark_adjudication(
     print("\n" + "=" * 120)
     print("TOP CANDIDATE DISCOVERY AUDIT (ALL 873 CORPUS VIDEOS)")
     print("=" * 120)
-    print(f"• Top 5 Videos by Scene 1 (Map / 4x Irrigation): {', '.join(s1_top20_vids[:5])}")
+    print(f"• Top 5 Videos by Scene 1 (Map / 4x Irrigation)        : {', '.join(s1_top20_vids[:5])}")
     print(f"• Top 5 Videos by Scene 2 (Aerial Dam / Rain Discharge): {', '.join(s2_top20_vids[:5])}")
-    print(f"• Intersection of Scene 1 & Scene 2 Top-20: {intersection_vids if intersection_vids else 'NONE (Disjoint Top-20)'}")
-    print(f"• Top 5 Temporal Chain Candidates (T1 < T2): {', '.join(dp_top20_vids[:5])}")
+    print(f"• Intersection of Scene 1 & Scene 2 Top-20             : {intersection_vids if intersection_vids else 'NONE (Disjoint Top-20)'}")
+    print(f"• Top 5 Temporal Chain Candidates (T1 < T2)            : {', '.join(dp_top20_vids[:5])}")
     print("=" * 120)
 
     print("\n| Rank | Video ID | Valid T1<T2? | Chain Score | Scene 1 Peak Frame (PTS, Cos) | Scene 2 Peak Frame (PTS, Cos) | Gap (frames) |")
     print("| ---- | -------- | ------------ | ----------- | ----------------------------- | ----------------------------- | ------------ |")
+
+    candidate_adjudication_templates = []
 
     for rank, cand in enumerate(by_dp[:15], start=1):
         vid = cand["video_id"]
@@ -1156,26 +1239,43 @@ def run_p1_2_visual_benchmark_adjudication(
         gap = (cf[1] - cf[0]) if len(cf) > 1 else 0
         print(f"| #{rank:<4} | {vid:<8} | {valid_str:<12} | {cand['chain_score']:<11.4f} | {s1_info:<29} | {s2_info:<29} | {gap:<12} |")
 
+        candidate_adjudication_templates.append({
+            "rank": rank,
+            "video_id": vid,
+            "temporal_chain_score": cand["chain_score"],
+            "has_valid_chain": cand["has_valid_chain"],
+            "winning_chain_frames": cf,
+            "scene1_peak": cand["s1_peaks"][0] if cand["s1_peaks"] else None,
+            "scene2_peak": cand["s2_peaks"][0] if cand["s2_peaks"] else None,
+            "human_adjudication_rubric": {
+                "map_present": None,
+                "irrigation_structure_repeated_four_times": None,
+                "aerial_dam": None,
+                "rainy_dam_closeup_or_discharge": None,
+                "temporal_order_correct": None,
+                "overall_label": "UNRESOLVED",
+            },
+        })
+
     print("=" * 120 + "\n")
 
     # -------------------------------------------------------------------------
-    # PART C: RENDER CANDIDATE DISCOVERY CONTACT SHEET
+    # PART C: RENDER CANDIDATE DISCOVERY CONTACT SHEET WITH WINNING DP FRAMES
     # -------------------------------------------------------------------------
-    # Select Top 6 DP Candidates + Target Video L29_V018 for side-by-side comparison
     discovery_vids = []
     for cand in by_dp[:6]:
         discovery_vids.append(cand["video_id"])
     if target_vid not in discovery_vids:
         discovery_vids.append(target_vid)
 
-    print(f"• Rendering Discovery Contact Sheet for {len(discovery_vids)} Candidate Videos ({discovery_vids})...", flush=True)
+    print(f"• [C] Rendering Discovery Contact Sheet for {len(discovery_vids)} Candidate Videos ({discovery_vids}) including Winning DP Frames...", flush=True)
 
     cand_sheet_path = base_out / "p1-2_candidate_discovery_contact_sheet.png"
 
-    # Each video gets 2 rows: Row 1 = Scene 1 Peaks (3 frames), Row 2 = Scene 2 Peaks (3 frames)
+    # Each video gets 3 rows: Row 1 = Scene 1 Peaks (3 frames), Row 2 = Scene 2 Peaks (3 frames), Row 3 = Actual Winning DP Frames (2 frames)
     n_vids = len(discovery_vids)
-    fig, axes = plt.subplots(n_vids * 2, 3, figsize=(18, 5 * n_vids * 2))
-    if n_vids * 2 == 1:
+    fig, axes = plt.subplots(n_vids * 3, 3, figsize=(18, 5 * n_vids * 3))
+    if n_vids * 3 == 1:
         axes = np.array([axes])
 
     for v_idx, vid in enumerate(discovery_vids):
@@ -1186,9 +1286,9 @@ def run_p1_2_visual_benchmark_adjudication(
         c_store = cand_obj["store"]
         dp_frames = cand_obj["chain_frames"]
 
-        # Scene 1 Top 3 Peaks
+        # Row 1: Scene 1 Top 3 Peaks
         for col_idx in range(3):
-            ax = axes[v_idx * 2, col_idx]
+            ax = axes[v_idx * 3, col_idx]
             if col_idx < len(cand_obj["s1_peaks"]):
                 fid, cos_val = cand_obj["s1_peaks"][col_idx]
                 r_rows = c_store.rows_for_frame(fid)
@@ -1204,35 +1304,40 @@ def run_p1_2_visual_benchmark_adjudication(
                     pts_time=pts_time,
                 )
 
-                if img is not None:
+                is_decode_ok = img is not None
+                if is_decode_ok:
                     ax.imshow(img)
+                    total_decoded_tiles += 1
                 else:
                     ax.text(0.5, 0.5, f"IMAGE NOT FOUND\nVideo: {vid}\nFrame: {fid}", ha="center", va="center", fontsize=8)
+                    total_failed_tiles += 1
+                total_requested_tiles += 1
 
                 is_dp_win = fid in dp_frames
                 caption = (
                     f"Video: {vid} | SCENE 1 (Map/Irrigation)\n"
                     f"Physical Frame: {fid} | PTS: {pts_time:.2f}s\n"
-                    f"Raw Cos: {cos_val:.4f} | DP Winning: {'YES ★' if is_dp_win else 'NO'}"
+                    f"Raw Cos: {cos_val:.4f} | Mode: {decode_mode}"
                 )
-                ax.set_title(caption, fontsize=8, color="red" if is_dp_win else "black", pad=6)
+                ax.set_title(caption, fontsize=8, color="black", pad=6)
 
                 manifest_entries.append({
                     "contact_sheet_file": cand_sheet_path.name,
                     "video_id": vid,
                     "frame_id": fid,
                     "pts_time": pts_time,
-                    "scene": "T1_MAP",
+                    "scene": "T1_MAP_PEAK",
                     "cosine": cos_val,
                     "is_dp_winning": is_dp_win,
-                    "decode_status": decode_mode,
+                    "decode_ok": is_decode_ok,
+                    "decode_mode": decode_mode,
                 })
             else:
                 ax.axis("off")
 
-        # Scene 2 Top 3 Peaks
+        # Row 2: Scene 2 Top 3 Peaks
         for col_idx in range(3):
-            ax = axes[v_idx * 2 + 1, col_idx]
+            ax = axes[v_idx * 3 + 1, col_idx]
             if col_idx < len(cand_obj["s2_peaks"]):
                 fid, cos_val = cand_obj["s2_peaks"][col_idx]
                 r_rows = c_store.rows_for_frame(fid)
@@ -1248,29 +1353,98 @@ def run_p1_2_visual_benchmark_adjudication(
                     pts_time=pts_time,
                 )
 
-                if img is not None:
+                is_decode_ok = img is not None
+                if is_decode_ok:
                     ax.imshow(img)
+                    total_decoded_tiles += 1
                 else:
                     ax.text(0.5, 0.5, f"IMAGE NOT FOUND\nVideo: {vid}\nFrame: {fid}", ha="center", va="center", fontsize=8)
+                    total_failed_tiles += 1
+                total_requested_tiles += 1
 
                 is_dp_win = fid in dp_frames
                 caption = (
                     f"Video: {vid} | SCENE 2 (Aerial Dam/Rain)\n"
                     f"Physical Frame: {fid} | PTS: {pts_time:.2f}s\n"
-                    f"Raw Cos: {cos_val:.4f} | DP Winning: {'YES ★' if is_dp_win else 'NO'}"
+                    f"Raw Cos: {cos_val:.4f} | Mode: {decode_mode}"
                 )
-                ax.set_title(caption, fontsize=8, color="red" if is_dp_win else "black", pad=6)
+                ax.set_title(caption, fontsize=8, color="black", pad=6)
 
                 manifest_entries.append({
                     "contact_sheet_file": cand_sheet_path.name,
                     "video_id": vid,
                     "frame_id": fid,
                     "pts_time": pts_time,
-                    "scene": "T2_DAM",
+                    "scene": "T2_DAM_PEAK",
                     "cosine": cos_val,
                     "is_dp_winning": is_dp_win,
-                    "decode_status": decode_mode,
+                    "decode_ok": is_decode_ok,
+                    "decode_mode": decode_mode,
                 })
+            else:
+                ax.axis("off")
+
+        # Row 3: Actual Winning DP Frames (T1 frame, T2 frame, and comparison)
+        for col_idx in range(3):
+            ax = axes[v_idx * 3 + 2, col_idx]
+            if col_idx < len(dp_frames):
+                fid = dp_frames[col_idx]
+                r_rows = c_store.rows_for_frame(fid)
+                mapping = c_store.frame_for_row(r_rows[0]) if r_rows else None
+                kf_order = mapping.keyframe_order if mapping else None
+                pts_time = mapping.pts_time if mapping else fid / 25.0
+
+                img, decode_mode = extract_image_for_frame(
+                    dataset_root=input_root,
+                    video_id=vid,
+                    frame_id=fid,
+                    keyframe_order=kf_order,
+                    pts_time=pts_time,
+                )
+
+                is_decode_ok = img is not None
+                if is_decode_ok:
+                    ax.imshow(img)
+                    total_decoded_tiles += 1
+                else:
+                    ax.text(0.5, 0.5, f"IMAGE NOT FOUND\nVideo: {vid}\nFrame: {fid}", ha="center", va="center", fontsize=8)
+                    total_failed_tiles += 1
+                total_requested_tiles += 1
+
+                for spine in ax.spines.values():
+                    spine.set_color("red")
+                    spine.set_linewidth(3)
+
+                scene_label = "T1 (Map/Irrigation)" if col_idx == 0 else "T2 (Dam/Rain)"
+                caption = (
+                    f"Video: {vid} | WINNING DP SCENE {scene_label} ★\n"
+                    f"Physical Frame: {fid} | PTS: {pts_time:.2f}s\n"
+                    f"Winning Chain Score: {cand_obj['chain_score']:.4f}"
+                )
+                ax.set_title(caption, fontsize=8, color="red", pad=6)
+
+                manifest_entries.append({
+                    "contact_sheet_file": cand_sheet_path.name,
+                    "video_id": vid,
+                    "frame_id": fid,
+                    "pts_time": pts_time,
+                    "scene": f"WINNING_DP_T{col_idx+1}",
+                    "is_dp_winning": True,
+                    "decode_ok": is_decode_ok,
+                    "decode_mode": decode_mode,
+                })
+            elif col_idx == 2 and len(dp_frames) == 2:
+                # Text summary tile for the pair
+                ax.text(
+                    0.5, 0.5,
+                    f"DP PAIR METRICS\nVideo: {vid}\nValid T1 < T2: YES ✅\n"
+                    f"T1 Frame: f{dp_frames[0]}\nT2 Frame: f{dp_frames[1]}\n"
+                    f"Frame Gap: {dp_frames[1] - dp_frames[0]} frames\n"
+                    f"Joint DP Score: {cand_obj['chain_score']:.4f}",
+                    ha="center", va="center", fontsize=9,
+                    bbox=dict(boxstyle="round,pad=0.5", fc="lightyellow", ec="red", lw=2),
+                )
+                ax.axis("off")
             else:
                 ax.axis("off")
 
@@ -1278,20 +1452,41 @@ def run_p1_2_visual_benchmark_adjudication(
     plt.tight_layout()
     plt.savefig(cand_sheet_path, dpi=120)
     plt.close(fig)
-    print(f"  📸 Saved Candidate Discovery contact sheet -> {cand_sheet_path} ✅", flush=True)
+    print(f"  📸 Saved Candidate Discovery contact sheet -> {cand_sheet_path.name} ✅", flush=True)
 
     # -------------------------------------------------------------------------
-    # PART D: EXPORT VISUAL ADJUDICATION MANIFEST JSON
+    # PART D: EXPORT VISUAL ADJUDICATION MANIFEST JSON WITH RUBRIC
     # -------------------------------------------------------------------------
+    manifest_payload = {
+        "benchmark_query_id": "query-p1-2-kis",
+        "target_video_locked": target_vid,
+        "locked_gt_frame": locked_gt_frame,
+        "total_requested_tiles": total_requested_tiles,
+        "total_decoded_tiles": total_decoded_tiles,
+        "total_failed_tiles": total_failed_tiles,
+        "decode_success_rate": float(total_decoded_tiles / total_requested_tiles) if total_requested_tiles > 0 else 0.0,
+        "candidate_adjudication_templates": candidate_adjudication_templates,
+        "rendered_tiles": manifest_entries,
+    }
+
     manifest_json_path = base_out / "p1-2_visual_adjudication_manifest.json"
-    manifest_json_path.write_text(json.dumps(manifest_entries, indent=2, ensure_ascii=False), encoding="utf-8")
-    print(f"  📄 Saved Visual Adjudication Manifest -> {manifest_json_path} ✅\n", flush=True)
+    manifest_json_path.write_text(json.dumps(manifest_payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"  📄 Saved Visual Adjudication Manifest -> {manifest_json_path.name} ✅\n", flush=True)
 
-    print("• Visual Artifact Resolution Summary for P1-2:")
-    print(f"  - Timeline Contact Sheet : {timeline_sheet_path}")
-    print(f"  - Candidate Contact Sheet: {cand_sheet_path}")
-    print(f"  - Adjudication Manifest  : {manifest_json_path}")
-    print("  - Next Step: Inspect candidate sheet tiles to visually adjudicate whether any candidate video contains genuine map + dam sequence.\n", flush=True)
+    print("=" * 120)
+    print("• Visual Artifact & Decode Resolution Summary for P1-2:")
+    print(f"  - Total Requested Tiles : {total_requested_tiles}")
+    print(f"  - Total Decoded Tiles   : {total_decoded_tiles} ({total_decoded_tiles/total_requested_tiles*100:.1f}%)")
+    print(f"  - Total Failed Tiles    : {total_failed_tiles}")
+    print(f"  - L29_V018 Full Pages   : {len(all_page_paths)} pages -> {all_page_paths[0].parent / 'p1-2_L29_V018_all_keyframes_page_*.png'}")
+    print(f"  - Timeline Summary Sheet: {timeline_sheet_path}")
+    print(f"  - Candidate Sheet       : {cand_sheet_path}")
+    print(f"  - Adjudication Manifest : {manifest_json_path}")
+    if total_decoded_tiles == 0:
+        print("  - Visual Evidence Status: VISUAL_EVIDENCE_INCOMPLETE ⚠️")
+    else:
+        print("  - Visual Evidence Status: VISUAL_EVIDENCE_AVAILABLE_FOR_HUMAN_ADJUDICATION ✅")
+    print("=" * 120 + "\n", flush=True)
 
     return manifest_entries
 
