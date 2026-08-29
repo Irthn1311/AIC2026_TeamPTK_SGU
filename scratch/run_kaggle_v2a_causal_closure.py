@@ -2169,12 +2169,37 @@ def run_all_5_queries_top100_visual_export(
         )
 
         resp = runtime.handle_query(req)
-        variants = resp.get("variants", [])
-        print(f"  • Compiled Query Variants ({len(variants)}):", flush=True)
-        for v in variants:
-            v_text = getattr(v, "text", v.get("text", "") if isinstance(v, dict) else "")
-            v_type = getattr(v, "variant_type", v.get("variant_type", "") if isinstance(v, dict) else "")
-            print(f"    - [{v_type}]: \"{v_text}\"", flush=True)
+        
+        # 1. Print Semantic Decomposition & English Translation Breakdown
+        query_dir = runtime.output_root / "requests" / req_id
+        trace_file = query_dir / "kis_video_first_trace.json"
+        req_manifest_file = query_dir / "request_manifest.json"
+
+        print(f"  • 🌐 Phân Tích Dịch Thuật & Phân Rã Ngữ Nghĩa (Semantic Decomposition):", flush=True)
+        if trace_file.exists():
+            try:
+                trace_data = json.loads(trace_file.read_text(encoding="utf-8"))
+                sem_meta = trace_data.get("semantic_query", {})
+                units = sem_meta.get("units", [])
+                for u in units:
+                    u_role = u.get("role", "UNIT")
+                    u_vi = u.get("text", "")
+                    print(f"    ├─ 🧩 [{u_role}]: \"{u_vi}\"", flush=True)
+                variants = sem_meta.get("variants", [])
+                for v in variants:
+                    v_id = v.get("variant_id", "")
+                    v_en = v.get("text", "")
+                    v_tokens = v.get("clip_token_count", 0)
+                    v_weight = v.get("weight", 1.0)
+                    print(f"    └─ 🇬🇧 [CLIP Variant {v_id}] (Weight: {v_weight:.2f}, Tokens: {v_tokens}): \"{v_en}\"", flush=True)
+            except Exception:
+                pass
+        else:
+            variants = resp.get("variants", [])
+            for v in variants:
+                v_text = getattr(v, "text", v.get("text", "") if isinstance(v, dict) else "")
+                v_type = getattr(v, "variant_type", v.get("variant_type", "") if isinstance(v, dict) else "")
+                print(f"    └─ 🇬🇧 [{v_type}]: \"{v_text}\"", flush=True)
 
         artifacts = resp.get("artifacts", {})
         rel_top100 = artifacts.get("refined_top100_jsonl") or artifacts.get("top100_jsonl")
