@@ -654,24 +654,20 @@ def run_p1_2_trace_and_raw_cosine_audit(
         top_m_weights=vf_cfg.top_m_weights,
     )
 
-    # Adaptive video nomination diagnostics
-    adaptive_diag = compute_adaptive_video_budget_v2(
-        maxima_rankings=maxima.rankings,
-        query_variants=variants,
-        base_budget=vf_cfg.adaptive_budget_base,
-        medium_budget=vf_cfg.adaptive_budget_medium,
-        high_budget=vf_cfg.adaptive_budget_high,
-        coverage_threshold=vf_cfg.coverage_threshold,
-    )
-
-    all_fused_videos = fuse_video_maxima_v2(
+    # Full Corpus Video Fusion (All 873 videos ranked)
+    all_fused_videos, adaptive_diag = fuse_video_maxima_v2(
+        variants=variants,
         maxima=maxima,
-        query_variants=variants,
-        selected_video_cap=len(runtime.video_restricted_searcher.registry.stores),
-        adaptive_diag=adaptive_diag,
+        primary_variant_ids=compiled_sq.primary_variant_ids,
+        supporting_variant_ids=compiled_sq.supporting_variant_ids,
+        temporal_variants=tuple(item.query_variant for item in compiled_sq.temporal_scene_variants),
+        rrf_constant=runtime.config.rrf_constant,
+        nomination_depth=len(runtime.video_restricted_searcher.registry.stores),
+        config=vf_cfg,
     )
     target_fused_entry = next((item for item in all_fused_videos if item.video_id == target_vid), None)
-    target_fused_rank = next((idx for idx, item in enumerate(all_fused_videos, start=1) if item.video_id == target_vid), None)
+    target_fused_rank = target_fused_entry.rank if target_fused_entry else None
+    target_fused_score = target_fused_entry.fusion_score if target_fused_entry else 0.0
 
     print("--- 2.3 COMPILED QUERY VARIANTS & PER-VARIANT SCORE BREAKDOWN ---")
     for idx, v in enumerate(variants, start=1):
@@ -714,7 +710,7 @@ def run_p1_2_trace_and_raw_cosine_audit(
     print(f"• Canonical Fused Video Rank       : #{target_fused_rank} / {total_videos}")
     print(f"• Canonical Video Nomination Budget: K = {len(selected_videos)} (Adaptive chosen K: {adaptive_diag.chosen_k})")
     print(f"• Target Video Nominated (Top-K)?  : {'YES ✅' if target_sel_entry else 'NO ❌'}")
-    print(f"• Target Video Fused Score         : {target_fused_entry.fused_score if target_fused_entry else 0.0:.6f}")
+    print(f"• Target Video Fused Score         : {target_fused_score:.6f}")
     print("------------------------------------------------------------------------------------------------------------------------\n", flush=True)
 
     # 2. Stage 2 Restricted Frame Retrieval Consumption Audit
