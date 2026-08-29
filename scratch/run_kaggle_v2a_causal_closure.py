@@ -991,7 +991,7 @@ def run_p1_2_visual_benchmark_adjudication(
     page_size = 64
     total_pages = math.ceil(total_kfs / page_size)
     print(f"\n• [A1] Rendering 100% TARGET INDEXED-KEYFRAME COVERAGE ({total_kfs}/{total_kfs} indexed keyframes of {target_vid}) into {total_pages} paginated contact sheets (64 frames/page)...", flush=True)
-    print(f"       * Provenance Note: This represents all visual information indexed in the feature store for {target_vid} (sampling interval ~2.0s).", flush=True)
+    print(f"       * Provenance Note: This represents 568 indexed keyframes covering the target video according to the feature registry mappings.", flush=True)
 
     all_page_paths = []
     for page_idx in range(total_pages):
@@ -1467,7 +1467,7 @@ def run_p1_2_visual_benchmark_adjudication(
     print(f"  📸 Saved Candidate Discovery contact sheet -> {cand_sheet_path.name} ✅", flush=True)
 
     # -------------------------------------------------------------------------
-    # PART D: COMPUTE SHA256 & EXPORT VISUAL ADJUDICATION MANIFEST JSON
+    # PART D: COMPUTE SHA256 & EXPORT IMMUTABLE EVIDENCE MANIFEST + SIDECAR + HUMAN TEMPLATE
     # -------------------------------------------------------------------------
     artifact_checksums = {}
     for p in all_page_paths:
@@ -1481,11 +1481,13 @@ def run_p1_2_visual_benchmark_adjudication(
     is_incomplete = (mandatory_failed > 0)
     visual_evidence_status = "VISUAL_EVIDENCE_INCOMPLETE ⚠️" if is_incomplete else "VISUAL_EVIDENCE_AVAILABLE_FOR_HUMAN_ADJUDICATION ✅"
 
-    manifest_payload = {
+    # 1. Immutable Machine Visual Evidence Manifest
+    evidence_manifest_payload = {
         "benchmark_query_id": "query-p1-2-kis",
         "target_video_locked": target_vid,
         "locked_gt_frame": locked_gt_frame,
         "visual_evidence_status": visual_evidence_status,
+        "provenance_description": "Immutable machine evidence recording rendered keyframe tiles, decode statuses, and artifact SHA256 hashes.",
         "decode_statistics": {
             "mandatory_requested": mandatory_requested,
             "mandatory_decoded": mandatory_decoded,
@@ -1498,17 +1500,64 @@ def run_p1_2_visual_benchmark_adjudication(
             "total_failed": mandatory_failed + optional_failed,
         },
         "artifact_sha256_checksums": artifact_checksums,
-        "candidate_adjudication_templates": candidate_adjudication_templates,
+        "candidate_discovery_summary": [
+            {
+                "rank": item["rank"],
+                "video_id": item["video_id"],
+                "temporal_chain_score": item["temporal_chain_score"],
+                "has_valid_chain": item["has_valid_chain"],
+                "winning_chain_frames": item["winning_chain_frames"],
+            }
+            for item in candidate_adjudication_templates
+        ],
         "rendered_tiles": manifest_entries,
     }
 
-    manifest_json_path = base_out / "p1-2_visual_adjudication_manifest.json"
-    manifest_json_path.write_text(json.dumps(manifest_payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    manifest_sha = hashlib.sha256(manifest_json_path.read_bytes()).hexdigest()
-    manifest_payload["manifest_self_sha256"] = manifest_sha
-    # Re-write with self SHA
-    manifest_json_path.write_text(json.dumps(manifest_payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    print(f"  📄 Saved Visual Adjudication Manifest -> {manifest_json_path.name} (SHA256: {manifest_sha[:16]}...) ✅\n", flush=True)
+    evidence_manifest_path = base_out / "p1-2_visual_evidence_manifest.json"
+    evidence_manifest_path.write_text(json.dumps(evidence_manifest_payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    # 2. Sidecar Checksum File (SHA256 of the exact bytes of the evidence manifest)
+    evidence_sha = hashlib.sha256(evidence_manifest_path.read_bytes()).hexdigest()
+    sidecar_path = base_out / "p1-2_visual_evidence_manifest.json.sha256"
+    sidecar_path.write_text(f"{evidence_sha}  {evidence_manifest_path.name}\n", encoding="utf-8")
+
+    # 3. Separate Human Adjudication Template (Linking to the immutable evidence SHA)
+    human_adjudication_payload = {
+        "benchmark_query_id": "query-p1-2-kis",
+        "target_video_locked": target_vid,
+        "locked_gt_frame": locked_gt_frame,
+        "referenced_evidence_manifest_file": evidence_manifest_path.name,
+        "referenced_evidence_manifest_sha256": evidence_sha,
+        "referenced_artifact_checksums": artifact_checksums,
+        "instructions": (
+            "Human reviewer records visual findings for target video and candidate discovery videos. "
+            "Examine the contact sheet PNGs. All rubric fields start as null/UNRESOLVED. "
+            "Set overall_label to MATCH (all predicates present in single video), PARTIAL, or NO_MATCH."
+        ),
+        "target_video_adjudication": {
+            "video_id": target_vid,
+            "locked_gt_frame": locked_gt_frame,
+            "total_indexed_keyframes_inspected": total_kfs,
+            "reviewed_pages": [p.name for p in all_page_paths],
+            "human_adjudication_rubric": {
+                "map_present": None,
+                "irrigation_structure_repeated_four_times": None,
+                "aerial_dam": None,
+                "rainy_dam_closeup_or_discharge": None,
+                "temporal_order_correct": None,
+                "overall_label": "UNRESOLVED",
+                "reviewer_notes": "",
+            },
+        },
+        "candidate_videos_adjudication": candidate_adjudication_templates,
+    }
+
+    human_adjudication_path = base_out / "p1-2_human_adjudication_template.json"
+    human_adjudication_path.write_text(json.dumps(human_adjudication_payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    print(f"  📄 Saved Visual Evidence Manifest -> {evidence_manifest_path.name} ✅", flush=True)
+    print(f"  🔒 Saved Sidecar Checksum File    -> {sidecar_path.name} (SHA256: {evidence_sha}) ✅", flush=True)
+    print(f"  📝 Saved Human Adjudication File  -> {human_adjudication_path.name} ✅\n", flush=True)
 
     print("=" * 120)
     print("• Visual Artifact & Decode Resolution Summary for P1-2:")
@@ -1523,7 +1572,8 @@ def run_p1_2_visual_benchmark_adjudication(
     print("• Final Artifact File Paths & SHA256 Checksums:")
     for fname, sha in artifact_checksums.items():
         print(f"  * {fname:<45} : {sha}")
-    print(f"  * {manifest_json_path.name:<45} : {manifest_sha}")
+    print(f"  * {evidence_manifest_path.name:<45} : {evidence_sha}")
+    print(f"  * Sidecar File: {sidecar_path.name}")
     print("=" * 120 + "\n", flush=True)
 
     return manifest_entries
