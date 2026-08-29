@@ -970,24 +970,28 @@ def run_p1_2_visual_benchmark_adjudication(
     maxima: Any,
 ) -> list[dict[str, Any]]:
     print("=" * 120, flush=True)
-    print("2.6 P1-2 VISUAL BENCHMARK ADJUDICATION (FULL 568 KEYFRAMES & BROAD CANDIDATE DISCOVERY)", flush=True)
+    print("2.6 P1-2 VISUAL BENCHMARK ADJUDICATION (100% TARGET INDEXED-KEYFRAME COVERAGE & BROAD CANDIDATES)", flush=True)
     print("=" * 120, flush=True)
 
     manifest_entries: list[dict[str, Any]] = []
-    total_requested_tiles = 0
-    total_decoded_tiles = 0
-    total_failed_tiles = 0
+    mandatory_requested = 0
+    mandatory_decoded = 0
+    mandatory_failed = 0
+    optional_requested = 0
+    optional_decoded = 0
+    optional_failed = 0
 
     all_mappings = store.mappings
     total_kfs = len(all_mappings)
     compulsory_peaks = [905, 1145, 4995, 6171, 8215, 8235, 9749, 16335, 25325, 27135, 27270]
 
     # -------------------------------------------------------------------------
-    # PART A1: RENDER ALL 568 INDEXED KEYFRAMES OF L29_V018 (PAGINATED CONTACT SHEETS)
+    # PART A1: RENDER 100% TARGET INDEXED-KEYFRAME COVERAGE (ALL 568 KEYFRAMES)
     # -------------------------------------------------------------------------
     page_size = 64
     total_pages = math.ceil(total_kfs / page_size)
-    print(f"\n• [A1] Rendering ALL {total_kfs} indexed keyframes of {target_vid} into {total_pages} paginated contact sheets (64 frames/page)...", flush=True)
+    print(f"\n• [A1] Rendering 100% TARGET INDEXED-KEYFRAME COVERAGE ({total_kfs}/{total_kfs} indexed keyframes of {target_vid}) into {total_pages} paginated contact sheets (64 frames/page)...", flush=True)
+    print(f"       * Provenance Note: This represents all visual information indexed in the feature store for {target_vid} (sampling interval ~2.0s).", flush=True)
 
     all_page_paths = []
     for page_idx in range(total_pages):
@@ -1019,11 +1023,11 @@ def run_p1_2_visual_benchmark_adjudication(
             is_decode_ok = img is not None
             if is_decode_ok:
                 ax.imshow(img)
-                total_decoded_tiles += 1
+                mandatory_decoded += 1
             else:
                 ax.text(0.5, 0.5, f"IMAGE NOT FOUND\nFrame: {fid}\n({decode_mode})", ha="center", va="center", fontsize=7)
-                total_failed_tiles += 1
-            total_requested_tiles += 1
+                mandatory_failed += 1
+            mandatory_requested += 1
 
             is_locked_gt = (fid == locked_gt_frame or fid == 6048)
             is_peak = fid in compulsory_peaks
@@ -1039,6 +1043,7 @@ def run_p1_2_visual_benchmark_adjudication(
 
             manifest_entries.append({
                 "contact_sheet_file": page_file.name,
+                "tile_type": "MANDATORY_TARGET_KEYFRAME",
                 "video_id": target_vid,
                 "frame_id": fid,
                 "keyframe_order": kf_order,
@@ -1061,7 +1066,7 @@ def run_p1_2_visual_benchmark_adjudication(
         print(f"  📸 Page [{page_idx+1:02d}/{total_pages:02d}]: Saved {n_page_tiles} keyframes -> {page_file.name} ✅", flush=True)
 
     # -------------------------------------------------------------------------
-    # PART A2: RENDER TIMELINE SUMMARY CONTACT SHEET
+    # PART A2: RENDER TIMELINE SUMMARY CONTACT SHEET (OPTIONAL SUMMARY VIEW)
     # -------------------------------------------------------------------------
     uniform_indices = np.linspace(0, total_kfs - 1, 20, dtype=int)
     uniform_fids = [all_mappings[i].frame_id for i in uniform_indices]
@@ -1105,11 +1110,11 @@ def run_p1_2_visual_benchmark_adjudication(
         is_decode_ok = img is not None
         if is_decode_ok:
             ax.imshow(img)
-            total_decoded_tiles += 1
+            optional_decoded += 1
         else:
             ax.text(0.5, 0.5, f"IMAGE NOT FOUND\nFrame: {fid}\n({decode_mode})", ha="center", va="center", fontsize=8)
-            total_failed_tiles += 1
-        total_requested_tiles += 1
+            optional_failed += 1
+        optional_requested += 1
 
         tags = []
         if fid == locked_gt_frame or fid == 6048:
@@ -1138,6 +1143,7 @@ def run_p1_2_visual_benchmark_adjudication(
 
         manifest_entries.append({
             "contact_sheet_file": timeline_sheet_path.name,
+            "tile_type": "OPTIONAL_TIMELINE_SUMMARY",
             "video_id": target_vid,
             "frame_id": fid,
             "pts_time": pts_time,
@@ -1165,6 +1171,9 @@ def run_p1_2_visual_benchmark_adjudication(
     # PART B: BROAD CANDIDATE DISCOVERY ACROSS ALL 873 CORPUS VIDEOS
     # -------------------------------------------------------------------------
     print("\n• [B] Scanning all 873 videos for Scene 1 (Map) and Scene 2 (Dam) Temporal Candidates...", flush=True)
+    print("      * SEMANTIC RULE: DP valid T1 < T2 verifies temporal order between two scene peaks only;", flush=True)
+    print("        it does NOT verify 'irrigation_structure_repeated_four_times' or full narrative story.", flush=True)
+    print("        Human visual inspection of contact sheets is mandatory for MATCH / PARTIAL / NO_MATCH.\n", flush=True)
 
     s1_emb = embeddings[1]
     s2_emb = embeddings[2]
@@ -1286,7 +1295,7 @@ def run_p1_2_visual_benchmark_adjudication(
         c_store = cand_obj["store"]
         dp_frames = cand_obj["chain_frames"]
 
-        # Row 1: Scene 1 Top 3 Peaks
+        # Row 1: Scene 1 Top 3 Peaks (Optional view)
         for col_idx in range(3):
             ax = axes[v_idx * 3, col_idx]
             if col_idx < len(cand_obj["s1_peaks"]):
@@ -1307,11 +1316,11 @@ def run_p1_2_visual_benchmark_adjudication(
                 is_decode_ok = img is not None
                 if is_decode_ok:
                     ax.imshow(img)
-                    total_decoded_tiles += 1
+                    optional_decoded += 1
                 else:
                     ax.text(0.5, 0.5, f"IMAGE NOT FOUND\nVideo: {vid}\nFrame: {fid}", ha="center", va="center", fontsize=8)
-                    total_failed_tiles += 1
-                total_requested_tiles += 1
+                    optional_failed += 1
+                optional_requested += 1
 
                 is_dp_win = fid in dp_frames
                 caption = (
@@ -1323,6 +1332,7 @@ def run_p1_2_visual_benchmark_adjudication(
 
                 manifest_entries.append({
                     "contact_sheet_file": cand_sheet_path.name,
+                    "tile_type": "OPTIONAL_CANDIDATE_PEAK",
                     "video_id": vid,
                     "frame_id": fid,
                     "pts_time": pts_time,
@@ -1335,7 +1345,7 @@ def run_p1_2_visual_benchmark_adjudication(
             else:
                 ax.axis("off")
 
-        # Row 2: Scene 2 Top 3 Peaks
+        # Row 2: Scene 2 Top 3 Peaks (Optional view)
         for col_idx in range(3):
             ax = axes[v_idx * 3 + 1, col_idx]
             if col_idx < len(cand_obj["s2_peaks"]):
@@ -1356,11 +1366,11 @@ def run_p1_2_visual_benchmark_adjudication(
                 is_decode_ok = img is not None
                 if is_decode_ok:
                     ax.imshow(img)
-                    total_decoded_tiles += 1
+                    optional_decoded += 1
                 else:
                     ax.text(0.5, 0.5, f"IMAGE NOT FOUND\nVideo: {vid}\nFrame: {fid}", ha="center", va="center", fontsize=8)
-                    total_failed_tiles += 1
-                total_requested_tiles += 1
+                    optional_failed += 1
+                optional_requested += 1
 
                 is_dp_win = fid in dp_frames
                 caption = (
@@ -1372,6 +1382,7 @@ def run_p1_2_visual_benchmark_adjudication(
 
                 manifest_entries.append({
                     "contact_sheet_file": cand_sheet_path.name,
+                    "tile_type": "OPTIONAL_CANDIDATE_PEAK",
                     "video_id": vid,
                     "frame_id": fid,
                     "pts_time": pts_time,
@@ -1384,7 +1395,7 @@ def run_p1_2_visual_benchmark_adjudication(
             else:
                 ax.axis("off")
 
-        # Row 3: Actual Winning DP Frames (T1 frame, T2 frame, and comparison)
+        # Row 3: Actual Winning DP Frames (MANDATORY ADJUDICATION TILES)
         for col_idx in range(3):
             ax = axes[v_idx * 3 + 2, col_idx]
             if col_idx < len(dp_frames):
@@ -1405,11 +1416,11 @@ def run_p1_2_visual_benchmark_adjudication(
                 is_decode_ok = img is not None
                 if is_decode_ok:
                     ax.imshow(img)
-                    total_decoded_tiles += 1
+                    mandatory_decoded += 1
                 else:
                     ax.text(0.5, 0.5, f"IMAGE NOT FOUND\nVideo: {vid}\nFrame: {fid}", ha="center", va="center", fontsize=8)
-                    total_failed_tiles += 1
-                total_requested_tiles += 1
+                    mandatory_failed += 1
+                mandatory_requested += 1
 
                 for spine in ax.spines.values():
                     spine.set_color("red")
@@ -1425,6 +1436,7 @@ def run_p1_2_visual_benchmark_adjudication(
 
                 manifest_entries.append({
                     "contact_sheet_file": cand_sheet_path.name,
+                    "tile_type": "MANDATORY_WINNING_DP_TILE",
                     "video_id": vid,
                     "frame_id": fid,
                     "pts_time": pts_time,
@@ -1455,37 +1467,63 @@ def run_p1_2_visual_benchmark_adjudication(
     print(f"  📸 Saved Candidate Discovery contact sheet -> {cand_sheet_path.name} ✅", flush=True)
 
     # -------------------------------------------------------------------------
-    # PART D: EXPORT VISUAL ADJUDICATION MANIFEST JSON WITH RUBRIC
+    # PART D: COMPUTE SHA256 & EXPORT VISUAL ADJUDICATION MANIFEST JSON
     # -------------------------------------------------------------------------
+    artifact_checksums = {}
+    for p in all_page_paths:
+        if p.exists():
+            artifact_checksums[p.name] = hashlib.sha256(p.read_bytes()).hexdigest()
+    if timeline_sheet_path.exists():
+        artifact_checksums[timeline_sheet_path.name] = hashlib.sha256(timeline_sheet_path.read_bytes()).hexdigest()
+    if cand_sheet_path.exists():
+        artifact_checksums[cand_sheet_path.name] = hashlib.sha256(cand_sheet_path.read_bytes()).hexdigest()
+
+    is_incomplete = (mandatory_failed > 0)
+    visual_evidence_status = "VISUAL_EVIDENCE_INCOMPLETE ⚠️" if is_incomplete else "VISUAL_EVIDENCE_AVAILABLE_FOR_HUMAN_ADJUDICATION ✅"
+
     manifest_payload = {
         "benchmark_query_id": "query-p1-2-kis",
         "target_video_locked": target_vid,
         "locked_gt_frame": locked_gt_frame,
-        "total_requested_tiles": total_requested_tiles,
-        "total_decoded_tiles": total_decoded_tiles,
-        "total_failed_tiles": total_failed_tiles,
-        "decode_success_rate": float(total_decoded_tiles / total_requested_tiles) if total_requested_tiles > 0 else 0.0,
+        "visual_evidence_status": visual_evidence_status,
+        "decode_statistics": {
+            "mandatory_requested": mandatory_requested,
+            "mandatory_decoded": mandatory_decoded,
+            "mandatory_failed": mandatory_failed,
+            "optional_requested": optional_requested,
+            "optional_decoded": optional_decoded,
+            "optional_failed": optional_failed,
+            "total_requested": mandatory_requested + optional_requested,
+            "total_decoded": mandatory_decoded + optional_decoded,
+            "total_failed": mandatory_failed + optional_failed,
+        },
+        "artifact_sha256_checksums": artifact_checksums,
         "candidate_adjudication_templates": candidate_adjudication_templates,
         "rendered_tiles": manifest_entries,
     }
 
     manifest_json_path = base_out / "p1-2_visual_adjudication_manifest.json"
     manifest_json_path.write_text(json.dumps(manifest_payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    print(f"  📄 Saved Visual Adjudication Manifest -> {manifest_json_path.name} ✅\n", flush=True)
+    manifest_sha = hashlib.sha256(manifest_json_path.read_bytes()).hexdigest()
+    manifest_payload["manifest_self_sha256"] = manifest_sha
+    # Re-write with self SHA
+    manifest_json_path.write_text(json.dumps(manifest_payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"  📄 Saved Visual Adjudication Manifest -> {manifest_json_path.name} (SHA256: {manifest_sha[:16]}...) ✅\n", flush=True)
 
     print("=" * 120)
     print("• Visual Artifact & Decode Resolution Summary for P1-2:")
-    print(f"  - Total Requested Tiles : {total_requested_tiles}")
-    print(f"  - Total Decoded Tiles   : {total_decoded_tiles} ({total_decoded_tiles/total_requested_tiles*100:.1f}%)")
-    print(f"  - Total Failed Tiles    : {total_failed_tiles}")
-    print(f"  - L29_V018 Full Pages   : {len(all_page_paths)} pages -> {all_page_paths[0].parent / 'p1-2_L29_V018_all_keyframes_page_*.png'}")
-    print(f"  - Timeline Summary Sheet: {timeline_sheet_path}")
-    print(f"  - Candidate Sheet       : {cand_sheet_path}")
-    print(f"  - Adjudication Manifest : {manifest_json_path}")
-    if total_decoded_tiles == 0:
-        print("  - Visual Evidence Status: VISUAL_EVIDENCE_INCOMPLETE ⚠️")
-    else:
-        print("  - Visual Evidence Status: VISUAL_EVIDENCE_AVAILABLE_FOR_HUMAN_ADJUDICATION ✅")
+    print(f"  - Mandatory Tiles Requested : {mandatory_requested}")
+    print(f"  - Mandatory Tiles Decoded   : {mandatory_decoded} ({mandatory_decoded/mandatory_requested*100:.1f}%)" if mandatory_requested > 0 else "  - Mandatory Tiles Decoded: 0")
+    print(f"  - Mandatory Tiles Failed    : {mandatory_failed}")
+    print(f"  - Optional Tiles Requested  : {optional_requested}")
+    print(f"  - Optional Tiles Decoded    : {optional_decoded}")
+    print(f"  - Optional Tiles Failed     : {optional_failed}")
+    print(f"  - Visual Evidence Status    : {visual_evidence_status}")
+    print("-" * 120)
+    print("• Final Artifact File Paths & SHA256 Checksums:")
+    for fname, sha in artifact_checksums.items():
+        print(f"  * {fname:<45} : {sha}")
+    print(f"  * {manifest_json_path.name:<45} : {manifest_sha}")
     print("=" * 120 + "\n", flush=True)
 
     return manifest_entries
