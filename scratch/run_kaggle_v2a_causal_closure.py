@@ -2160,9 +2160,7 @@ def run_all_5_queries_top100_visual_export(
         print(f"  VI Text: \"{q_text}\"", flush=True)
         print(f"──────────────────────────────────────────────────────────────────────────────────────────────────", flush=True)
 
-        req_id = f"audit-top100-{q_short}"
-        if req_id in runtime._seen_request_ids:
-            req_id = f"audit-top100-{q_short}-{uuid.uuid4().hex[:4]}"
+        req_id = f"audit-top100-{q_short}-{int(time.time() * 1000)}"
 
         req = QueryRequest(
             request_id=req_id,
@@ -2171,6 +2169,13 @@ def run_all_5_queries_top100_visual_export(
         )
 
         resp = runtime.handle_query(req)
+        variants = resp.get("variants", [])
+        print(f"  • Compiled Query Variants ({len(variants)}):", flush=True)
+        for v in variants:
+            v_text = getattr(v, "text", v.get("text", "") if isinstance(v, dict) else "")
+            v_type = getattr(v, "variant_type", v.get("variant_type", "") if isinstance(v, dict) else "")
+            print(f"    - [{v_type}]: \"{v_text}\"", flush=True)
+
         artifacts = resp.get("artifacts", {})
         rel_top100 = artifacts.get("refined_top100_jsonl") or artifacts.get("top100_jsonl")
         if rel_top100:
@@ -2178,8 +2183,20 @@ def run_all_5_queries_top100_visual_export(
         else:
             top100_path = runtime.output_root / "requests" / req_id / "top100.jsonl"
 
+        # Read candidates from response records if available to get actual scores
         candidates = []
-        if top100_path.exists():
+        resp_records = resp.get("records", [])
+        if resp_records:
+            for r_idx, rec in enumerate(resp_records, 1):
+                candidates.append({
+                    "rank": getattr(rec, "rank", r_idx),
+                    "video_id": getattr(rec, "video_id", ""),
+                    "frame_id": getattr(rec, "frame_id", 0),
+                    "score": float(getattr(rec, "score", 0.0)),
+                    "pts_time": float(getattr(rec, "pts_time", 0.0) or 0.0),
+                    "keyframe_order": getattr(rec, "keyframe_order", None),
+                })
+        elif top100_path.exists():
             with top100_path.open("r", encoding="utf-8") as f:
                 for line in f:
                     if line.strip():
@@ -2194,7 +2211,7 @@ def run_all_5_queries_top100_visual_export(
         }
         true_match_vid = true_vids.get(q_short, "")
 
-        print(f"  • Top-100 Candidates Loaded: {len(candidates)} records from {top100_path.name}", flush=True)
+        print(f"  • Top-100 Candidates Loaded: {len(candidates)} records", flush=True)
         print(f"  • Top-10 Frame Preview:", flush=True)
         print(f"    {'Rank':<6} | {'Video ID':<10} | {'Frame ID':<10} | {'PTS (s)':<10} | {'Score':<10} | {'Is Target?'}", flush=True)
         print(f"    {'-'*6} | {'-'*10} | {'-'*10} | {'-'*10} | {'-'*10} | {'-'*10}", flush=True)
@@ -2202,7 +2219,7 @@ def run_all_5_queries_top100_visual_export(
             c_vid = c.get("video_id", "")
             is_tgt = "YES (GT) ⭐" if c_vid == target_vid else ("TRUE MATCH ⭐ (" + c_vid + ")" if c_vid == true_match_vid else "No")
             pts = float(c.get("pts_time", 0.0) or (c.get("frame_id", 0)/25.0))
-            score_val = float(c.get("fusion_score") if "fusion_score" in c else c.get("score", 0.0))
+            score_val = float(c.get("score", 0.0))
             print(f"    #{c.get('rank', 0):<5} | {c.get('video_id', ''):<10} | f{c.get('frame_id', 0):<9} | {pts:<10.3f} | {score_val:<10.4f} | {is_tgt}", flush=True)
 
         # Render Page 1 (Rank 1-50) and Page 2 (Rank 51-100)
