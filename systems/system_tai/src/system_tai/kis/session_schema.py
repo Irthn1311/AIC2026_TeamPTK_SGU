@@ -159,10 +159,14 @@ class SessionConfig:
                 raise ValueError(
                     "KIS semantic video-first retrieval requires dynamic VinAI translation"
                 )
-            if self.translation_model_name != "vinai/vinai-translate-vi2en-v2":
+            allowed_models = {"vinai/vinai-translate-vi2en-v2", "google-translate", "google"}
+            if (
+                self.translation_model_name not in allowed_models
+                and not self.translation_model_name.startswith("vinai")
+            ):
                 raise ValueError(
-                    "KIS semantic video-first retrieval requires "
-                    "vinai/vinai-translate-vi2en-v2"
+                    "KIS semantic video-first retrieval requires vinai/vinai-translate-vi2en-v2 "
+                    f"or google-translate, got {self.translation_model_name!r}"
                 )
         if not isinstance(self.q3_anchor_refinement_config, Q3AnchorRefinementConfig):
             raise ValueError(
