@@ -1178,7 +1178,7 @@ def run_p1_2_visual_benchmark_adjudication(
     candidate_pool = []
 
     for st in all_stores:
-        vid = st.video_id
+        vid = st.descriptor.video_id
         if len(st.mappings) == 0:
             continue
 
