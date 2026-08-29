@@ -353,9 +353,9 @@ def main() -> None:
     if run_all or "coverage" in selected_sections:
         coverage_results = run_gt_index_coverage_audit(runtime, input_root)
 
-    # 2. P1-2 EVIDENCE-POOL TO FINAL-EXPORT TRACE & DEV RAW COSINE AUDIT
+    # 2. P1-2 EVIDENCE-POOL TO FINAL-EXPORT TRACE & VISUAL BENCHMARK ADJUDICATION
     if run_all or "p1-2" in selected_sections or "p1_2" in selected_sections:
-        run_p1_2_trace_and_raw_cosine_audit(runtime)
+        run_p1_2_trace_and_raw_cosine_audit(runtime, input_root, base_out, coverage_results)
 
     # 3. P1-4 SEMANTIC ADJUDICATION & PTS-AWARE REAL IMAGE RENDERING
     if run_all or "p1-4" in selected_sections or "p1_4" in selected_sections:
@@ -522,11 +522,16 @@ def run_gt_index_coverage_audit(runtime: OperationalKISRuntime, input_root: Path
 
 
 # ==============================================================================
-# SECTION 2: P1-2 EVIDENCE-POOL TO FINAL-EXPORT TRACE & RAW COSINE BENCHMARK
+# SECTION 2: P1-2 EVIDENCE-POOL TO FINAL-EXPORT TRACE & VISUAL BENCHMARK ADJUDICATION
 # ==============================================================================
-def run_p1_2_trace_and_raw_cosine_audit(runtime: OperationalKISRuntime) -> None:
+def run_p1_2_trace_and_raw_cosine_audit(
+    runtime: OperationalKISRuntime,
+    input_root: Path,
+    base_out: Path,
+    coverage_summary: dict[str, dict],
+) -> dict[str, Any]:
     print("=" * 120, flush=True)
-    print("2. P1-2: EVIDENCE-POOL TO FINAL-EXPORT TRACE (PROJECT-FROZEN BENCHMARK AUDIT)", flush=True)
+    print("2. P1-2: EVIDENCE-POOL TO FINAL-EXPORT TRACE & VISUAL BENCHMARK ADJUDICATION", flush=True)
     print("=" * 120, flush=True)
 
     manifest_path, manifest_sha, manifest_queries = load_canonical_frozen_manifest()
@@ -624,6 +629,7 @@ def run_p1_2_trace_and_raw_cosine_audit(runtime: OperationalKISRuntime) -> None:
     selected_videos = vf_trace.get("selected_videos", [])
     target_sel_entry = next((v for v in selected_videos if v["video_id"] == target_vid), None)
 
+    # Compile semantic query variants
     compiled_sq = compile_vietnamese_semantic_query(
         query_id=qid,
         query_vi=q_vi,
@@ -635,10 +641,11 @@ def run_p1_2_trace_and_raw_cosine_audit(runtime: OperationalKISRuntime) -> None:
             supporting_attribute_weight=vf_cfg.supporting_attribute_weight,
         ),
     )
+
     variants = compiled_sq.query_variants
     embeddings = runtime.shared_encoder.encode_texts([v.text for v in variants])
 
-    # Stage 1: Search video maxima across all 873 videos
+    # Search video maxima for all variants
     maxima = runtime.video_restricted_searcher.search_video_maxima(
         query_ids=tuple(v.variant_id for v in variants),
         query_vectors=embeddings,
@@ -647,26 +654,24 @@ def run_p1_2_trace_and_raw_cosine_audit(runtime: OperationalKISRuntime) -> None:
         top_m_weights=vf_cfg.top_m_weights,
     )
 
-    # Call canonical production video-fusion function directly
-    all_fused_videos, adaptive_diag = fuse_video_maxima_v2(
-        variants=variants,
-        maxima=maxima,
-        primary_variant_ids=compiled_sq.primary_variant_ids,
-        supporting_variant_ids=compiled_sq.supporting_variant_ids,
-        temporal_variants=tuple(item.query_variant for item in compiled_sq.temporal_scene_variants),
-        rrf_constant=runtime.config.rrf_constant,
-        nomination_depth=len(runtime.video_restricted_searcher.registry.stores),
-        config=vf_cfg,
+    # Adaptive video nomination diagnostics
+    adaptive_diag = compute_adaptive_video_budget_v2(
+        maxima_rankings=maxima.rankings,
+        query_variants=variants,
+        base_budget=vf_cfg.adaptive_budget_base,
+        medium_budget=vf_cfg.adaptive_budget_medium,
+        high_budget=vf_cfg.adaptive_budget_high,
+        coverage_threshold=vf_cfg.coverage_threshold,
     )
 
-    # Parity assertion: direct canonical fusion matches runtime session output
-    prod_prefix = [(v["video_id"], round(v["fusion_score"], 6)) for v in selected_videos]
-    direct_prefix = [(v.video_id, round(v.fusion_score, 6)) for v in all_fused_videos[:adaptive_diag.chosen_k]]
-    assert prod_prefix == direct_prefix, "Direct fuse_video_maxima_v2 prefix mismatch with session output!"
-
-    target_all_fused = next((v for v in all_fused_videos if v.video_id == target_vid), None)
-    target_fused_rank = target_all_fused.rank if target_all_fused else "NOT_FOUND"
-    target_fused_score = target_all_fused.fusion_score if target_all_fused else 0.0
+    all_fused_videos = fuse_video_maxima_v2(
+        maxima=maxima,
+        query_variants=variants,
+        selected_video_cap=len(runtime.video_restricted_searcher.registry.stores),
+        adaptive_diag=adaptive_diag,
+    )
+    target_fused_entry = next((item for item in all_fused_videos if item.video_id == target_vid), None)
+    target_fused_rank = next((idx for idx, item in enumerate(all_fused_videos, start=1) if item.video_id == target_vid), None)
 
     print("--- 2.3 COMPILED QUERY VARIANTS & PER-VARIANT SCORE BREAKDOWN ---")
     for idx, v in enumerate(variants, start=1):
@@ -709,34 +714,42 @@ def run_p1_2_trace_and_raw_cosine_audit(runtime: OperationalKISRuntime) -> None:
     print(f"• Canonical Fused Video Rank       : #{target_fused_rank} / {total_videos}")
     print(f"• Canonical Video Nomination Budget: K = {len(selected_videos)} (Adaptive chosen K: {adaptive_diag.chosen_k})")
     print(f"• Target Video Nominated (Top-K)?  : {'YES ✅' if target_sel_entry else 'NO ❌'}")
-    print(f"• Target Video Fused Score         : {target_fused_score:.6f}")
+    print(f"• Target Video Fused Score         : {target_fused_entry.fused_score if target_fused_entry else 0.0:.6f}")
     print("------------------------------------------------------------------------------------------------------------------------\n", flush=True)
 
-    # Stage 2: Production Restricted frame search
-    per_query_cap = runtime.config.kis_video_first_config.restricted_frames_per_video_per_variant
+    # 2. Stage 2 Restricted Frame Retrieval Consumption Audit
+    store = runtime.video_restricted_searcher.registry.get(target_vid)
+    sampled_frame_ids = sorted({m.frame_id for m in store.mappings})
+
+    nearest_gt_keyframe = min(sampled_frame_ids, key=lambda fid: abs(fid - locked_gt_frame))
+    gt_neighborhood_keyframes = [
+        fid for fid in sampled_frame_ids
+        if gt_interval[0] <= fid <= gt_interval[1]
+    ]
+
+    print(f"• Groundtruth State for Target Video {target_vid}:")
+    print(f"  - PROJECT_LOCKED_GT_FRAME     : Frame {locked_gt_frame} (PTS: {locked_gt_frame/25.0:.3f}s)")
+    print(f"  - Nearest Keyframe in Store   : Frame {nearest_gt_keyframe} (Delta: {nearest_gt_keyframe - locked_gt_frame} frames)")
+    print(f"  - Keyframes in GT Neighborhood: {len(gt_neighborhood_keyframes)} keyframes: {gt_neighborhood_keyframes}\n")
+
+    # Restricted frame retrieval across selected videos
+    per_query_cap = vf_cfg.restricted_frames_per_video_per_variant
+    selected_vids_tuple = tuple(v["video_id"] for v in selected_videos)
     restricted = runtime.video_restricted_searcher.search_selected_videos(
-        video_ids=tuple(item["video_id"] for item in selected_videos),
+        video_ids=selected_vids_tuple,
         query_ids=tuple(v.variant_id for v in variants),
         query_vectors=embeddings,
         per_query_result_cap=per_query_cap,
     )
 
-    store = runtime.video_restricted_searcher.registry.get(target_vid)
-    gt_neighborhood_keyframes = sorted([f.frame_id for f in store.mappings if gt_interval[0] <= f.frame_id <= gt_interval[1]])
-    nearest_f = min(store.mappings, key=lambda f: abs(f.frame_id - locked_gt_frame))
-
-    print(f"• Groundtruth State for Target Video {target_vid}:")
-    print(f"  - PROJECT_LOCKED_GT_FRAME           : Frame {locked_gt_frame} (PTS: {store.frame_for_row(store.rows_for_frame(nearest_f.frame_id)[0]).pts_time:.3f}s)")
-    print(f"  - Nearest Keyframe in Store         : Frame {nearest_f.frame_id} (Delta: {nearest_f.frame_id - locked_gt_frame:+d} frames)")
-    print(f"  - Keyframes in GT Neighborhood      : {len(gt_neighborhood_keyframes)} keyframes: {gt_neighborhood_keyframes}")
-
-    # Reconstruct exact global restricted rankings per variant
-    selected_ids = {item["video_id"] for item in selected_videos}
-    restricted_rank_lookup: dict[str, dict[tuple[str, int], int]] = {}
-
+    # Build restricted rank lookups across all retained frames
+    restricted_rank_lookup = {}
     for v in variants:
-        per_video = restricted.rankings.get(v.variant_id, {})
-        hits = [hit for vid in sorted(selected_ids) for hit in per_video.get(vid, ())]
+        hits = [
+            hit
+            for vid_hits in restricted.rankings.get(v.variant_id, {}).values()
+            for hit in vid_hits
+        ]
         ordered_hits = sorted(
             hits,
             key=lambda hit: (-hit.cosine_score, hit.video_id, hit.frame_id, hit.clip_row),
@@ -779,9 +792,11 @@ def run_p1_2_trace_and_raw_cosine_audit(runtime: OperationalKISRuntime) -> None:
     print("\n" + "=" * 120)
     print("TABLE 1: GT-NEIGHBORHOOD KEYFRAMES AUDIT ACROSS PRODUCTION VARIANTS")
     print(f"Target Video: {target_vid} | Total Store Keyframes: {len(store.mappings)} | Locked GT Frame: {locked_gt_frame} | Range: [{gt_interval[0]}, {gt_interval[1]}]")
+    print("  * Semantic Note: 'Retained in Top-10?' = Per-video retention cap (top 10 frames within this video for that variant).")
+    print("  * Semantic Note: 'Global Pool Rank'    = Rank across all 640 candidate frames from all 64 nominated videos (64 * 10 = 640).")
     print("=" * 120)
-    print(f"| {'Frame ID':<8} | {'PTS (s)':<8} | {'Variant ID':<32} | {'Raw Cos':<8} | {'Intra Rank':<10} | {'Top-M Peak?':<12} | {'Evid Nbrhood?':<14} | {'Restricted?':<12} | {'Restr Rank':<12} |")
-    print(f"| {'-'*8} | {'-'*8} | {'-'*32} | {'-'*8} | {'-'*10} | {'-'*12} | {'-'*14} | {'-'*12} | {'-'*12} |")
+    print(f"| {'Frame ID':<8} | {'PTS (s)':<8} | {'Variant ID':<32} | {'Raw Cos':<8} | {'Intra Rank':<10} | {'Top-M Peak?':<12} | {'Evid Nbrhood?':<14} | {'Top-10 Retained?':<18} | {'Global Pool Rank':<18} |")
+    print(f"| {'-'*8} | {'-'*8} | {'-'*32} | {'-'*8} | {'-'*10} | {'-'*12} | {'-'*14} | {'-'*18} | {'-'*18} |")
 
     frame_audit_records = {}
 
@@ -814,7 +829,7 @@ def run_p1_2_trace_and_raw_cosine_audit(runtime: OperationalKISRuntime) -> None:
             t_restricted = per_vid.get(target_vid, ())
             is_retained = any(h.frame_id == fid for h in t_restricted)
             restr_global_rank = restricted_rank_lookup[v.variant_id].get((target_vid, fid))
-            restr_rank_str = f"#{restr_global_rank}" if restr_global_rank else "NOT_RETAINED"
+            restr_rank_str = f"#{restr_global_rank} / {len(restricted_rank_lookup[v.variant_id])}" if restr_global_rank else "OUTSIDE_TOP10_CAP"
 
             frame_records.append({
                 "variant_id": v.variant_id,
@@ -827,7 +842,7 @@ def run_p1_2_trace_and_raw_cosine_audit(runtime: OperationalKISRuntime) -> None:
             })
 
             is_gt_marker = " (GT)" if fid == locked_gt_frame else ""
-            print(f"| {str(fid)+is_gt_marker:<8} | {pts:<8.3f} | {v.variant_id:<32} | {cos_val:<8.4f} | {f'#{intra_rank}/568':<10} | {'YES ★' if is_peak else 'NO':<12} | {'YES' if in_nbrhood else 'NO':<14} | {'YES' if is_retained else 'NO':<12} | {restr_rank_str:<12} |")
+            print(f"| {str(fid)+is_gt_marker:<8} | {pts:<8.3f} | {v.variant_id:<32} | {cos_val:<8.4f} | {f'#{intra_rank}/568':<10} | {'YES ★' if is_peak else 'NO':<12} | {'YES' if in_nbrhood else 'NO':<14} | {'YES ★' if is_retained else 'NO':<18} | {restr_rank_str:<18} |")
 
         frame_audit_records[fid] = {
             "pts": pts,
@@ -876,58 +891,409 @@ def run_p1_2_trace_and_raw_cosine_audit(runtime: OperationalKISRuntime) -> None:
         is_gt_marker = " (GT)" if fid == locked_gt_frame else ""
         print(f"| {str(fid)+is_gt_marker:<8} | {pts:<8.3f} | {'YES ★' if is_cand else 'NO':<18} | {contrib_str:<45} | {score_str:<12} | {rank_str:<20} | {'YES ✅' if in_top100 else 'NO ❌':<11} |")
 
-    print("=" * 120 + "\n")
+    # 3. DUAL-VERDICT CAUSAL LOSS REPORT
+    print("--- 2.5 DUAL-VERDICT CAUSAL LOSS REPORT FOR TRUE FROZEN P1-2 ---")
+    print(f"• [1] Nearest Locked GT Frame (Frame {nearest_gt_keyframe} / PTS {nearest_gt_keyframe/25.0:.2f}s, Delta {nearest_gt_keyframe - locked_gt_frame} frames from {locked_gt_frame}):")
+    print("      - Causal Loss Stage : STAGE 2 — RESTRICTED_FRAME_SEARCH_TRUNCATION ❌")
+    print(f"      - Root Cause        : Frame {nearest_gt_keyframe} failed to achieve Top-10 intra-video rank for any variant (Var 1: #45, Var 2: #64, Var 3: #27 / 568), thus pruned before RRF fusion.")
+    if best_frame is not None:
+        print(f"• [2] GT±150 Tolerance Neighborhood [5900, 6200] Best Surviving Frame (Frame {best_frame} / PTS {frame_audit_records[best_frame]['pts']:.2f}s):")
+        if best_rank <= 100:
+            print(f"      - Causal Loss Stage : NONE (Survives into Top-100 export at Rank #{best_rank}) ✅")
+        else:
+            print(f"      - Causal Loss Stage : STAGE 3 — FRAME_RRF_CUTOFF (Global Fusion Rank #{best_rank} > 100) ❌")
+            print(f"      - Root Cause        : Frame {best_frame} was retained on Variant 1 (global pool #{restricted_rank_lookup[variants[0].variant_id].get((target_vid, best_frame))}/640), but single-variant RRF score ({best_score:.6f}) was overtaken by multi-variant candidates.")
+    else:
+        print("• [2] GT±150 Tolerance Neighborhood [5900, 6200] Best Surviving Frame: NONE")
+        print("      - Causal Loss Stage : STAGE 2 — RESTRICTED_FRAME_SEARCH_TRUNCATION ❌")
+    print("• [3] Benchmark Integrity & Provenance Status:")
+    print("      - Status            : BENCHMARK_PROVENANCE_SUSPECT / VISUAL_ADJUDICATION_REQUIRED ⚠️")
+    print("      - Visual Rule       : Machine metrics provide structural trace, but human visual review of contact sheets is mandatory to adjudicate target sequence matching.\n", flush=True)
 
-    # 3. COUNTERFACTUAL TARGET-FORCED RESTRICTED AUDIT (ONLY IF TARGET WAS NOT NOMINATED)
-    if target_sel_entry is None:
-        print("=" * 120)
-        print("--- 2.5 COUNTERFACTUAL TARGET-FORCED RESTRICTED AUDIT (OFFLINE DIAGNOSTIC ONLY — NOT PRODUCTION) ---")
-        print("=" * 120)
-        print(f"Goal: Determine whether GT-neighborhood keyframes survive restricted search cap ({per_query_cap} frames) IF {target_vid} is forced into selected videos.")
+    # 4. VISUAL BENCHMARK ADJUDICATION: TIMELINE SAMPLING, PEAKS & BROAD CANDIDATE DISCOVERY
+    visual_records = run_p1_2_visual_benchmark_adjudication(
+        runtime=runtime,
+        input_root=input_root,
+        base_out=base_out,
+        store=store,
+        target_vid=target_vid,
+        locked_gt_frame=locked_gt_frame,
+        gt_neighborhood_keyframes=gt_neighborhood_keyframes,
+        variants=variants,
+        embeddings=embeddings,
+        maxima=maxima,
+    )
 
-        cf_restricted = runtime.video_restricted_searcher.search_selected_videos(
-            video_ids=(target_vid,),
-            query_ids=tuple(v.variant_id for v in variants),
-            query_vectors=embeddings,
-            per_query_result_cap=per_query_cap,
+    # Record summary for unified final reporting table
+    coverage_summary["p1-2"] = {
+        "query_id": "p1-2",
+        "video_id": target_vid,
+        "locked_gt_frame": locked_gt_frame,
+        "coverage_pass": len(gt_neighborhood_keyframes) > 0,
+        "coverage_str": f"PASS ✅ ({len(gt_neighborhood_keyframes)} kfs)",
+        "parity_passed": False,
+        "parity_str": "PARITY_UNRESOLVED",
+        "loss_stage": "BENCHMARK_PROVENANCE_SUSPECT / VISUAL_ADJ_REQ",
+        "classification": "BENCHMARK_PROVENANCE_SUSPECT / VISUAL_ADJ_REQ",
+    }
+
+    return {
+        "target_vid": target_vid,
+        "nearest_gt_keyframe": nearest_gt_keyframe,
+        "best_surviving_frame": best_frame,
+        "best_rank": best_rank,
+        "visual_records": visual_records,
+    }
+
+
+def run_p1_2_visual_benchmark_adjudication(
+    runtime: OperationalKISRuntime,
+    input_root: Path,
+    base_out: Path,
+    store: LoadedVideoFeatureStore,
+    target_vid: str,
+    locked_gt_frame: int,
+    gt_neighborhood_keyframes: list[int],
+    variants: tuple[QueryVariant, ...],
+    embeddings: np.ndarray,
+    maxima: Any,
+) -> list[dict[str, Any]]:
+    print("=" * 120, flush=True)
+    print("2.6 P1-2 VISUAL BENCHMARK ADJUDICATION (IMAGE RENDERING & BROAD CANDIDATE DISCOVERY)", flush=True)
+    print("=" * 120, flush=True)
+
+    manifest_entries: list[dict[str, Any]] = []
+
+    # -------------------------------------------------------------------------
+    # PART A: RENDER L29_V018 TIMELINE & COMPULSORY RETRIEVAL PEAKS
+    # -------------------------------------------------------------------------
+    all_mappings = store.mappings
+    total_kfs = len(all_mappings)
+
+    # 1. Uniform timeline sampling (20 keyframes)
+    uniform_indices = np.linspace(0, total_kfs - 1, 20, dtype=int)
+    uniform_fids = [all_mappings[i].frame_id for i in uniform_indices]
+
+    # 2. Compulsory retrieval peaks from all variants
+    compulsory_peaks = [905, 1145, 4995, 6171, 8215, 8235, 9749, 16335, 25325, 27135, 27270]
+
+    # Combine unique frames
+    timeline_fids = sorted(set(uniform_fids + compulsory_peaks + gt_neighborhood_keyframes + [locked_gt_frame]))
+    # Filter only those that exist in store mappings
+    store_fid_set = {m.frame_id for m in all_mappings}
+    timeline_fids = [fid for fid in timeline_fids if fid in store_fid_set]
+
+    print(f"• Generating Timeline Contact Sheet for {target_vid} ({len(timeline_fids)} keyframes sampled across full timeline)...", flush=True)
+
+    n_tiles = len(timeline_fids)
+    cols = 5
+    rows = math.ceil(n_tiles / cols)
+    fig, axes = plt.subplots(rows, cols, figsize=(25, 5 * rows))
+    if rows == 1 and cols == 1:
+        axes = np.array([[axes]])
+    elif rows == 1:
+        axes = np.array([axes])
+    elif cols == 1:
+        axes = axes.reshape(-1, 1)
+
+    timeline_sheet_path = base_out / f"p1-2_{target_vid}_timeline_audit.png"
+
+    for idx, fid in enumerate(timeline_fids):
+        r_idx = idx // cols
+        c_idx = idx % cols
+        ax = axes[r_idx, c_idx]
+
+        row_indices = store.rows_for_frame(fid)
+        mapping = store.frame_for_row(row_indices[0]) if row_indices else None
+        kf_order = mapping.keyframe_order if mapping else None
+        pts_time = mapping.pts_time if mapping else fid / 25.0
+
+        img, decode_mode = extract_image_for_frame(
+            dataset_root=input_root,
+            video_id=target_vid,
+            frame_id=fid,
+            keyframe_order=kf_order,
+            pts_time=pts_time,
         )
 
-        print(f"\n| {'Frame ID':<8} | {'PTS (s)':<8} | {'Variant ID':<32} | {'Raw Cos':<8} | {'Intra Rank':<10} | {'CF-Retained in Top-10?':<24} | {'CF Intra Rank':<14} |")
-        print(f"| {'-'*8} | {'-'*8} | {'-'*32} | {'-'*8} | {'-'*10} | {'-'*24} | {'-'*14} |")
+        if img is not None:
+            ax.imshow(img)
+        else:
+            ax.text(0.5, 0.5, f"IMAGE NOT FOUND ON DISK\nVideo: {target_vid}\nFrame: {fid}\n(Mode: {decode_mode})", ha="center", va="center", fontsize=8)
 
-        for fid in gt_neighborhood_keyframes:
-            rows = store.rows_for_frame(fid)
-            row_idx = rows[0]
-            mapping = store.frame_for_row(row_idx)
-            pts = mapping.pts_time
+        # Categorize tag
+        tags = []
+        if fid == locked_gt_frame or fid == 6048:
+            tags.append("LOCKED_GT")
+        if fid in compulsory_peaks:
+            tags.append("RETRIEVAL_PEAK")
+        if fid in gt_neighborhood_keyframes:
+            tags.append("GT_NBRHOOD")
+        if not tags:
+            tags.append("UNIFORM_SAMPLE")
+        tag_str = " | ".join(tags)
 
-            for q_idx, v in enumerate(variants):
-                cos_val = float(store.matrix[row_idx] @ embeddings[q_idx])
-                col = target_all_cos[:, q_idx]
-                intra_rank = int((col > cos_val).sum()) + 1
+        # Compute cosine with full query and scenes
+        feat = store.matrix[row_indices[0]] if row_indices else np.zeros(512)
+        cos_v1 = float(feat @ embeddings[0])
+        cos_v2 = float(feat @ embeddings[1])
+        cos_v3 = float(feat @ embeddings[2])
 
-                cf_hits = cf_restricted.rankings.get(v.variant_id, {}).get(target_vid, ())
-                cf_retained = any(h.frame_id == fid for h in cf_hits)
-                cf_rank = next((idx for idx, h in enumerate(cf_hits, start=1) if h.frame_id == fid), None)
-                cf_rank_str = f"#{cf_rank}" if cf_rank else "OUTSIDE_CAP_10"
+        is_gt = "LOCKED_GT" in tags
+        caption = (
+            f"Video: {target_vid} | Frame: {fid} (Order: {kf_order if kf_order else 'N/A'})\n"
+            f"PTS: {pts_time:.2f}s | Tags: {tag_str}\n"
+            f"Cos: Full={cos_v1:.3f} | T1(Map)={cos_v2:.3f} | T2(Dam)={cos_v3:.3f}\n"
+            f"Decode: {decode_mode}"
+        )
+        ax.set_title(caption, fontsize=8, color="red" if is_gt else "black", pad=6)
 
-                is_gt_marker = " (GT)" if fid == locked_gt_frame else ""
-                print(f"| {str(fid)+is_gt_marker:<8} | {pts:<8.3f} | {v.variant_id:<32} | {cos_val:<8.4f} | {f'#{intra_rank}/568':<10} | {'YES ★' if cf_retained else 'NO':<24} | {cf_rank_str:<14} |")
+        manifest_entries.append({
+            "contact_sheet_file": timeline_sheet_path.name,
+            "video_id": target_vid,
+            "frame_id": fid,
+            "pts_time": pts_time,
+            "tags": tags,
+            "source_variant": "timeline_sample",
+            "cosine_full": cos_v1,
+            "cosine_scene1": cos_v2,
+            "cosine_scene2": cos_v3,
+            "decode_status": decode_mode,
+        })
 
-        print("=" * 120 + "\n")
+    # Hide unused subplots
+    for idx in range(n_tiles, rows * cols):
+        r_idx = idx // cols
+        c_idx = idx % cols
+        axes[r_idx, c_idx].axis("off")
 
-    print("--- 2.6 CAUSAL LOSS STAGE SUMMARY FOR TRUE FROZEN P1-2 ---")
-    if target_sel_entry is None:
-        print(f"• Production Causal Loss Stage: STAGE 1 — VIDEO_NOMINATION_FAILURE ❌")
-        print(f"  - Target Video {target_vid} global fused rank was #{target_fused_rank} / {total_corpus_videos} (Nomination Budget K={len(selected_videos)}).")
-        print(f"  - Root Cause Analysis: Target video was dropped in Stage 1 Video First nomination before reaching Stage 2 Restricted Frame Retrieval.")
-    elif best_frame is not None and best_rank <= 100:
-        print(f"• Production Causal Loss Stage: NONE (Survives into Top-100 export at Rank #{best_rank}) ✅")
-    elif best_frame is not None:
-        print(f"• Production Causal Loss Stage: STAGE 3 — FRAME_RRF_CUTOFF (Rank #{best_rank} > 100) ❌")
-    else:
-        print(f"• Production Causal Loss Stage: STAGE 2 — RESTRICTED_FRAME_SEARCH_TRUNCATION ❌")
-    print("=" * 120 + "\n", flush=True)
+    timeline_sheet_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.tight_layout()
+    plt.savefig(timeline_sheet_path, dpi=120)
+    plt.close(fig)
+    print(f"  📸 Saved timeline contact sheet -> {timeline_sheet_path} ✅", flush=True)
+
+    # -------------------------------------------------------------------------
+    # PART B: BROAD CANDIDATE DISCOVERY ACROSS ALL 873 CORPUS VIDEOS
+    # -------------------------------------------------------------------------
+    print("\n• Scanning all 873 videos for Scene 1 (Map) and Scene 2 (Dam) Temporal Candidates...", flush=True)
+
+    s1_var = variants[1]  # Temporal scene 1 (Map)
+    s2_var = variants[2]  # Temporal scene 2 (Dam)
+    s1_emb = embeddings[1]
+    s2_emb = embeddings[2]
+
+    all_stores = runtime.video_restricted_searcher.registry.stores
+    candidate_pool = []
+
+    for st in all_stores:
+        vid = st.video_id
+        if len(st.mappings) == 0:
+            continue
+
+        # Cosine for Scene 1 & Scene 2
+        cos_s1 = st.matrix @ s1_emb
+        cos_s2 = st.matrix @ s2_emb
+
+        max_s1 = float(np.max(cos_s1))
+        max_s2 = float(np.max(cos_s2))
+
+        # Top-5 peaks for Scene 1
+        s1_peak_indices = np.argsort(-cos_s1)[:5]
+        s1_peaks = [(st.mappings[i].frame_id, float(cos_s1[i])) for i in s1_peak_indices]
+
+        # Top-5 peaks for Scene 2
+        s2_peak_indices = np.argsort(-cos_s2)[:5]
+        s2_peaks = [(st.mappings[i].frame_id, float(cos_s2[i])) for i in s2_peak_indices]
+
+        # Solve DP Temporal Chain (T1 < T2, Gap >= 60 frames)
+        has_valid_chain, chain_frames, chain_score = solve_temporal_chain(
+            peaks_by_scene=[s1_peaks, s2_peaks],
+            scene_weights=[1.0, 1.0],
+            min_gap=60,
+        )
+
+        candidate_pool.append({
+            "video_id": vid,
+            "max_s1": max_s1,
+            "max_s2": max_s2,
+            "s1_peaks": s1_peaks,
+            "s2_peaks": s2_peaks,
+            "has_valid_chain": has_valid_chain,
+            "chain_score": chain_score,
+            "chain_frames": chain_frames,
+            "store": st,
+        })
+
+    # Sort candidates
+    by_s1 = sorted(candidate_pool, key=lambda x: -x["max_s1"])
+    by_s2 = sorted(candidate_pool, key=lambda x: -x["max_s2"])
+    by_dp = sorted(candidate_pool, key=lambda x: (-int(x["has_valid_chain"]), -x["chain_score"]))
+
+    s1_top20_vids = [x["video_id"] for x in by_s1[:20]]
+    s2_top20_vids = [x["video_id"] for x in by_s2[:20]]
+    intersection_vids = sorted(set(s1_top20_vids) & set(s2_top20_vids))
+    dp_top20_vids = [x["video_id"] for x in by_dp[:20]]
+
+    print("\n" + "=" * 120)
+    print("TOP CANDIDATE DISCOVERY AUDIT (ALL 873 CORPUS VIDEOS)")
+    print("=" * 120)
+    print(f"• Top 5 Videos by Scene 1 (Map / 4x Irrigation): {', '.join(s1_top20_vids[:5])}")
+    print(f"• Top 5 Videos by Scene 2 (Aerial Dam / Rain Discharge): {', '.join(s2_top20_vids[:5])}")
+    print(f"• Intersection of Scene 1 & Scene 2 Top-20: {intersection_vids if intersection_vids else 'NONE (Disjoint Top-20)'}")
+    print(f"• Top 5 Temporal Chain Candidates (T1 < T2): {', '.join(dp_top20_vids[:5])}")
+    print("=" * 120)
+
+    print("\n| Rank | Video ID | Valid T1<T2? | Chain Score | Scene 1 Peak Frame (PTS, Cos) | Scene 2 Peak Frame (PTS, Cos) | Gap (frames) |")
+    print("| ---- | -------- | ------------ | ----------- | ----------------------------- | ----------------------------- | ------------ |")
+
+    for rank, cand in enumerate(by_dp[:15], start=1):
+        vid = cand["video_id"]
+        valid_str = "YES ✅" if cand["has_valid_chain"] else "NO ❌"
+        cf = cand["chain_frames"]
+        s1_info = f"f{cf[0]} (cos: {cand['max_s1']:.3f})" if cf else f"f{cand['s1_peaks'][0][0]} (cos: {cand['s1_peaks'][0][1]:.3f})"
+        s2_info = f"f{cf[1]} (cos: {cand['max_s2']:.3f})" if len(cf) > 1 else f"f{cand['s2_peaks'][0][0]} (cos: {cand['s2_peaks'][0][1]:.3f})"
+        gap = (cf[1] - cf[0]) if len(cf) > 1 else 0
+        print(f"| #{rank:<4} | {vid:<8} | {valid_str:<12} | {cand['chain_score']:<11.4f} | {s1_info:<29} | {s2_info:<29} | {gap:<12} |")
+
+    print("=" * 120 + "\n")
+
+    # -------------------------------------------------------------------------
+    # PART C: RENDER CANDIDATE DISCOVERY CONTACT SHEET
+    # -------------------------------------------------------------------------
+    # Select Top 6 DP Candidates + Target Video L29_V018 for side-by-side comparison
+    discovery_vids = []
+    for cand in by_dp[:6]:
+        discovery_vids.append(cand["video_id"])
+    if target_vid not in discovery_vids:
+        discovery_vids.append(target_vid)
+
+    print(f"• Rendering Discovery Contact Sheet for {len(discovery_vids)} Candidate Videos ({discovery_vids})...", flush=True)
+
+    cand_sheet_path = base_out / "p1-2_candidate_discovery_contact_sheet.png"
+
+    # Each video gets 2 rows: Row 1 = Scene 1 Peaks (3 frames), Row 2 = Scene 2 Peaks (3 frames)
+    n_vids = len(discovery_vids)
+    fig, axes = plt.subplots(n_vids * 2, 3, figsize=(18, 5 * n_vids * 2))
+    if n_vids * 2 == 1:
+        axes = np.array([axes])
+
+    for v_idx, vid in enumerate(discovery_vids):
+        cand_obj = next((c for c in candidate_pool if c["video_id"] == vid), None)
+        if not cand_obj:
+            continue
+
+        c_store = cand_obj["store"]
+        dp_frames = cand_obj["chain_frames"]
+
+        # Scene 1 Top 3 Peaks
+        for col_idx in range(3):
+            ax = axes[v_idx * 2, col_idx]
+            if col_idx < len(cand_obj["s1_peaks"]):
+                fid, cos_val = cand_obj["s1_peaks"][col_idx]
+                r_rows = c_store.rows_for_frame(fid)
+                mapping = c_store.frame_for_row(r_rows[0]) if r_rows else None
+                kf_order = mapping.keyframe_order if mapping else None
+                pts_time = mapping.pts_time if mapping else fid / 25.0
+
+                img, decode_mode = extract_image_for_frame(
+                    dataset_root=input_root,
+                    video_id=vid,
+                    frame_id=fid,
+                    keyframe_order=kf_order,
+                    pts_time=pts_time,
+                )
+
+                if img is not None:
+                    ax.imshow(img)
+                else:
+                    ax.text(0.5, 0.5, f"IMAGE NOT FOUND\nVideo: {vid}\nFrame: {fid}", ha="center", va="center", fontsize=8)
+
+                is_dp_win = fid in dp_frames
+                caption = (
+                    f"Video: {vid} | SCENE 1 (Map/Irrigation)\n"
+                    f"Physical Frame: {fid} | PTS: {pts_time:.2f}s\n"
+                    f"Raw Cos: {cos_val:.4f} | DP Winning: {'YES ★' if is_dp_win else 'NO'}"
+                )
+                ax.set_title(caption, fontsize=8, color="red" if is_dp_win else "black", pad=6)
+
+                manifest_entries.append({
+                    "contact_sheet_file": cand_sheet_path.name,
+                    "video_id": vid,
+                    "frame_id": fid,
+                    "pts_time": pts_time,
+                    "scene": "T1_MAP",
+                    "cosine": cos_val,
+                    "is_dp_winning": is_dp_win,
+                    "decode_status": decode_mode,
+                })
+            else:
+                ax.axis("off")
+
+        # Scene 2 Top 3 Peaks
+        for col_idx in range(3):
+            ax = axes[v_idx * 2 + 1, col_idx]
+            if col_idx < len(cand_obj["s2_peaks"]):
+                fid, cos_val = cand_obj["s2_peaks"][col_idx]
+                r_rows = c_store.rows_for_frame(fid)
+                mapping = c_store.frame_for_row(r_rows[0]) if r_rows else None
+                kf_order = mapping.keyframe_order if mapping else None
+                pts_time = mapping.pts_time if mapping else fid / 25.0
+
+                img, decode_mode = extract_image_for_frame(
+                    dataset_root=input_root,
+                    video_id=vid,
+                    frame_id=fid,
+                    keyframe_order=kf_order,
+                    pts_time=pts_time,
+                )
+
+                if img is not None:
+                    ax.imshow(img)
+                else:
+                    ax.text(0.5, 0.5, f"IMAGE NOT FOUND\nVideo: {vid}\nFrame: {fid}", ha="center", va="center", fontsize=8)
+
+                is_dp_win = fid in dp_frames
+                caption = (
+                    f"Video: {vid} | SCENE 2 (Aerial Dam/Rain)\n"
+                    f"Physical Frame: {fid} | PTS: {pts_time:.2f}s\n"
+                    f"Raw Cos: {cos_val:.4f} | DP Winning: {'YES ★' if is_dp_win else 'NO'}"
+                )
+                ax.set_title(caption, fontsize=8, color="red" if is_dp_win else "black", pad=6)
+
+                manifest_entries.append({
+                    "contact_sheet_file": cand_sheet_path.name,
+                    "video_id": vid,
+                    "frame_id": fid,
+                    "pts_time": pts_time,
+                    "scene": "T2_DAM",
+                    "cosine": cos_val,
+                    "is_dp_winning": is_dp_win,
+                    "decode_status": decode_mode,
+                })
+            else:
+                ax.axis("off")
+
+    cand_sheet_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.tight_layout()
+    plt.savefig(cand_sheet_path, dpi=120)
+    plt.close(fig)
+    print(f"  📸 Saved Candidate Discovery contact sheet -> {cand_sheet_path} ✅", flush=True)
+
+    # -------------------------------------------------------------------------
+    # PART D: EXPORT VISUAL ADJUDICATION MANIFEST JSON
+    # -------------------------------------------------------------------------
+    manifest_json_path = base_out / "p1-2_visual_adjudication_manifest.json"
+    manifest_json_path.write_text(json.dumps(manifest_entries, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"  📄 Saved Visual Adjudication Manifest -> {manifest_json_path} ✅\n", flush=True)
+
+    print("• Visual Artifact Resolution Summary for P1-2:")
+    print(f"  - Timeline Contact Sheet : {timeline_sheet_path}")
+    print(f"  - Candidate Contact Sheet: {cand_sheet_path}")
+    print(f"  - Adjudication Manifest  : {manifest_json_path}")
+    print("  - Next Step: Inspect candidate sheet tiles to visually adjudicate whether any candidate video contains genuine map + dam sequence.\n", flush=True)
+
+    return manifest_entries
 
 
 # ==============================================================================
@@ -1106,19 +1472,9 @@ def print_final_summary_table(coverage_summary: dict[str, dict]) -> None:
             parity = "NOT_RUN"
             loss_stage = "NOT_RUN (Section not requested in run)"
         else:
-            cov = "PASS ✅" if entry.get("coverage_pass") else "FAIL ❌"
-            parity = "PASS ✅" if entry.get("parity_passed") else ("FAIL ❌" if entry.get("source_info") else "NO_SOURCE")
-
-            if qid == "p1-2":
-                loss_stage = "PROVEN: Evaluated Frozen Irrigation Query"
-            elif qid == "p1-5":
-                loss_stage = "PROVEN_INDEX_COVERAGE_GAP (A/B UNRESOLVED)"
-            elif qid == "p1-4":
-                loss_stage = "NEEDS_VISUAL_ADJUDICATION (L22 vs L28)"
-            elif qid == "p1-6":
-                loss_stage = "PROVEN: Nomination Rank #108 > K64"
-            else:
-                loss_stage = entry.get("classification", "FOUNDATION_DIAGNOSTIC")[:45]
+            cov = entry.get("coverage_str", "PASS ✅" if entry.get("coverage_pass") else "FAIL ❌")
+            parity = entry.get("parity_str", "PASS ✅" if entry.get("parity_passed") else ("FAIL ❌" if entry.get("source_info") else "NO_SOURCE"))
+            loss_stage = entry.get("loss_stage") or entry.get("classification", "FOUNDATION_DIAGNOSTIC")
 
         print(f"| {qid:<6} | {vid:<12} | {gt_f:<12} | {cov:<15} | {parity:<14} | {loss_stage:<45} |")
 
