@@ -28,6 +28,15 @@ class TranslationProvider(Protocol):
     def translate(self, text: str) -> str: ...
 
 
+def _is_valid_translation(val: str) -> bool:
+    if not val or not val.strip():
+        return False
+    v = val.lower()
+    if "error 500" in v or "server error" in v or "<!doctype" in v or "<html" in v or "that’s an error" in v or "that's an error" in v or "that’s all we know" in v or "that's all we know" in v:
+        return False
+    return True
+
+
 class GoogleTranslateProvider:
     """Vietnamese-to-English provider backed by Google Translator with transparent JSON cache."""
 
@@ -46,7 +55,7 @@ class GoogleTranslateProvider:
                 import json
                 payload = json.loads(self.cache_path.read_text(encoding="utf-8"))
                 if isinstance(payload, dict):
-                    self._cache = {str(k): str(v) for k, v in payload.items() if str(v).strip()}
+                    self._cache = {str(k): str(v) for k, v in payload.items() if _is_valid_translation(str(v))}
             except Exception as exc:
                 logger.warning("Could not read translation cache %s: %s", self.cache_path, exc)
 
@@ -63,9 +72,8 @@ class GoogleTranslateProvider:
             try:
                 from deep_translator import GoogleTranslator
                 self._translator = GoogleTranslator(source="auto", target="en")
-                logger.info("GoogleTranslator initialized successfully.")
             except Exception as exc:
-                logger.warning("GoogleTranslator unavailable (%s); using cache or original.", exc)
+                logger.warning("GoogleTranslator unavailable (%s); using cache or web fallback.", exc)
         return self._translator
 
     def translate(self, text: str) -> str:
@@ -80,14 +88,14 @@ class GoogleTranslateProvider:
             url = f"https://translate.google.com/m?sl=auto&tl=en&q={urllib.parse.quote(text)}"
             req = urllib.request.Request(
                 url,
-                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"},
             )
-            with urllib.request.urlopen(req, timeout=8) as resp:
+            with urllib.request.urlopen(req, timeout=10) as resp:
                 content = resp.read().decode("utf-8")
             match = re.search(r'class="result-container">([^<]+)</div>', content)
             if match:
                 res = html.unescape(match.group(1)).strip()
-                if res and "Error 500" not in res:
+                if _is_valid_translation(res):
                     return res
         except Exception:
             pass
@@ -99,28 +107,28 @@ class GoogleTranslateProvider:
         if not cleaned or any(not text for text in cleaned):
             raise TranslationError("Cannot translate an empty batch or whitespace-only text")
 
-        translator = self._get_translator()
         results: list[str] = []
         cache_updated = False
 
         for q in cleaned:
-            if q in self._cache and self._cache[q].strip():
+            if q in self._cache and _is_valid_translation(self._cache[q]):
                 results.append(self._cache[q].strip())
                 continue
 
-            translated = ""
-            if translator is not None:
-                try:
-                    res = str(translator.translate(q) or "").strip()
-                    if res and "Error 500" not in res and "<!DOCTYPE" not in res:
-                        translated = res
-                except Exception as exc:
-                    logger.debug("deep_translator error for %r: %s", q, exc)
+            # Prioritize direct web translation on cloud servers (avoids deep-translator 500 error)
+            translated = self._translate_web(q)
 
             if not translated:
-                translated = self._translate_web(q)
+                translator = self._get_translator()
+                if translator is not None:
+                    try:
+                        res = str(translator.translate(q) or "").strip()
+                        if _is_valid_translation(res):
+                            translated = res
+                    except Exception as exc:
+                        logger.debug("deep_translator error for %r: %s", q, exc)
 
-            if translated:
+            if translated and _is_valid_translation(translated):
                 self._cache[q] = translated
                 cache_updated = True
                 results.append(translated)

@@ -557,6 +557,17 @@ def main() -> None:
         output_root=base_out,
     )
 
+    # Purge any stale translation cache containing Error 500
+    for t_cache in [Path("/kaggle/working/translation_cache.json"), base_out / "translation_cache.json"]:
+        if t_cache.exists():
+            try:
+                raw_txt = t_cache.read_text(encoding="utf-8")
+                if "Error 500" in raw_txt or "Server Error" in raw_txt:
+                    t_cache.unlink()
+                    print(f"🧹 Purged stale error-polluted translation cache: {t_cache}", flush=True)
+            except Exception:
+                pass
+
     t0 = time.time()
     runtime = OperationalKISRuntime.bootstrap(config)
     print(f"Runtime bootstrap completed in {time.time() - t0:.2f}s.\n", flush=True)
@@ -2187,29 +2198,39 @@ def run_all_5_queries_top100_visual_export(
         resp = runtime.handle_query(req)
         artifacts = resp.get("artifacts", {})
 
-        # 2. Load candidates with REAL fusion scores from internal CSV
-        top100_csv_rel = artifacts.get("refined_top100_csv")
-        top100_csv_path = (runtime.output_root / top100_csv_rel) if top100_csv_rel else (runtime.output_root / "requests" / req_id / "top100.csv")
+        # 2. Load candidates with REAL fusion scores from internal artifacts
+        top100_csv_rel = artifacts.get("refined_top100_csv") or artifacts.get("top100_csv")
+        candidates_json_rel = artifacts.get("candidates_json")
         
         candidates = []
-        if top100_csv_path.exists():
-            import csv as csv_module
-            with top100_csv_path.open("r", encoding="utf-8") as f:
-                reader = csv_module.DictReader(f)
-                for row in reader:
+        if candidates_json_rel and (runtime.output_root / candidates_json_rel).exists():
+            try:
+                c_data = json.loads((runtime.output_root / candidates_json_rel).read_text(encoding="utf-8"))
+                for r in c_data.get("records", []):
                     candidates.append({
-                        "rank": int(row.get("rank", 0)),
-                        "video_id": row.get("video_id", ""),
-                        "frame_id": int(row.get("frame_id", 0)),
-                        "score": float(row.get("fusion_score", row.get("score", 0.0))),
-                        "pts_time": float(row.get("pts_time", 0.0) or 0.0),
+                        "rank": int(r.get("rank", 0)),
+                        "video_id": r.get("video_id", ""),
+                        "frame_id": int(r.get("frame_id", 0)),
+                        "score": float(r.get("fusion_score", r.get("score", 0.0))),
+                        "pts_time": float(r.get("pts_time", 0.0) or (int(r.get("frame_id", 0))/25.0)),
                     })
-        elif artifacts.get("refined_top100_jsonl"):
-            top100_jsonl = runtime.output_root / artifacts["refined_top100_jsonl"]
-            with top100_jsonl.open("r", encoding="utf-8") as f:
-                for line in f:
-                    if line.strip():
-                        candidates.append(json.loads(line.strip()))
+            except Exception:
+                pass
+        
+        if not candidates:
+            top100_csv_path = (runtime.output_root / top100_csv_rel) if top100_csv_rel else (runtime.output_root / "requests" / req_id / "top100.csv")
+            if top100_csv_path.exists():
+                import csv as csv_module
+                with top100_csv_path.open("r", encoding="utf-8") as f:
+                    reader = csv_module.DictReader(f)
+                    for row in reader:
+                        candidates.append({
+                            "rank": int(row.get("rank", 0)),
+                            "video_id": row.get("video_id", ""),
+                            "frame_id": int(row.get("frame_id", 0)),
+                            "score": float(row.get("fusion_score", row.get("score", 0.0))),
+                            "pts_time": float(row.get("pts_time", 0.0) or 0.0),
+                        })
 
         true_vids = {
             "p1-1": "L30_V046",
