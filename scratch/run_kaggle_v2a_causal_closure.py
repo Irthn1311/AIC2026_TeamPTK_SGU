@@ -1521,6 +1521,13 @@ def run_p1_2_visual_benchmark_adjudication(
     sidecar_path = base_out / "p1-2_visual_evidence_manifest.json.sha256"
     sidecar_path.write_text(f"{evidence_sha}  {evidence_manifest_path.name}\n", encoding="utf-8")
 
+    # Sidecar re-read verification against exact bytes
+    sidecar_content = sidecar_path.read_text(encoding="utf-8").strip()
+    sidecar_sha = sidecar_content.split()[0]
+    recomputed_sha = hashlib.sha256(evidence_manifest_path.read_bytes()).hexdigest()
+    sidecar_verified = (evidence_sha == sidecar_sha == recomputed_sha)
+    assert sidecar_verified, f"Sidecar checksum mismatch: {evidence_sha} vs {sidecar_sha} vs {recomputed_sha}"
+
     # 3. Separate Human Adjudication Template (Linking to the immutable evidence SHA)
     human_adjudication_payload = {
         "benchmark_query_id": "query-p1-2-kis",
@@ -1556,7 +1563,7 @@ def run_p1_2_visual_benchmark_adjudication(
     human_adjudication_path.write_text(json.dumps(human_adjudication_payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
     print(f"  📄 Saved Visual Evidence Manifest -> {evidence_manifest_path.name} ✅", flush=True)
-    print(f"  🔒 Saved Sidecar Checksum File    -> {sidecar_path.name} (SHA256: {evidence_sha}) ✅", flush=True)
+    print(f"  🔒 Saved Sidecar Checksum File    -> {sidecar_path.name} ✅", flush=True)
     print(f"  📝 Saved Human Adjudication File  -> {human_adjudication_path.name} ✅\n", flush=True)
 
     print("=" * 120)
@@ -1568,6 +1575,12 @@ def run_p1_2_visual_benchmark_adjudication(
     print(f"  - Optional Tiles Decoded    : {optional_decoded}")
     print(f"  - Optional Tiles Failed     : {optional_failed}")
     print(f"  - Visual Evidence Status    : {visual_evidence_status}")
+    print("-" * 120)
+    print("• Sidecar Provenance Verification:")
+    print(f"  * EVIDENCE_MANIFEST_SHA256            : {evidence_sha}")
+    print(f"  * SIDECAR_SHA256                      : {sidecar_sha}")
+    print(f"  * RECOMPUTED_EVIDENCE_MANIFEST_SHA256 : {recomputed_sha}")
+    print(f"  * SIDECAR_VERIFICATION                : {'PASS ✅' if sidecar_verified else 'FAIL ❌'}")
     print("-" * 120)
     print("• Final Artifact File Paths & SHA256 Checksums:")
     for fname, sha in artifact_checksums.items():
