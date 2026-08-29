@@ -179,18 +179,49 @@ def get_git_head() -> str:
 _SEARCH_DIRS_CACHE: list[Path] | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class TileDecodeResult:
+    video_id: str
+    requested_physical_frame_id: int
+    requested_pts: float
+    requested_keyframe_order: int | None
+    resolved_source_type: str  # KEYFRAME_FILE | RAW_VIDEO_PTS | RAW_VIDEO_FRAME_INDEX | UNRESOLVED
+    resolved_path: str | None
+    resolution_rule: str  # EXACT_KEYFRAME_ORDER_FILE | EXACT_PHYSICAL_FRAME_FILE | RAW_VIDEO_PTS_SEEK | RAW_VIDEO_FRAME_INDEX_SEEK | UNRESOLVED
+    resolved_filename: str | None
+    decoded_pts_or_frame_index: float | int | None
+    frame_delta: int
+    pts_delta: float
+    integrity_status: str  # PASS | FAIL
+    image: Any = None
+
+    def to_manifest_dict(self) -> dict[str, Any]:
+        return {
+            "video_id": self.video_id,
+            "requested_physical_frame_id": self.requested_physical_frame_id,
+            "requested_pts": self.requested_pts,
+            "requested_keyframe_order": self.requested_keyframe_order,
+            "resolved_source_type": self.resolved_source_type,
+            "resolved_path": str(self.resolved_path) if self.resolved_path else None,
+            "resolution_rule": self.resolution_rule,
+            "resolved_filename": self.resolved_filename,
+            "decoded_pts_or_frame_index": self.decoded_pts_or_frame_index,
+            "frame_delta": self.frame_delta,
+            "pts_delta": self.pts_delta,
+            "integrity_status": self.integrity_status,
+        }
+
+
 _GLOBAL_DIR_CACHE: dict[str, list[Path]] | None = None
 _GLOBAL_FILE_CACHE: dict[str, list[Path]] | None = None
-_GLOBAL_KEYFRAME_FILES_CACHE: dict[str, list[Path]] | None = None
 
 
 def build_global_dataset_index(dataset_root: Path) -> None:
-    global _GLOBAL_DIR_CACHE, _GLOBAL_FILE_CACHE, _GLOBAL_KEYFRAME_FILES_CACHE
+    global _GLOBAL_DIR_CACHE, _GLOBAL_FILE_CACHE
     if _GLOBAL_DIR_CACHE is not None:
         return
     _GLOBAL_DIR_CACHE = {}
     _GLOBAL_FILE_CACHE = {}
-    _GLOBAL_KEYFRAME_FILES_CACHE = {}
 
     roots = [dataset_root]
     if Path("/kaggle/input").exists():
@@ -200,6 +231,8 @@ def build_global_dataset_index(dataset_root: Path) -> None:
 
     indexed_dirs = 0
     indexed_files = 0
+    keyframe_dirs_count = 0
+    raw_videos_count = 0
     t0 = time.time()
     for r in roots:
         if not r.exists():
@@ -211,23 +244,25 @@ def build_global_dataset_index(dataset_root: Path) -> None:
                 _GLOBAL_DIR_CACHE.setdefault(d_name, []).append(root_path)
                 indexed_dirs += 1
 
-                img_files = []
+                has_img = False
                 for f in files:
                     f_lower = f.casefold()
                     _GLOBAL_FILE_CACHE.setdefault(f_lower, []).append(root_path / f)
                     indexed_files += 1
                     if f_lower.endswith((".jpg", ".jpeg", ".png", ".webp")):
-                        img_files.append(root_path / f)
+                        has_img = True
+                    if f_lower.endswith((".mp4", ".mkv", ".avi", ".mov", ".ts")):
+                        raw_videos_count += 1
 
-                if img_files:
-                    _GLOBAL_KEYFRAME_FILES_CACHE.setdefault(d_name, []).extend(img_files)
+                if has_img:
+                    keyframe_dirs_count += 1
         except Exception as exc:
             print(f"[Warning] Error during global dataset indexing: {exc}", flush=True)
 
     print(
         f"• Global Dataset Index Built in {time.time() - t0:.2f}s: "
-        f"{len(_GLOBAL_DIR_CACHE)} unique dirnames ({indexed_dirs} visited), "
-        f"{len(_GLOBAL_FILE_CACHE)} unique filenames ({indexed_files} visited).",
+        f"{len(_GLOBAL_DIR_CACHE)} unique dirnames ({indexed_dirs} visited, {keyframe_dirs_count} with keyframes), "
+        f"{len(_GLOBAL_FILE_CACHE)} unique filenames ({indexed_files} visited, {raw_videos_count} raw video matches).",
         flush=True,
     )
 
@@ -238,11 +273,15 @@ def find_keyframe_image(
     frame_id: int,
     keyframe_order: int | None = None,
     runtime: Any = None,
-) -> Path | None:
+) -> tuple[Path | None, str]:
+    """Scoped keyframe file resolution with exact provenance tracking.
+
+    Returns (path, resolution_rule).
+    """
     build_global_dataset_index(dataset_root)
 
-    # 1. Try runtime manifest keyframe_directory if available
-    manifest_dirs: list[Path] = []
+    # 1. Candidate Directories strictly scoped to video_id
+    scoped_dirs: list[Path] = []
     if runtime is not None and hasattr(runtime, "manifest") and runtime.manifest is not None:
         for v in getattr(runtime.manifest, "videos", ()):
             if getattr(v, "video_id", None) == video_id:
@@ -250,55 +289,57 @@ def find_keyframe_image(
                 if kdir:
                     pk = Path(kdir)
                     if pk.is_dir():
-                        manifest_dirs.append(pk)
+                        scoped_dirs.append(pk)
                 break
 
-    # 2. Add globally discovered directories matching video_id
-    candidate_dirs = list(manifest_dirs)
     vid_lower = video_id.casefold()
     if _GLOBAL_DIR_CACHE and vid_lower in _GLOBAL_DIR_CACHE:
         for d in _GLOBAL_DIR_CACHE[vid_lower]:
-            if d not in candidate_dirs:
-                candidate_dirs.append(d)
+            if d not in scoped_dirs:
+                scoped_dirs.append(d)
 
-    # 3. Test exact filename patterns in all candidate directories
-    names_to_try: list[str] = []
-    if keyframe_order is not None:
-        for fmt in (f"{keyframe_order:06d}", f"{keyframe_order:05d}", f"{keyframe_order:04d}", f"{keyframe_order:03d}", f"{keyframe_order}"):
-            names_to_try.extend([f"{fmt}.jpg", f"{fmt}.jpeg", f"{fmt}.png", f"frame_{fmt}.jpg", f"frame_{fmt}.png", f"shot_{fmt}.jpg"])
-        # Also try 0-indexed vs 1-indexed shift
-        for ko_shifted in (keyframe_order + 1, keyframe_order - 1):
-            if ko_shifted >= 0:
-                for fmt in (f"{ko_shifted:06d}", f"{ko_shifted:05d}", f"{ko_shifted:04d}", f"{ko_shifted}"):
-                    names_to_try.extend([f"{fmt}.jpg", f"{fmt}.png"])
+    # 2. Rule 1: Exact Keyframe Order (n) in BTC mapping
+    if keyframe_order is not None and keyframe_order > 0:
+        order_names = [
+            f"{keyframe_order:06d}.jpg",
+            f"{keyframe_order:05d}.jpg",
+            f"{keyframe_order:04d}.jpg",
+            f"{keyframe_order:03d}.jpg",
+            f"{keyframe_order}.jpg",
+            f"{keyframe_order:06d}.png",
+            f"{keyframe_order:05d}.png",
+            f"{keyframe_order:04d}.png",
+            f"{keyframe_order}.png",
+            f"{keyframe_order:06d}.jpeg",
+            f"{keyframe_order}.jpeg",
+        ]
+        for sdir in scoped_dirs:
+            for name in order_names:
+                cand = sdir / name
+                if cand.is_file():
+                    return cand, "EXACT_KEYFRAME_ORDER_FILE"
 
-    for fmt in (f"{frame_id:06d}", f"{frame_id:05d}", f"{frame_id:04d}", f"{frame_id:03d}", f"{frame_id}"):
-        names_to_try.extend([f"{fmt}.jpg", f"{fmt}.jpeg", f"{fmt}.png", f"frame_{fmt}.jpg", f"frame_{fmt}.png"])
-
-    for cdir in candidate_dirs:
-        for name in names_to_try:
-            cand = cdir / name
+    # 3. Rule 2: Exact Physical Frame ID in mapping
+    fid_names = [
+        f"{frame_id:06d}.jpg",
+        f"{frame_id:05d}.jpg",
+        f"{frame_id:04d}.jpg",
+        f"{frame_id:03d}.jpg",
+        f"{frame_id}.jpg",
+        f"{frame_id:06d}.png",
+        f"{frame_id:05d}.png",
+        f"{frame_id:04d}.png",
+        f"{frame_id}.png",
+        f"{frame_id:06d}.jpeg",
+        f"{frame_id}.jpeg",
+    ]
+    for sdir in scoped_dirs:
+        for name in fid_names:
+            cand = sdir / name
             if cand.is_file():
-                return cand
+                return cand, "EXACT_PHYSICAL_FRAME_FILE"
 
-    # 4. If exact name lookup misses, match by sorted image file position in folder
-    for cdir in candidate_dirs:
-        c_name = cdir.name.casefold()
-        img_list = _GLOBAL_KEYFRAME_FILES_CACHE.get(c_name, []) if _GLOBAL_KEYFRAME_FILES_CACHE else []
-        if not img_list:
-            try:
-                img_list = sorted([p for p in cdir.iterdir() if p.suffix.casefold() in (".jpg", ".jpeg", ".png", ".webp")])
-            except Exception:
-                pass
-        if img_list and keyframe_order is not None:
-            # Try 1-based index (order 1 -> img_list[0])
-            if 1 <= keyframe_order <= len(img_list):
-                return img_list[keyframe_order - 1]
-            # Try 0-based index
-            if 0 <= keyframe_order < len(img_list):
-                return img_list[keyframe_order]
-
-    return None
+    return None, "UNRESOLVED"
 
 
 def find_source_video_file(
@@ -344,48 +385,108 @@ def extract_image_for_frame(
     source_fps: float | None = None,
     parity_passed: bool = False,
     runtime: Any = None,
-) -> tuple[Image.Image | None, str]:
-    # 1. Try finding keyframe image file first
-    img_path = find_keyframe_image(dataset_root, video_id, frame_id, keyframe_order, runtime=runtime)
+) -> TileDecodeResult:
+    requested_pts = float(pts_time) if pts_time is not None else float(frame_id) / 25.0
+
+    # 1. Try Keyframe File (Order n or physical frame_id)
+    img_path, kf_rule = find_keyframe_image(dataset_root, video_id, frame_id, keyframe_order, runtime=runtime)
     if img_path and img_path.is_file():
         try:
-            return Image.open(img_path), f"KEYFRAME_FILE ({img_path.name})"
+            img = Image.open(img_path)
+            return TileDecodeResult(
+                video_id=video_id,
+                requested_physical_frame_id=frame_id,
+                requested_pts=requested_pts,
+                requested_keyframe_order=keyframe_order,
+                resolved_source_type="KEYFRAME_FILE",
+                resolved_path=str(img_path.resolve(strict=False)),
+                resolution_rule=kf_rule,
+                resolved_filename=img_path.name,
+                decoded_pts_or_frame_index=requested_pts if kf_rule == "EXACT_KEYFRAME_ORDER_FILE" else frame_id,
+                frame_delta=0,
+                pts_delta=0.0,
+                integrity_status="PASS",
+                image=img,
+            )
         except Exception:
             pass
 
-    # 2. Try decoding directly from source video file using cv2
+    # 2. Try Raw Video Fallback (OpenCV)
     vid_path = find_source_video_file(dataset_root, video_id, runtime=runtime)
     if vid_path and vid_path.is_file():
         try:
             import cv2
             cap = cv2.VideoCapture(str(vid_path))
             if cap.isOpened():
-                frame = None
-                mode = ""
-                # Prefer PTS-based seek when PTS is available
+                # Rule 5: Raw video fallback must decode by mapping PTS first
                 if pts_time is not None and pts_time >= 0:
                     cap.set(cv2.CAP_PROP_POS_MSEC, pts_time * 1000.0)
                     ret, f = cap.read()
                     if ret and f is not None:
-                        frame = f
-                        mode = f"CV2_PTS ({pts_time:.2f}s)"
+                        actual_msec = cap.get(cv2.CAP_PROP_POS_MSEC)
+                        actual_pts = actual_msec / 1000.0 if actual_msec > 0 else pts_time
+                        pts_delta = abs(actual_pts - pts_time)
+                        rgb = cv2.cvtColor(f, cv2.COLOR_BGR2RGB)
+                        cap.release()
+                        return TileDecodeResult(
+                            video_id=video_id,
+                            requested_physical_frame_id=frame_id,
+                            requested_pts=requested_pts,
+                            requested_keyframe_order=keyframe_order,
+                            resolved_source_type="RAW_VIDEO_PTS",
+                            resolved_path=str(vid_path.resolve(strict=False)),
+                            resolution_rule="RAW_VIDEO_PTS_SEEK",
+                            resolved_filename=vid_path.name,
+                            decoded_pts_or_frame_index=actual_pts,
+                            frame_delta=0,
+                            pts_delta=pts_delta,
+                            integrity_status="PASS",
+                            image=Image.fromarray(rgb),
+                        )
 
-                # If PTS seek was not used or failed, try frame-index seek
-                if frame is None:
+                # Frame-index seek ONLY when parity_passed is True
+                if parity_passed:
                     cap.set(cv2.CAP_PROP_POS_FRAMES, frame_id)
                     ret, f = cap.read()
                     if ret and f is not None:
-                        frame = f
-                        mode = f"CV2_FRAME_IDX (f{frame_id})"
+                        rgb = cv2.cvtColor(f, cv2.COLOR_BGR2RGB)
+                        cap.release()
+                        return TileDecodeResult(
+                            video_id=video_id,
+                            requested_physical_frame_id=frame_id,
+                            requested_pts=requested_pts,
+                            requested_keyframe_order=keyframe_order,
+                            resolved_source_type="RAW_VIDEO_FRAME_INDEX",
+                            resolved_path=str(vid_path.resolve(strict=False)),
+                            resolution_rule="RAW_VIDEO_FRAME_INDEX_SEEK",
+                            resolved_filename=vid_path.name,
+                            decoded_pts_or_frame_index=frame_id,
+                            frame_delta=0,
+                            pts_delta=0.0,
+                            integrity_status="PASS",
+                            image=Image.fromarray(rgb),
+                        )
 
                 cap.release()
-                if frame is not None:
-                    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    return Image.fromarray(rgb), mode
         except Exception:
             pass
 
-    return None, "IMAGE_UNRESOLVED"
+    # 3. Unresolved
+    return TileDecodeResult(
+        video_id=video_id,
+        requested_physical_frame_id=frame_id,
+        requested_pts=requested_pts,
+        requested_keyframe_order=keyframe_order,
+        resolved_source_type="UNRESOLVED",
+        resolved_path=None,
+        resolution_rule="UNRESOLVED",
+        resolved_filename=None,
+        decoded_pts_or_frame_index=None,
+        frame_delta=-1,
+        pts_delta=-1.0,
+        integrity_status="FAIL",
+        image=None,
+    )
 
 
 def main() -> None:
@@ -1059,22 +1160,71 @@ def run_p1_2_visual_benchmark_adjudication(
 
     manifest_entries: list[dict[str, Any]] = []
     mandatory_requested = 0
-    mandatory_decoded = 0
-    mandatory_failed = 0
+    mandatory_exact_keyframe_file = 0
+    mandatory_raw_video_pts = 0
+    mandatory_raw_video_frame_index = 0
+    mandatory_unresolved = 0
+    mandatory_integrity_fail = 0
+
     optional_requested = 0
-    optional_decoded = 0
-    optional_failed = 0
+    optional_exact_keyframe_file = 0
+    optional_raw_video_pts = 0
+    optional_raw_video_frame_index = 0
+    optional_unresolved = 0
+    optional_integrity_fail = 0
 
     all_mappings = store.mappings
     total_kfs = len(all_mappings)
     compulsory_peaks = [905, 1145, 4995, 6171, 8215, 8235, 9749, 16335, 25325, 27135, 27270]
 
     # -------------------------------------------------------------------------
+    # PART A0: 10-RECORD MAPPING SANITY SAMPLE (PROVENANCE VERIFICATION)
+    # -------------------------------------------------------------------------
+    sample_target_fids = [
+        all_mappings[0].frame_id,
+        905,
+        4995,
+        5940,
+        5959,
+        6048,
+        6075,
+        6107,
+        6171,
+        all_mappings[-1].frame_id,
+    ]
+    sample_seen = set()
+    sample_mappings = []
+    for fid in sample_target_fids:
+        if fid not in sample_seen:
+            sample_seen.add(fid)
+            m = next((m for m in all_mappings if m.frame_id == fid), None)
+            if m:
+                sample_mappings.append(m)
+
+    print("• [A0] 10-Record Mapping Sanity Sample (Target Video L29_V018 Trace):", flush=True)
+    print("=" * 120, flush=True)
+    print("| #  | Physical Frame | Order (n) | PTS (s) | Source Type    | Resolution Rule           | Resolved Filename | Status |", flush=True)
+    print("| -- | -------------- | --------- | ------- | -------------- | ------------------------- | ----------------- | ------ |", flush=True)
+    for s_idx, sm in enumerate(sample_mappings, start=1):
+        dec_sample = extract_image_for_frame(
+            dataset_root=input_root,
+            video_id=target_vid,
+            frame_id=sm.frame_id,
+            keyframe_order=sm.keyframe_order,
+            pts_time=sm.pts_time,
+            runtime=runtime,
+        )
+        status_str = "PASS ✅" if dec_sample.integrity_status == "PASS" else "FAIL ❌"
+        fname_str = dec_sample.resolved_filename or "N/A"
+        print(f"| {s_idx:<2} | f{sm.frame_id:<13} | n={sm.keyframe_order:<6} | {sm.pts_time:<7.3f} | {dec_sample.resolved_source_type:<14} | {dec_sample.resolution_rule:<25} | {fname_str:<17} | {status_str:<6} |", flush=True)
+    print("=" * 120 + "\n", flush=True)
+
+    # -------------------------------------------------------------------------
     # PART A1: RENDER 100% TARGET INDEXED-KEYFRAME COVERAGE (ALL 568 KEYFRAMES)
     # -------------------------------------------------------------------------
     page_size = 64
     total_pages = math.ceil(total_kfs / page_size)
-    print(f"\n• [A1] Rendering 100% TARGET INDEXED-KEYFRAME COVERAGE ({total_kfs}/{total_kfs} indexed keyframes of {target_vid}) into {total_pages} paginated contact sheets (64 frames/page)...", flush=True)
+    print(f"• [A1] Rendering 100% TARGET INDEXED-KEYFRAME COVERAGE ({total_kfs}/{total_kfs} indexed keyframes of {target_vid}) into {total_pages} paginated contact sheets (64 frames/page)...", flush=True)
     print(f"       * Provenance Note: This represents 568 indexed keyframes covering the target video according to the feature registry mappings.", flush=True)
 
     all_page_paths = []
@@ -1096,7 +1246,7 @@ def run_p1_2_visual_benchmark_adjudication(
             kf_order = mapping.keyframe_order
             pts_time = mapping.pts_time
 
-            img, decode_mode = extract_image_for_frame(
+            dec_res = extract_image_for_frame(
                 dataset_root=input_root,
                 video_id=target_vid,
                 frame_id=fid,
@@ -1105,14 +1255,24 @@ def run_p1_2_visual_benchmark_adjudication(
                 runtime=runtime,
             )
 
-            is_decode_ok = img is not None
-            if is_decode_ok:
-                ax.imshow(img)
-                mandatory_decoded += 1
-            else:
-                ax.text(0.5, 0.5, f"IMAGE NOT FOUND\nFrame: {fid}\n({decode_mode})", ha="center", va="center", fontsize=7)
-                mandatory_failed += 1
+            if dec_res.resolved_source_type == "KEYFRAME_FILE":
+                mandatory_exact_keyframe_file += 1
+            elif dec_res.resolved_source_type == "RAW_VIDEO_PTS":
+                mandatory_raw_video_pts += 1
+            elif dec_res.resolved_source_type == "RAW_VIDEO_FRAME_INDEX":
+                mandatory_raw_video_frame_index += 1
+            elif dec_res.resolved_source_type == "UNRESOLVED":
+                mandatory_unresolved += 1
+
+            if dec_res.integrity_status != "PASS":
+                mandatory_integrity_fail += 1
+
             mandatory_requested += 1
+
+            if dec_res.image is not None:
+                ax.imshow(dec_res.image)
+            else:
+                ax.text(0.5, 0.5, f"IMAGE UNRESOLVED\nFrame: {fid}\nOrder: {kf_order}\n({dec_res.resolution_rule})", ha="center", va="center", fontsize=7)
 
             is_locked_gt = (fid == locked_gt_frame or fid == 6048)
             is_peak = fid in compulsory_peaks
@@ -1124,21 +1284,17 @@ def run_p1_2_visual_benchmark_adjudication(
                 spine.set_linewidth(3 if (is_locked_gt or is_peak or is_gt_nbrhood) else 0.5)
 
             marker_str = " (LOCKED GT ★)" if is_locked_gt else (" (PEAK)" if is_peak else (" (GT NBRHOOD)" if is_gt_nbrhood else ""))
-            ax.set_title(f"f{fid} | {pts_time:.2f}s | #{kf_order}{marker_str}", fontsize=7, color=border_color if border_color != "gray" else "black", pad=3)
+            title_caption = f"f{fid} | {pts_time:.2f}s | #{kf_order}{marker_str}\n{dec_res.resolution_rule}\n{dec_res.resolved_filename or 'UNRESOLVED'}"
+            ax.set_title(title_caption, fontsize=6.5, color=border_color if border_color != "gray" else "black", pad=3)
+            ax.axis("off")
 
             manifest_entries.append({
                 "contact_sheet_file": page_file.name,
                 "tile_type": "MANDATORY_TARGET_KEYFRAME",
-                "video_id": target_vid,
-                "frame_id": fid,
-                "keyframe_order": kf_order,
-                "pts_time": pts_time,
                 "is_locked_gt": is_locked_gt,
                 "is_retrieval_peak": is_peak,
                 "is_gt_nbrhood": is_gt_nbrhood,
-                "decode_ok": is_decode_ok,
-                "source_path": str(input_root),
-                "decode_mode": decode_mode,
+                **dec_res.to_manifest_dict(),
             })
 
         for tile_idx in range(n_page_tiles, 64):
@@ -1184,7 +1340,7 @@ def run_p1_2_visual_benchmark_adjudication(
         kf_order = mapping.keyframe_order if mapping else None
         pts_time = mapping.pts_time if mapping else fid / 25.0
 
-        img, decode_mode = extract_image_for_frame(
+        dec_res = extract_image_for_frame(
             dataset_root=input_root,
             video_id=target_vid,
             frame_id=fid,
@@ -1193,14 +1349,24 @@ def run_p1_2_visual_benchmark_adjudication(
             runtime=runtime,
         )
 
-        is_decode_ok = img is not None
-        if is_decode_ok:
-            ax.imshow(img)
-            optional_decoded += 1
-        else:
-            ax.text(0.5, 0.5, f"IMAGE NOT FOUND\nFrame: {fid}\n({decode_mode})", ha="center", va="center", fontsize=8)
-            optional_failed += 1
+        if dec_res.resolved_source_type == "KEYFRAME_FILE":
+            optional_exact_keyframe_file += 1
+        elif dec_res.resolved_source_type == "RAW_VIDEO_PTS":
+            optional_raw_video_pts += 1
+        elif dec_res.resolved_source_type == "RAW_VIDEO_FRAME_INDEX":
+            optional_raw_video_frame_index += 1
+        elif dec_res.resolved_source_type == "UNRESOLVED":
+            optional_unresolved += 1
+
+        if dec_res.integrity_status != "PASS":
+            optional_integrity_fail += 1
+
         optional_requested += 1
+
+        if dec_res.image is not None:
+            ax.imshow(dec_res.image)
+        else:
+            ax.text(0.5, 0.5, f"IMAGE UNRESOLVED\nFrame: {fid}\n({dec_res.resolution_rule})", ha="center", va="center", fontsize=8)
 
         tags = []
         if fid == locked_gt_frame or fid == 6048:
@@ -1223,23 +1389,19 @@ def run_p1_2_visual_benchmark_adjudication(
             f"Video: {target_vid} | Frame: {fid} (#{kf_order if kf_order else 'N/A'})\n"
             f"PTS: {pts_time:.2f}s | Tags: {tag_str}\n"
             f"Cos: Full={cos_v1:.3f} | T1(Map)={cos_v2:.3f} | T2(Dam)={cos_v3:.3f}\n"
-            f"Mode: {decode_mode}"
+            f"{dec_res.resolution_rule} | {dec_res.resolved_filename or 'UNRESOLVED'}"
         )
         ax.set_title(caption, fontsize=8, color="red" if is_gt else "black", pad=6)
 
         manifest_entries.append({
             "contact_sheet_file": timeline_sheet_path.name,
             "tile_type": "OPTIONAL_TIMELINE_SUMMARY",
-            "video_id": target_vid,
-            "frame_id": fid,
-            "pts_time": pts_time,
             "tags": tags,
             "source_variant": "timeline_sample",
             "cosine_full": cos_v1,
             "cosine_scene1": cos_v2,
             "cosine_scene2": cos_v3,
-            "decode_ok": is_decode_ok,
-            "decode_mode": decode_mode,
+            **dec_res.to_manifest_dict(),
         })
 
     for idx in range(n_tiles, rows * cols):
@@ -1391,7 +1553,7 @@ def run_p1_2_visual_benchmark_adjudication(
                 kf_order = mapping.keyframe_order if mapping else None
                 pts_time = mapping.pts_time if mapping else fid / 25.0
 
-                img, decode_mode = extract_image_for_frame(
+                dec_res = extract_image_for_frame(
                     dataset_root=input_root,
                     video_id=vid,
                     frame_id=fid,
@@ -1400,34 +1562,41 @@ def run_p1_2_visual_benchmark_adjudication(
                     runtime=runtime,
                 )
 
-                is_decode_ok = img is not None
-                if is_decode_ok:
-                    ax.imshow(img)
-                    optional_decoded += 1
-                else:
-                    ax.text(0.5, 0.5, f"IMAGE NOT FOUND\nVideo: {vid}\nFrame: {fid}", ha="center", va="center", fontsize=8)
-                    optional_failed += 1
+                if dec_res.resolved_source_type == "KEYFRAME_FILE":
+                    optional_exact_keyframe_file += 1
+                elif dec_res.resolved_source_type == "RAW_VIDEO_PTS":
+                    optional_raw_video_pts += 1
+                elif dec_res.resolved_source_type == "RAW_VIDEO_FRAME_INDEX":
+                    optional_raw_video_frame_index += 1
+                elif dec_res.resolved_source_type == "UNRESOLVED":
+                    optional_unresolved += 1
+
+                if dec_res.integrity_status != "PASS":
+                    optional_integrity_fail += 1
+
                 optional_requested += 1
+
+                if dec_res.image is not None:
+                    ax.imshow(dec_res.image)
+                else:
+                    ax.text(0.5, 0.5, f"IMAGE UNRESOLVED\nVideo: {vid}\nFrame: {fid}\n({dec_res.resolution_rule})", ha="center", va="center", fontsize=8)
 
                 is_dp_win = fid in dp_frames
                 caption = (
                     f"Video: {vid} | SCENE 1 (Map/Irrigation)\n"
                     f"Physical Frame: {fid} | PTS: {pts_time:.2f}s\n"
-                    f"Raw Cos: {cos_val:.4f} | Mode: {decode_mode}"
+                    f"Raw Cos: {cos_val:.4f} | {dec_res.resolution_rule}\n"
+                    f"{dec_res.resolved_filename or 'UNRESOLVED'}"
                 )
                 ax.set_title(caption, fontsize=8, color="black", pad=6)
 
                 manifest_entries.append({
                     "contact_sheet_file": cand_sheet_path.name,
                     "tile_type": "OPTIONAL_CANDIDATE_PEAK",
-                    "video_id": vid,
-                    "frame_id": fid,
-                    "pts_time": pts_time,
                     "scene": "T1_MAP_PEAK",
                     "cosine": cos_val,
                     "is_dp_winning": is_dp_win,
-                    "decode_ok": is_decode_ok,
-                    "decode_mode": decode_mode,
+                    **dec_res.to_manifest_dict(),
                 })
             else:
                 ax.axis("off")
@@ -1442,7 +1611,7 @@ def run_p1_2_visual_benchmark_adjudication(
                 kf_order = mapping.keyframe_order if mapping else None
                 pts_time = mapping.pts_time if mapping else fid / 25.0
 
-                img, decode_mode = extract_image_for_frame(
+                dec_res = extract_image_for_frame(
                     dataset_root=input_root,
                     video_id=vid,
                     frame_id=fid,
@@ -1451,34 +1620,41 @@ def run_p1_2_visual_benchmark_adjudication(
                     runtime=runtime,
                 )
 
-                is_decode_ok = img is not None
-                if is_decode_ok:
-                    ax.imshow(img)
-                    optional_decoded += 1
-                else:
-                    ax.text(0.5, 0.5, f"IMAGE NOT FOUND\nVideo: {vid}\nFrame: {fid}", ha="center", va="center", fontsize=8)
-                    optional_failed += 1
+                if dec_res.resolved_source_type == "KEYFRAME_FILE":
+                    optional_exact_keyframe_file += 1
+                elif dec_res.resolved_source_type == "RAW_VIDEO_PTS":
+                    optional_raw_video_pts += 1
+                elif dec_res.resolved_source_type == "RAW_VIDEO_FRAME_INDEX":
+                    optional_raw_video_frame_index += 1
+                elif dec_res.resolved_source_type == "UNRESOLVED":
+                    optional_unresolved += 1
+
+                if dec_res.integrity_status != "PASS":
+                    optional_integrity_fail += 1
+
                 optional_requested += 1
+
+                if dec_res.image is not None:
+                    ax.imshow(dec_res.image)
+                else:
+                    ax.text(0.5, 0.5, f"IMAGE UNRESOLVED\nVideo: {vid}\nFrame: {fid}\n({dec_res.resolution_rule})", ha="center", va="center", fontsize=8)
 
                 is_dp_win = fid in dp_frames
                 caption = (
                     f"Video: {vid} | SCENE 2 (Aerial Dam/Rain)\n"
                     f"Physical Frame: {fid} | PTS: {pts_time:.2f}s\n"
-                    f"Raw Cos: {cos_val:.4f} | Mode: {decode_mode}"
+                    f"Raw Cos: {cos_val:.4f} | {dec_res.resolution_rule}\n"
+                    f"{dec_res.resolved_filename or 'UNRESOLVED'}"
                 )
                 ax.set_title(caption, fontsize=8, color="black", pad=6)
 
                 manifest_entries.append({
                     "contact_sheet_file": cand_sheet_path.name,
                     "tile_type": "OPTIONAL_CANDIDATE_PEAK",
-                    "video_id": vid,
-                    "frame_id": fid,
-                    "pts_time": pts_time,
                     "scene": "T2_DAM_PEAK",
                     "cosine": cos_val,
                     "is_dp_winning": is_dp_win,
-                    "decode_ok": is_decode_ok,
-                    "decode_mode": decode_mode,
+                    **dec_res.to_manifest_dict(),
                 })
             else:
                 ax.axis("off")
@@ -1493,7 +1669,7 @@ def run_p1_2_visual_benchmark_adjudication(
                 kf_order = mapping.keyframe_order if mapping else None
                 pts_time = mapping.pts_time if mapping else fid / 25.0
 
-                img, decode_mode = extract_image_for_frame(
+                dec_res = extract_image_for_frame(
                     dataset_root=input_root,
                     video_id=vid,
                     frame_id=fid,
@@ -1502,14 +1678,24 @@ def run_p1_2_visual_benchmark_adjudication(
                     runtime=runtime,
                 )
 
-                is_decode_ok = img is not None
-                if is_decode_ok:
-                    ax.imshow(img)
-                    mandatory_decoded += 1
-                else:
-                    ax.text(0.5, 0.5, f"IMAGE NOT FOUND\nVideo: {vid}\nFrame: {fid}", ha="center", va="center", fontsize=8)
-                    mandatory_failed += 1
+                if dec_res.resolved_source_type == "KEYFRAME_FILE":
+                    mandatory_exact_keyframe_file += 1
+                elif dec_res.resolved_source_type == "RAW_VIDEO_PTS":
+                    mandatory_raw_video_pts += 1
+                elif dec_res.resolved_source_type == "RAW_VIDEO_FRAME_INDEX":
+                    mandatory_raw_video_frame_index += 1
+                elif dec_res.resolved_source_type == "UNRESOLVED":
+                    mandatory_unresolved += 1
+
+                if dec_res.integrity_status != "PASS":
+                    mandatory_integrity_fail += 1
+
                 mandatory_requested += 1
+
+                if dec_res.image is not None:
+                    ax.imshow(dec_res.image)
+                else:
+                    ax.text(0.5, 0.5, f"IMAGE UNRESOLVED\nVideo: {vid}\nFrame: {fid}\n({dec_res.resolution_rule})", ha="center", va="center", fontsize=8)
 
                 for spine in ax.spines.values():
                     spine.set_color("red")
@@ -1519,20 +1705,17 @@ def run_p1_2_visual_benchmark_adjudication(
                 caption = (
                     f"Video: {vid} | WINNING DP SCENE {scene_label} ★\n"
                     f"Physical Frame: {fid} | PTS: {pts_time:.2f}s\n"
-                    f"Winning Chain Score: {cand_obj['chain_score']:.4f}"
+                    f"Winning Chain Score: {cand_obj['chain_score']:.4f}\n"
+                    f"{dec_res.resolution_rule} | {dec_res.resolved_filename or 'UNRESOLVED'}"
                 )
                 ax.set_title(caption, fontsize=8, color="red", pad=6)
 
                 manifest_entries.append({
                     "contact_sheet_file": cand_sheet_path.name,
                     "tile_type": "MANDATORY_WINNING_DP_TILE",
-                    "video_id": vid,
-                    "frame_id": fid,
-                    "pts_time": pts_time,
                     "scene": f"WINNING_DP_T{col_idx+1}",
                     "is_dp_winning": True,
-                    "decode_ok": is_decode_ok,
-                    "decode_mode": decode_mode,
+                    **dec_res.to_manifest_dict(),
                 })
             elif col_idx == 2 and len(dp_frames) == 2:
                 # Text summary tile for the pair
@@ -1567,7 +1750,7 @@ def run_p1_2_visual_benchmark_adjudication(
     if cand_sheet_path.exists():
         artifact_checksums[cand_sheet_path.name] = hashlib.sha256(cand_sheet_path.read_bytes()).hexdigest()
 
-    is_incomplete = (mandatory_failed > 0)
+    is_incomplete = (mandatory_unresolved > 0 or mandatory_integrity_fail > 0)
     visual_evidence_status = "VISUAL_EVIDENCE_INCOMPLETE ⚠️" if is_incomplete else "VISUAL_EVIDENCE_AVAILABLE_FOR_HUMAN_ADJUDICATION ✅"
 
     # 1. Immutable Machine Visual Evidence Manifest
@@ -1576,17 +1759,23 @@ def run_p1_2_visual_benchmark_adjudication(
         "target_video_locked": target_vid,
         "locked_gt_frame": locked_gt_frame,
         "visual_evidence_status": visual_evidence_status,
-        "provenance_description": "Immutable machine evidence recording rendered keyframe tiles, decode statuses, and artifact SHA256 hashes.",
+        "provenance_description": "Immutable machine evidence recording rendered keyframe tiles, strict decode resolution types, and artifact SHA256 hashes.",
         "decode_statistics": {
             "mandatory_requested": mandatory_requested,
-            "mandatory_decoded": mandatory_decoded,
-            "mandatory_failed": mandatory_failed,
+            "mandatory_exact_keyframe_file": mandatory_exact_keyframe_file,
+            "mandatory_raw_video_pts": mandatory_raw_video_pts,
+            "mandatory_raw_video_frame_index": mandatory_raw_video_frame_index,
+            "mandatory_unresolved": mandatory_unresolved,
+            "mandatory_integrity_fail": mandatory_integrity_fail,
             "optional_requested": optional_requested,
-            "optional_decoded": optional_decoded,
-            "optional_failed": optional_failed,
+            "optional_exact_keyframe_file": optional_exact_keyframe_file,
+            "optional_raw_video_pts": optional_raw_video_pts,
+            "optional_raw_video_frame_index": optional_raw_video_frame_index,
+            "optional_unresolved": optional_unresolved,
+            "optional_integrity_fail": optional_integrity_fail,
             "total_requested": mandatory_requested + optional_requested,
-            "total_decoded": mandatory_decoded + optional_decoded,
-            "total_failed": mandatory_failed + optional_failed,
+            "total_resolved": mandatory_exact_keyframe_file + mandatory_raw_video_pts + mandatory_raw_video_frame_index + optional_exact_keyframe_file + optional_raw_video_pts + optional_raw_video_frame_index,
+            "total_unresolved": mandatory_unresolved + optional_unresolved,
         },
         "artifact_sha256_checksums": artifact_checksums,
         "candidate_discovery_summary": [
@@ -1657,13 +1846,19 @@ def run_p1_2_visual_benchmark_adjudication(
 
     print("=" * 120)
     print("• Visual Artifact & Decode Resolution Summary for P1-2:")
-    print(f"  - Mandatory Tiles Requested : {mandatory_requested}")
-    print(f"  - Mandatory Tiles Decoded   : {mandatory_decoded} ({mandatory_decoded/mandatory_requested*100:.1f}%)" if mandatory_requested > 0 else "  - Mandatory Tiles Decoded: 0")
-    print(f"  - Mandatory Tiles Failed    : {mandatory_failed}")
-    print(f"  - Optional Tiles Requested  : {optional_requested}")
-    print(f"  - Optional Tiles Decoded    : {optional_decoded}")
-    print(f"  - Optional Tiles Failed     : {optional_failed}")
-    print(f"  - Visual Evidence Status    : {visual_evidence_status}")
+    print(f"  - Mandatory Tiles Requested         : {mandatory_requested}")
+    print(f"  - Mandatory Exact Keyframe Files    : {mandatory_exact_keyframe_file} ({(mandatory_exact_keyframe_file/mandatory_requested*100):.1f}%)" if mandatory_requested > 0 else "  - Mandatory Exact Keyframe Files: 0")
+    print(f"  - Mandatory Raw Video PTS Decoded   : {mandatory_raw_video_pts}")
+    print(f"  - Mandatory Raw Video Frame Index   : {mandatory_raw_video_frame_index}")
+    print(f"  - Mandatory Unresolved              : {mandatory_unresolved}")
+    print(f"  - Mandatory Integrity Fails         : {mandatory_integrity_fail}")
+    print(f"  - Optional Tiles Requested          : {optional_requested}")
+    print(f"  - Optional Exact Keyframe Files     : {optional_exact_keyframe_file}")
+    print(f"  - Optional Raw Video PTS Decoded    : {optional_raw_video_pts}")
+    print(f"  - Optional Raw Video Frame Index    : {optional_raw_video_frame_index}")
+    print(f"  - Optional Unresolved               : {optional_unresolved}")
+    print(f"  - Optional Integrity Fails          : {optional_integrity_fail}")
+    print(f"  - Visual Evidence Status            : {visual_evidence_status}")
     print("-" * 120)
     print("• Sidecar Provenance Verification:")
     print(f"  * EVIDENCE_MANIFEST_SHA256            : {evidence_sha}")
@@ -1782,7 +1977,7 @@ def run_p1_4_real_image_adjudication(
                     kf_order = mapping.keyframe_order if mapping else None
                     pts_time = mapping.pts_time if mapping else None
 
-                    img, decode_mode = extract_image_for_frame(
+                    dec_res = extract_image_for_frame(
                         dataset_root=input_root,
                         video_id=vid,
                         frame_id=req_frame_id,
@@ -1793,19 +1988,20 @@ def run_p1_4_real_image_adjudication(
                         runtime=runtime,
                     )
 
-                    if img is not None:
-                        ax.imshow(img)
+                    if dec_res.image is not None:
+                        ax.imshow(dec_res.image)
                         vid_loaded_count += 1
                     else:
                         vid_failed_count += 1
-                        ax.text(0.5, 0.5, f"IMAGE NOT FOUND ON DISK\nVideo: {vid}\nFrame: {req_frame_id}\n(Mode: {decode_mode})", ha="center", va="center", fontsize=8)
+                        ax.text(0.5, 0.5, f"IMAGE UNRESOLVED\nVideo: {vid}\nFrame: {req_frame_id}\n({dec_res.resolution_rule})", ha="center", va="center", fontsize=8)
 
                     is_chain = req_frame_id in chain_frames
                     caption = (
                         f"Video: {vid} | Scene: T{scene_var.temporal_index}\n"
                         f"Physical Frame: {req_frame_id} (Order: {kf_order if kf_order else 'N/A'})\n"
                         f"PTS: {pts_time:.3f}s | Raw Cosine: {cosine:.4f}\n"
-                        f"Winning DP Frame: {'YES ★' if is_chain else 'NO'} | Mode: {decode_mode}"
+                        f"Winning DP Frame: {'YES ★' if is_chain else 'NO'} | {dec_res.resolution_rule}\n"
+                        f"{dec_res.resolved_filename or 'UNRESOLVED'}"
                     )
                     ax.set_title(caption, fontsize=8, color="red" if is_chain else "black", pad=6)
                 else:
