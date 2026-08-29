@@ -75,7 +75,7 @@ def main() -> None:
     args = parser.parse_args()
 
     print("=" * 80)
-    print("🚀 AIC 2026 - SYSTEM TAI CANONICAL PRODUCTION LAUNCHER")
+    print("[+] AIC 2026 - SYSTEM TAI CANONICAL PRODUCTION LAUNCHER")
     print("=" * 80)
 
     # 1. Preflight Check
@@ -109,9 +109,9 @@ def main() -> None:
     api_docs_url = f"http://{args.host}:{args.port}/docs"
 
     print("\n" + "=" * 80)
-    print(f"🌟 SYSTEM TAI READY & OPERATIONAL!")
-    print(f"👉 Application Web UI:    {server_url}")
-    print(f"👉 Interactive API Docs:  {api_docs_url}")
+    print(f"[*] SYSTEM TAI READY & OPERATIONAL!")
+    print(f"[*] Application Web UI:    {server_url}")
+    print(f"[*] Interactive API Docs:  {api_docs_url}")
     print("=" * 80 + "\n")
 
     if not args.no_browser:

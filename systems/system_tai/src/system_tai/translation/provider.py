@@ -72,6 +72,27 @@ class GoogleTranslateProvider:
         """Translate one Vietnamese string to English."""
         return self.translate_many((text,))[0]
 
+    def _translate_web(self, text: str) -> str:
+        try:
+            import html
+            import urllib.parse
+            import urllib.request
+            url = f"https://translate.google.com/m?sl=auto&tl=en&q={urllib.parse.quote(text)}"
+            req = urllib.request.Request(
+                url,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+            )
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                content = resp.read().decode("utf-8")
+            match = re.search(r'class="result-container">([^<]+)</div>', content)
+            if match:
+                res = html.unescape(match.group(1)).strip()
+                if res and "Error 500" not in res:
+                    return res
+        except Exception:
+            pass
+        return ""
+
     def translate_many(self, texts: tuple[str, ...] | list[str]) -> tuple[str, ...]:
         """Translate a batch of strings with JSON caching."""
         cleaned = tuple(text.strip() for text in texts)
@@ -86,18 +107,25 @@ class GoogleTranslateProvider:
             if q in self._cache and self._cache[q].strip():
                 results.append(self._cache[q].strip())
                 continue
+
+            translated = ""
             if translator is not None:
                 try:
-                    translated = str(translator.translate(q) or "").strip()
-                    if translated:
-                        self._cache[q] = translated
-                        cache_updated = True
-                        results.append(translated)
-                        continue
+                    res = str(translator.translate(q) or "").strip()
+                    if res and "Error 500" not in res and "<!DOCTYPE" not in res:
+                        translated = res
                 except Exception as exc:
-                    logger.debug("Google translation error for %r: %s", q, exc)
+                    logger.debug("deep_translator error for %r: %s", q, exc)
 
-            results.append(q)
+            if not translated:
+                translated = self._translate_web(q)
+
+            if translated:
+                self._cache[q] = translated
+                cache_updated = True
+                results.append(translated)
+            else:
+                results.append(q)
 
         if cache_updated and self.cache_path is not None:
             try:
