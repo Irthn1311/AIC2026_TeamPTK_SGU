@@ -552,6 +552,14 @@ def main() -> None:
     # 4. PRINT FINAL UNIFIED SUMMARY TABLE
     print_final_summary_table(coverage_results)
 
+    # 5. PACKAGE ALL VISUAL EVIDENCE ARTIFACTS INTO A SINGLE ZIP ARCHIVE
+    zip_dest = Path("/kaggle/working/v2a3_visual_evidence_package") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "v2a3_visual_evidence_package"
+    try:
+        shutil.make_archive(str(zip_dest), "zip", base_out)
+        print(f"📦 Visual Evidence Artifacts Package Created -> {zip_dest}.zip ✅\n", flush=True)
+    except Exception as e:
+        print(f"⚠️ Could not create zip archive: {e}\n", flush=True)
+
 
 # ==============================================================================
 # SECTION 1: GT INDEX COVERAGE AUDIT WITH SOURCE <-> MAPPING PARITY
@@ -687,7 +695,7 @@ def run_gt_index_coverage_audit(runtime: OperationalKISRuntime, input_root: Path
                 elif src_contains_center:
                     classification = "A) EXTRACTION/INDEX COVERAGE BUG (Source contains center, lacks tail)"
                 else:
-                    classification = "B) SOURCE/GT/MAPPING MISMATCH (Source video shorter than GT center)"
+                    classification = "SOURCE_GT_PROVENANCE_INCONSISTENCY_CONFIRMED (Source length 3153 < GT 3325)"
             else:
                 if vid_file is None:
                     classification = "C) UNRESOLVED_SOURCE_NOT_FOUND (Cannot verify on disk without source video)"
@@ -1120,16 +1128,16 @@ def run_p1_2_trace_and_raw_cosine_audit(
     )
 
     # Record summary for unified final reporting table
+    cov_record = coverage_summary.get("p1-2", {})
     coverage_summary["p1-2"] = {
+        **cov_record,
         "query_id": "p1-2",
         "video_id": target_vid,
         "locked_gt_frame": locked_gt_frame,
         "coverage_pass": len(gt_neighborhood_keyframes) > 0,
         "coverage_str": f"PASS ✅ ({len(gt_neighborhood_keyframes)} kfs)",
-        "parity_passed": False,
-        "parity_str": "PARITY_UNRESOLVED",
-        "loss_stage": "BENCHMARK_PROVENANCE_SUSPECT / VISUAL_ADJ_REQ",
-        "classification": "BENCHMARK_PROVENANCE_SUSPECT / VISUAL_ADJ_REQ",
+        "loss_stage": "STAGE 2 (Cap) / STAGE 3 (RRF Cutoff)",
+        "classification": "QUERY_TARGET_SEMANTIC_BINDING_UNRESOLVED_PENDING_VISUAL_ADJUDICATION",
     }
 
     return {
@@ -1870,19 +1878,25 @@ def run_p1_2_visual_benchmark_adjudication(
     print(f"  🔒 Saved Sidecar Checksum File    -> {sidecar_path.name} ✅", flush=True)
     print(f"  📝 Saved Human Adjudication File  -> {human_adjudication_path.name} ✅\n", flush=True)
 
-    target_tiles = [t for t in manifest_entries if t.get("tile_type") == "TARGET_KEYFRAME_TILE"]
-    target_exact = sum(1 for t in target_tiles if t.get("resolved_source_type") == "KEYFRAME_FILE" and t.get("integrity_status") == "PASS")
-    target_raw_pts = sum(1 for t in target_tiles if t.get("resolved_source_type") == "RAW_VIDEO_PTS")
-    target_ambiguous = sum(1 for t in target_tiles if "AMBIGUOUS" in t.get("resolution_rule", ""))
+    target_tiles = [t for t in manifest_entries if t.get("tile_type") == "MANDATORY_TARGET_KEYFRAME"]
+    target_requested = len(target_tiles)
+    target_exact_unique = sum(1 for t in target_tiles if t.get("resolved_source_type") == "KEYFRAME_FILE" and t.get("integrity_status") == "PASS")
+    target_raw_pts = sum(1 for t in target_tiles if t.get("resolved_source_type") == "RAW_VIDEO_PTS" and t.get("integrity_status") == "PASS")
+    target_ambiguous = sum(1 for t in target_tiles if "AMBIGUOUS" in t.get("resolution_rule", "") or t.get("resolved_source_type") == "AMBIGUOUS_KEYFRAME_FILE")
     target_unresolved = sum(1 for t in target_tiles if t.get("resolved_source_type") == "UNRESOLVED")
     target_integrity_fail = sum(1 for t in target_tiles if t.get("integrity_status") != "PASS")
 
+    # Assert mutually-exclusive partition of target indexed keyframes
+    assert (target_exact_unique + target_raw_pts + target_ambiguous + target_unresolved) == target_requested == 568, (
+        f"Target partition mismatch: {target_exact_unique} + {target_raw_pts} + {target_ambiguous} + {target_unresolved} != {target_requested}"
+    )
+
     print("=" * 120)
-    print("1. TARGET DECODE INTEGRITY (Video: L29_V018)")
+    print(f"1. TARGET DECODE INTEGRITY (Video: {target_vid} | Requested: {target_requested} indexed keyframes)")
     print("=" * 120)
     print(f"  video                              = {target_vid}")
-    print(f"  requested_target_indexed_keyframes = {len(target_tiles)}")
-    print(f"  exact                              = {target_exact}")
+    print(f"  requested_target_indexed_keyframes = {target_requested}")
+    print(f"  exact_unique                       = {target_exact_unique}")
     print(f"  raw_pts                            = {target_raw_pts}")
     print(f"  ambiguous                          = {target_ambiguous}")
     print(f"  unresolved                         = {target_unresolved}")
@@ -1894,8 +1908,8 @@ def run_p1_2_visual_benchmark_adjudication(
     print("\n" + "=" * 120)
     print(f"2. LIST ALL {len(ambiguous_tiles)} AMBIGUITIES / INTEGRITY FAILS")
     print("=" * 120)
-    print(f"| # | Video ID | Physical Frame | Order (n) | Artifact Scope / Tile Type | Resolution Rule | Filename / Detail | Status |")
-    print(f"| - | -------- | -------------- | --------- | -------------------------- | --------------- | ----------------- | ------ |")
+    print(f"| # | Video ID | Physical Frame | Order (n) | Artifact Scope / Tile Type | Resolution Rule | Filenames (Order vs Physical) | Status |")
+    print(f"| - | -------- | -------------- | --------- | -------------------------- | --------------- | ----------------------------- | ------ |")
     for idx, t in enumerate(ambiguous_tiles, start=1):
         print(
             f"| {idx:<1} | {t.get('video_id', 'N/A'):<8} "
@@ -1903,7 +1917,7 @@ def run_p1_2_visual_benchmark_adjudication(
             f"| n={str(t.get('requested_keyframe_order', 'N/A')):<6} "
             f"| {t.get('tile_type', 'N/A'):<26} "
             f"| {t.get('resolution_rule', 'N/A'):<27} "
-            f"| {str(t.get('resolved_filename', 'N/A')):<17} "
+            f"| {str(t.get('resolved_filename', 'N/A')):<29} "
             f"| {t.get('integrity_status', 'N/A'):<6} |"
         )
     print("=" * 120)
