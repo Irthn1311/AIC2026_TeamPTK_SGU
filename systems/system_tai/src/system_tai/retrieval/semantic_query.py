@@ -196,6 +196,16 @@ def _clean(text: str) -> str:
 
 
 def _split_semantic_clauses(query_vi: str) -> tuple[str, ...]:
+    # Check if temporal boundary markers exist to preserve cohesive multi-sentence scene phases
+    raw_blocks = [b.strip() for b in _TEMPORAL_BOUNDARY.split(query_vi) if b.strip()]
+    if len(raw_blocks) >= 2:
+        clauses = []
+        for block in raw_blocks:
+            c = _clean(block)
+            if c:
+                clauses.append(c)
+        return tuple(clauses)
+
     clauses: list[str] = []
     for sentence in _SENTENCE_BOUNDARY.split(query_vi):
         sentence = _clean(sentence)

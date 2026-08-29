@@ -867,16 +867,17 @@ def fuse_restricted_frames(
     enriched_list: list[CandidateFrame] = []
     for item in fused.ranked_candidates:
         is_chain_winner = item.frame_id in chain_frames_by_video.get(item.video_id, ())
-        # Additive bonus if this frame is a winning DP sequence frame
-        final_score = item.score + (temporal_chain_bonus if is_chain_winner else 0.0)
+        vid_ev = video_by_id[item.video_id]
+        vid_rank = vid_ev.rank
+        vid_rrf_boost = 1.0 / (60.0 + vid_rank)
+        # Additive bonus if this frame is a winning DP sequence frame + video concordance
+        final_score = item.score + 0.10 * vid_rrf_boost + (temporal_chain_bonus if is_chain_winner else 0.0)
 
         diag = {
             **dict(item.diagnostic_metadata or {}),
-            "video_nomination_rank": video_by_id[item.video_id].rank,
-            "video_fusion_score": video_by_id[item.video_id].fusion_score,
-            "video_primary_coverage_count": (
-                video_by_id[item.video_id].primary_coverage_count
-            ),
+            "video_nomination_rank": vid_ev.rank,
+            "video_fusion_score": vid_ev.fusion_score,
+            "video_primary_coverage_count": vid_ev.primary_coverage_count,
             "is_temporal_chain_winner": is_chain_winner,
         }
         enriched_list.append(

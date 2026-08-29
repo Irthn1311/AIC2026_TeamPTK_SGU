@@ -22,6 +22,7 @@ import hashlib
 import json
 import math
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -252,6 +253,14 @@ def find_keyframe_image(
             if p.is_dir() and p not in scoped_dirs:
                 scoped_dirs.append(p)
 
+        # Broad search across dataset mount points if standard paths missing
+        if not scoped_dirs:
+            for root_p in [dataset_root, Path("/kaggle/input")]:
+                if root_p.is_dir():
+                    for match_dir in root_p.glob(f"**/{video_id}"):
+                        if match_dir.is_dir() and match_dir not in scoped_dirs:
+                            scoped_dirs.append(match_dir)
+
     # 2. Test exact keyframe order match (n)
     cand_by_order: Path | None = None
     if keyframe_order is not None and keyframe_order > 0:
@@ -301,16 +310,9 @@ def find_keyframe_image(
         if cand_by_fid:
             break
 
-    # 4. Ambiguity Evaluation
-    if cand_by_order and cand_by_fid:
-        try:
-            if cand_by_order.resolve() != cand_by_fid.resolve():
-                # Distinct files match order vs frame_id -> Ambiguous resolution
-                return None, f"AMBIGUOUS_KEYFRAME_RESOLUTION:order={cand_by_order.name},fid={cand_by_fid.name}"
-        except Exception:
-            return None, "AMBIGUOUS_KEYFRAME_RESOLUTION"
-        return cand_by_order, "EXACT_KEYFRAME_ORDER_FILE"
-    elif cand_by_order:
+    # In AIC keyframe stores, numeric filenames (001.jpg, 002.jpg) represent 1-based order.
+    # Prefer order match first, then fid match.
+    if cand_by_order:
         return cand_by_order, "EXACT_KEYFRAME_ORDER_FILE"
     elif cand_by_fid:
         return cand_by_fid, "EXACT_PHYSICAL_FRAME_FILE"
@@ -366,6 +368,21 @@ def extract_image_for_frame(
     parity_passed: bool = False,
     runtime: Any = None,
 ) -> TileDecodeResult:
+    # Auto-resolve order and pts from registry if not provided
+    if (keyframe_order is None or keyframe_order <= 0 or pts_time is None or pts_time <= 0) and runtime is not None:
+        try:
+            store = runtime.registry.get_store(video_id)
+            if store is not None:
+                for m in store.mappings:
+                    if m.frame_id == frame_id:
+                        if keyframe_order is None or keyframe_order <= 0:
+                            keyframe_order = getattr(m, "keyframe_order", None)
+                        if pts_time is None or pts_time <= 0:
+                            pts_time = getattr(m, "pts_time", None)
+                        break
+        except Exception:
+            pass
+
     requested_pts = float(pts_time) if pts_time is not None else float(frame_id) / 25.0
 
     # 1. Try Keyframe File (Order n or physical frame_id)
@@ -2160,12 +2177,22 @@ def run_all_5_queries_top100_visual_export(
                     if line.strip():
                         candidates.append(json.loads(line.strip()))
 
+        true_vids = {
+            "p1-1": "L30_V046",
+            "p1-2": "L21_V003",
+            "p1-4": "L22_V021",
+            "p1-5": "L26_V035",
+            "p1-6": "L22_V023",
+        }
+        true_match_vid = true_vids.get(q_short, "")
+
         print(f"  • Top-100 Candidates Loaded: {len(candidates)} records from {top100_path.name}", flush=True)
         print(f"  • Top-10 Frame Preview:", flush=True)
         print(f"    {'Rank':<6} | {'Video ID':<10} | {'Frame ID':<10} | {'PTS (s)':<10} | {'Score':<10} | {'Is Target?'}", flush=True)
         print(f"    {'-'*6} | {'-'*10} | {'-'*10} | {'-'*10} | {'-'*10} | {'-'*10}", flush=True)
         for c in candidates[:10]:
-            is_tgt = "YES ⭐" if c.get("video_id") == target_vid else ("MATCH ⭐ (L22_V021)" if c.get("video_id") == "L22_V021" and q_short == "p1-4" else "No")
+            c_vid = c.get("video_id", "")
+            is_tgt = "YES (GT) ⭐" if c_vid == target_vid else ("TRUE MATCH ⭐ (" + c_vid + ")" if c_vid == true_match_vid else "No")
             pts = float(c.get("pts_time", 0.0) or (c.get("frame_id", 0)/25.0))
             score_val = float(c.get("fusion_score") if "fusion_score" in c else c.get("score", 0.0))
             print(f"    #{c.get('rank', 0):<5} | {c.get('video_id', ''):<10} | f{c.get('frame_id', 0):<9} | {pts:<10.3f} | {score_val:<10.4f} | {is_tgt}", flush=True)
@@ -2192,13 +2219,19 @@ def run_all_5_queries_top100_visual_export(
                     rank = int(cand.get("rank", start_r + idx + 1))
                     score = float(cand.get("fusion_score") if "fusion_score" in cand else cand.get("score", 0.0))
                     pts = float(cand.get("pts_time", 0.0) or 0.0)
-                    if pts <= 0.0:
+                    order = cand.get("keyframe_order")
+
+                    if (order is None or order <= 0 or pts <= 0.0) and runtime is not None:
                         try:
                             store = runtime.registry.get_store(vid)
                             if store is not None:
-                                m = next((m for m in store.mappings if m.frame_id == fid), None)
-                                if m is not None:
-                                    pts = float(m.pts_time)
+                                for m in store.mappings:
+                                    if m.frame_id == fid:
+                                        if order is None or order <= 0:
+                                            order = m.keyframe_order
+                                        if pts <= 0.0:
+                                            pts = float(m.pts_time)
+                                        break
                         except Exception:
                             pass
                     if pts <= 0.0:
@@ -2208,20 +2241,21 @@ def run_all_5_queries_top100_visual_export(
                         dataset_root=input_root,
                         video_id=vid,
                         frame_id=fid,
+                        keyframe_order=order,
                         pts_time=pts,
                         runtime=runtime,
                     )
 
                     is_target = (vid == target_vid)
-                    is_true_cand = (q_short == "p1-4" and vid == "L22_V021")
+                    is_true_cand = (vid == true_match_vid)
 
                     if dec_res.image is not None:
                         ax.imshow(dec_res.image)
                     else:
                         ax.text(0.5, 0.5, f"IMAGE MISSING\n{vid}\nf{fid}", ha="center", va="center", fontsize=8, color="red")
 
-                    header_color = "red" if is_target else ("darkgreen" if is_true_cand else "black")
-                    bg_color = "mistyrose" if is_target else ("honeydew" if is_true_cand else "lightyellow")
+                    header_color = "darkgreen" if is_true_cand else ("red" if is_target else "black")
+                    bg_color = "honeydew" if is_true_cand else ("mistyrose" if is_target else "lightyellow")
                     ax.set_title(
                         f"#{rank} {vid} f{fid}\n{pts:.1f}s | {score:.4f}",
                         fontsize=7,
@@ -2230,9 +2264,9 @@ def run_all_5_queries_top100_visual_export(
                         bbox=dict(boxstyle="round,pad=0.2", fc=bg_color, ec=header_color, lw=1.5 if (is_target or is_true_cand) else 0.5),
                     )
 
-                    if is_target or is_true_cand:
+                    if is_true_cand or is_target:
                         for spine in ax.spines.values():
-                            spine.set_edgecolor("red" if is_target else "green")
+                            spine.set_edgecolor("green" if is_true_cand else "red")
                             spine.set_linewidth(2.0)
                     else:
                         for spine in ax.spines.values():
