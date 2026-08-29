@@ -306,7 +306,7 @@ def find_keyframe_image(
         try:
             if cand_by_order.resolve() != cand_by_fid.resolve():
                 # Distinct files match order vs frame_id -> Ambiguous resolution
-                return None, "AMBIGUOUS_KEYFRAME_RESOLUTION"
+                return None, f"AMBIGUOUS_KEYFRAME_RESOLUTION:order={cand_by_order.name},fid={cand_by_fid.name}"
         except Exception:
             return None, "AMBIGUOUS_KEYFRAME_RESOLUTION"
         return cand_by_order, "EXACT_KEYFRAME_ORDER_FILE"
@@ -370,7 +370,8 @@ def extract_image_for_frame(
 
     # 1. Try Keyframe File (Order n or physical frame_id)
     img_path, kf_rule = find_keyframe_image(dataset_root, video_id, frame_id, keyframe_order, runtime=runtime)
-    if kf_rule == "AMBIGUOUS_KEYFRAME_RESOLUTION":
+    if kf_rule.startswith("AMBIGUOUS_KEYFRAME_RESOLUTION"):
+        resolved_fn = kf_rule.split(":", 1)[1] if ":" in kf_rule else None
         return TileDecodeResult(
             video_id=video_id,
             requested_physical_frame_id=frame_id,
@@ -379,7 +380,7 @@ def extract_image_for_frame(
             resolved_source_type="AMBIGUOUS_KEYFRAME_FILE",
             resolved_path=None,
             resolution_rule="AMBIGUOUS_KEYFRAME_RESOLUTION",
-            resolved_filename=None,
+            resolved_filename=resolved_fn,
             decoded_pts_or_frame_index=None,
             frame_delta=-1,
             pts_delta=-1.0,
@@ -1869,8 +1870,46 @@ def run_p1_2_visual_benchmark_adjudication(
     print(f"  🔒 Saved Sidecar Checksum File    -> {sidecar_path.name} ✅", flush=True)
     print(f"  📝 Saved Human Adjudication File  -> {human_adjudication_path.name} ✅\n", flush=True)
 
+    target_tiles = [t for t in manifest_entries if t.get("tile_type") == "TARGET_KEYFRAME_TILE"]
+    target_exact = sum(1 for t in target_tiles if t.get("resolved_source_type") == "KEYFRAME_FILE" and t.get("integrity_status") == "PASS")
+    target_raw_pts = sum(1 for t in target_tiles if t.get("resolved_source_type") == "RAW_VIDEO_PTS")
+    target_ambiguous = sum(1 for t in target_tiles if "AMBIGUOUS" in t.get("resolution_rule", ""))
+    target_unresolved = sum(1 for t in target_tiles if t.get("resolved_source_type") == "UNRESOLVED")
+    target_integrity_fail = sum(1 for t in target_tiles if t.get("integrity_status") != "PASS")
+
     print("=" * 120)
-    print("MANDATORY_DECODE_COUNTS")
+    print("1. TARGET DECODE INTEGRITY (Video: L29_V018)")
+    print("=" * 120)
+    print(f"  video                              = {target_vid}")
+    print(f"  requested_target_indexed_keyframes = {len(target_tiles)}")
+    print(f"  exact                              = {target_exact}")
+    print(f"  raw_pts                            = {target_raw_pts}")
+    print(f"  ambiguous                          = {target_ambiguous}")
+    print(f"  unresolved                         = {target_unresolved}")
+    print(f"  integrity_fail                     = {target_integrity_fail}")
+    print("=" * 120)
+
+    ambiguous_tiles = [t for t in manifest_entries if "AMBIGUOUS" in t.get("resolution_rule", "") or t.get("integrity_status") != "PASS"]
+
+    print("\n" + "=" * 120)
+    print(f"2. LIST ALL {len(ambiguous_tiles)} AMBIGUITIES / INTEGRITY FAILS")
+    print("=" * 120)
+    print(f"| # | Video ID | Physical Frame | Order (n) | Artifact Scope / Tile Type | Resolution Rule | Filename / Detail | Status |")
+    print(f"| - | -------- | -------------- | --------- | -------------------------- | --------------- | ----------------- | ------ |")
+    for idx, t in enumerate(ambiguous_tiles, start=1):
+        print(
+            f"| {idx:<1} | {t.get('video_id', 'N/A'):<8} "
+            f"| f{str(t.get('requested_physical_frame_id', 'N/A')):<13} "
+            f"| n={str(t.get('requested_keyframe_order', 'N/A')):<6} "
+            f"| {t.get('tile_type', 'N/A'):<26} "
+            f"| {t.get('resolution_rule', 'N/A'):<27} "
+            f"| {str(t.get('resolved_filename', 'N/A')):<17} "
+            f"| {t.get('integrity_status', 'N/A'):<6} |"
+        )
+    print("=" * 120)
+
+    print("\n" + "=" * 120)
+    print("GLOBAL MANDATORY_DECODE_COUNTS (ALL MANDATORY TILES)")
     print(f"  exact_keyframe_file   : {mandatory_exact_keyframe_file} ({(mandatory_exact_keyframe_file/mandatory_requested*100):.1f}%)" if mandatory_requested > 0 else "  exact_keyframe_file   : 0")
     print(f"  raw_video_pts         : {mandatory_raw_video_pts}")
     print(f"  raw_video_frame_index : {mandatory_raw_video_frame_index}")
