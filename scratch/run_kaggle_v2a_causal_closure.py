@@ -674,20 +674,15 @@ def run_p1_2_trace_and_raw_cosine_audit(runtime: OperationalKISRuntime) -> None:
         emb_bytes = emb.astype(np.float32).tobytes()
         checksum = hashlib.sha256(emb_bytes).hexdigest()[:12]
 
-        if v.variant_id == compiled_sq.full_query_variant.variant_id:
-            role_str = "FULL_QUERY"
-            t_idx_str = "None"
-            vi_text = q_vi
+        var_match = next((item for item in compiled_sq.variants if item.query_variant.variant_id == v.variant_id), None)
+        if var_match:
+            role_str = var_match.semantic_role.value
+            t_idx_str = str(var_match.temporal_index)
+            vi_text = var_match.source_vietnamese
         else:
-            scene_match = next((s for s in compiled_sq.temporal_scene_variants if s.query_variant.variant_id == v.variant_id), None)
-            if scene_match:
-                role_str = "TEMPORAL_SCENE"
-                t_idx_str = str(scene_match.temporal_index)
-                vi_text = scene_match.raw_unit.text
-            else:
-                role_str = "SUPPORTING_ATTRIBUTE"
-                t_idx_str = "None"
-                vi_text = "N/A"
+            role_str = "UNKNOWN"
+            t_idx_str = "None"
+            vi_text = "N/A"
 
         hits = maxima.rankings.get(v.variant_id, ())
         hits_by_raw = sorted(hits, key=lambda h: -h.cosine_score)
