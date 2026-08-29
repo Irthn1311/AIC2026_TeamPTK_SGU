@@ -2168,32 +2168,24 @@ def run_all_5_queries_top100_visual_export(
             query_vi=q_text,
         )
 
+        # 1. Print Semantic Decomposition & English Translation Breakdown Directly
+        print(f"  • 🌐 Phân Tích Dịch Thuật & Phân Rã Ngữ Nghĩa (Semantic Decomposition):", flush=True)
+        try:
+            compiled_query = compile_vietnamese_semantic_query(
+                query_id=qid,
+                query_vi=q_text,
+                provider=runtime.translation_provider,
+                token_budget_guard=runtime.token_budget_guard,
+            )
+            for u in compiled_query.units:
+                print(f"    ├─ 🧩 [{u.role.name}]: \"{u.text}\"", flush=True)
+            for v in compiled_query.variants:
+                print(f"    └─ 🇬🇧 [CLIP Variant {v.query_variant.variant_id}] (Weight: {v.query_variant.weight:.2f}, Tokens: {v.clip_token_count}): \"{v.query_variant.text}\"", flush=True)
+        except Exception as e:
+            print(f"    ⚠️ Translation debug: {e}", flush=True)
+
         resp = runtime.handle_query(req)
         artifacts = resp.get("artifacts", {})
-        
-        # 1. Print Semantic Decomposition & English Translation Breakdown
-        trace_rel = artifacts.get("kis_video_first_trace_json")
-        trace_file = (runtime.output_root / trace_rel) if trace_rel else (runtime.output_root / "requests" / req_id / "kis_video_first_trace.json")
-
-        print(f"  • 🌐 Phân Tích Dịch Thuật & Phân Rã Ngữ Nghĩa (Semantic Decomposition):", flush=True)
-        if trace_file.exists():
-            try:
-                trace_data = json.loads(trace_file.read_text(encoding="utf-8"))
-                sem_meta = trace_data.get("semantic_query", {})
-                units = sem_meta.get("units", [])
-                for u in units:
-                    u_role = u.get("role", "UNIT")
-                    u_vi = u.get("text", "")
-                    print(f"    ├─ 🧩 [{u_role}]: \"{u_vi}\"", flush=True)
-                variants = sem_meta.get("variants", [])
-                for v in variants:
-                    v_id = v.get("variant_id", "")
-                    v_en = v.get("text", "")
-                    v_tokens = v.get("clip_token_count", 0)
-                    v_weight = v.get("weight", 1.0)
-                    print(f"    └─ 🇬🇧 [CLIP Variant {v_id}] (Weight: {v_weight:.2f}, Tokens: {v_tokens}): \"{v_en}\"", flush=True)
-            except Exception:
-                pass
 
         # 2. Load candidates with REAL fusion scores from internal CSV
         top100_csv_rel = artifacts.get("refined_top100_csv")
