@@ -273,17 +273,36 @@ class OperationalKISRuntime:
         self.token_budget_guard: Any | None = None
         if config.enable_dynamic_translation:
             from system_tai.translation.provider import (
+                GoogleTranslateProvider,
                 TokenBudgetGuard,
                 VinAITranslateProvider,
             )
 
-            self.translation_provider = VinAITranslateProvider(
-                model_name_or_path=config.translation_model_name,
-                device=config.translation_device,
-                cache_dir=config.translation_cache_dir,
-                allow_model_download=config.translation_allow_model_download,
-                revision=config.translation_revision,
-            )
+            cache_path = None
+            if config.translation_cache_dir:
+                cache_path = Path(config.translation_cache_dir) / "translation_cache.json"
+            elif Path("/kaggle/working").exists():
+                cache_path = Path("/kaggle/working/translation_cache.json")
+            else:
+                cache_path = Path(config.output_root) / "translation_cache.json"
+
+            if (
+                config.translation_model_name == "google-translate"
+                or "google" in config.translation_model_name.lower()
+                or getattr(config, "use_google_translation", False)
+            ):
+                self.translation_provider = GoogleTranslateProvider(
+                    cache_path=cache_path,
+                    enable_network=True,
+                )
+            else:
+                self.translation_provider = VinAITranslateProvider(
+                    model_name_or_path=config.translation_model_name,
+                    device=config.translation_device,
+                    cache_dir=config.translation_cache_dir,
+                    allow_model_download=config.translation_allow_model_download,
+                    revision=config.translation_revision,
+                )
             self.token_budget_guard = TokenBudgetGuard(
                 max_tokens=config.translation_max_clip_tokens
             )
@@ -512,7 +531,7 @@ class OperationalKISRuntime:
         if video_first_enabled:
             if self.translation_provider is None or self.token_budget_guard is None:
                 raise ValueError(
-                    "KIS semantic video-first retrieval requires the VinAI provider"
+                    "KIS semantic video-first retrieval requires a translation provider"
                 )
             if request.query_en or request.query_en_expansion:
                 raise ValueError(

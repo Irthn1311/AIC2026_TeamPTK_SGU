@@ -127,7 +127,7 @@ def create_production_v2a_session_config(
         device="auto",
         allow_model_download=True,
         enable_dynamic_translation=True,
-        translation_model_name="vinai/vinai-translate-vi2en-v2",
+        translation_model_name="google-translate",
         translation_device="auto",
         translation_allow_model_download=True,
         translation_max_clip_tokens=75,

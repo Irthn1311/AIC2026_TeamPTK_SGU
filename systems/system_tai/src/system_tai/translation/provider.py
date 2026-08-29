@@ -28,6 +28,91 @@ class TranslationProvider(Protocol):
     def translate(self, text: str) -> str: ...
 
 
+class GoogleTranslateProvider:
+    """Vietnamese-to-English provider backed by Google Translator with transparent JSON cache."""
+
+    def __init__(
+        self,
+        *,
+        cache_path: Path | str | None = None,
+        enable_network: bool = True,
+    ) -> None:
+        self.cache_path = Path(cache_path) if cache_path else None
+        self.enable_network = enable_network
+        self._cache: dict[str, str] = {}
+        self._translator: Any = None
+        if self.cache_path is not None and self.cache_path.exists():
+            try:
+                import json
+                payload = json.loads(self.cache_path.read_text(encoding="utf-8"))
+                if isinstance(payload, dict):
+                    self._cache = {str(k): str(v) for k, v in payload.items() if str(v).strip()}
+            except Exception as exc:
+                logger.warning("Could not read translation cache %s: %s", self.cache_path, exc)
+
+    @property
+    def provider_name(self) -> str:
+        return "google-translate"
+
+    @property
+    def device(self) -> str:
+        return "cpu"
+
+    def _get_translator(self) -> Any:
+        if self._translator is None and self.enable_network:
+            try:
+                from deep_translator import GoogleTranslator
+                self._translator = GoogleTranslator(source="auto", target="en")
+                logger.info("GoogleTranslator initialized successfully.")
+            except Exception as exc:
+                logger.warning("GoogleTranslator unavailable (%s); using cache or original.", exc)
+        return self._translator
+
+    def translate(self, text: str) -> str:
+        """Translate one Vietnamese string to English."""
+        return self.translate_many((text,))[0]
+
+    def translate_many(self, texts: tuple[str, ...] | list[str]) -> tuple[str, ...]:
+        """Translate a batch of strings with JSON caching."""
+        cleaned = tuple(text.strip() for text in texts)
+        if not cleaned or any(not text for text in cleaned):
+            raise TranslationError("Cannot translate an empty batch or whitespace-only text")
+
+        translator = self._get_translator()
+        results: list[str] = []
+        cache_updated = False
+
+        for q in cleaned:
+            if q in self._cache and self._cache[q].strip():
+                results.append(self._cache[q].strip())
+                continue
+            if translator is not None:
+                try:
+                    translated = str(translator.translate(q) or "").strip()
+                    if translated:
+                        self._cache[q] = translated
+                        cache_updated = True
+                        results.append(translated)
+                        continue
+                except Exception as exc:
+                    logger.debug("Google translation error for %r: %s", q, exc)
+
+            results.append(q)
+
+        if cache_updated and self.cache_path is not None:
+            try:
+                import json
+                self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+                self.cache_path.write_text(
+                    json.dumps(self._cache, ensure_ascii=False, indent=2, sort_keys=True),
+                    encoding="utf-8",
+                )
+            except Exception as exc:
+                logger.debug("Could not write translation cache to %s: %s", self.cache_path, exc)
+
+        return tuple(results)
+
+
 class VinAITranslateProvider:
     """Vietnamese-to-English provider backed by VinAI Translate v2.
 

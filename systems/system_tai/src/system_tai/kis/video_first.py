@@ -899,36 +899,34 @@ def fuse_restricted_frames(
         key=lambda c: (-c.score, c.video_id, c.frame_id),
     )
 
-    # Apply temporal suppression / diversity if configured
-    if min_frame_gap > 0 or max_candidates_per_video is not None:
-        selected_candidates: list[CandidateFrame] = []
-        selected_frames: dict[str, list[int]] = {}
-        selected_counts: dict[str, int] = {}
-        for cand in enriched_sorted:
-            vid = cand.video_id
-            if (
-                max_candidates_per_video is not None
-                and selected_counts.get(vid, 0) >= max_candidates_per_video
+    # Two-Stage Decoupled Frame Localization (Precision Top Selection + Recall Tail Fill)
+    primary_candidates: list[CandidateFrame] = []
+    secondary_candidates: list[CandidateFrame] = []
+    video_primary_counts: dict[str, int] = {}
+    selected_frames: dict[str, list[int]] = {}
+
+    for cand in enriched_sorted:
+        vid = cand.video_id
+        is_chain_winner = cand.diagnostic_metadata.get("is_temporal_chain_winner", False)
+        max_primary_for_vid = 2 if is_chain_winner else 1
+
+        # Temporal suppression for non-chain winners
+        if not is_chain_winner and min_frame_gap > 0:
+            if any(
+                abs(cand.frame_id - existing) < min_frame_gap
+                for existing in selected_frames.get(vid, [])
             ):
                 continue
-            is_chain_winner = cand.diagnostic_metadata.get(
-                "is_temporal_chain_winner", False
-            )
-            # If not a chain winner, enforce minimum frame gap within the same video
-            if not is_chain_winner and min_frame_gap > 0:
-                if any(
-                    abs(cand.frame_id - existing) < min_frame_gap
-                    for existing in selected_frames.get(vid, [])
-                ):
-                    continue
-            selected_candidates.append(cand)
+
+        if video_primary_counts.get(vid, 0) < max_primary_for_vid:
+            primary_candidates.append(cand)
             selected_frames.setdefault(vid, []).append(cand.frame_id)
-            selected_counts[vid] = selected_counts.get(vid, 0) + 1
-            if len(selected_candidates) >= output_top_k:
-                break
-        final_candidates = selected_candidates
-    else:
-        final_candidates = enriched_sorted[:output_top_k]
+            video_primary_counts[vid] = video_primary_counts.get(vid, 0) + 1
+        else:
+            secondary_candidates.append(cand)
+            selected_frames.setdefault(vid, []).append(cand.frame_id)
+
+    final_candidates = (primary_candidates + secondary_candidates)[:output_top_k]
 
     reranked = tuple(
         CandidateFrame(
