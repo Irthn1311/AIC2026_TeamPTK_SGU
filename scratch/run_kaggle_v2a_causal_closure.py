@@ -2146,7 +2146,12 @@ def run_all_5_queries_top100_visual_export(
         )
 
         resp = runtime.handle_query(req)
-        top100_path = Path(resp["final_prediction_artifact"])
+        artifacts = resp.get("artifacts", {})
+        rel_top100 = artifacts.get("refined_top100_jsonl") or artifacts.get("top100_jsonl")
+        if rel_top100:
+            top100_path = runtime.output_root / rel_top100
+        else:
+            top100_path = runtime.output_root / "requests" / req_id / "top100.jsonl"
 
         candidates = []
         if top100_path.exists():
@@ -2155,14 +2160,15 @@ def run_all_5_queries_top100_visual_export(
                     if line.strip():
                         candidates.append(json.loads(line.strip()))
 
-        print(f"  • Top-100 Candidates Loaded: {len(candidates)} records", flush=True)
+        print(f"  • Top-100 Candidates Loaded: {len(candidates)} records from {top100_path.name}", flush=True)
         print(f"  • Top-10 Frame Preview:", flush=True)
         print(f"    {'Rank':<6} | {'Video ID':<10} | {'Frame ID':<10} | {'PTS (s)':<10} | {'Score':<10} | {'Is Target?'}", flush=True)
         print(f"    {'-'*6} | {'-'*10} | {'-'*10} | {'-'*10} | {'-'*10} | {'-'*10}", flush=True)
         for c in candidates[:10]:
             is_tgt = "YES ⭐" if c.get("video_id") == target_vid else ("MATCH ⭐ (L22_V021)" if c.get("video_id") == "L22_V021" and q_short == "p1-4" else "No")
             pts = float(c.get("pts_time", 0.0) or (c.get("frame_id", 0)/25.0))
-            print(f"    #{c.get('rank', 0):<5} | {c.get('video_id', ''):<10} | f{c.get('frame_id', 0):<9} | {pts:<10.3f} | {c.get('score', 0.0):<10.4f} | {is_tgt}", flush=True)
+            score_val = float(c.get("fusion_score") if "fusion_score" in c else c.get("score", 0.0))
+            print(f"    #{c.get('rank', 0):<5} | {c.get('video_id', ''):<10} | f{c.get('frame_id', 0):<9} | {pts:<10.3f} | {score_val:<10.4f} | {is_tgt}", flush=True)
 
         # Render Page 1 (Rank 1-50) and Page 2 (Rank 51-100)
         for page_idx, (start_r, end_r) in enumerate([(0, 50), (50, 100)], start=1):
@@ -2184,8 +2190,19 @@ def run_all_5_queries_top100_visual_export(
                     vid = cand.get("video_id", "")
                     fid = int(cand.get("frame_id", 0))
                     rank = int(cand.get("rank", start_r + idx + 1))
-                    score = float(cand.get("score", 0.0))
-                    pts = float(cand.get("pts_time", 0.0) or (fid / 25.0))
+                    score = float(cand.get("fusion_score") if "fusion_score" in cand else cand.get("score", 0.0))
+                    pts = float(cand.get("pts_time", 0.0) or 0.0)
+                    if pts <= 0.0:
+                        try:
+                            store = runtime.registry.get_store(vid)
+                            if store is not None:
+                                m = next((m for m in store.mappings if m.frame_id == fid), None)
+                                if m is not None:
+                                    pts = float(m.pts_time)
+                        except Exception:
+                            pass
+                    if pts <= 0.0:
+                        pts = float(fid) / 25.0
 
                     dec_res = extract_image_for_frame(
                         dataset_root=input_root,
