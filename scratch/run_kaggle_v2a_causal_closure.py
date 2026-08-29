@@ -267,6 +267,10 @@ def build_global_dataset_index(dataset_root: Path) -> None:
     )
 
 
+DECLARED_PTS_TOLERANCE_SECONDS: float = 0.500
+EXACT_FILE_AMBIGUITY_POLICY: str = "FAIL"
+
+
 def find_keyframe_image(
     dataset_root: Path,
     video_id: str,
@@ -274,7 +278,7 @@ def find_keyframe_image(
     keyframe_order: int | None = None,
     runtime: Any = None,
 ) -> tuple[Path | None, str]:
-    """Scoped keyframe file resolution with exact provenance tracking.
+    """Scoped keyframe file resolution with ambiguity detection and exact provenance tracking.
 
     Returns (path, resolution_rule).
     """
@@ -298,7 +302,8 @@ def find_keyframe_image(
             if d not in scoped_dirs:
                 scoped_dirs.append(d)
 
-    # 2. Rule 1: Exact Keyframe Order (n) in BTC mapping
+    # 2. Test exact keyframe order match (n)
+    cand_by_order: Path | None = None
     if keyframe_order is not None and keyframe_order > 0:
         order_names = [
             f"{keyframe_order:06d}.jpg",
@@ -317,9 +322,13 @@ def find_keyframe_image(
             for name in order_names:
                 cand = sdir / name
                 if cand.is_file():
-                    return cand, "EXACT_KEYFRAME_ORDER_FILE"
+                    cand_by_order = cand
+                    break
+            if cand_by_order:
+                break
 
-    # 3. Rule 2: Exact Physical Frame ID in mapping
+    # 3. Test exact physical frame ID match (frame_id)
+    cand_by_fid: Path | None = None
     fid_names = [
         f"{frame_id:06d}.jpg",
         f"{frame_id:05d}.jpg",
@@ -337,7 +346,24 @@ def find_keyframe_image(
         for name in fid_names:
             cand = sdir / name
             if cand.is_file():
-                return cand, "EXACT_PHYSICAL_FRAME_FILE"
+                cand_by_fid = cand
+                break
+        if cand_by_fid:
+            break
+
+    # 4. Ambiguity Evaluation
+    if cand_by_order and cand_by_fid:
+        try:
+            if cand_by_order.resolve() != cand_by_fid.resolve():
+                # Distinct files match order vs frame_id -> Ambiguous resolution
+                return None, "AMBIGUOUS_KEYFRAME_RESOLUTION"
+        except Exception:
+            return None, "AMBIGUOUS_KEYFRAME_RESOLUTION"
+        return cand_by_order, "EXACT_KEYFRAME_ORDER_FILE"
+    elif cand_by_order:
+        return cand_by_order, "EXACT_KEYFRAME_ORDER_FILE"
+    elif cand_by_fid:
+        return cand_by_fid, "EXACT_PHYSICAL_FRAME_FILE"
 
     return None, "UNRESOLVED"
 
@@ -390,6 +416,23 @@ def extract_image_for_frame(
 
     # 1. Try Keyframe File (Order n or physical frame_id)
     img_path, kf_rule = find_keyframe_image(dataset_root, video_id, frame_id, keyframe_order, runtime=runtime)
+    if kf_rule == "AMBIGUOUS_KEYFRAME_RESOLUTION":
+        return TileDecodeResult(
+            video_id=video_id,
+            requested_physical_frame_id=frame_id,
+            requested_pts=requested_pts,
+            requested_keyframe_order=keyframe_order,
+            resolved_source_type="AMBIGUOUS_KEYFRAME_FILE",
+            resolved_path=None,
+            resolution_rule="AMBIGUOUS_KEYFRAME_RESOLUTION",
+            resolved_filename=None,
+            decoded_pts_or_frame_index=None,
+            frame_delta=-1,
+            pts_delta=-1.0,
+            integrity_status="FAIL",
+            image=None,
+        )
+
     if img_path and img_path.is_file():
         try:
             img = Image.open(img_path)
@@ -428,6 +471,7 @@ def extract_image_for_frame(
                         pts_delta = abs(actual_pts - pts_time)
                         rgb = cv2.cvtColor(f, cv2.COLOR_BGR2RGB)
                         cap.release()
+                        pts_integrity_pass = (pts_delta <= DECLARED_PTS_TOLERANCE_SECONDS)
                         return TileDecodeResult(
                             video_id=video_id,
                             requested_physical_frame_id=frame_id,
@@ -440,7 +484,7 @@ def extract_image_for_frame(
                             decoded_pts_or_frame_index=actual_pts,
                             frame_delta=0,
                             pts_delta=pts_delta,
-                            integrity_status="PASS",
+                            integrity_status="PASS" if pts_integrity_pass else "FAIL",
                             image=Image.fromarray(rgb),
                         )
 
@@ -1164,6 +1208,7 @@ def run_p1_2_visual_benchmark_adjudication(
     mandatory_raw_video_pts = 0
     mandatory_raw_video_frame_index = 0
     mandatory_unresolved = 0
+    mandatory_ambiguous = 0
     mandatory_integrity_fail = 0
 
     optional_requested = 0
@@ -1171,7 +1216,15 @@ def run_p1_2_visual_benchmark_adjudication(
     optional_raw_video_pts = 0
     optional_raw_video_frame_index = 0
     optional_unresolved = 0
+    optional_ambiguous = 0
     optional_integrity_fail = 0
+
+    print("=" * 120, flush=True)
+    print("DECODE_INTEGRITY_POLICY", flush=True)
+    print(f"  exact_file_ambiguity_policy   = {EXACT_FILE_AMBIGUITY_POLICY}", flush=True)
+    print(f"  raw_video_pts_tolerance       = <= {DECLARED_PTS_TOLERANCE_SECONDS:.3f}s", flush=True)
+    print(f"  raw_video_frame_index_allowed = False (Guarded strictly by source<->mapping parity)", flush=True)
+    print("=" * 120 + "\n", flush=True)
 
     all_mappings = store.mappings
     total_kfs = len(all_mappings)
@@ -1201,7 +1254,7 @@ def run_p1_2_visual_benchmark_adjudication(
             if m:
                 sample_mappings.append(m)
 
-    print("• [A0] 10-Record Mapping Sanity Sample (Target Video L29_V018 Trace):", flush=True)
+    print("• [A0] TARGET_MAPPING_SANITY_SAMPLE (Target Video L29_V018 Trace):", flush=True)
     print("=" * 120, flush=True)
     print("| #  | Physical Frame | Order (n) | PTS (s) | Source Type    | Resolution Rule           | Resolved Filename | Status |", flush=True)
     print("| -- | -------------- | --------- | ------- | -------------- | ------------------------- | ----------------- | ------ |", flush=True)
@@ -1261,6 +1314,8 @@ def run_p1_2_visual_benchmark_adjudication(
                 mandatory_raw_video_pts += 1
             elif dec_res.resolved_source_type == "RAW_VIDEO_FRAME_INDEX":
                 mandatory_raw_video_frame_index += 1
+            elif dec_res.resolved_source_type == "AMBIGUOUS_KEYFRAME_FILE":
+                mandatory_ambiguous += 1
             elif dec_res.resolved_source_type == "UNRESOLVED":
                 mandatory_unresolved += 1
 
@@ -1355,6 +1410,8 @@ def run_p1_2_visual_benchmark_adjudication(
             optional_raw_video_pts += 1
         elif dec_res.resolved_source_type == "RAW_VIDEO_FRAME_INDEX":
             optional_raw_video_frame_index += 1
+        elif dec_res.resolved_source_type == "AMBIGUOUS_KEYFRAME_FILE":
+            optional_ambiguous += 1
         elif dec_res.resolved_source_type == "UNRESOLVED":
             optional_unresolved += 1
 
@@ -1568,6 +1625,8 @@ def run_p1_2_visual_benchmark_adjudication(
                     optional_raw_video_pts += 1
                 elif dec_res.resolved_source_type == "RAW_VIDEO_FRAME_INDEX":
                     optional_raw_video_frame_index += 1
+                elif dec_res.resolved_source_type == "AMBIGUOUS_KEYFRAME_FILE":
+                    optional_ambiguous += 1
                 elif dec_res.resolved_source_type == "UNRESOLVED":
                     optional_unresolved += 1
 
@@ -1626,6 +1685,8 @@ def run_p1_2_visual_benchmark_adjudication(
                     optional_raw_video_pts += 1
                 elif dec_res.resolved_source_type == "RAW_VIDEO_FRAME_INDEX":
                     optional_raw_video_frame_index += 1
+                elif dec_res.resolved_source_type == "AMBIGUOUS_KEYFRAME_FILE":
+                    optional_ambiguous += 1
                 elif dec_res.resolved_source_type == "UNRESOLVED":
                     optional_unresolved += 1
 
@@ -1684,6 +1745,8 @@ def run_p1_2_visual_benchmark_adjudication(
                     mandatory_raw_video_pts += 1
                 elif dec_res.resolved_source_type == "RAW_VIDEO_FRAME_INDEX":
                     mandatory_raw_video_frame_index += 1
+                elif dec_res.resolved_source_type == "AMBIGUOUS_KEYFRAME_FILE":
+                    mandatory_ambiguous += 1
                 elif dec_res.resolved_source_type == "UNRESOLVED":
                     mandatory_unresolved += 1
 
@@ -1750,7 +1813,7 @@ def run_p1_2_visual_benchmark_adjudication(
     if cand_sheet_path.exists():
         artifact_checksums[cand_sheet_path.name] = hashlib.sha256(cand_sheet_path.read_bytes()).hexdigest()
 
-    is_incomplete = (mandatory_unresolved > 0 or mandatory_integrity_fail > 0)
+    is_incomplete = (mandatory_unresolved > 0 or mandatory_ambiguous > 0 or mandatory_integrity_fail > 0)
     visual_evidence_status = "VISUAL_EVIDENCE_INCOMPLETE ⚠️" if is_incomplete else "VISUAL_EVIDENCE_AVAILABLE_FOR_HUMAN_ADJUDICATION ✅"
 
     # 1. Immutable Machine Visual Evidence Manifest
@@ -1760,22 +1823,30 @@ def run_p1_2_visual_benchmark_adjudication(
         "locked_gt_frame": locked_gt_frame,
         "visual_evidence_status": visual_evidence_status,
         "provenance_description": "Immutable machine evidence recording rendered keyframe tiles, strict decode resolution types, and artifact SHA256 hashes.",
+        "decode_integrity_policy": {
+            "exact_file_ambiguity_policy": EXACT_FILE_AMBIGUITY_POLICY,
+            "raw_video_pts_tolerance_seconds": DECLARED_PTS_TOLERANCE_SECONDS,
+            "raw_video_frame_index_allowed": False,
+        },
         "decode_statistics": {
             "mandatory_requested": mandatory_requested,
             "mandatory_exact_keyframe_file": mandatory_exact_keyframe_file,
             "mandatory_raw_video_pts": mandatory_raw_video_pts,
             "mandatory_raw_video_frame_index": mandatory_raw_video_frame_index,
             "mandatory_unresolved": mandatory_unresolved,
+            "mandatory_ambiguous": mandatory_ambiguous,
             "mandatory_integrity_fail": mandatory_integrity_fail,
             "optional_requested": optional_requested,
             "optional_exact_keyframe_file": optional_exact_keyframe_file,
             "optional_raw_video_pts": optional_raw_video_pts,
             "optional_raw_video_frame_index": optional_raw_video_frame_index,
             "optional_unresolved": optional_unresolved,
+            "optional_ambiguous": optional_ambiguous,
             "optional_integrity_fail": optional_integrity_fail,
             "total_requested": mandatory_requested + optional_requested,
             "total_resolved": mandatory_exact_keyframe_file + mandatory_raw_video_pts + mandatory_raw_video_frame_index + optional_exact_keyframe_file + optional_raw_video_pts + optional_raw_video_frame_index,
             "total_unresolved": mandatory_unresolved + optional_unresolved,
+            "total_ambiguous": mandatory_ambiguous + optional_ambiguous,
         },
         "artifact_sha256_checksums": artifact_checksums,
         "candidate_discovery_summary": [
@@ -1845,26 +1916,19 @@ def run_p1_2_visual_benchmark_adjudication(
     print(f"  📝 Saved Human Adjudication File  -> {human_adjudication_path.name} ✅\n", flush=True)
 
     print("=" * 120)
-    print("• Visual Artifact & Decode Resolution Summary for P1-2:")
-    print(f"  - Mandatory Tiles Requested         : {mandatory_requested}")
-    print(f"  - Mandatory Exact Keyframe Files    : {mandatory_exact_keyframe_file} ({(mandatory_exact_keyframe_file/mandatory_requested*100):.1f}%)" if mandatory_requested > 0 else "  - Mandatory Exact Keyframe Files: 0")
-    print(f"  - Mandatory Raw Video PTS Decoded   : {mandatory_raw_video_pts}")
-    print(f"  - Mandatory Raw Video Frame Index   : {mandatory_raw_video_frame_index}")
-    print(f"  - Mandatory Unresolved              : {mandatory_unresolved}")
-    print(f"  - Mandatory Integrity Fails         : {mandatory_integrity_fail}")
-    print(f"  - Optional Tiles Requested          : {optional_requested}")
-    print(f"  - Optional Exact Keyframe Files     : {optional_exact_keyframe_file}")
-    print(f"  - Optional Raw Video PTS Decoded    : {optional_raw_video_pts}")
-    print(f"  - Optional Raw Video Frame Index    : {optional_raw_video_frame_index}")
-    print(f"  - Optional Unresolved               : {optional_unresolved}")
-    print(f"  - Optional Integrity Fails          : {optional_integrity_fail}")
-    print(f"  - Visual Evidence Status            : {visual_evidence_status}")
+    print("MANDATORY_DECODE_COUNTS")
+    print(f"  exact_keyframe_file   : {mandatory_exact_keyframe_file} ({(mandatory_exact_keyframe_file/mandatory_requested*100):.1f}%)" if mandatory_requested > 0 else "  exact_keyframe_file   : 0")
+    print(f"  raw_video_pts         : {mandatory_raw_video_pts}")
+    print(f"  raw_video_frame_index : {mandatory_raw_video_frame_index}")
+    print(f"  unresolved            : {mandatory_unresolved}")
+    print(f"  ambiguous             : {mandatory_ambiguous}")
+    print(f"  integrity_fail        : {mandatory_integrity_fail}")
+    print(f"\nVISUAL_EVIDENCE_STATUS = {visual_evidence_status}")
     print("-" * 120)
-    print("• Sidecar Provenance Verification:")
-    print(f"  * EVIDENCE_MANIFEST_SHA256            : {evidence_sha}")
-    print(f"  * SIDECAR_SHA256                      : {sidecar_sha}")
-    print(f"  * RECOMPUTED_EVIDENCE_MANIFEST_SHA256 : {recomputed_sha}")
-    print(f"  * SIDECAR_VERIFICATION                : {'PASS ✅' if sidecar_verified else 'FAIL ❌'}")
+    print(f"EVIDENCE_MANIFEST_SHA256 = {evidence_sha}")
+    print(f"SIDECAR_SHA256           = {sidecar_sha}")
+    print(f"RECOMPUTED_SHA256        = {recomputed_sha}")
+    print(f"SIDECAR_VERIFICATION     = {'PASS ✅' if sidecar_verified else 'FAIL ❌'}")
     print("-" * 120)
     print("• Final Artifact File Paths & SHA256 Checksums:")
     for fname, sha in artifact_checksums.items():
