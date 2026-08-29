@@ -212,61 +212,6 @@ class TileDecodeResult:
         }
 
 
-_GLOBAL_DIR_CACHE: dict[str, list[Path]] | None = None
-_GLOBAL_FILE_CACHE: dict[str, list[Path]] | None = None
-
-
-def build_global_dataset_index(dataset_root: Path) -> None:
-    global _GLOBAL_DIR_CACHE, _GLOBAL_FILE_CACHE
-    if _GLOBAL_DIR_CACHE is not None:
-        return
-    _GLOBAL_DIR_CACHE = {}
-    _GLOBAL_FILE_CACHE = {}
-
-    roots = [dataset_root]
-    if Path("/kaggle/input").exists():
-        roots.append(Path("/kaggle/input"))
-    if REPO_ROOT.exists():
-        roots.append(REPO_ROOT)
-
-    indexed_dirs = 0
-    indexed_files = 0
-    keyframe_dirs_count = 0
-    raw_videos_count = 0
-    t0 = time.time()
-    for r in roots:
-        if not r.exists():
-            continue
-        try:
-            for root, dirs, files in os.walk(r):
-                root_path = Path(root)
-                d_name = root_path.name.casefold()
-                _GLOBAL_DIR_CACHE.setdefault(d_name, []).append(root_path)
-                indexed_dirs += 1
-
-                has_img = False
-                for f in files:
-                    f_lower = f.casefold()
-                    _GLOBAL_FILE_CACHE.setdefault(f_lower, []).append(root_path / f)
-                    indexed_files += 1
-                    if f_lower.endswith((".jpg", ".jpeg", ".png", ".webp")):
-                        has_img = True
-                    if f_lower.endswith((".mp4", ".mkv", ".avi", ".mov", ".ts")):
-                        raw_videos_count += 1
-
-                if has_img:
-                    keyframe_dirs_count += 1
-        except Exception as exc:
-            print(f"[Warning] Error during global dataset indexing: {exc}", flush=True)
-
-    print(
-        f"• Global Dataset Index Built in {time.time() - t0:.2f}s: "
-        f"{len(_GLOBAL_DIR_CACHE)} unique dirnames ({indexed_dirs} visited, {keyframe_dirs_count} with keyframes), "
-        f"{len(_GLOBAL_FILE_CACHE)} unique filenames ({indexed_files} visited, {raw_videos_count} raw video matches).",
-        flush=True,
-    )
-
-
 DECLARED_PTS_TOLERANCE_SECONDS: float = 0.500
 EXACT_FILE_AMBIGUITY_POLICY: str = "FAIL"
 
@@ -282,8 +227,6 @@ def find_keyframe_image(
 
     Returns (path, resolution_rule).
     """
-    build_global_dataset_index(dataset_root)
-
     # 1. Candidate Directories strictly scoped to video_id
     scoped_dirs: list[Path] = []
     if runtime is not None and hasattr(runtime, "manifest") and runtime.manifest is not None:
@@ -296,11 +239,18 @@ def find_keyframe_image(
                         scoped_dirs.append(pk)
                 break
 
-    vid_lower = video_id.casefold()
-    if _GLOBAL_DIR_CACHE and vid_lower in _GLOBAL_DIR_CACHE:
-        for d in _GLOBAL_DIR_CACHE[vid_lower]:
-            if d not in scoped_dirs:
-                scoped_dirs.append(d)
+    if not scoped_dirs:
+        standard_candidates = [
+            dataset_root / "keyframes" / video_id,
+            dataset_root / "Keyframes" / video_id,
+            dataset_root / video_id,
+            Path("/kaggle/input") / "keyframes" / video_id,
+            Path("/kaggle/input") / "Keyframes" / video_id,
+            Path("/kaggle/input") / video_id,
+        ]
+        for p in standard_candidates:
+            if p.is_dir() and p not in scoped_dirs:
+                scoped_dirs.append(p)
 
     # 2. Test exact keyframe order match (n)
     cand_by_order: Path | None = None
@@ -389,15 +339,19 @@ def find_source_video_file(
                     if rv and Path(rv).is_file():
                         return Path(rv)
 
-    # 2. Check global file cache
-    build_global_dataset_index(dataset_root)
-    vid_lower = video_id.casefold()
-    for ext in ("mp4", "mkv", "avi", "mov", "ts"):
-        target_name = f"{vid_lower}.{ext}"
-        if _GLOBAL_FILE_CACHE and target_name in _GLOBAL_FILE_CACHE:
-            files = _GLOBAL_FILE_CACHE[target_name]
-            if files and files[0].is_file():
-                return files[0]
+    # 2. Check standard layout paths
+    for ext in ("mp4", "mkv", "avi", "mov", "ts", "MP4"):
+        candidates = [
+            dataset_root / "videos" / f"{video_id}.{ext}",
+            dataset_root / "video" / f"{video_id}.{ext}",
+            dataset_root / "raw_videos" / f"{video_id}.{ext}",
+            dataset_root / f"{video_id}.{ext}",
+            Path("/kaggle/input") / "videos" / f"{video_id}.{ext}",
+            Path("/kaggle/input") / "raw_videos" / f"{video_id}.{ext}",
+        ]
+        for c in candidates:
+            if c.is_file():
+                return c
 
     return None
 
