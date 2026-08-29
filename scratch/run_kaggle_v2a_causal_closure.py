@@ -355,6 +355,14 @@ def find_source_video_file(
             if c.is_file():
                 return c
 
+    # 3. Dynamic recursive search across dataset root and /kaggle/input
+    for root_p in [dataset_root, Path("/kaggle/input")]:
+        if root_p.is_dir():
+            for ext in ("mp4", "mkv", "avi", "mov", "ts", "MP4"):
+                for match_file in root_p.glob(f"**/{video_id}.{ext}"):
+                    if match_file.is_file():
+                        return match_file
+
     return None
 
 
