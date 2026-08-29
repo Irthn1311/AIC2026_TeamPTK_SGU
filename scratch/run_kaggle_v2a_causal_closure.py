@@ -493,8 +493,8 @@ def main() -> None:
     parser.add_argument(
         "--sections",
         type=str,
-        default="coverage,p1-2,p1-4",
-        help="Comma-separated sections to run: coverage, p1-2, p1-4, p1-5, p1-6 or 'all' (default: coverage,p1-2,p1-4)",
+        default="coverage,p1-2,p1-4,top100",
+        help="Comma-separated sections to run: coverage, p1-2, p1-4, top100 or 'all' (default: coverage,p1-2,p1-4,top100)",
     )
     args, _ = parser.parse_known_args()
     selected_sections = [s.strip().lower() for s in args.sections.split(",") if s.strip()]
@@ -549,10 +549,14 @@ def main() -> None:
     if run_all or "p1-4" in selected_sections or "p1_4" in selected_sections:
         run_p1_4_real_image_adjudication(runtime, input_root, base_out, coverage_results)
 
-    # 4. PRINT FINAL UNIFIED SUMMARY TABLE
+    # 4. FULL TOP-100 VISUAL CONTACT SHEET EXPORT FOR ALL 5 FOCUS QUERIES (50 frames x 2 pages / query)
+    if run_all or "top100" in selected_sections:
+        run_all_5_queries_top100_visual_export(runtime, input_root, base_out, coverage_results)
+
+    # 5. PRINT FINAL UNIFIED SUMMARY TABLE
     print_final_summary_table(coverage_results)
 
-    # 5. PACKAGE ALL VISUAL EVIDENCE ARTIFACTS INTO A SINGLE ZIP ARCHIVE
+    # 6. PACKAGE ALL VISUAL EVIDENCE ARTIFACTS INTO A SINGLE ZIP ARCHIVE
     zip_dest = Path("/kaggle/working/v2a3_visual_evidence_package") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "v2a3_visual_evidence_package"
     try:
         shutil.make_archive(str(zip_dest), "zip", base_out)
@@ -2098,6 +2102,139 @@ def run_p1_4_real_image_adjudication(
     else:
         print("  - Visual Status: IMAGES UNAVAILABLE ON RUNNER DISK (SEMANTIC_ADJUDICATION = UNRESOLVED) ⚠️")
         print("  - Strict Causal Statement: Monotonicity of timestamps confirmed mathematically (T1 < T2), but visual semantic validity remains UNRESOLVED.")
+    print("=" * 120 + "\n", flush=True)
+
+
+# ==============================================================================
+# SECTION 3.5: FULL TOP-100 VISUAL CONTACT SHEET EXPORT (ALL 5 FOCUS QUERIES)
+# ==============================================================================
+def run_all_5_queries_top100_visual_export(
+    runtime: OperationalKISRuntime,
+    input_root: Path,
+    base_out: Path,
+    coverage_results: dict[str, dict],
+) -> None:
+    print("=" * 120, flush=True)
+    print("3.5 FULL TOP-100 VISUAL CONTACT SHEET EXPORT (ALL 5 FOCUS QUERIES: 50 FRAMES x 2 PAGES / QUERY)", flush=True)
+    print("=" * 120, flush=True)
+
+    manifest_path, manifest_sha, manifest_queries = load_canonical_frozen_manifest()
+    query_order = ["p1-1", "p1-2", "p1-4", "p1-5", "p1-6"]
+
+    for q_short in query_order:
+        q_data = manifest_queries.get(q_short)
+        if not q_data:
+            continue
+        qid = q_data["query_id"]
+        q_text = q_data["query_vi"]
+        target_vid = q_data.get("target_video", "")
+        locked_gt = q_data.get("locked_gt_frame", 0)
+
+        print(f"\n──────────────────────────────────────────────────────────────────────────────────────────────────", flush=True)
+        print(f"• Processing Query [{q_short}] ({qid}) | Target: {target_vid} (GT Frame: {locked_gt})", flush=True)
+        print(f"  VI Text: \"{q_text}\"", flush=True)
+        print(f"──────────────────────────────────────────────────────────────────────────────────────────────────", flush=True)
+
+        req_id = f"audit-top100-{q_short}"
+        if req_id in runtime._seen_request_ids:
+            req_id = f"audit-top100-{q_short}-{uuid.uuid4().hex[:4]}"
+
+        req = QueryRequest(
+            request_id=req_id,
+            query_id=qid,
+            query_vi=q_text,
+        )
+
+        resp = runtime.handle_query(req)
+        top100_path = Path(resp["final_prediction_artifact"])
+
+        candidates = []
+        if top100_path.exists():
+            with top100_path.open("r", encoding="utf-8") as f:
+                for line in f:
+                    if line.strip():
+                        candidates.append(json.loads(line.strip()))
+
+        print(f"  • Top-100 Candidates Loaded: {len(candidates)} records", flush=True)
+        print(f"  • Top-10 Frame Preview:", flush=True)
+        print(f"    {'Rank':<6} | {'Video ID':<10} | {'Frame ID':<10} | {'PTS (s)':<10} | {'Score':<10} | {'Is Target?'}", flush=True)
+        print(f"    {'-'*6} | {'-'*10} | {'-'*10} | {'-'*10} | {'-'*10} | {'-'*10}", flush=True)
+        for c in candidates[:10]:
+            is_tgt = "YES ⭐" if c.get("video_id") == target_vid else ("MATCH ⭐ (L22_V021)" if c.get("video_id") == "L22_V021" and q_short == "p1-4" else "No")
+            pts = float(c.get("pts_time", 0.0) or (c.get("frame_id", 0)/25.0))
+            print(f"    #{c.get('rank', 0):<5} | {c.get('video_id', ''):<10} | f{c.get('frame_id', 0):<9} | {pts:<10.3f} | {c.get('score', 0.0):<10.4f} | {is_tgt}", flush=True)
+
+        # Render Page 1 (Rank 1-50) and Page 2 (Rank 51-100)
+        for page_idx, (start_r, end_r) in enumerate([(0, 50), (50, 100)], start=1):
+            page_cands = candidates[start_r:end_r]
+            if not page_cands:
+                continue
+
+            fig, axes = plt.subplots(5, 10, figsize=(26, 14), dpi=100)
+            fig.suptitle(
+                f"Top-100 Keyframes: Query [{q_short}] ({qid}) — Page {page_idx} (Rank #{start_r+1} to #{end_r})\nQuery: {q_text[:110]}...",
+                fontsize=11, fontweight="bold", y=0.99
+            )
+            axes_flat = axes.flatten()
+
+            for idx in range(50):
+                ax = axes_flat[idx]
+                if idx < len(page_cands):
+                    cand = page_cands[idx]
+                    vid = cand.get("video_id", "")
+                    fid = int(cand.get("frame_id", 0))
+                    rank = int(cand.get("rank", start_r + idx + 1))
+                    score = float(cand.get("score", 0.0))
+                    pts = float(cand.get("pts_time", 0.0) or (fid / 25.0))
+
+                    dec_res = extract_image_for_frame(
+                        dataset_root=input_root,
+                        video_id=vid,
+                        frame_id=fid,
+                        pts_time=pts,
+                        runtime=runtime,
+                    )
+
+                    is_target = (vid == target_vid)
+                    is_true_cand = (q_short == "p1-4" and vid == "L22_V021")
+
+                    if dec_res.image is not None:
+                        ax.imshow(dec_res.image)
+                    else:
+                        ax.text(0.5, 0.5, f"IMAGE MISSING\n{vid}\nf{fid}", ha="center", va="center", fontsize=8, color="red")
+
+                    header_color = "red" if is_target else ("darkgreen" if is_true_cand else "black")
+                    bg_color = "mistyrose" if is_target else ("honeydew" if is_true_cand else "lightyellow")
+                    ax.set_title(
+                        f"#{rank} {vid} f{fid}\n{pts:.1f}s | {score:.4f}",
+                        fontsize=7,
+                        color=header_color,
+                        fontweight="bold" if (is_target or is_true_cand) else "normal",
+                        bbox=dict(boxstyle="round,pad=0.2", fc=bg_color, ec=header_color, lw=1.5 if (is_target or is_true_cand) else 0.5),
+                    )
+
+                    if is_target or is_true_cand:
+                        for spine in ax.spines.values():
+                            spine.set_edgecolor("red" if is_target else "green")
+                            spine.set_linewidth(2.0)
+                    else:
+                        for spine in ax.spines.values():
+                            spine.set_visible(False)
+                else:
+                    ax.axis("off")
+                ax.set_xticks([])
+                ax.set_yticks([])
+
+            sheet_name = f"{q_short}_top100_page_{page_idx:02d}.png"
+            sheet_path = base_out / sheet_name
+            sheet_path.parent.mkdir(parents=True, exist_ok=True)
+            plt.tight_layout()
+            plt.savefig(sheet_path, dpi=100)
+            plt.close(fig)
+            print(f"  📸 Saved Top-100 Contact Sheet -> {sheet_name} (Rank #{start_r+1}..#{end_r}) ✅", flush=True)
+
+    print("\n" + "=" * 120, flush=True)
+    print("ALL 10 TOP-100 CONTACT SHEETS SUCCESSFULLY GENERATED ✅", flush=True)
     print("=" * 120 + "\n", flush=True)
 
 
