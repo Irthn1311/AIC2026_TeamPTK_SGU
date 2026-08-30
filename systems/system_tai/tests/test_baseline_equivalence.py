@@ -6,6 +6,10 @@ the system maintains exact equivalence to commit 5d9db1d.
 """
 
 import pytest
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+
 from system_tai.kis.video_first import (
     KISVideoFirstConfig,
     fuse_restricted_frames,
@@ -684,6 +688,195 @@ def test_vi_variant_absent_from_video_maxima_query_ids():
         assert any("vi_local_query" in qid for qid in restricted_query_ids_captured), (
             f"VI query missing from search_selected_videos: {restricted_query_ids_captured}"
         )
+
+
+def _create_mock_ablation_artifacts(
+    base_dir: Path,
+    runs: list[str],
+    mutate_translation_run: str | None = None,
+    missing_artifact_run: str | None = None,
+    bad_query_id_run: str | None = None,
+):
+    import json
+    query_order = ["p1-1", "p1-2", "p1-4", "p1-5", "p1-6"]
+    for rk in runs:
+        run_dir = base_dir / f"run_{rk}"
+        req_dir = run_dir / "requests"
+        req_dir.mkdir(parents=True, exist_ok=True)
+        for q_short in query_order:
+            if rk == missing_artifact_run and q_short == "p1-4":
+                continue
+            qid = f"query-{q_short}-kis"
+            file_qid = "query-p1-1-wrong" if (rk == bad_query_id_run and q_short == "p1-1") else qid
+
+            q_req_dir = req_dir / f"audit-top100-{q_short}-123456"
+            q_req_dir.mkdir(parents=True, exist_ok=True)
+            cand_file = q_req_dir / "candidates.json"
+
+            text_suffix = " mutated" if rk == mutate_translation_run else ""
+            units = [
+                {
+                    "segments": [
+                        {"variant_id": f"{qid}::semantic_01", "text": f"English query for {q_short}{text_suffix}", "weight": 1.0},
+                        {"variant_id": f"{qid}::semantic_02", "text": f"Primary scene for {q_short}", "weight": 1.0},
+                    ]
+                }
+            ]
+            cdata = {
+                "query_id": file_qid,
+                "request_id": f"audit-top100-{q_short}-123456",
+                "translation": {"units": units},
+                "records": [
+                    {
+                        "query_id": file_qid,
+                        "rank": 1,
+                        "video_id": "L30_V046" if q_short == "p1-1" else "L21_V003",
+                        "frame_id": 6784 if q_short == "p1-1" else 100,
+                        "pts_time": 271.36 if q_short == "p1-1" else 10.0,
+                        "fusion_score": 0.95,
+                    }
+                ],
+            }
+            cand_file.write_text(json.dumps(cdata, indent=2), encoding="utf-8")
+
+
+def test_ablation_summary_table_generation_success():
+    """Verify that generate_and_save_ablation_summary_table runs successfully and outputs valid summary matrix."""
+    import tempfile
+    import json
+    from pathlib import Path
+    import importlib.util
+
+    runner_path = REPO_ROOT / "scratch" / "run_kaggle_v2a_causal_closure.py"
+    spec = importlib.util.spec_from_file_location("runner_module", runner_path)
+    assert spec and spec.loader
+    runner_mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner_mod)
+
+    with tempfile.TemporaryDirectory() as td:
+        base_out = Path(td)
+        runs = ["A", "B", "C"]
+        _create_mock_ablation_artifacts(base_out, runs)
+
+        ablation_configs = {
+            "A": {"name": "Run A: Baseline", "restricted_frames_per_video_per_variant": 10},
+            "B": {"name": "Run B: Depth", "restricted_frames_per_video_per_variant": 20},
+            "C": {"name": "Run C: Diversity", "restricted_frames_per_video_per_variant": 20},
+        }
+
+        runner_mod.generate_and_save_ablation_summary_table(
+            all_run_results={},
+            base_out=base_out,
+            runs_to_execute=runs,
+            ablation_configs=ablation_configs,
+        )
+
+        sum_file = base_out / "ablation_matrix_summary.json"
+        assert sum_file.exists()
+        loaded = json.loads(sum_file.read_text(encoding="utf-8"))
+        assert "generated_at" in loaded
+        assert set(loaded["runs"].keys()) == {"A", "B", "C"}
+        assert loaded["runs"]["A"]["queries"]["p1-1"]["valid_interval_hit"] is True
+        assert loaded["runs"]["A"]["queries"]["p1-1"]["first_human_video_rank"] == 1
+
+
+def test_ablation_summary_detects_translation_drift_and_raises():
+    """Verify that translation drift across runs causes generate_and_save_ablation_summary_table to raise RuntimeError."""
+    import tempfile
+    import pytest
+    from pathlib import Path
+    import importlib.util
+
+    runner_path = REPO_ROOT / "scratch" / "run_kaggle_v2a_causal_closure.py"
+    spec = importlib.util.spec_from_file_location("runner_module", runner_path)
+    assert spec and spec.loader
+    runner_mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner_mod)
+
+    with tempfile.TemporaryDirectory() as td:
+        base_out = Path(td)
+        runs = ["A", "B", "C"]
+        _create_mock_ablation_artifacts(base_out, runs, mutate_translation_run="B")
+
+        ablation_configs = {
+            "A": {"name": "Run A: Baseline"},
+            "B": {"name": "Run B: Depth"},
+            "C": {"name": "Run C: Diversity"},
+        }
+
+        with pytest.raises(RuntimeError, match="Translation drift detected"):
+            runner_mod.generate_and_save_ablation_summary_table(
+                all_run_results={},
+                base_out=base_out,
+                runs_to_execute=runs,
+                ablation_configs=ablation_configs,
+            )
+
+
+def test_ablation_summary_missing_artifact_raises():
+    """Verify that a missing candidates.json artifact causes generate_and_save_ablation_summary_table to raise RuntimeError."""
+    import tempfile
+    import pytest
+    from pathlib import Path
+    import importlib.util
+
+    runner_path = REPO_ROOT / "scratch" / "run_kaggle_v2a_causal_closure.py"
+    spec = importlib.util.spec_from_file_location("runner_module", runner_path)
+    assert spec and spec.loader
+    runner_mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner_mod)
+
+    with tempfile.TemporaryDirectory() as td:
+        base_out = Path(td)
+        runs = ["A", "B", "C"]
+        _create_mock_ablation_artifacts(base_out, runs, missing_artifact_run="C")
+
+        ablation_configs = {
+            "A": {"name": "Run A: Baseline"},
+            "B": {"name": "Run B: Depth"},
+            "C": {"name": "Run C: Diversity"},
+        }
+
+        with pytest.raises(RuntimeError, match="Missing current candidate artifact"):
+            runner_mod.generate_and_save_ablation_summary_table(
+                all_run_results={},
+                base_out=base_out,
+                runs_to_execute=runs,
+                ablation_configs=ablation_configs,
+            )
+
+
+def test_ablation_summary_mismatched_query_id_raises():
+    """Verify that a mismatched query_id in candidates.json causes generate_and_save_ablation_summary_table to raise RuntimeError."""
+    import tempfile
+    import pytest
+    from pathlib import Path
+    import importlib.util
+
+    runner_path = REPO_ROOT / "scratch" / "run_kaggle_v2a_causal_closure.py"
+    spec = importlib.util.spec_from_file_location("runner_module", runner_path)
+    assert spec and spec.loader
+    runner_mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner_mod)
+
+    with tempfile.TemporaryDirectory() as td:
+        base_out = Path(td)
+        runs = ["A", "B", "C"]
+        _create_mock_ablation_artifacts(base_out, runs, bad_query_id_run="A")
+
+        ablation_configs = {
+            "A": {"name": "Run A: Baseline"},
+            "B": {"name": "Run B: Depth"},
+            "C": {"name": "Run C: Diversity"},
+        }
+
+        with pytest.raises(RuntimeError, match="Mismatched query_id"):
+            runner_mod.generate_and_save_ablation_summary_table(
+                all_run_results={},
+                base_out=base_out,
+                runs_to_execute=runs,
+                ablation_configs=ablation_configs,
+            )
 
 
 

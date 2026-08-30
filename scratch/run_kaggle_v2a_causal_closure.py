@@ -18,6 +18,7 @@ Strict Protocol:
 from __future__ import annotations
 
 import argparse
+from datetime import UTC, datetime
 import hashlib
 import json
 import math
@@ -547,6 +548,9 @@ def generate_and_save_ablation_summary_table(
             except Exception:
                 pass
 
+    if not ref_data or "queries" not in ref_data:
+        raise RuntimeError(f"Manual reference manual_kis_reference_v1.json missing or invalid (searched: {ref_paths})")
+
     ref_queries_map = {q.get("query_id"): q for q in ref_data.get("queries", [])}
 
     summary_matrix = {
@@ -599,72 +603,77 @@ def generate_and_save_ablation_summary_table(
             )
             cand_file = matches[-1] if matches else None
 
-            if cand_file and cand_file.exists():
-                try:
-                    cdata = json.loads(cand_file.read_text(encoding="utf-8"))
-                    assert cdata.get("query_id") == qid, f"Mismatched query_id in {cand_file}: {cdata.get('query_id')} != {qid}"
+            if cand_file is None or not cand_file.exists():
+                raise RuntimeError(
+                    f"Missing current candidate artifact for run '{run_key}', query '{q_short}': "
+                    f"expected {run_out / 'requests' / f'audit-top100-{q_short}-*/candidates.json'}"
+                )
 
-                    trans = cdata.get("translation", {})
-                    units = trans.get("units", [])
-                    if units:
-                        semantic_payload = [
-                            {
-                                "variant_id": seg.get("variant_id"),
-                                "text": seg.get("text"),
-                                "weight": seg.get("weight"),
-                            }
-                            for unit in units
-                            for seg in unit.get("segments", [])
-                        ]
-                        q_summary["semantic_variant_sha256"] = hashlib.sha256(
-                            json.dumps(
-                                semantic_payload,
-                                ensure_ascii=False,
-                                sort_keys=True,
-                                separators=(",", ":"),
-                            ).encode("utf-8")
-                        ).hexdigest()[:12]
-                    elif "english_segments" in trans:
-                        q_summary["semantic_variant_sha256"] = hashlib.sha256(
-                            json.dumps(trans["english_segments"]).encode("utf-8")
-                        ).hexdigest()[:12]
+            cdata = json.loads(cand_file.read_text(encoding="utf-8"))
+            if cdata.get("query_id") != qid:
+                raise RuntimeError(f"Mismatched query_id in {cand_file}: expected '{qid}', got '{cdata.get('query_id')}'")
 
-                    records = cdata.get("records", [])
-                    q_summary["total_candidates"] = len(records)
+            trans = cdata.get("translation", {})
+            units = trans.get("units", [])
+            if units:
+                semantic_payload = [
+                    {
+                        "variant_id": seg.get("variant_id"),
+                        "text": seg.get("text"),
+                        "weight": seg.get("weight"),
+                    }
+                    for unit in units
+                    for seg in unit.get("segments", [])
+                ]
+                q_summary["semantic_variant_sha256"] = hashlib.sha256(
+                    json.dumps(
+                        semantic_payload,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest()[:12]
+            elif "english_segments" in trans:
+                q_summary["semantic_variant_sha256"] = hashlib.sha256(
+                    json.dumps(trans["english_segments"]).encode("utf-8")
+                ).hexdigest()[:12]
 
-                    src_counts = {}
-                    for r in records:
-                        vid = r.get("video_id")
-                        rk = r.get("rank")
-                        pts = r.get("pts_time", 0.0)
-                        fid = r.get("frame_id")
+            if not q_summary["semantic_variant_sha256"]:
+                raise RuntimeError(f"Could not compute translation hash for run '{run_key}', query '{q_short}' from {cand_file}")
 
-                        sel_map = r.get("selection_by_variant", {})
-                        if sel_map:
-                            for var_id, var_info in sel_map.items():
-                                s = var_info.get("source", "RAW")
-                                src_counts[s] = src_counts.get(s, 0) + 1
-                        else:
-                            src_counts["RAW"] = src_counts.get("RAW", 0) + 1
+            records = cdata.get("records", [])
+            q_summary["total_candidates"] = len(records)
 
-                        if vid == human_vid and q_summary["first_human_video_rank"] is None:
-                            q_summary["first_human_video_rank"] = rk
-                        if vid == legacy_vid and q_summary["first_legacy_video_rank"] is None:
-                            q_summary["first_legacy_video_rank"] = rk
+            src_counts = {}
+            for r in records:
+                vid = r.get("video_id")
+                rk = r.get("rank")
+                pts = r.get("pts_time", 0.0)
+                fid = r.get("frame_id")
 
-                        if vid == human_vid and human_pts_intervals:
-                            for s_pts, e_pts in human_pts_intervals:
-                                if s_pts <= pts <= e_pts:
-                                    if q_summary["first_valid_interval_rank"] is None:
-                                        q_summary["first_valid_interval_rank"] = rk
-                                        q_summary["valid_interval_hit"] = True
-                                        q_summary["valid_interval_frame_id"] = fid
-                                        q_summary["valid_interval_source"] = sel_map
+                sel_map = r.get("selection_by_variant", {})
+                if sel_map:
+                    for var_id, var_info in sel_map.items():
+                        s = var_info.get("source", "RAW")
+                        src_counts[s] = src_counts.get(s, 0) + 1
+                else:
+                    src_counts["RAW"] = src_counts.get("RAW", 0) + 1
 
-                    q_summary["source_breakdown"] = src_counts
-                except Exception as e:
-                    q_summary["error"] = str(e)
+                if vid == human_vid and q_summary["first_human_video_rank"] is None:
+                    q_summary["first_human_video_rank"] = rk
+                if vid == legacy_vid and q_summary["first_legacy_video_rank"] is None:
+                    q_summary["first_legacy_video_rank"] = rk
 
+                if vid == human_vid and human_pts_intervals:
+                    for s_pts, e_pts in human_pts_intervals:
+                        if s_pts <= pts <= e_pts:
+                            if q_summary["first_valid_interval_rank"] is None:
+                                q_summary["first_valid_interval_rank"] = rk
+                                q_summary["valid_interval_hit"] = True
+                                q_summary["valid_interval_frame_id"] = fid
+                                q_summary["valid_interval_source"] = sel_map
+
+            q_summary["source_breakdown"] = src_counts
             run_data["queries"][q_short] = q_summary
 
         summary_matrix["runs"][run_key] = run_data
@@ -680,11 +689,11 @@ def generate_and_save_ablation_summary_table(
                 summary_matrix["runs"][rk]["queries"][q_short].get("semantic_variant_sha256")
                 for rk in runs_to_execute
             ]
-            valid_hashes = [h for h in hashes if h is not None]
-            if len(set(valid_hashes)) > 1:
-                print(f"  ⚠️ WARNING: Translation drift detected for [{q_short}]: {dict(zip(runs_to_execute, hashes))}", flush=True)
-            elif valid_hashes:
-                print(f"  ✅ Zero Translation Drift Verified for [{q_short}] (SHA={valid_hashes[0]}) across {runs_to_execute}", flush=True)
+            if any(h is None for h in hashes):
+                raise RuntimeError(f"Missing translation hash for query [{q_short}] in runs: {dict(zip(runs_to_execute, hashes))}")
+            if len(set(hashes)) != 1:
+                raise RuntimeError(f"Translation drift detected for query [{q_short}]: {dict(zip(runs_to_execute, hashes))}")
+            print(f"  ✅ Zero Translation Drift Strictly Verified for [{q_short}] (SHA={hashes[0]}) across {runs_to_execute}", flush=True)
 
     print("\n" + "=" * 130, flush=True)
     print("📋 PHASE B1 ABLATION MATRIX: MULTI-RUN STATISTICAL COMPARISON TABLE", flush=True)
