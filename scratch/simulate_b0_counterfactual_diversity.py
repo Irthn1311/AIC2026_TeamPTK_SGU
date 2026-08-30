@@ -24,25 +24,45 @@ from system_tai.features.btc_clip_store import VideoFeatureStoreLoader
 
 
 def run_b0_simulation() -> None:
+    print("🔍 3.1 Resolving target feature store for L30_V046...", flush=True)
     manifest_path = OUT / "feature_manifest.json"
     csv_path = None
     npy_path = None
 
     if manifest_path.is_file():
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        entry = next((v for v in manifest.get("videos", []) if v.get("video_id") == "L30_V046"), None)
-        if entry:
-            csv_path = Path(entry["mapping_csv_path"])
-            npy_path = Path(entry["clip_npy_path"])
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            entry = next((v for v in manifest.get("videos", []) if v.get("video_id") == "L30_V046"), None)
+            if entry:
+                csv_path = Path(entry["mapping_csv_path"])
+                npy_path = Path(entry["clip_npy_path"])
+        except Exception:
+            pass
 
     if csv_path is None or not csv_path.is_file():
-        input_root = Path("/kaggle/input") if Path("/kaggle/input").exists() else REPO / "scratch"
-        csv_candidates = list(input_root.glob("**/L30_V046.csv"))
-        npy_candidates = list(input_root.glob("**/L30_V046.npy"))
-        assert csv_candidates, f"Không tìm thấy L30_V046.csv trong {input_root}"
-        assert npy_candidates, f"Không tìm thấy L30_V046.npy trong {input_root}"
-        csv_path = csv_candidates[0]
-        npy_path = npy_candidates[0]
+        print("  • Searching /kaggle/input for L30_V046 CSV & NPY...", flush=True)
+        input_roots = [Path("/kaggle/input/datasets"), Path("/kaggle/input"), REPO / "scratch"]
+        for base in input_roots:
+            if not base.exists():
+                continue
+            for root, dirs, files in os.walk(str(base)):
+                # Prune keyframe image and video directories to avoid slow walk
+                dirs[:] = [d for d in dirs if d.lower() not in ("keyframes", "frames", "videos", "video", "raw_videos", "images", "media")]
+                for f in files:
+                    if f == "L30_V046.csv" and csv_path is None:
+                        csv_path = Path(root) / f
+                    elif f == "L30_V046.npy" and npy_path is None:
+                        npy_path = Path(root) / f
+                if csv_path and npy_path and csv_path.is_file() and npy_path.is_file():
+                    break
+            if csv_path and npy_path and csv_path.is_file() and npy_path.is_file():
+                break
+
+        assert csv_path and csv_path.is_file(), f"Không tìm thấy L30_V046.csv trong {input_roots}"
+        assert npy_path and npy_path.is_file(), f"Không tìm thấy L30_V046.npy trong {input_roots}"
+
+    print(f"  • CSV Path: {csv_path}", flush=True)
+    print(f"  • NPY Path: {npy_path}", flush=True)
 
     # Pipeline exact variants (from previous candidate artifact or canonical pipeline definitions)
     variants = []
@@ -106,8 +126,10 @@ def run_b0_simulation() -> None:
     if not target_store.descriptor.normalized:
         matrix = matrix / np.maximum(np.linalg.norm(matrix, axis=1, keepdims=True), 1e-12)
 
+    print("⏳ Loading OpenAI CLIP (ViT-B/32)...", flush=True)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model, _ = clip.load("ViT-B/32", device=device)
+    print(f"✅ OpenAI CLIP Loaded successfully on {device.upper()}!", flush=True)
 
     texts = [v["text"] for v in all_test_variants]
     with torch.no_grad():
