@@ -333,18 +333,26 @@ def find_keyframe_image(
     return None, "UNRESOLVED"
 
 
+_VIDEO_PATH_CACHE: dict[str, Path | None] = {}
+
+
 def find_source_video_file(
     dataset_root: Path,
     video_id: str,
     runtime: Any = None,
 ) -> Path | None:
+    if video_id in _VIDEO_PATH_CACHE:
+        return _VIDEO_PATH_CACHE[video_id]
+
     # 1. Try runtime raw_video_registry / manifest
     if runtime is not None:
         if hasattr(runtime, "raw_video_registry") and runtime.raw_video_registry is not None:
             try:
                 rec = runtime.raw_video_registry.get(video_id)
                 if rec and getattr(rec, "raw_video_path", None) and Path(rec.raw_video_path).is_file():
-                    return Path(rec.raw_video_path)
+                    res = Path(rec.raw_video_path)
+                    _VIDEO_PATH_CACHE[video_id] = res
+                    return res
             except Exception:
                 pass
         if hasattr(runtime, "manifest") and runtime.manifest is not None:
@@ -352,7 +360,9 @@ def find_source_video_file(
                 if getattr(v, "video_id", None) == video_id:
                     rv = getattr(v, "raw_video_path", None)
                     if rv and Path(rv).is_file():
-                        return Path(rv)
+                        res = Path(rv)
+                        _VIDEO_PATH_CACHE[video_id] = res
+                        return res
 
     # 2. Check standard layout paths
     for ext in ("mp4", "mkv", "avi", "mov", "ts", "MP4"):
@@ -366,16 +376,10 @@ def find_source_video_file(
         ]
         for c in candidates:
             if c.is_file():
+                _VIDEO_PATH_CACHE[video_id] = c
                 return c
 
-    # 3. Dynamic recursive search across dataset root and /kaggle/input
-    for root_p in [dataset_root, Path("/kaggle/input")]:
-        if root_p.is_dir():
-            for ext in ("mp4", "mkv", "avi", "mov", "ts", "MP4"):
-                for match_file in root_p.glob(f"**/{video_id}.{ext}"):
-                    if match_file.is_file():
-                        return match_file
-
+    _VIDEO_PATH_CACHE[video_id] = None
     return None
 
 
