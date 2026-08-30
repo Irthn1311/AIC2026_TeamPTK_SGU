@@ -741,6 +741,18 @@ def generate_and_save_ablation_summary_table(
 
 
 def main() -> None:
+    try:
+        import clip
+    except ModuleNotFoundError:
+        print("📦 Installing OpenAI CLIP dependency (git+https://github.com/openai/CLIP.git)...", flush=True)
+        try:
+            subprocess.run(
+                [sys.executable, "-m", "pip", "install", "-q", "git+https://github.com/openai/CLIP.git", "ftfy", "regex"],
+                check=False,
+            )
+        except Exception:
+            pass
+
     parser = argparse.ArgumentParser(description="KIS V2-A.3 Foundation Closure Audit")
     parser.add_argument(
         "--sections",
