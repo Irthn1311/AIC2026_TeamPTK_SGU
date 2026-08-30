@@ -125,7 +125,7 @@ def run_b0_simulation() -> None:
 
     # 3. SIMULATE CANDIDATE DEPTH K IN {10, 15, 20, 25, 30, 40}
     print("\n" + "=" * 120)
-    print("3. CANDIDATE DEPTH K INCLUSION SIMULATION FOR GROUND TRUTH INTERVAL [264.0, 274.0]s")
+    print("3. CANDIDATE DEPTH K INCLUSION SIMULATION FOR HUMAN-VERIFIED INTERVAL [264.0, 274.0]s")
     print("=" * 120)
     for k_val in [10, 15, 20, 25, 30, 40]:
         union_frames = set()
@@ -160,6 +160,36 @@ def run_b0_simulation() -> None:
             status = "INCLUDED ✅" if gt_hit else "MISSED ❌"
             gt_fids = [f"f{target_store.mappings[r].frame_id}@{target_store.mappings[r].pts_time:.1f}s" for r in gt_hit]
             print(f"  • Variant [{v['id'][:28]}]: {len(selected_rows)} candidates -> GT hit: {gt_fids or '[]'} ({status})")
+
+    # 5. SIMULATE HYBRID CANDIDATE POLICY (RAW TOP-10 + TOP DIVERSE FRAMES)
+    print("\n" + "=" * 120)
+    print("5. HYBRID CANDIDATE POLICY SIMULATION (RAW TOP-10 + DIVERSE SLOTS)")
+    print("=" * 120)
+    for total_budget in [15, 20, 25, 30]:
+        diverse_budget = total_budget - 10
+        print(f"\n--- Total Budget K={total_budget} (Raw Top-10 + {diverse_budget} Diverse Slots with 5.0s Gap) ---")
+        union_frames = set()
+        for j in range(len(variants)):
+            sorted_rows = list(np.argsort(-scores[:, j]))
+            raw_top10 = sorted_rows[:10]
+            selected_pts = [float(target_store.mappings[r].pts_time) for r in raw_top10]
+            selected_rows = list(raw_top10)
+
+            for r in sorted_rows[10:]:
+                if len(selected_rows) >= total_budget:
+                    break
+                pts = float(target_store.mappings[r].pts_time)
+                if not any(abs(pts - p) < 5.0 for p in selected_pts):
+                    selected_rows.append(r)
+                    selected_pts.append(pts)
+
+            for r in selected_rows:
+                union_frames.add(int(r))
+
+        gt_included = [r for r in gt_rows if r in union_frames]
+        status = "INCLUDED ✅" if gt_included else "MISSED ❌"
+        gt_fids = [f"f{target_store.mappings[r].frame_id}@{target_store.mappings[r].pts_time:.1f}s" for r in gt_included]
+        print(f"  • Budget K={total_budget:<2} -> Total Frames Nominated: {len(union_frames):>2}/97 | GT Frames: {gt_fids or '[]'} -> {status}")
 
     print("\n" + "=" * 120)
 

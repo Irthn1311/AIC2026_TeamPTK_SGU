@@ -2074,8 +2074,17 @@ def run_p1_4_real_image_adjudication(
         vid_failed_count = 0
 
         # Check parity status for this video if available
-        cov_entry = coverage_summary.get(vid) or next((data for data in coverage_summary.values() if data.get("video_id") == vid), {})
-        parity_passed = cov_entry.get("parity_passed", False)
+        cov_entry = {}
+        for data in coverage_summary.values():
+            human = data.get("human_reference", {})
+            legacy = data.get("legacy", {})
+            if human.get("video_id") == vid:
+                cov_entry = human
+                break
+            elif legacy.get("video_id") == vid:
+                cov_entry = legacy
+                break
+        parity_passed = bool(cov_entry.get("parity_passed", False))
         src_fps = cov_entry.get("source_info", {}).get("fps")
 
         for row_idx, (scene_var, v) in enumerate(zip(temporal_scene_variants, all_variants, strict=True)):
