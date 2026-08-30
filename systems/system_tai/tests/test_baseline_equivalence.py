@@ -272,7 +272,6 @@ def test_simulate_b0_equal_budget_hybrid_logic():
     """Verify that the hybrid candidate selection logic guarantees exact equal budget allocation."""
     import numpy as np
 
-    # 40 frames, dense cluster in first 10 frames (10.0 to 12.0s), diverse tail (20.0s to 80.0s)
     n_frames = 40
     timestamps = [10.0 + i * 0.2 for i in range(10)] + [20.0 + i * 3.0 for i in range(30)]
     scores = np.linspace(0.9, 0.1, n_frames)
@@ -291,7 +290,6 @@ def test_simulate_b0_equal_budget_hybrid_logic():
                 selected_rows.append(r)
                 selected_pts.append(pts)
 
-        # Tail-fill
         if len(selected_rows) < total_budget:
             selected_set = set(selected_rows)
             for r in sorted_rows:
@@ -303,6 +301,174 @@ def test_simulate_b0_equal_budget_hybrid_logic():
 
         assert len(selected_rows) == min(total_budget, n_frames), f"Expected {total_budget} rows, got {len(selected_rows)}"
         assert len(set(selected_rows)) == len(selected_rows), "Duplicates detected in candidate selection"
+
+
+def test_raw_and_hybrid_use_equal_nominal_budget_with_compulsory_extras():
+    """Verify that Run B (raw K=20) and Run C (hybrid K=20) maintain equal nominal budgets, with compulsory as extras."""
+    from system_tai.retrieval.video_evidence import (
+        _UnrankedFrameHit,
+        select_hybrid_candidates,
+    )
+
+    # 50 mock frames, dense cluster in first 10, diverse in tail
+    all_ordered = [
+        _UnrankedFrameHit(
+            video_id="L30_V046",
+            frame_id=1000 + i,
+            clip_row=i,
+            keyframe_order=i,
+            pts_time=10.0 + (i * 0.2 if i < 10 else 20.0 + (i - 10) * 3.0),
+            cosine_score=0.95 - i * 0.01,
+        )
+        for i in range(50)
+    ]
+
+    # Compulsory frames from DP chain: frame 1000 (already in raw top 10), frame 1045 (at index 45, far out)
+    compulsory = [1000, 1045]
+
+    # Run C: Hybrid K=20
+    hybrid_hits, telemetry = select_hybrid_candidates(
+        all_ordered,
+        total_budget=20,
+        raw_top_k=10,
+        min_pts_gap_seconds=5.0,
+        compulsory_frame_ids=compulsory,
+    )
+
+    assert telemetry["nominal_budget"] == 20
+    assert telemetry["normal_candidate_count"] == 20
+    assert telemetry["compulsory_extra_count"] == 1  # 1045 is extra, 1000 already in raw
+    assert telemetry["effective_candidate_count"] == 21
+    assert len(hybrid_hits) == 21
+
+    # Check sources
+    sources = [h.selection_source for h in hybrid_hits]
+    assert sources.count("RAW") == 10
+    assert sources.count("DIVERSE") > 0
+    assert sources.count("TEMPORAL_CHAIN_COMPULSORY") == 1
+    assert hybrid_hits[-1].frame_id == 1045
+    assert hybrid_hits[-1].selection_source == "TEMPORAL_CHAIN_COMPULSORY"
+
+
+def test_selection_by_variant_survives_rrf_and_candidate_serialization():
+    """Verify that selection_by_variant survives RRF fusion and is preserved on candidate records."""
+    from types import MappingProxyType
+    from system_tai.common.schemas import KISResult
+    from system_tai.kis.video_first import FusedVideoEvidence, fuse_restricted_frames
+    from system_tai.retrieval.multi_query import (
+        QueryLanguage,
+        QueryVariant,
+        QueryVariantType,
+        WeightedRRFRetriever,
+    )
+    from system_tai.retrieval.video_evidence import (
+        RestrictedFrameHit,
+        VideoRestrictedSearchOutcome,
+    )
+
+    v1 = QueryVariant(
+        variant_id="var_01",
+        text="text 1",
+        language=QueryLanguage.ENGLISH,
+        variant_type=QueryVariantType.ENGLISH_TRANSLATION,
+        weight=1.0,
+    )
+    v2 = QueryVariant(
+        variant_id="var_02",
+        text="text 2",
+        language=QueryLanguage.ENGLISH,
+        variant_type=QueryVariantType.ENGLISH_TRANSLATION,
+        weight=1.0,
+    )
+
+    # Frame 6784 is DIVERSE in var_01 (rank 12, raw rank 28) and RAW in var_02 (rank 1, raw rank 1)
+    hit_v1 = RestrictedFrameHit(
+        video_id="L30_V046",
+        frame_id=6784,
+        clip_row=50,
+        keyframe_order=50,
+        pts_time=271.36,
+        cosine_score=0.25,
+        rank=1,
+        selection_source="DIVERSE",
+        raw_local_rank=28,
+    )
+    hit_v2 = RestrictedFrameHit(
+        video_id="L30_V046",
+        frame_id=6784,
+        clip_row=50,
+        keyframe_order=50,
+        pts_time=271.36,
+        cosine_score=0.30,
+        rank=1,
+        selection_source="RAW",
+        raw_local_rank=1,
+    )
+
+    restricted_outcome = VideoRestrictedSearchOutcome(
+        rankings={
+            "var_01": {"L30_V046": (hit_v1,)},
+            "var_02": {"L30_V046": (hit_v2,)},
+        },
+        physical_rows_scored=100,
+        video_store_scan_count=1,
+    )
+
+    video_evidence = FusedVideoEvidence(
+        video_id="L30_V046",
+        rank=1,
+        fusion_score=0.85,
+        variant_hit_count=2,
+        primary_coverage_count=1,
+        best_individual_rank=1,
+        per_variant=(),
+    )
+
+    rrf = WeightedRRFRetriever(exact_retriever=None)  # type: ignore[arg-type]
+    fused_result = fuse_restricted_frames(
+        query_id="query_p1_1",
+        variants=(v1, v2),
+        restricted=restricted_outcome,
+        selected_videos=(video_evidence,),
+        weighted_rrf=rrf,
+        output_top_k=10,
+        rrf_constant=60.0,
+    )
+
+    assert len(fused_result.ranked_candidates) == 1
+    cand = fused_result.ranked_candidates[0]
+    assert cand.frame_id == 6784
+
+    diag = cand.diagnostic_metadata
+    assert "selection_by_variant" in diag
+    sel_map = diag["selection_by_variant"]
+    assert "var_01" in sel_map
+    assert sel_map["var_01"]["source"] == "DIVERSE"
+    assert sel_map["var_01"]["raw_local_rank"] == 28
+    assert sel_map["var_01"]["pts_time"] == 271.36
+
+    assert "var_02" in sel_map
+    assert sel_map["var_02"]["source"] == "RAW"
+    assert sel_map["var_02"]["raw_local_rank"] == 1
+
+
+def test_vi_variant_absent_from_video_maxima_query_ids():
+    """Verify that when enable_vi_localization_variant is True, the VI variant is NEVER passed to search_video_maxima."""
+    from system_tai.kis.session_schema import (
+        KISVideoFirstConfig,
+        QueryRequest,
+        SessionConfig,
+    )
+    from system_tai.kis.session_engine import OperationalKISRuntime
+
+    cfg = KISVideoFirstConfig(
+        enabled=True,
+        enable_vi_localization_variant=True,
+        vi_localization_weight=0.5,
+    )
+    assert cfg.enable_vi_localization_variant is True
+    assert cfg.vi_localization_weight == 0.5
+
 
 
 

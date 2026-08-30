@@ -41,6 +41,10 @@ class KISVideoFirstConfig:
     enable_score_normalization: bool = False
     enable_late_interaction: bool = False
     enable_positive_chain_bonus: bool = False
+    enable_temporal_diverse_local_candidates: bool = False
+    temporal_diversity_gap_seconds: float = 5.0
+    enable_vi_localization_variant: bool = False
+    vi_localization_weight: float = 0.5
 
     def __post_init__(self) -> None:
         if type(self.enabled) is not bool:
@@ -91,6 +95,20 @@ class KISVideoFirstConfig:
             )
         ):
             raise ValueError("max_restricted_candidates_per_video must be a positive integer")
+        if type(self.enable_temporal_diverse_local_candidates) is not bool:
+            raise ValueError("enable_temporal_diverse_local_candidates must be a boolean")
+        if (
+            not math.isfinite(self.temporal_diversity_gap_seconds)
+            or self.temporal_diversity_gap_seconds < 0
+        ):
+            raise ValueError("temporal_diversity_gap_seconds must be finite and non-negative")
+        if type(self.enable_vi_localization_variant) is not bool:
+            raise ValueError("enable_vi_localization_variant must be a boolean")
+        if (
+            not math.isfinite(self.vi_localization_weight)
+            or self.vi_localization_weight <= 0
+        ):
+            raise ValueError("vi_localization_weight must be finite and positive")
 
 
 @dataclass(frozen=True, slots=True)
@@ -839,7 +857,11 @@ def fuse_restricted_frames(
                     score=float(hit.cosine_score),
                     rank=rank,
                     source="video_restricted_exact",
-                    diagnostic_metadata={"pts_time": hit.pts_time},
+                    diagnostic_metadata={
+                        "pts_time": hit.pts_time,
+                        "selection_source": hit.selection_source,
+                        "raw_local_rank": hit.raw_local_rank,
+                    },
                 )
                 for rank, hit in enumerate(ordered, start=1)
             ),
@@ -878,10 +900,17 @@ def fuse_restricted_frames(
         final_score = item.score + 0.10 * vid_rrf_boost + (temporal_chain_bonus if is_chain_winner else 0.0)
 
         variant_scores: dict[str, float] = {}
+        selection_by_variant: dict[str, dict[str, object]] = {}
         for var_id, r in rankings.items():
             for hit in r.ranked_candidates:
                 if hit.video_id == item.video_id and hit.frame_id == item.frame_id:
                     variant_scores[var_id] = float(hit.score)
+                    if hit.diagnostic_metadata and "selection_source" in hit.diagnostic_metadata:
+                        selection_by_variant[var_id] = {
+                            "source": hit.diagnostic_metadata.get("selection_source", "RAW"),
+                            "raw_local_rank": hit.diagnostic_metadata.get("raw_local_rank", 0),
+                            "pts_time": hit.diagnostic_metadata.get("pts_time"),
+                        }
                     break
 
         diag = {
@@ -892,6 +921,9 @@ def fuse_restricted_frames(
             "is_temporal_chain_winner": is_chain_winner,
             "scores_by_variant": variant_scores,
         }
+        if selection_by_variant:
+            diag["selection_by_variant"] = selection_by_variant
+
         enriched_list.append(
             CandidateFrame(
                 video_id=item.video_id,

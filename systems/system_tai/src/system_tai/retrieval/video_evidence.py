@@ -25,6 +25,8 @@ class RestrictedFrameHit:
     pts_time: float
     cosine_score: float
     rank: int
+    selection_source: str = "RAW"
+    raw_local_rank: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +110,99 @@ def _normalize_query_matrix(
     return np.stack(units).astype(np.float32, copy=False)
 
 
+def select_hybrid_candidates(
+    all_ordered: Sequence[_UnrankedFrameHit],
+    *,
+    total_budget: int,
+    raw_top_k: int = 10,
+    min_pts_gap_seconds: float = 5.0,
+    compulsory_frame_ids: Sequence[int] | None = None,
+) -> tuple[tuple[RestrictedFrameHit, ...], dict[str, object]]:
+    """Select candidates using an equal-budget hybrid policy: Raw Top-K + Diverse Slots + Tail-Fill + Extras."""
+    if type(total_budget) is not int or total_budget <= 0:
+        raise ValueError("total_budget must be a positive integer")
+    if type(raw_top_k) is not int or raw_top_k < 0:
+        raise ValueError("raw_top_k must be a non-negative integer")
+    if not math.isfinite(min_pts_gap_seconds) or min_pts_gap_seconds < 0:
+        raise ValueError("min_pts_gap_seconds must be a non-negative finite float")
+
+    total_available = len(all_ordered)
+    raw_budget = min(raw_top_k, total_budget, total_available)
+    raw_hits = list(all_ordered[:raw_budget])
+    selected_pts = [hit.pts_time for hit in raw_hits]
+    selected_fids = {hit.frame_id for hit in raw_hits}
+
+    diverse_budget = total_budget - len(raw_hits)
+    diverse_hits: list[_UnrankedFrameHit] = []
+
+    if diverse_budget > 0:
+        for hit in all_ordered[raw_budget:]:
+            if len(diverse_hits) >= diverse_budget:
+                break
+            if hit.frame_id in selected_fids:
+                continue
+            if not any(abs(hit.pts_time - p) < min_pts_gap_seconds for p in selected_pts):
+                diverse_hits.append(hit)
+                selected_pts.append(hit.pts_time)
+                selected_fids.add(hit.frame_id)
+
+    tail_fill_hits: list[_UnrankedFrameHit] = []
+    if len(raw_hits) + len(diverse_hits) < min(total_budget, total_available):
+        for hit in all_ordered[raw_budget:]:
+            if hit.frame_id in selected_fids:
+                continue
+            tail_fill_hits.append(hit)
+            selected_fids.add(hit.frame_id)
+            if len(raw_hits) + len(diverse_hits) + len(tail_fill_hits) >= min(total_budget, total_available):
+                break
+
+    normal_selected = raw_hits + diverse_hits + tail_fill_hits
+
+    # Compulsory frames from DP temporal chain added as extras outside nominal K
+    compulsory_set = set(compulsory_frame_ids or ())
+    missing_compulsory: list[_UnrankedFrameHit] = []
+    if compulsory_set:
+        for hit in all_ordered:
+            if hit.frame_id in compulsory_set and hit.frame_id not in selected_fids:
+                missing_compulsory.append(hit)
+                selected_fids.add(hit.frame_id)
+
+    raw_ranks = {hit.frame_id: idx for idx, hit in enumerate(all_ordered, start=1)}
+
+    hits_with_source: list[tuple[_UnrankedFrameHit, str]] = (
+        [(hit, "RAW") for hit in raw_hits]
+        + [(hit, "DIVERSE") for hit in diverse_hits]
+        + [(hit, "TAIL_FILL") for hit in tail_fill_hits]
+        + [(hit, "TEMPORAL_CHAIN_COMPULSORY") for hit in missing_compulsory]
+    )
+
+    final_hits = tuple(
+        RestrictedFrameHit(
+            video_id=hit.video_id,
+            frame_id=hit.frame_id,
+            clip_row=hit.clip_row,
+            keyframe_order=hit.keyframe_order,
+            pts_time=hit.pts_time,
+            cosine_score=hit.cosine_score,
+            rank=rank,
+            selection_source=source,
+            raw_local_rank=raw_ranks.get(hit.frame_id, 0),
+        )
+        for rank, (hit, source) in enumerate(hits_with_source, start=1)
+    )
+
+    telemetry = {
+        "nominal_budget": total_budget,
+        "normal_candidate_count": len(normal_selected),
+        "compulsory_extra_count": len(missing_compulsory),
+        "effective_candidate_count": len(final_hits),
+        "raw_count": len(raw_hits),
+        "diverse_count": len(diverse_hits),
+        "tail_fill_count": len(tail_fill_hits),
+    }
+    return final_hits, telemetry
+
+
 def rank_store_frames(
     store: LoadedVideoFeatureStore,
     *,
@@ -120,6 +215,9 @@ def rank_store_frames(
     per_query_cap: int | None = None,
     query_vectors_are_normalized: bool = False,
     compulsory_frame_ids: Sequence[int] | None = None,
+    enable_temporal_diversity: bool = False,
+    temporal_diversity_gap_seconds: float = 5.0,
+    raw_top_k: int = 10,
 ) -> dict[str, tuple[RestrictedFrameHit, ...]]:
     """Rank distinct absolute frames for several vectors in one store traversal."""
 
@@ -193,31 +291,47 @@ def rank_store_frames(
             best_by_query_frame[query_index].values(),
             key=_frame_sort_key,
         )
-        if per_query_cap is not None:
-            capped = all_ordered[:per_query_cap]
-            if compulsory_set:
-                capped_fids = {hit.frame_id for hit in capped}
-                missing_compulsory = [
-                    hit for hit in all_ordered[per_query_cap:]
-                    if hit.frame_id in compulsory_set and hit.frame_id not in capped_fids
-                ]
-                ordered = capped + missing_compulsory
-            else:
-                ordered = capped
-        else:
-            ordered = all_ordered
-        rankings[query_id] = tuple(
-            RestrictedFrameHit(
-                video_id=hit.video_id,
-                frame_id=hit.frame_id,
-                clip_row=hit.clip_row,
-                keyframe_order=hit.keyframe_order,
-                pts_time=hit.pts_time,
-                cosine_score=hit.cosine_score,
-                rank=rank,
+        if enable_temporal_diversity and per_query_cap is not None:
+            hybrid_hits, _ = select_hybrid_candidates(
+                all_ordered,
+                total_budget=per_query_cap,
+                raw_top_k=raw_top_k,
+                min_pts_gap_seconds=temporal_diversity_gap_seconds,
+                compulsory_frame_ids=compulsory_frame_ids,
             )
-            for rank, hit in enumerate(ordered, start=1)
-        )
+            rankings[query_id] = hybrid_hits
+        else:
+            if per_query_cap is not None:
+                capped = all_ordered[:per_query_cap]
+                if compulsory_set:
+                    capped_fids = {hit.frame_id for hit in capped}
+                    missing_compulsory = [
+                        hit for hit in all_ordered[per_query_cap:]
+                        if hit.frame_id in compulsory_set and hit.frame_id not in capped_fids
+                    ]
+                    ordered = capped + missing_compulsory
+                else:
+                    ordered = capped
+            else:
+                ordered = all_ordered
+
+            raw_ranks = {hit.frame_id: idx for idx, hit in enumerate(all_ordered, start=1)}
+            capped_fid_set = {hit.frame_id for hit in (all_ordered[:per_query_cap] if per_query_cap is not None else all_ordered)}
+
+            rankings[query_id] = tuple(
+                RestrictedFrameHit(
+                    video_id=hit.video_id,
+                    frame_id=hit.frame_id,
+                    clip_row=hit.clip_row,
+                    keyframe_order=hit.keyframe_order,
+                    pts_time=hit.pts_time,
+                    cosine_score=hit.cosine_score,
+                    rank=rank,
+                    selection_source="RAW" if hit.frame_id in capped_fid_set else "TEMPORAL_CHAIN_COMPULSORY",
+                    raw_local_rank=raw_ranks.get(hit.frame_id, 0),
+                )
+                for rank, hit in enumerate(ordered, start=1)
+            )
     return rankings
 
 
@@ -344,6 +458,9 @@ class VideoRestrictedFeatureSearcher:
         ),
         per_query_result_cap: int,
         compulsory_frame_ids_by_video: Mapping[str, Sequence[int]] | None = None,
+        enable_temporal_diversity: bool = False,
+        temporal_diversity_gap_seconds: float = 5.0,
+        raw_top_k: int = 10,
     ) -> VideoRestrictedSearchOutcome:
         if not video_ids:
             raise ValueError("video_ids must not be empty")
@@ -368,6 +485,9 @@ class VideoRestrictedFeatureSearcher:
                 chunk_size=self.chunk_size,
                 per_query_cap=per_query_result_cap,
                 compulsory_frame_ids=compulsory_map.get(video_id),
+                enable_temporal_diversity=enable_temporal_diversity,
+                temporal_diversity_gap_seconds=temporal_diversity_gap_seconds,
+                raw_top_k=raw_top_k,
             )
             rows_scored += store.descriptor.row_count
             for query_id in query_ids:

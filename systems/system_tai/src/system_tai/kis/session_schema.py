@@ -336,6 +336,18 @@ class SessionConfig:
                 adaptive_budget_medium=kis_cfg.get("adaptive_budget_medium", 48),
                 adaptive_budget_high=kis_cfg.get("adaptive_budget_high", 64),
                 coverage_threshold=kis_cfg.get("coverage_threshold", 0.75),
+                enable_temporal_diverse_local_candidates=kis_cfg.get(
+                    "enable_temporal_diverse_local_candidates", False
+                ),
+                temporal_diversity_gap_seconds=float(
+                    kis_cfg.get("temporal_diversity_gap_seconds", 5.0)
+                ),
+                enable_vi_localization_variant=kis_cfg.get(
+                    "enable_vi_localization_variant", False
+                ),
+                vi_localization_weight=float(
+                    kis_cfg.get("vi_localization_weight", 0.5)
+                ),
             ),
         }
         kwargs.update(overrides)

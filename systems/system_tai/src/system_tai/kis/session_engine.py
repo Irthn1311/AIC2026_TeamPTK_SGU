@@ -687,22 +687,56 @@ class OperationalKISRuntime:
                         item.temporal_chain.selected_chain_frames
                     )
 
+            # Check auxiliary Vietnamese localization variant
+            video_first_config = self.config.kis_video_first_config
+            if video_first_config.enable_vi_localization_variant:
+                vi_embedding = self.shared_encoder.encode_texts((request.query_vi,))[0]
+                vi_token_count = self.token_budget_guard.count_tokens(request.query_vi)
+                vi_was_truncated = vi_token_count > self.token_budget_guard.max_tokens
+                vi_variant = QueryVariant(
+                    variant_id=f"{request.query_id}::vi_local_query",
+                    text=request.query_vi,
+                    language=QueryLanguage.VIETNAMESE,
+                    variant_type=QueryVariantType.VIETNAMESE_DIRECT,
+                    weight=video_first_config.vi_localization_weight,
+                )
+                localization_variants = tuple(variants) + (vi_variant,)
+                localization_vectors = np.vstack([variant_embeddings, vi_embedding[None, :]])
+                translation_metadata["vi_localizer_telemetry"] = {
+                    "vi_localizer_enabled": True,
+                    "vi_localization_weight": video_first_config.vi_localization_weight,
+                    "vi_context_token_count": vi_token_count,
+                    "vi_was_truncated": vi_was_truncated,
+                }
+            else:
+                localization_variants = variants
+                localization_vectors = variant_embeddings
+
             restricted = self.video_restricted_searcher.search_selected_videos(
                 video_ids=tuple(item.video_id for item in selected_videos),
-                query_ids=tuple(variant.variant_id for variant in variants),
-                query_vectors=variant_embeddings,
+                query_ids=tuple(variant.variant_id for variant in localization_variants),
+                query_vectors=localization_vectors,
                 per_query_result_cap=(
                     self.config.kis_video_first_config
                     .restricted_frames_per_video_per_variant
                 ),
                 compulsory_frame_ids_by_video=compulsory_by_video if v2_adaptive else None,
+                enable_temporal_diversity=(
+                    self.config.kis_video_first_config
+                    .enable_temporal_diverse_local_candidates
+                ),
+                temporal_diversity_gap_seconds=(
+                    self.config.kis_video_first_config
+                    .temporal_diversity_gap_seconds
+                ),
+                raw_top_k=10,
             )
             restricted_frame_search_seconds = self.clock() - restricted_started
 
             frame_fusion_started = self.clock()
             video_first_outcome = build_kis_video_first_outcome(
                 query_id=request.query_id,
-                variants=variants,
+                variants=localization_variants,
                 maxima=maxima,
                 restricted=restricted,
                 selected_videos=selected_videos,
@@ -882,6 +916,8 @@ class OperationalKISRuntime:
                     ("score_normalization", getattr(self.config.kis_video_first_config, "enable_score_normalization", False)),
                     ("late_interaction", getattr(self.config.kis_video_first_config, "enable_late_interaction", False)),
                     ("positive_chain_bonus", getattr(self.config.kis_video_first_config, "enable_positive_chain_bonus", False)),
+                    ("temporal_diverse_local_candidates", getattr(self.config.kis_video_first_config, "enable_temporal_diverse_local_candidates", False)),
+                    ("vi_localization_variant", getattr(self.config.kis_video_first_config, "enable_vi_localization_variant", False)),
                 ] if val
             ],
             "records": [
@@ -893,6 +929,7 @@ class OperationalKISRuntime:
                     "fusion_score": candidate.score,
                     "pts_time": _get_cand_pts(candidate),
                     "scores_by_variant": (candidate.diagnostic_metadata or {}).get("scores_by_variant", {}),
+                    **({"selection_by_variant": (candidate.diagnostic_metadata or {})["selection_by_variant"]} if "selection_by_variant" in (candidate.diagnostic_metadata or {}) else {}),
                     "is_temporal_chain_winner": (candidate.diagnostic_metadata or {}).get("is_temporal_chain_winner", False),
                     "video_nomination_rank": (candidate.diagnostic_metadata or {}).get("video_nomination_rank"),
                     "variant_hit_count": (candidate.diagnostic_metadata or {}).get(

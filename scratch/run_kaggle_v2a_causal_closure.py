@@ -117,8 +117,14 @@ def create_production_v2a_session_config(
     reuse_manifest_path: Path | None,
     manifest_cache_path: Path | None,
     output_root: Path,
+    *,
+    restricted_frames_per_video_per_variant: int = 10,
+    enable_temporal_diverse_local_candidates: bool = False,
+    temporal_diversity_gap_seconds: float = 5.0,
+    enable_vi_localization_variant: bool = False,
+    vi_localization_weight: float = 0.5,
 ) -> SessionConfig:
-    """Canonical production V2-A configuration factory matching production gate."""
+    """Canonical production V2-A configuration factory matching production gate with ablation support."""
     config = SessionConfig(
         input_root=input_root,
         reuse_manifest=reuse_manifest_path,
@@ -145,6 +151,11 @@ def create_production_v2a_session_config(
             adaptive_budget_medium=48,
             adaptive_budget_high=64,
             coverage_threshold=0.75,
+            restricted_frames_per_video_per_variant=restricted_frames_per_video_per_variant,
+            enable_temporal_diverse_local_candidates=enable_temporal_diverse_local_candidates,
+            temporal_diversity_gap_seconds=temporal_diversity_gap_seconds,
+            enable_vi_localization_variant=enable_vi_localization_variant,
+            vi_localization_weight=vi_localization_weight,
         ),
     )
     # Field-by-field production gate contract assertions
@@ -521,17 +532,70 @@ def main() -> None:
         default="coverage,p1-2,p1-4,top100",
         help="Comma-separated sections to run: coverage, p1-2, p1-4, top100 or 'all' (default: coverage,p1-2,p1-4,top100)",
     )
+    parser.add_argument(
+        "--ablation",
+        type=str,
+        default="A",
+        choices=["A", "B", "C", "D", "E", "all", "ALL"],
+        help="Phase B1 ablation run: A (baseline K10), B (raw K20), C (hybrid K20), D (VI localizer), E (combined), or 'all'",
+    )
     args, _ = parser.parse_known_args()
     selected_sections = [s.strip().lower() for s in args.sections.split(",") if s.strip()]
     run_all = "all" in selected_sections
+    ablation_mode = args.ablation.strip().upper()
+    runs_to_execute = ["A", "B", "C", "D", "E"] if ablation_mode == "ALL" else [ablation_mode]
+
+    ablation_configs = {
+        "A": {
+            "name": "Run A: Baseline Control (K=10, Hybrid=Off, VI=Off)",
+            "restricted_frames_per_video_per_variant": 10,
+            "enable_temporal_diverse_local_candidates": False,
+            "temporal_diversity_gap_seconds": 5.0,
+            "enable_vi_localization_variant": False,
+            "vi_localization_weight": 0.5,
+        },
+        "B": {
+            "name": "Run B: Depth Only (K=20, Hybrid=Off, VI=Off)",
+            "restricted_frames_per_video_per_variant": 20,
+            "enable_temporal_diverse_local_candidates": False,
+            "temporal_diversity_gap_seconds": 5.0,
+            "enable_vi_localization_variant": False,
+            "vi_localization_weight": 0.5,
+        },
+        "C": {
+            "name": "Run C: Diversity at Equal Budget (K=20, Hybrid=On, Gap=5s, VI=Off)",
+            "restricted_frames_per_video_per_variant": 20,
+            "enable_temporal_diverse_local_candidates": True,
+            "temporal_diversity_gap_seconds": 5.0,
+            "enable_vi_localization_variant": False,
+            "vi_localization_weight": 0.5,
+        },
+        "D": {
+            "name": "Run D: VI Localizer Only (K=10, Hybrid=Off, VI=On, w=0.5)",
+            "restricted_frames_per_video_per_variant": 10,
+            "enable_temporal_diverse_local_candidates": False,
+            "temporal_diversity_gap_seconds": 5.0,
+            "enable_vi_localization_variant": True,
+            "vi_localization_weight": 0.5,
+        },
+        "E": {
+            "name": "Run E: Combined Synergy (K=20, Hybrid=On, Gap=5s, VI=On, w=0.5)",
+            "restricted_frames_per_video_per_variant": 20,
+            "enable_temporal_diverse_local_candidates": True,
+            "temporal_diversity_gap_seconds": 5.0,
+            "enable_vi_localization_variant": True,
+            "vi_localization_weight": 0.5,
+        },
+    }
 
     full_sha = get_git_head()
     print("=" * 120, flush=True)
-    print("KIS V2-A.3 FOUNDATION CLOSURE — STRICT EMPIRICAL AUDIT (NO TUNING, NO GEMINI)", flush=True)
+    print("KIS V2-A.3 FOUNDATION CLOSURE — STRICT EMPIRICAL AUDIT & PHASE B1 ABLATIONS", flush=True)
     print("=" * 120, flush=True)
     print(f"• Exact Commit SHA: {full_sha}", flush=True)
     print(f"• Python Version  : {sys.version.split()[0]}", flush=True)
-    print(f"• Active Sections : {', '.join(selected_sections) if not run_all else 'ALL SECTIONS'}", flush=True)
+    print(f"• Ablation Plan   : {', '.join(runs_to_execute)}", flush=True)
+    print(f"• Active Sections : {', '.join(selected_sections) if not run_all else 'ALL SECTIONS'}\n", flush=True)
 
     input_root = Path("/kaggle/input/datasets") if Path("/kaggle/input/datasets").exists() else Path("/kaggle/input")
     reuse_manifest_path = None
@@ -550,55 +614,73 @@ def main() -> None:
         Path("/kaggle/working/manifest_cache.json") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "manifest_cache.json"
     )
 
-    config = create_production_v2a_session_config(
-        input_root=input_root,
-        reuse_manifest_path=reuse_manifest_path,
-        manifest_cache_path=manifest_cache,
-        output_root=base_out,
-    )
+    all_run_results = {}
 
-    # Purge any stale translation cache containing Error 500
-    for t_cache in [Path("/kaggle/working/translation_cache.json"), base_out / "translation_cache.json"]:
-        if t_cache.exists():
-            try:
-                raw_txt = t_cache.read_text(encoding="utf-8")
-                if "Error 500" in raw_txt or "Server Error" in raw_txt:
-                    t_cache.unlink()
-                    print(f"🧹 Purged stale error-polluted translation cache: {t_cache}", flush=True)
-            except Exception:
-                pass
+    for run_key in runs_to_execute:
+        run_spec = ablation_configs[run_key]
+        run_out = base_out if len(runs_to_execute) == 1 and ablation_mode != "ALL" else base_out / f"run_{run_key}"
+        run_out.mkdir(parents=True, exist_ok=True)
 
-    t0 = time.time()
-    runtime = OperationalKISRuntime.bootstrap(config)
-    print(f"Runtime bootstrap completed in {time.time() - t0:.2f}s.\n", flush=True)
+        print("-" * 120, flush=True)
+        print(f"🚀 EXECUTING ABLATION: {run_spec['name']}", flush=True)
+        print(f"• Output Directory: {run_out}", flush=True)
+        print("-" * 120, flush=True)
 
-    coverage_results = {}
-    # 1. GT INDEX COVERAGE AUDIT WITH SOURCE <-> MAPPING PARITY (ALL 5 TARGET VIDEOS)
-    if run_all or "coverage" in selected_sections:
-        coverage_results = run_gt_index_coverage_audit(runtime, input_root)
+        config = create_production_v2a_session_config(
+            input_root=input_root,
+            reuse_manifest_path=reuse_manifest_path,
+            manifest_cache_path=manifest_cache,
+            output_root=run_out,
+            restricted_frames_per_video_per_variant=run_spec["restricted_frames_per_video_per_variant"],
+            enable_temporal_diverse_local_candidates=run_spec["enable_temporal_diverse_local_candidates"],
+            temporal_diversity_gap_seconds=run_spec["temporal_diversity_gap_seconds"],
+            enable_vi_localization_variant=run_spec["enable_vi_localization_variant"],
+            vi_localization_weight=run_spec["vi_localization_weight"],
+        )
 
-    # 2. P1-2 EVIDENCE-POOL TO FINAL-EXPORT TRACE & VISUAL BENCHMARK ADJUDICATION
-    if run_all or "p1-2" in selected_sections or "p1_2" in selected_sections:
-        run_p1_2_trace_and_raw_cosine_audit(runtime, input_root, base_out, coverage_results)
+        # Purge stale translation cache if error-polluted
+        for t_cache in [Path("/kaggle/working/translation_cache.json"), run_out / "translation_cache.json"]:
+            if t_cache.exists():
+                try:
+                    raw_txt = t_cache.read_text(encoding="utf-8")
+                    if "Error 500" in raw_txt or "Server Error" in raw_txt:
+                        t_cache.unlink()
+                        print(f"🧹 Purged stale error-polluted translation cache: {t_cache}", flush=True)
+                except Exception:
+                    pass
 
-    # 3. P1-4 SEMANTIC ADJUDICATION & PTS-AWARE REAL IMAGE RENDERING
-    if run_all or "p1-4" in selected_sections or "p1_4" in selected_sections:
-        run_p1_4_real_image_adjudication(runtime, input_root, base_out, coverage_results)
+        t0 = time.time()
+        runtime = OperationalKISRuntime.bootstrap(config)
+        print(f"Runtime bootstrap completed in {time.time() - t0:.2f}s.\n", flush=True)
 
-    # 4. FULL TOP-100 VISUAL CONTACT SHEET EXPORT FOR ALL 5 FOCUS QUERIES (50 frames x 2 pages / query)
-    if run_all or "top100" in selected_sections:
-        run_all_5_queries_top100_visual_export(runtime, input_root, base_out, coverage_results)
+        coverage_results = {}
+        # 1. GT INDEX COVERAGE AUDIT WITH SOURCE <-> MAPPING PARITY (ALL 5 TARGET VIDEOS)
+        if run_all or "coverage" in selected_sections:
+            coverage_results = run_gt_index_coverage_audit(runtime, input_root)
 
-    # 5. PRINT FINAL UNIFIED SUMMARY TABLE
-    print_final_summary_table(coverage_results)
+        # 2. P1-2 EVIDENCE-POOL TO FINAL-EXPORT TRACE & VISUAL BENCHMARK ADJUDICATION
+        if run_all or "p1-2" in selected_sections or "p1_2" in selected_sections:
+            run_p1_2_trace_and_raw_cosine_audit(runtime, input_root, run_out, coverage_results)
+
+        # 3. P1-4 SEMANTIC ADJUDICATION & PTS-AWARE REAL IMAGE RENDERING
+        if run_all or "p1-4" in selected_sections or "p1_4" in selected_sections:
+            run_p1_4_real_image_adjudication(runtime, input_root, run_out, coverage_results)
+
+        # 4. FULL TOP-100 VISUAL CONTACT SHEET EXPORT FOR ALL 5 FOCUS QUERIES (50 frames x 2 pages / query)
+        if run_all or "top100" in selected_sections:
+            run_all_5_queries_top100_visual_export(runtime, input_root, run_out, coverage_results)
+
+        # 5. PRINT UNIFIED SUMMARY TABLE FOR THIS RUN
+        print_final_summary_table(coverage_results)
+        all_run_results[run_key] = {"name": run_spec["name"], "coverage": coverage_results}
 
     # 6. PACKAGE ALL VISUAL EVIDENCE ARTIFACTS INTO A SINGLE ZIP ARCHIVE
     zip_dest = Path("/kaggle/working/v2a3_visual_evidence_package") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "v2a3_visual_evidence_package"
     try:
         shutil.make_archive(str(zip_dest), "zip", base_out)
-        print(f"📦 Visual Evidence Artifacts Package Created -> {zip_dest}.zip ✅\n", flush=True)
+        print(f"\n📦 Visual Evidence Artifacts Package Created -> {zip_dest}.zip ✅\n", flush=True)
     except Exception as e:
-        print(f"⚠️ Could not create zip archive: {e}\n", flush=True)
+        print(f"\n⚠️ Could not create zip archive: {e}\n", flush=True)
 
 
 # ==============================================================================
