@@ -935,15 +935,15 @@ def main() -> None:
 
         coverage_results = {}
         # 1. GT INDEX COVERAGE AUDIT WITH SOURCE <-> MAPPING PARITY (ALL 5 TARGET VIDEOS)
-        if run_all or "coverage" in selected_sections:
+        if (run_all or "coverage" in selected_sections) and (run_key == runs_to_execute[0]):
             coverage_results = run_gt_index_coverage_audit(runtime, input_root)
 
         # 2. P1-2 EVIDENCE-POOL TO FINAL-EXPORT TRACE & VISUAL BENCHMARK ADJUDICATION
-        if run_all or "p1-2" in selected_sections or "p1_2" in selected_sections:
+        if (run_all or "p1-2" in selected_sections or "p1_2" in selected_sections) and (run_key == runs_to_execute[0]):
             run_p1_2_trace_and_raw_cosine_audit(runtime, input_root, run_out, coverage_results)
 
         # 3. P1-4 SEMANTIC ADJUDICATION & PTS-AWARE REAL IMAGE RENDERING
-        if run_all or "p1-4" in selected_sections or "p1_4" in selected_sections:
+        if (run_all or "p1-4" in selected_sections or "p1_4" in selected_sections) and (run_key == runs_to_execute[0]):
             run_p1_4_real_image_adjudication(runtime, input_root, run_out, coverage_results)
 
         # 4. FULL TOP-100 EVALUATION FOR ALL 5 FOCUS QUERIES (ALWAYS RUN RETRIEVAL, OPTIONAL PNG RENDER)
