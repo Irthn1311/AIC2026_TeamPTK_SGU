@@ -128,7 +128,39 @@ def run_b0_simulation() -> None:
 
     print("⏳ Loading OpenAI CLIP (ViT-B/32)...", flush=True)
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model, _ = clip.load("ViT-B/32", device=device)
+
+    # Robust model loading / download with retries
+    cache_dir = Path.home() / ".cache" / "clip"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    target_file = cache_dir / "ViT-B-32.pt"
+
+    if not target_file.exists() or target_file.stat().st_size < 100_000_000:
+        for p in Path("/kaggle/input").glob("**/ViT-B-32.pt"):
+            if p.is_file() and p.stat().st_size > 100_000_000:
+                print(f"  • Found pre-cached CLIP model in dataset: {p}", flush=True)
+                import shutil
+                shutil.copy(p, target_file)
+                break
+
+    if not target_file.exists() or target_file.stat().st_size < 100_000_000:
+        url = "https://openaipublic.azureedge.net/clip/models/40d365715913c9da98579312b702a82c18be219cc2a73407c4526f58eba950af/ViT-B-32.pt"
+        print(f"  • Downloading ViT-B-32.pt (~338MB) to {target_file}...", flush=True)
+        import urllib.request, time, shutil
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        req = urllib.request.Request(url, headers=headers)
+        for attempt in range(5):
+            try:
+                with urllib.request.urlopen(req, timeout=60) as resp, open(target_file, "wb") as f:
+                    shutil.copyfileobj(resp, f)
+                if target_file.stat().st_size > 100_000_000:
+                    print("  • Download complete! ✅", flush=True)
+                    break
+            except Exception as e:
+                print(f"  ⚠️ Download attempt {attempt+1}/5 failed ({e}). Retrying in 3s...", flush=True)
+                time.sleep(3)
+
+    model_source = str(target_file) if target_file.exists() and target_file.stat().st_size > 100_000_000 else "ViT-B/32"
+    model, _ = clip.load(model_source, device=device)
     print(f"✅ OpenAI CLIP Loaded successfully on {device.upper()}!", flush=True)
 
     texts = [v["text"] for v in all_test_variants]
