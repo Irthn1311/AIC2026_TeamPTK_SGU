@@ -1034,6 +1034,14 @@ def build_kis_video_first_outcome(
         var_id: {hit.video_id: hit.rank for hit in hits}
         for var_id, hits in maxima.rankings.items()
     }
+    is_exp = bool(
+        config
+        and (
+            config.restricted_frames_per_video_per_variant != 10
+            or config.enable_temporal_diverse_local_candidates
+            or config.enable_vi_localization_variant
+        )
+    )
     return KISVideoFirstOutcome(
         result=result,
         selected_videos=tuple(selected_videos),
@@ -1044,5 +1052,5 @@ def build_kis_video_first_outcome(
         adaptive_diagnostic=adaptive_diagnostic,
         per_scene_top128=per_scene_top128,
         per_scene_ranks=per_scene_ranks,
-        candidate_selection_telemetry=restricted.candidate_selection_telemetry,
+        candidate_selection_telemetry=restricted.candidate_selection_telemetry if is_exp else None,
     )

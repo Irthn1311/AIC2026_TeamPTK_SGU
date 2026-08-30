@@ -913,8 +913,14 @@ class OperationalKISRuntime:
             return 0
 
         candidates_json = query_dir / "candidates.json"
+        is_experimental_localization = bool(
+            getattr(self.config.kis_video_first_config, "restricted_frames_per_video_per_variant", 10) != 10
+            or getattr(self.config.kis_video_first_config, "enable_temporal_diverse_local_candidates", False)
+            or getattr(self.config.kis_video_first_config, "enable_vi_localization_variant", False)
+        )
+
         candidates_data = {
-            "query_id": request.query_id,
+            "query_id": conditioned_result.query_id,
             "request_id": request.request_id,
             "top100_sha256": top100_sha256,
             "evidence_frame_pool": evidence_frame_pool,
@@ -924,8 +930,7 @@ class OperationalKISRuntime:
                 qid: {vid: dict(tel) for vid, tel in per_vid.items()}
                 for qid, per_vid in restricted.candidate_selection_telemetry.items()
             }} if (restricted is not None and getattr(restricted, "candidate_selection_telemetry", None)
-                   and (getattr(self.config.kis_video_first_config, "enable_temporal_diverse_local_candidates", False)
-                        or getattr(self.config.kis_video_first_config, "enable_vi_localization_variant", False))) else {}),
+                   and is_experimental_localization) else {}),
             "enabled_features": [
                 name for name, val in [
                     ("candidate_union", getattr(self.config.kis_video_first_config, "enable_candidate_union", False)),
@@ -946,8 +951,7 @@ class OperationalKISRuntime:
                     "pts_time": _get_cand_pts(candidate),
                     "scores_by_variant": (candidate.diagnostic_metadata or {}).get("scores_by_variant", {}),
                     **({"selection_by_variant": (candidate.diagnostic_metadata or {})["selection_by_variant"]}
-                       if (getattr(self.config.kis_video_first_config, "enable_temporal_diverse_local_candidates", False)
-                           or getattr(self.config.kis_video_first_config, "enable_vi_localization_variant", False))
+                       if is_experimental_localization
                           and "selection_by_variant" in (candidate.diagnostic_metadata or {})
                        else {}),
                     "is_temporal_chain_winner": (candidate.diagnostic_metadata or {}).get("is_temporal_chain_winner", False),

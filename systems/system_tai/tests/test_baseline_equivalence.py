@@ -391,36 +391,25 @@ def test_raw_and_hybrid_use_equal_nominal_budget_with_compulsory_extras():
     assert any(h.selection_source == "DIVERSE" for h in hybrid_hits)
 
 
-def test_selection_by_variant_survives_rrf_and_candidate_serialization(tmp_path):
-    """Verify that selection_by_variant survives RRF fusion and is preserved through candidate JSON serialization."""
+def test_selection_by_variant_survives_rrf_and_candidate_serialization():
+    """Verify that selection_by_variant survives RRF fusion and is preserved through real OperationalKISRuntime candidate JSON serialization."""
     import json
-    from types import MappingProxyType
-    from system_tai.common.schemas import CandidateFrame, KISResult
-    from system_tai.kis.video_first import FusedVideoEvidence, fuse_restricted_frames
-    from system_tai.retrieval.multi_query import (
-        QueryLanguage,
-        QueryVariant,
-        QueryVariantType,
-        WeightedRRFRetriever,
+    import tempfile
+    from pathlib import Path
+    import numpy as np
+    from unittest.mock import MagicMock
+    from system_tai.kis.session_schema import (
+        KISVideoFirstConfig,
+        QueryRequest,
+        SessionConfig,
     )
+    from system_tai.kis.session_engine import OperationalKISRuntime
+    from system_tai.retrieval.multi_query import WeightedRRFRetriever
     from system_tai.retrieval.video_evidence import (
-        RestrictedFrameHit,
+        FullCorpusVideoMaximaOutcome,
+        VideoMaximumHit,
         VideoRestrictedSearchOutcome,
-    )
-
-    v1 = QueryVariant(
-        variant_id="var_01",
-        text="text 1",
-        language=QueryLanguage.ENGLISH,
-        variant_type=QueryVariantType.ENGLISH_TRANSLATION,
-        weight=1.0,
-    )
-    v2 = QueryVariant(
-        variant_id="var_02",
-        text="text 2",
-        language=QueryLanguage.ENGLISH,
-        variant_type=QueryVariantType.ENGLISH_TRANSLATION,
-        weight=1.0,
+        RestrictedFrameHit,
     )
 
     hit_v1 = RestrictedFrameHit(
@@ -434,104 +423,142 @@ def test_selection_by_variant_survives_rrf_and_candidate_serialization(tmp_path)
         selection_source="DIVERSE",
         raw_local_rank=28,
     )
-    hit_v2 = RestrictedFrameHit(
-        video_id="L30_V046",
-        frame_id=6784,
-        clip_row=50,
-        keyframe_order=50,
-        pts_time=271.36,
-        cosine_score=0.30,
-        rank=1,
-        selection_source="RAW",
-        raw_local_rank=1,
-    )
 
-    restricted_outcome = VideoRestrictedSearchOutcome(
-        rankings={
-            "var_01": {"L30_V046": (hit_v1,)},
-            "var_02": {"L30_V046": (hit_v2,)},
-        },
-        physical_rows_scored=100,
-        video_store_scan_count=1,
-    )
+    def make_mock_runtime(is_exp: bool, out_dir: Path):
+        mock_searcher = MagicMock()
+        def fake_search_video_maxima(*, query_ids, query_vectors, **kwargs):
+            return FullCorpusVideoMaximaOutcome(
+                rankings={qid: (VideoMaximumHit(query_id=qid, video_id="L30_V046", frame_id=6784, clip_row=50, keyframe_order=50, cosine_score=0.9, rank=1),) for qid in query_ids},
+                physical_rows_scored=10,
+                video_store_scan_count=1,
+            )
+        mock_searcher.search_video_maxima.side_effect = fake_search_video_maxima
 
-    video_evidence = FusedVideoEvidence(
-        video_id="L30_V046",
-        rank=1,
-        fusion_score=0.85,
-        variant_hit_count=2,
-        primary_coverage_count=1,
-        best_individual_rank=1,
-        per_variant=(),
-    )
+        def fake_search_selected_videos(*, video_ids, query_ids, query_vectors, **kwargs):
+            return VideoRestrictedSearchOutcome(
+                rankings={qid: {"L30_V046": (hit_v1,)} for qid in query_ids},
+                physical_rows_scored=10,
+                video_store_scan_count=1,
+                candidate_selection_telemetry={qid: {"L30_V046": {"RAW": 10, "DIVERSE": 10}} for qid in query_ids},
+            )
+        mock_searcher.search_selected_videos.side_effect = fake_search_selected_videos
 
-    rrf = WeightedRRFRetriever(exact_retriever=None)  # type: ignore[arg-type]
-    fused_result = fuse_restricted_frames(
-        query_id="query_p1_1",
-        variants=(v1, v2),
-        restricted=restricted_outcome,
-        selected_videos=(video_evidence,),
-        weighted_rrf=rrf,
-        output_top_k=10,
-        rrf_constant=60.0,
-    )
+        cfg = SessionConfig(
+            input_root=out_dir,
+            output_root=out_dir,
+            enable_dynamic_translation=True,
+            kis_video_first_config=KISVideoFirstConfig(
+                enabled=True,
+                restricted_frames_per_video_per_variant=20 if is_exp else 10,
+                enable_temporal_diverse_local_candidates=is_exp,
+                temporal_diversity_gap_seconds=5.0,
+                enable_vi_localization_variant=False,
+            ),
+        )
 
-    assert len(fused_result.ranked_candidates) == 1
-    cand = fused_result.ranked_candidates[0]
-    assert cand.frame_id == 6784
+        mock_trans = MagicMock()
+        mock_trans.provider_name = "mock_vinai"
+        mock_trans.translate_many.return_value = ("A woman wearing a red jacket walking in a park.",)
+        mock_trans.translate.return_value = "A woman wearing a red jacket walking in a park."
+        mock_guard = MagicMock()
+        mock_guard.split_for_clip.side_effect = lambda text: (text,)
+        mock_guard.count_tokens.return_value = 15
+        mock_guard.max_tokens = 75
 
-    # 1. Test Serialization with Feature Enabled
-    cand_data_enabled = {
-        "query_id": "query_p1_1",
-        "enabled_features": ["temporal_diverse_local_candidates"],
-        "records": [
-            {
-                "query_id": "query_p1_1",
-                "rank": cand.rank,
-                "video_id": cand.video_id,
-                "frame_id": cand.frame_id,
-                "fusion_score": cand.score,
-                "pts_time": (cand.diagnostic_metadata or {}).get("pts_time", 271.36),
-                "scores_by_variant": (cand.diagnostic_metadata or {}).get("scores_by_variant", {}),
-                **({"selection_by_variant": (cand.diagnostic_metadata or {})["selection_by_variant"]}
-                   if "selection_by_variant" in (cand.diagnostic_metadata or {}) else {}),
-            }
-        ],
-    }
-    cand_file = tmp_path / "candidates_enabled.json"
-    cand_file.write_text(json.dumps(cand_data_enabled, indent=2), encoding="utf-8")
-    loaded = json.loads(cand_file.read_text(encoding="utf-8"))
-    rec = loaded["records"][0]
-    assert "selection_by_variant" in rec
-    assert rec["selection_by_variant"]["var_01"]["source"] == "DIVERSE"
-    assert rec["selection_by_variant"]["var_01"]["raw_local_rank"] == 28
-    assert rec["selection_by_variant"]["var_02"]["source"] == "RAW"
-    assert rec["selection_by_variant"]["var_02"]["raw_local_rank"] == 1
+        mock_encoder = MagicMock()
+        mock_encoder.dimension = 512
+        mock_encoder.identifiers = {"device": "cpu", "model": "ViT-B/32"}
+        mock_encoder.encode_texts.return_value = np.ones((1, 512), dtype=np.float32)
 
-    # 2. Test Serialization with Feature Disabled (Byte/Schema Fidelity)
-    cand_data_disabled = {
-        "query_id": "query_p1_1",
-        "enabled_features": [],
-        "records": [
-            {
-                "query_id": "query_p1_1",
-                "rank": cand.rank,
-                "video_id": cand.video_id,
-                "frame_id": cand.frame_id,
-                "fusion_score": cand.score,
-                "pts_time": (cand.diagnostic_metadata or {}).get("pts_time", 271.36),
-                "scores_by_variant": (cand.diagnostic_metadata or {}).get("scores_by_variant", {}),
-            }
-        ],
-    }
-    cand_file_dis = tmp_path / "candidates_disabled.json"
-    cand_file_dis.write_text(json.dumps(cand_data_disabled, indent=2), encoding="utf-8")
-    loaded_dis = json.loads(cand_file_dis.read_text(encoding="utf-8"))
-    assert "selection_by_variant" not in loaded_dis["records"][0]
+        mock_registry = MagicMock()
+        mock_registry.embedding_dimension = 512
+        mock_registry.total_rows = 10
+        mock_registry.stores = ()
+        mock_registry.keys.return_value = ("L30_V046",)
+        mock_registry.get_store.return_value = None
+
+        mock_manifest = MagicMock()
+        mock_manifest.identifiers = {}
+        mock_manifest.dataset_root = out_dir
+        mock_manifest.schema_version = "v1"
+        mock_manifest.fingerprint = "dummy_fp"
+        mock_manifest.videos = ()
+
+        mock_raw_registry = MagicMock()
+        mock_raw_registry.records = ()
+        video_rec = MagicMock()
+        video_rec.raw_video_path = str(out_dir / "video.mp4")
+        video_rec.fps = 25.0
+        video_rec.total_frames = 1000
+        video_rec.duration_seconds = 40.0
+        video_rec.codec = "h264"
+        video_rec.width = 1280
+        video_rec.height = 720
+        video_rec.frame_index_base = 0
+        mock_raw_registry.get.return_value = video_rec
+
+        runtime = OperationalKISRuntime(
+            config=cfg,
+            manifest_path=out_dir / "manifest.json",
+            manifest=mock_manifest,
+            registry=mock_registry,
+            raw_video_registry=mock_raw_registry,
+            shared_encoder=mock_encoder,
+            decoder=MagicMock(),
+            translation_provider=mock_trans,
+            token_budget_guard=mock_guard,
+        )
+        runtime.video_restricted_searcher = mock_searcher
+        runtime.weighted_rrf = WeightedRRFRetriever(exact_retriever=None)  # type: ignore[arg-type]
+        return runtime
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp_path = Path(td)
+        # 1. Test Serialization with Feature Enabled (Run C / Experimental)
+        out_dir_exp = tmp_path / "exp_run"
+        out_dir_exp.mkdir()
+        runtime_exp = make_mock_runtime(is_exp=True, out_dir=out_dir_exp)
+        req_exp = QueryRequest(
+            request_id="req_test_exp",
+            query_id="query_p1_1",
+            query_vi="Một người phụ nữ mặc áo khoác đỏ",
+        )
+        outcome_exp = runtime_exp.handle_query(req_exp)
+        matches_exp = sorted((out_dir_exp / "requests").glob("*/candidates.json"))
+        assert matches_exp
+        cand_file_exp = matches_exp[-1]
+        loaded_exp = json.loads(cand_file_exp.read_text(encoding="utf-8"))
+        assert loaded_exp["query_id"] == "query_p1_1"
+        assert "candidate_selection_telemetry" in loaded_exp
+        rec_exp = loaded_exp["records"][0]
+        sel_entry = list(rec_exp["selection_by_variant"].values())[0]
+        assert sel_entry["source"] == "DIVERSE"
+        assert sel_entry["raw_local_rank"] == 28
+
+        # 2. Test Serialization with Feature Disabled (Run A Baseline Fidelity)
+        out_dir_base = tmp_path / "base_run"
+        out_dir_base.mkdir()
+        runtime_base = make_mock_runtime(is_exp=False, out_dir=out_dir_base)
+        req_base = QueryRequest(
+            request_id="req_test_base",
+            query_id="query_p1_1",
+            query_vi="Một người phụ nữ mặc áo khoác đỏ",
+        )
+        outcome_base = runtime_base.handle_query(req_base)
+        matches_base = sorted((out_dir_base / "requests").glob("*/candidates.json"))
+        assert matches_base
+        cand_file_base = matches_base[-1]
+        loaded_base = json.loads(cand_file_base.read_text(encoding="utf-8"))
+        assert loaded_base["query_id"] == "query_p1_1"
+        assert "candidate_selection_telemetry" not in loaded_base
+        rec_base = loaded_base["records"][0]
+        assert "selection_by_variant" not in rec_base
 
 
-def test_vi_variant_absent_from_video_maxima_query_ids(tmp_path):
+def test_vi_variant_absent_from_video_maxima_query_ids():
     """Verify runtime interaction: when enable_vi_localization_variant is True, VI variant is NEVER passed to search_video_maxima."""
+    import tempfile
+    from pathlib import Path
     import numpy as np
     from unittest.mock import MagicMock
     from system_tai.kis.session_schema import (
@@ -540,6 +567,7 @@ def test_vi_variant_absent_from_video_maxima_query_ids(tmp_path):
         SessionConfig,
     )
     from system_tai.kis.session_engine import OperationalKISRuntime
+    from system_tai.retrieval.multi_query import WeightedRRFRetriever
     from system_tai.retrieval.video_evidence import (
         FullCorpusVideoMaximaOutcome,
         VideoMaximumHit,
@@ -547,113 +575,115 @@ def test_vi_variant_absent_from_video_maxima_query_ids(tmp_path):
         RestrictedFrameHit,
     )
 
-    maxima_query_ids_captured = []
-    restricted_query_ids_captured = []
+    with tempfile.TemporaryDirectory() as td:
+        tmp_path = Path(td)
+        maxima_query_ids_captured = []
+        restricted_query_ids_captured = []
 
-    mock_searcher = MagicMock()
-    def fake_search_video_maxima(*, query_ids, query_vectors, **kwargs):
-        maxima_query_ids_captured.extend(query_ids)
-        return FullCorpusVideoMaximaOutcome(
-            rankings={qid: (VideoMaximumHit(query_id=qid, video_id="L30_V046", frame_id=1, clip_row=0, keyframe_order=0, cosine_score=0.9, rank=1),) for qid in query_ids},
-            physical_rows_scored=10,
-            video_store_scan_count=1,
+        mock_searcher = MagicMock()
+        def fake_search_video_maxima(*, query_ids, query_vectors, **kwargs):
+            maxima_query_ids_captured.extend(query_ids)
+            return FullCorpusVideoMaximaOutcome(
+                rankings={qid: (VideoMaximumHit(query_id=qid, video_id="L30_V046", frame_id=1, clip_row=0, keyframe_order=0, cosine_score=0.9, rank=1),) for qid in query_ids},
+                physical_rows_scored=10,
+                video_store_scan_count=1,
+            )
+        mock_searcher.search_video_maxima.side_effect = fake_search_video_maxima
+
+        def fake_search_selected_videos(*, video_ids, query_ids, query_vectors, **kwargs):
+            restricted_query_ids_captured.extend(query_ids)
+            return VideoRestrictedSearchOutcome(
+                rankings={qid: {"L30_V046": (RestrictedFrameHit(video_id="L30_V046", frame_id=1, clip_row=0, keyframe_order=0, pts_time=1.0, cosine_score=0.9, rank=1),)} for qid in query_ids},
+                physical_rows_scored=10,
+                video_store_scan_count=1,
+            )
+        mock_searcher.search_selected_videos.side_effect = fake_search_selected_videos
+
+        cfg = SessionConfig(
+            input_root=tmp_path,
+            output_root=tmp_path,
+            enable_dynamic_translation=True,
+            kis_video_first_config=KISVideoFirstConfig(
+                enabled=True,
+                enable_vi_localization_variant=True,
+                vi_localization_weight=0.5,
+            ),
         )
-    mock_searcher.search_video_maxima.side_effect = fake_search_video_maxima
 
-    def fake_search_selected_videos(*, video_ids, query_ids, query_vectors, **kwargs):
-        restricted_query_ids_captured.extend(query_ids)
-        return VideoRestrictedSearchOutcome(
-            rankings={qid: {"L30_V046": (RestrictedFrameHit(video_id="L30_V046", frame_id=1, clip_row=0, keyframe_order=0, pts_time=1.0, cosine_score=0.9, rank=1),)} for qid in query_ids},
-            physical_rows_scored=10,
-            video_store_scan_count=1,
+        mock_trans = MagicMock()
+        mock_trans.provider_name = "mock_vinai"
+        mock_trans.translate_many.side_effect = lambda texts: tuple(f"English translation for {t}" for t in texts)
+        mock_trans.translate.return_value = "A woman wearing a red jacket walking in a park."
+        mock_guard = MagicMock()
+        mock_guard.split_for_clip.side_effect = lambda text: (text,)
+        mock_guard.count_tokens.return_value = 15
+        mock_guard.max_tokens = 75
+
+        mock_encoder = MagicMock()
+        mock_encoder.dimension = 512
+        mock_encoder.identifiers = {"device": "cpu", "model": "ViT-B/32"}
+        mock_encoder.encode_texts.side_effect = lambda texts: np.ones((len(texts), 512), dtype=np.float32)
+
+        mock_registry = MagicMock()
+        mock_registry.embedding_dimension = 512
+        mock_registry.total_rows = 10
+        mock_registry.stores = ()
+        mock_registry.keys.return_value = ("L30_V046",)
+        mock_registry.get_store.return_value = None
+
+        mock_manifest = MagicMock()
+        mock_manifest.identifiers = {}
+        mock_manifest.dataset_root = tmp_path
+        mock_manifest.schema_version = "v1"
+        mock_manifest.fingerprint = "dummy_fp"
+        mock_manifest.videos = ()
+
+        mock_raw_registry = MagicMock()
+        mock_raw_registry.records = ()
+        video_rec = MagicMock()
+        video_rec.raw_video_path = str(tmp_path / "video.mp4")
+        video_rec.fps = 25.0
+        video_rec.total_frames = 1000
+        video_rec.duration_seconds = 40.0
+        video_rec.codec = "h264"
+        video_rec.width = 1280
+        video_rec.height = 720
+        video_rec.frame_index_base = 0
+        mock_raw_registry.get.return_value = video_rec
+
+        runtime = OperationalKISRuntime(
+            config=cfg,
+            manifest_path=tmp_path / "manifest.json",
+            manifest=mock_manifest,
+            registry=mock_registry,
+            raw_video_registry=mock_raw_registry,
+            shared_encoder=mock_encoder,
+            decoder=MagicMock(),
+            translation_provider=mock_trans,
+            token_budget_guard=mock_guard,
         )
-    mock_searcher.search_selected_videos.side_effect = fake_search_selected_videos
+        runtime.video_restricted_searcher = mock_searcher
+        runtime.weighted_rrf = WeightedRRFRetriever(exact_retriever=None)  # type: ignore[arg-type]
 
-    cfg = SessionConfig(
-        input_root=tmp_path,
-        output_root=tmp_path,
-        enable_dynamic_translation=True,
-        kis_video_first_config=KISVideoFirstConfig(
-            enabled=True,
-            enable_vi_localization_variant=True,
-            vi_localization_weight=0.5,
-        ),
-    )
+        req = QueryRequest(
+            request_id="req_test_1",
+            query_id="query_p1_1",
+            query_vi="Một người phụ nữ mặc áo khoác đỏ trong công viên",
+        )
 
-    mock_trans = MagicMock()
-    mock_trans.provider_name = "mock_vinai"
-    mock_trans.translate_many.side_effect = lambda texts: tuple(f"English translation for {t}" for t in texts)
-    mock_trans.translate.return_value = "A woman wearing a red jacket walking in a park."
-    mock_guard = MagicMock()
-    mock_guard.split_for_clip.side_effect = lambda text: (text,)
-    mock_guard.count_tokens.return_value = 15
-    mock_guard.max_tokens = 75
+        outcome = runtime.handle_query(req)
 
-    mock_encoder = MagicMock()
-    mock_encoder.dimension = 512
-    mock_encoder.identifiers = {"device": "cpu", "model": "ViT-B/32"}
-    mock_encoder.encode_texts.side_effect = lambda texts: np.ones((len(texts), 512), dtype=np.float32)
+        # 1. Assert search_video_maxima contains ONLY English nomination variants
+        assert len(maxima_query_ids_captured) > 0
+        assert not any("vi_local_query" in qid for qid in maxima_query_ids_captured), (
+            f"VI query leaked into search_video_maxima: {maxima_query_ids_captured}"
+        )
 
-    mock_registry = MagicMock()
-    mock_registry.embedding_dimension = 512
-    mock_registry.total_rows = 10
-    mock_registry.stores = ()
-    mock_registry.keys.return_value = ("L30_V046",)
-    mock_registry.get_store.return_value = None
-
-    mock_manifest = MagicMock()
-    mock_manifest.identifiers = {}
-    mock_manifest.dataset_root = tmp_path
-    mock_manifest.schema_version = "v1"
-    mock_manifest.fingerprint = "dummy_fp"
-    mock_manifest.videos = ()
-
-    mock_raw_registry = MagicMock()
-    mock_raw_registry.records = ()
-    video_rec = MagicMock()
-    video_rec.raw_video_path = str(tmp_path / "video.mp4")
-    video_rec.fps = 25.0
-    video_rec.total_frames = 1000
-    video_rec.duration_seconds = 40.0
-    video_rec.codec = "h264"
-    video_rec.width = 1280
-    video_rec.height = 720
-    video_rec.frame_index_base = 0
-    mock_raw_registry.get.return_value = video_rec
-
-    runtime = OperationalKISRuntime(
-        config=cfg,
-        manifest_path=tmp_path / "manifest.json",
-        manifest=mock_manifest,
-        registry=mock_registry,
-        raw_video_registry=mock_raw_registry,
-        shared_encoder=mock_encoder,
-        decoder=MagicMock(),
-        translation_provider=mock_trans,
-        token_budget_guard=mock_guard,
-    )
-    runtime.video_restricted_searcher = mock_searcher
-    runtime.weighted_rrf = WeightedRRFRetriever(exact_retriever=None)  # type: ignore[arg-type]
-
-    req = QueryRequest(
-        request_id="req_test_1",
-        query_id="query_p1_1",
-        query_vi="Một người phụ nữ mặc áo khoác đỏ đi dạo trong công viên",
-    )
-
-    outcome = runtime.handle_query(req)
-
-    # 1. Assert search_video_maxima contains ONLY English nomination variants
-    assert len(maxima_query_ids_captured) > 0
-    assert not any("vi_local_query" in qid for qid in maxima_query_ids_captured), (
-        f"VI query leaked into search_video_maxima: {maxima_query_ids_captured}"
-    )
-
-    # 2. Assert search_selected_videos DOES contain vi_local_query
-    assert len(restricted_query_ids_captured) > 0
-    assert any("vi_local_query" in qid for qid in restricted_query_ids_captured), (
-        f"VI query missing from search_selected_videos: {restricted_query_ids_captured}"
-    )
+        # 2. Assert search_selected_videos DOES contain vi_local_query
+        assert len(restricted_query_ids_captured) > 0
+        assert any("vi_local_query" in qid for qid in restricted_query_ids_captured), (
+            f"VI query missing from search_selected_videos: {restricted_query_ids_captured}"
+        )
 
 
 

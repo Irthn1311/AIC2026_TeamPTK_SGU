@@ -533,13 +533,21 @@ def generate_and_save_ablation_summary_table(
     manifest_path, manifest_sha, manifest_queries = load_canonical_frozen_manifest()
     query_order = ["p1-1", "p1-2", "p1-4", "p1-5", "p1-6"]
 
-    target_info = {
-        "p1-1": {"human_vid": "L30_V046", "legacy_vid": "L30_V046", "valid_interval": (264.0, 274.0), "gt_frame": 6784},
-        "p1-2": {"human_vid": "L21_V003", "legacy_vid": "L29_V018", "valid_interval": None, "gt_frame": None},
-        "p1-4": {"human_vid": "L22_V021", "legacy_vid": "L22_V021", "valid_interval": None, "gt_frame": None},
-        "p1-5": {"human_vid": "L28_V012", "legacy_vid": "L28_V012", "valid_interval": None, "gt_frame": None},
-        "p1-6": {"human_vid": "L26_V035", "legacy_vid": "L26_V035", "valid_interval": None, "gt_frame": None},
-    }
+    ref_paths = [
+        SYSTEM_TAI_SRC.parent / "benchmarks" / "manual_kis_reference_v1.json",
+        REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "manual_kis_reference_v1.json",
+        Path("/kaggle/working/AIC2026_TeamPTK_SGU/systems/system_tai/benchmarks/manual_kis_reference_v1.json"),
+    ]
+    ref_data = {}
+    for p in ref_paths:
+        if p.is_file():
+            try:
+                ref_data = json.loads(p.read_text(encoding="utf-8"))
+                break
+            except Exception:
+                pass
+
+    ref_queries_map = {q.get("query_id"): q for q in ref_data.get("queries", [])}
 
     summary_matrix = {
         "generated_at": datetime.now(UTC).isoformat(),
@@ -559,11 +567,21 @@ def generate_and_save_ablation_summary_table(
         for q_short in query_order:
             q_meta = manifest_queries.get(q_short, {})
             qid = q_meta.get("query_id", f"query-{q_short}-kis")
-            cand_file = run_out / qid / "candidates.json"
+            ref_entry = ref_queries_map.get(qid, {})
+
+            human_vid = ref_entry.get("human_verified_video_id") or q_meta.get("target_video", "")
+            legacy_vid = ref_entry.get("legacy_manifest_target", {}).get("target_video") or q_meta.get("target_video", "")
+            human_pts_intervals = ref_entry.get("human_annotated_intervals_pts", [])
+            human_status = ref_entry.get("annotation_status", "VIDEO_ONLY_VERIFIED")
 
             q_summary = {
                 "query_id": qid,
-                "target_info": target_info[q_short],
+                "target_info": {
+                    "human_vid": human_vid,
+                    "legacy_vid": legacy_vid,
+                    "human_pts_intervals": human_pts_intervals,
+                    "annotation_status": human_status,
+                },
                 "first_human_video_rank": None,
                 "first_legacy_video_rank": None,
                 "first_valid_interval_rank": None,
@@ -575,22 +593,46 @@ def generate_and_save_ablation_summary_table(
                 "semantic_variant_sha256": None,
             }
 
-            if cand_file.exists():
+            matches = sorted(
+                (run_out / "requests").glob(f"audit-top100-{q_short}-*/candidates.json"),
+                key=lambda p: p.stat().st_mtime,
+            )
+            cand_file = matches[-1] if matches else None
+
+            if cand_file and cand_file.exists():
                 try:
                     cdata = json.loads(cand_file.read_text(encoding="utf-8"))
+                    assert cdata.get("query_id") == qid, f"Mismatched query_id in {cand_file}: {cdata.get('query_id')} != {qid}"
+
                     trans = cdata.get("translation", {})
-                    seg_txt = "".join(trans.get("english_segments", []))
-                    if seg_txt:
-                        q_summary["semantic_variant_sha256"] = hashlib.sha256(seg_txt.encode("utf-8")).hexdigest()[:12]
+                    units = trans.get("units", [])
+                    if units:
+                        semantic_payload = [
+                            {
+                                "variant_id": seg.get("variant_id"),
+                                "text": seg.get("text"),
+                                "weight": seg.get("weight"),
+                            }
+                            for unit in units
+                            for seg in unit.get("segments", [])
+                        ]
+                        q_summary["semantic_variant_sha256"] = hashlib.sha256(
+                            json.dumps(
+                                semantic_payload,
+                                ensure_ascii=False,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ).encode("utf-8")
+                        ).hexdigest()[:12]
+                    elif "english_segments" in trans:
+                        q_summary["semantic_variant_sha256"] = hashlib.sha256(
+                            json.dumps(trans["english_segments"]).encode("utf-8")
+                        ).hexdigest()[:12]
 
                     records = cdata.get("records", [])
                     q_summary["total_candidates"] = len(records)
 
                     src_counts = {}
-                    t_human = target_info[q_short]["human_vid"]
-                    t_legacy = target_info[q_short]["legacy_vid"]
-                    v_int = target_info[q_short]["valid_interval"]
-
                     for r in records:
                         vid = r.get("video_id")
                         rk = r.get("rank")
@@ -605,18 +647,19 @@ def generate_and_save_ablation_summary_table(
                         else:
                             src_counts["RAW"] = src_counts.get("RAW", 0) + 1
 
-                        if vid == t_human and q_summary["first_human_video_rank"] is None:
+                        if vid == human_vid and q_summary["first_human_video_rank"] is None:
                             q_summary["first_human_video_rank"] = rk
-                        if vid == t_legacy and q_summary["first_legacy_video_rank"] is None:
+                        if vid == legacy_vid and q_summary["first_legacy_video_rank"] is None:
                             q_summary["first_legacy_video_rank"] = rk
 
-                        if vid == t_human and v_int is not None:
-                            if v_int[0] <= pts <= v_int[1]:
-                                if q_summary["first_valid_interval_rank"] is None:
-                                    q_summary["first_valid_interval_rank"] = rk
-                                    q_summary["valid_interval_hit"] = True
-                                    q_summary["valid_interval_frame_id"] = fid
-                                    q_summary["valid_interval_source"] = sel_map
+                        if vid == human_vid and human_pts_intervals:
+                            for s_pts, e_pts in human_pts_intervals:
+                                if s_pts <= pts <= e_pts:
+                                    if q_summary["first_valid_interval_rank"] is None:
+                                        q_summary["first_valid_interval_rank"] = rk
+                                        q_summary["valid_interval_hit"] = True
+                                        q_summary["valid_interval_frame_id"] = fid
+                                        q_summary["valid_interval_source"] = sel_map
 
                     q_summary["source_breakdown"] = src_counts
                 except Exception as e:
@@ -630,38 +673,60 @@ def generate_and_save_ablation_summary_table(
     json_path.write_text(json.dumps(summary_matrix, indent=2), encoding="utf-8")
     print(f"\n📊 Ablation Summary JSON Artifact saved -> {json_path} ✅", flush=True)
 
+    if len(runs_to_execute) > 1:
+        print("\n🔍 Verifying Zero Translation Drift across runs...", flush=True)
+        for q_short in query_order:
+            hashes = [
+                summary_matrix["runs"][rk]["queries"][q_short].get("semantic_variant_sha256")
+                for rk in runs_to_execute
+            ]
+            valid_hashes = [h for h in hashes if h is not None]
+            if len(set(valid_hashes)) > 1:
+                print(f"  ⚠️ WARNING: Translation drift detected for [{q_short}]: {dict(zip(runs_to_execute, hashes))}", flush=True)
+            elif valid_hashes:
+                print(f"  ✅ Zero Translation Drift Verified for [{q_short}] (SHA={valid_hashes[0]}) across {runs_to_execute}", flush=True)
+
     print("\n" + "=" * 130, flush=True)
     print("📋 PHASE B1 ABLATION MATRIX: MULTI-RUN STATISTICAL COMPARISON TABLE", flush=True)
     print("=" * 130, flush=True)
 
-    header = f"| {'Target Query / Metric':<45} | " + " | ".join(f"{f'Run {rk}':<12}" for rk in runs_to_execute) + " |"
-    sep = f"|:{'-'*45}-|-" + "-|-".join(f"{'-'*12}" for _ in runs_to_execute) + "-|"
+    header = f"| {'Target Query / Metric':<48} | " + " | ".join(f"{f'Run {rk}':<12}" for rk in runs_to_execute) + " |"
+    sep = f"|:{'-'*48}-|-" + "-|-".join(f"{'-'*12}" for _ in runs_to_execute) + "-|"
     print(header, flush=True)
     print(sep, flush=True)
 
     p1_1_vid = [str(summary_matrix["runs"][rk]["queries"]["p1-1"]["first_human_video_rank"] or "MISS") for rk in runs_to_execute]
-    print(f"| {'P1-1 Target Video Rank (L30_V046)':<45} | " + " | ".join(f"{v:<12}" for v in p1_1_vid) + " |", flush=True)
+    print(f"| {'P1-1 Target Video Rank (L30_V046)':<48} | " + " | ".join(f"{v:<12}" for v in p1_1_vid) + " |", flush=True)
 
     p1_1_int = [str(summary_matrix["runs"][rk]["queries"]["p1-1"]["first_valid_interval_rank"] or "MISS") for rk in runs_to_execute]
-    print(f"| {'P1-1 GT Interval Rank (f6784, 271.36s)':<45} | " + " | ".join(f"{v:<12}" for v in p1_1_int) + " |", flush=True)
+    print(f"| {'P1-1 GT Interval Rank (264s-274s, f6784)':<48} | " + " | ".join(f"{v:<12}" for v in p1_1_int) + " |", flush=True)
 
     p1_2_hum = [str(summary_matrix["runs"][rk]["queries"]["p1-2"]["first_human_video_rank"] or "MISS") for rk in runs_to_execute]
-    print(f"| {'P1-2 Human Target Rank (L21_V003)':<45} | " + " | ".join(f"{v:<12}" for v in p1_2_hum) + " |", flush=True)
+    print(f"| {'P1-2 Human Target Rank (L21_V003)':<48} | " + " | ".join(f"{v:<12}" for v in p1_2_hum) + " |", flush=True)
 
     p1_2_leg = [str(summary_matrix["runs"][rk]["queries"]["p1-2"]["first_legacy_video_rank"] or "MISS") for rk in runs_to_execute]
-    print(f"| {'P1-2 Legacy Target Rank (L29_V018)':<45} | " + " | ".join(f"{v:<12}" for v in p1_2_leg) + " |", flush=True)
+    print(f"| {'P1-2 Legacy Target Rank (L29_V018)':<48} | " + " | ".join(f"{v:<12}" for v in p1_2_leg) + " |", flush=True)
 
-    p1_4_vid = [str(summary_matrix["runs"][rk]["queries"]["p1-4"]["first_human_video_rank"] or "MISS") for rk in runs_to_execute]
-    print(f"| {'P1-4 Human Target Rank (L22_V021)':<45} | " + " | ".join(f"{v:<12}" for v in p1_4_vid) + " |", flush=True)
+    p1_4_hum = [str(summary_matrix["runs"][rk]["queries"]["p1-4"]["first_human_video_rank"] or "MISS") for rk in runs_to_execute]
+    print(f"| {'P1-4 Human Target Rank (L22_V021)':<48} | " + " | ".join(f"{v:<12}" for v in p1_4_hum) + " |", flush=True)
 
-    p1_5_vid = [str(summary_matrix["runs"][rk]["queries"]["p1-5"]["first_human_video_rank"] or "MISS") for rk in runs_to_execute]
-    print(f"| {'P1-5 Human Target Rank (L28_V012)':<45} | " + " | ".join(f"{v:<12}" for v in p1_5_vid) + " |", flush=True)
+    p1_4_leg = [str(summary_matrix["runs"][rk]["queries"]["p1-4"]["first_legacy_video_rank"] or "MISS") for rk in runs_to_execute]
+    print(f"| {'P1-4 Legacy Target Rank (L28_V012)':<48} | " + " | ".join(f"{v:<12}" for v in p1_4_leg) + " |", flush=True)
 
-    p1_6_vid = [str(summary_matrix["runs"][rk]["queries"]["p1-6"]["first_human_video_rank"] or "MISS") for rk in runs_to_execute]
-    print(f"| {'P1-6 Human Target Rank (L26_V035)':<45} | " + " | ".join(f"{v:<12}" for v in p1_6_vid) + " |", flush=True)
+    p1_5_hum = [str(summary_matrix["runs"][rk]["queries"]["p1-5"]["first_human_video_rank"] or "MISS") for rk in runs_to_execute]
+    print(f"| {'P1-5 Human Target Rank (L26_V035)':<48} | " + " | ".join(f"{v:<12}" for v in p1_5_hum) + " |", flush=True)
+
+    p1_5_leg = [str(summary_matrix["runs"][rk]["queries"]["p1-5"]["first_legacy_video_rank"] or "MISS") for rk in runs_to_execute]
+    print(f"| {'P1-5 Legacy Target Rank (L30_V021)':<48} | " + " | ".join(f"{v:<12}" for v in p1_5_leg) + " |", flush=True)
+
+    p1_6_hum = [str(summary_matrix["runs"][rk]["queries"]["p1-6"]["first_human_video_rank"] or "MISS") for rk in runs_to_execute]
+    print(f"| {'P1-6 Human Target Rank (L22_V023)':<48} | " + " | ".join(f"{v:<12}" for v in p1_6_hum) + " |", flush=True)
+
+    p1_6_leg = [str(summary_matrix["runs"][rk]["queries"]["p1-6"]["first_legacy_video_rank"] or "MISS") for rk in runs_to_execute]
+    print(f"| {'P1-6 Legacy Target Rank (L27_V005)':<48} | " + " | ".join(f"{v:<12}" for v in p1_6_leg) + " |", flush=True)
 
     drift_hashes = [str(summary_matrix["runs"][rk]["queries"]["p1-1"]["semantic_variant_sha256"] or "N/A") for rk in runs_to_execute]
-    print(f"| {'Translation Hash (P1-1 Semantic SHA)':<45} | " + " | ".join(f"{v:<12}" for v in drift_hashes) + " |", flush=True)
+    print(f"| {'Translation Hash (P1-1 Semantic SHA)':<48} | " + " | ".join(f"{v:<12}" for v in drift_hashes) + " |", flush=True)
 
     print("=" * 130 + "\n", flush=True)
 
@@ -678,15 +743,8 @@ def main() -> None:
         "--ablation",
         type=str,
         default="A",
-        choices=["A", "B", "C", "D", "E", "all", "ALL"],
-        help="Phase B1 ablation run: A (baseline K10), B (raw K20), C (hybrid K20), D (VI localizer), E (combined), or 'all'",
+        help="Phase B1 ablation run: A, B, C, D, E, ABC, A,B,C, or all (default: A)",
     )
-    args, _ = parser.parse_known_args()
-    selected_sections = [s.strip().lower() for s in args.sections.split(",") if s.strip()]
-    run_all = "all" in selected_sections
-    ablation_mode = args.ablation.strip().upper()
-    runs_to_execute = ["A", "B", "C", "D", "E"] if ablation_mode == "ALL" else [ablation_mode]
-
     ablation_configs = {
         "A": {
             "name": "Run A: Baseline Control (K=10, Hybrid=Off, VI=Off)",
@@ -729,6 +787,21 @@ def main() -> None:
             "vi_localization_weight": 0.5,
         },
     }
+
+    args, _ = parser.parse_known_args()
+    selected_sections = [s.strip().lower() for s in args.sections.split(",") if s.strip()]
+    run_all = "all" in selected_sections
+    ablation_raw = args.ablation.strip().upper()
+    if ablation_raw == "ALL":
+        runs_to_execute = ["A", "B", "C", "D", "E"]
+    elif "," in ablation_raw:
+        runs_to_execute = [r.strip() for r in ablation_raw.split(",") if r.strip() in ablation_configs]
+    elif len(ablation_raw) > 1 and all(c in ablation_configs for c in ablation_raw):
+        runs_to_execute = [c for c in ablation_raw]
+    elif ablation_raw in ablation_configs:
+        runs_to_execute = [ablation_raw]
+    else:
+        runs_to_execute = ["A"]
 
     full_sha = get_git_head()
     print("=" * 120, flush=True)
