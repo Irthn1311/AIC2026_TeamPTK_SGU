@@ -27,6 +27,7 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -740,6 +741,43 @@ def generate_and_save_ablation_summary_table(
     print("=" * 130 + "\n", flush=True)
 
 
+def ensure_clip_model_cached() -> None:
+    cache_dir = Path.home() / ".cache" / "clip"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    target_file = cache_dir / "ViT-B-32.pt"
+
+    if target_file.is_file() and target_file.stat().st_size > 100_000_000:
+        return
+
+    # Check /kaggle/input for pre-cached weights
+    if Path("/kaggle/input").exists():
+        for p in Path("/kaggle/input").glob("**/ViT-B-32.pt"):
+            if p.is_file() and p.stat().st_size > 100_000_000:
+                print(f"  • Found pre-cached CLIP model in dataset: {p}", flush=True)
+                shutil.copy(p, target_file)
+                return
+
+    # Download with retries, timeout, and browser User-Agent
+    urls = [
+        "https://openaipublic.azureedge.net/clip/models/40d365715913c9da98579312b702a82c18be219cc2a73407c4526f58eba950af/ViT-B-32.pt",
+        "https://openaipublic.azureedge.net/clip/models/580e00a5e038cc808b1a14755321302e82ce3aaf3b95d9e03952dd17bf450018/ViT-B-32.pt",
+    ]
+    print(f"  • Downloading ViT-B-32.pt (~338MB) to {target_file}...", flush=True)
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    for url in urls:
+        for attempt in range(5):
+            try:
+                req = urllib.request.Request(url, headers=headers)
+                with urllib.request.urlopen(req, timeout=60) as resp, open(target_file, "wb") as f:
+                    shutil.copyfileobj(resp, f)
+                if target_file.is_file() and target_file.stat().st_size > 100_000_000:
+                    print("  • CLIP model download complete! ✅", flush=True)
+                    return
+            except Exception as e:
+                print(f"  ⚠️ CLIP download attempt {attempt+1}/5 failed ({e}). Retrying in 2s...", flush=True)
+                time.sleep(2)
+
+
 def main() -> None:
     try:
         import clip
@@ -752,6 +790,8 @@ def main() -> None:
             )
         except Exception:
             pass
+
+    ensure_clip_model_cached()
 
     parser = argparse.ArgumentParser(description="KIS V2-A.3 Foundation Closure Audit")
     parser.add_argument(
