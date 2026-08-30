@@ -12,8 +12,9 @@
         "locked_gt_frame": 2425
       },
       "human_verified_video_id": "L30_V046",
-      "human_annotated_intervals": [],
-      "annotation_status": "VIDEO_ONLY_VERIFIED",
+      "human_annotated_intervals_pts": [[264.0, 274.0]],
+      "human_annotated_intervals": [[6600, 6850]],
+      "annotation_status": "FRAME_INTERVAL_VERIFIED",
       "annotation_source": "manual_human_review"
     },
     {

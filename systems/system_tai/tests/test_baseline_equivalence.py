@@ -119,10 +119,13 @@ def test_manual_reference_schema_and_tri_state_evaluator():
 
     for q in queries:
         assert q["official_gt"] is None
-        assert q["annotation_status"] == "VIDEO_ONLY_VERIFIED"
-        assert q["human_annotated_intervals"] == []
+        assert q["annotation_status"] in ("VIDEO_ONLY_VERIFIED", "FRAME_INTERVAL_VERIFIED")
         assert isinstance(q["human_verified_video_id"], str)
         assert len(q["human_verified_video_id"]) > 0
+
+    p1_1 = next(q for q in queries if "p1-1" in q["query_id"])
+    assert p1_1["annotation_status"] == "FRAME_INTERVAL_VERIFIED"
+    assert p1_1["human_annotated_intervals"] == [[6600, 6850]]
 
 
 def test_runner_py_compile_syntax():
