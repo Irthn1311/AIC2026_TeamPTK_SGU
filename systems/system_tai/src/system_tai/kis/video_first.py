@@ -22,25 +22,25 @@ class KISVideoFirstConfig:
     enabled: bool = False
     v2_adaptive_enabled: bool = False
     selected_video_cap: int = 32
-    video_nomination_depth: int = 32
-    restricted_frames_per_video_per_variant: int = 16
+    video_nomination_depth: int = 100
+    restricted_frames_per_video_per_variant: int = 10
     full_query_weight: float = 1.0
     primary_scene_weight: float = 1.0
     supporting_attribute_weight: float = 0.35
-    coverage_threshold: float = 0.50
-    top_m_evidence_cap: int = 5
-    top_m_min_frame_gap: int = 25
-    top_m_weights: tuple[float, ...] = (1.0, 0.70, 0.50, 0.35, 0.25)
+    top_m_evidence_cap: int = 3
+    top_m_min_frame_gap: int = 60
+    top_m_weights: tuple[float, ...] = (0.6, 0.3, 0.1)
+    adaptive_budget_base: int = 32
+    adaptive_budget_medium: int = 48
+    adaptive_budget_high: int = 64
+    coverage_threshold: float = 0.75
     temporal_chain_frame_bonus: float = 0.05
-    restricted_frame_min_gap: int = 25
+    restricted_frame_min_gap: int = 0
     max_restricted_candidates_per_video: int | None = None
     enable_candidate_union: bool = False
     enable_score_normalization: bool = False
     enable_late_interaction: bool = False
     enable_positive_chain_bonus: bool = False
-    adaptive_budget_base: int = 32
-    adaptive_budget_medium: int = 48
-    adaptive_budget_high: int = 64
 
     def __post_init__(self) -> None:
         if type(self.enabled) is not bool:
@@ -911,25 +911,38 @@ def fuse_restricted_frames(
         key=lambda c: (-c.score, c.video_id, c.frame_id),
     )
 
-    # Segment-Level Decoupled Frame Localization (Distinct Temporal Action Clusters)
-    primary_candidates: list[CandidateFrame] = []
-    secondary_candidates: list[CandidateFrame] = []
-    selected_cluster_frames: dict[str, list[int]] = {}
-    segment_gap = max(min_frame_gap, 75)  # 3.0 seconds at 25 fps
+    if min_frame_gap > 0:
+        # Strict frame gap filter
+        filtered_candidates: list[CandidateFrame] = []
+        selected_frames_by_video: dict[str, list[int]] = {}
+        for cand in enriched_sorted:
+            vid = cand.video_id
+            is_chain_winner = cand.diagnostic_metadata.get("is_temporal_chain_winner", False)
+            existing = selected_frames_by_video.get(vid, [])
+            if is_chain_winner or not any(abs(cand.frame_id - f) < min_frame_gap for f in existing):
+                filtered_candidates.append(cand)
+                selected_frames_by_video.setdefault(vid, []).append(cand.frame_id)
+        final_candidates = filtered_candidates[:output_top_k]
+    else:
+        # Segment-Level Decoupled Frame Localization (Distinct Temporal Action Clusters)
+        primary_candidates: list[CandidateFrame] = []
+        secondary_candidates: list[CandidateFrame] = []
+        selected_cluster_frames: dict[str, list[int]] = {}
+        segment_gap = 75  # 3.0 seconds at 25 fps
 
-    for cand in enriched_sorted:
-        vid = cand.video_id
-        is_chain_winner = cand.diagnostic_metadata.get("is_temporal_chain_winner", False)
-        existing_frames = selected_cluster_frames.get(vid, [])
-        is_new_segment = not any(abs(cand.frame_id - f) < segment_gap for f in existing_frames)
+        for cand in enriched_sorted:
+            vid = cand.video_id
+            is_chain_winner = cand.diagnostic_metadata.get("is_temporal_chain_winner", False)
+            existing_frames = selected_cluster_frames.get(vid, [])
+            is_new_segment = not any(abs(cand.frame_id - f) < segment_gap for f in existing_frames)
 
-        if is_chain_winner or is_new_segment:
-            primary_candidates.append(cand)
-            selected_cluster_frames.setdefault(vid, []).append(cand.frame_id)
-        else:
-            secondary_candidates.append(cand)
+            if is_chain_winner or is_new_segment:
+                primary_candidates.append(cand)
+                selected_cluster_frames.setdefault(vid, []).append(cand.frame_id)
+            else:
+                secondary_candidates.append(cand)
 
-    final_candidates = (primary_candidates + secondary_candidates)[:output_top_k]
+        final_candidates = (primary_candidates + secondary_candidates)[:output_top_k]
 
     reranked = tuple(
         CandidateFrame(

@@ -35,25 +35,29 @@ def compute_population_mad_stats(
 
     # Cast to float64 for deterministic reductions
     arr_f64 = np.asarray(scores, dtype=np.float64).ravel()
-    
-    # Clean non-finite values if present
-    if not np.all(np.isfinite(arr_f64)):
-        arr_f64 = np.nan_to_num(arr_f64, nan=0.0, posinf=1.0, neginf=-1.0)
+    finite_mask = np.isfinite(arr_f64)
+    finite_vals = arr_f64[finite_mask]
 
-    med = float(np.median(arr_f64))
-    dev = np.abs(arr_f64 - med)
+    if finite_vals.size == 0:
+        # All values non-finite: fail closed
+        z_out = np.full(scores.shape, -1e9, dtype=np.float32)
+        return z_out, NormalizationStats(0, 0.0, 0.0, True)
+
+    med = float(np.median(finite_vals))
+    dev = np.abs(finite_vals - med)
     mad = float(np.median(dev))
 
     is_degenerate = mad < 1e-9
 
     if is_degenerate:
-        # Fallback to standard deviation if MAD is 0 but scores vary slightly
-        std = float(np.std(arr_f64))
+        # Fallback to standard deviation if MAD is 0 but finite scores vary slightly
+        std = float(np.std(finite_vals))
         scale = max(std, epsilon)
     else:
         scale = 1.4826 * mad + epsilon
 
-    z_scores = (arr_f64 - med) / scale
+    z_scores = np.full_like(arr_f64, -1e9)
+    z_scores[finite_mask] = (finite_vals - med) / scale
     
     # Reshape back to original shape in float32
     z_out = z_scores.reshape(scores.shape).astype(np.float32)

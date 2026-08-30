@@ -618,6 +618,8 @@ class OperationalKISRuntime:
         video_first_restricted_rows_scored = 0
         video_first_restricted_store_scan_count = 0
         selected_videos = ()
+        video_first_outcome = None
+        restricted = None
         if video_first_enabled:
             assert compiled_semantic_query is not None
             v2_adaptive = self.config.kis_video_first_config.v2_adaptive_enabled
@@ -847,6 +849,14 @@ class OperationalKISRuntime:
             "evidence_frame_pool": evidence_frame_pool,
             "translation": translation_metadata,
             "video_first": video_first_trace,
+            "enabled_features": [
+                name for name, val in [
+                    ("candidate_union", getattr(self.config.kis_video_first_config, "enable_candidate_union", False)),
+                    ("score_normalization", getattr(self.config.kis_video_first_config, "enable_score_normalization", False)),
+                    ("late_interaction", getattr(self.config.kis_video_first_config, "enable_late_interaction", False)),
+                    ("positive_chain_bonus", getattr(self.config.kis_video_first_config, "enable_positive_chain_bonus", False)),
+                ] if val
+            ],
             "records": [
                 {
                     "query_id": conditioned_result.query_id,
@@ -854,6 +864,10 @@ class OperationalKISRuntime:
                     "video_id": candidate.video_id,
                     "frame_id": candidate.frame_id,
                     "fusion_score": candidate.score,
+                    "pts_time": (candidate.diagnostic_metadata or {}).get("pts_time", 0.0),
+                    "scores_by_variant": (candidate.diagnostic_metadata or {}).get("scores_by_variant", {}),
+                    "is_temporal_chain_winner": (candidate.diagnostic_metadata or {}).get("is_temporal_chain_winner", False),
+                    "video_nomination_rank": (candidate.diagnostic_metadata or {}).get("video_nomination_rank"),
                     "variant_hit_count": (candidate.diagnostic_metadata or {}).get(
                         "variant_hit_count"
                     ),

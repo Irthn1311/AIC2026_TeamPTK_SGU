@@ -2201,7 +2201,6 @@ def run_all_5_queries_top100_visual_export(
         # 2. Load candidates with REAL fusion scores from internal artifacts
         top100_csv_rel = artifacts.get("refined_top100_csv") or artifacts.get("top100_csv")
         candidates_json_rel = artifacts.get("candidates_json")
-        
         candidates = []
         if candidates_json_rel and (runtime.output_root / candidates_json_rel).exists():
             try:
@@ -2232,17 +2231,28 @@ def run_all_5_queries_top100_visual_export(
                             "pts_time": float(row.get("pts_time", 0.0) or 0.0),
                         })
 
-        # Tri-State Evaluator with Human-Verified Target Reference (Isolated Post-Retrieval Evaluation)
-        true_vids = {
-            "p1-1": "L30_V046",
-            "p1-2": "L21_V003",
-            "p1-4": "L22_V021",
-            "p1-5": "L26_V035",
-            "p1-6": "L22_V023",
-        }
-        human_verified_vid = true_vids.get(q_short, "")
+        # Load manual human reference manifest dynamically (isolated evaluation)
+        ref_paths = [
+            SYSTEM_TAI_SRC.parent / "benchmarks" / "manual_kis_reference_v1.json",
+            REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "manual_kis_reference_v1.json",
+            Path("/kaggle/working/AIC2026_TeamPTK_SGU/systems/system_tai/benchmarks/manual_kis_reference_v1.json"),
+        ]
+        ref_data = {}
+        ref_sha256 = ""
+        for p in ref_paths:
+            if p.is_file():
+                raw_bytes = p.read_bytes()
+                ref_sha256 = hashlib.sha256(raw_bytes).hexdigest()
+                ref_data = json.loads(raw_bytes.decode("utf-8"))
+                break
+
+        query_ref_entry = next((q for q in ref_data.get("queries", []) if q.get("query_id") == qid or q.get("query_id") == f"query-{q_short}-kis"), {})
+        human_verified_vid = query_ref_entry.get("human_verified_video_id", "")
+        human_intervals = query_ref_entry.get("human_annotated_intervals", [])
+        annotation_status = query_ref_entry.get("annotation_status", "VIDEO_ONLY_VERIFIED")
 
         print(f"  • Top-100 Candidates Loaded: {len(candidates)} records", flush=True)
+        print(f"  • Reference SHA256: {ref_sha256[:16]}... | Annotation Status: {annotation_status}", flush=True)
         print(f"  • Top-10 Frame Preview:", flush=True)
         print(f"    {'Rank':<6} | {'Video ID':<10} | {'Frame ID':<10} | {'PTS (s)':<10} | {'Score':<10} | {'Evaluation Status'}", flush=True)
         print(f"    {'-'*6} | {'-'*10} | {'-'*10} | {'-'*10} | {'-'*10} | {'-'*20}", flush=True)
@@ -2250,22 +2260,39 @@ def run_all_5_queries_top100_visual_export(
         breakdown_rows = []
         for c in candidates:
             c_vid = c.get("video_id", "")
+            fid = int(c.get("frame_id", 0))
             if c_vid == human_verified_vid:
                 status_label = "MATCHES_HUMAN_VERIFIED_VIDEO ⭐"
             else:
                 status_label = "DIFFERENT_FROM_HUMAN_VERIFIED_VIDEO"
 
-            pts = float(c.get("pts_time", 0.0) or (c.get("frame_id", 0)/25.0))
+            # Tri-state frame interval evaluation
+            if human_intervals:
+                in_interval = any(s <= fid <= e for s, e in human_intervals)
+                if c_vid == human_verified_vid and in_interval:
+                    valid_frame_hit = True
+                    frame_eval_status = "VALID_MANUAL_INTERVAL_HIT"
+                elif c_vid == human_verified_vid:
+                    valid_frame_hit = False
+                    frame_eval_status = "SAME_VIDEO_OUTSIDE_INTERVAL"
+                else:
+                    valid_frame_hit = False
+                    frame_eval_status = "DIFFERENT_VIDEO"
+            else:
+                valid_frame_hit = None
+                frame_eval_status = "NOT_EVALUABLE_NO_INTERVAL"
+
+            pts = float(c.get("pts_time", 0.0) or (fid / 25.0))
             score_val = float(c.get("score", 0.0))
             
             if c.get("rank", 0) <= 10:
-                print(f"    #{c.get('rank', 0):<5} | {c.get('video_id', ''):<10} | f{c.get('frame_id', 0):<9} | {pts:<10.3f} | {score_val:<10.4f} | {status_label}", flush=True)
+                print(f"    #{c.get('rank', 0):<5} | {c_vid:<10} | f{fid:<9} | {pts:<10.3f} | {score_val:<10.4f} | {status_label}", flush=True)
 
             breakdown_rows.append({
                 "query_id": qid,
                 "rank": int(c.get("rank", 0)),
                 "video_id": c_vid,
-                "frame_id": int(c.get("frame_id", 0)),
+                "frame_id": fid,
                 "pts_time": pts,
                 "scores": {
                     "baseline_final": score_val,
@@ -2274,8 +2301,10 @@ def run_all_5_queries_top100_visual_export(
                 },
                 "enabled_features": [],
                 "human_verified_target": human_verified_vid,
+                "reference_sha256": ref_sha256,
                 "evaluation_status": status_label,
-                "frame_evaluation_status": "NOT_EVALUABLE_NO_INTERVAL",
+                "valid_frame_hit": valid_frame_hit,
+                "frame_evaluation_status": frame_eval_status,
             })
 
         # Save machine-readable JSONL breakdown
@@ -2290,42 +2319,25 @@ def run_all_5_queries_top100_visual_export(
             if not page_cands:
                 continue
 
-            fig, axes = plt.subplots(5, 10, figsize=(26, 14), dpi=100)
+            fig, axes = plt.subplots(5, 10, figsize=(20, 10))
             fig.suptitle(
-                f"Top-100 Keyframes: Query [{q_short}] ({qid}) — Page {page_idx} (Rank #{start_r+1} to #{end_r})\nQuery: {q_text[:110]}...",
-                fontsize=11, fontweight="bold", y=0.99
+                f"Top-100 Keyframes: Query [{q_short}] ({qid}) — Page {page_idx} (Rank #{start_r+1} to #{end_r})\nQuery: {q_text[:100]}...",
+                fontsize=8,
+                fontweight="bold"
             )
             axes_flat = axes.flatten()
 
-            for idx in range(50):
+            for idx, c in enumerate(page_cands):
                 ax = axes_flat[idx]
-                if idx < len(page_cands):
-                    cand = page_cands[idx]
-                    vid = cand.get("video_id", "")
-                    fid = int(cand.get("frame_id", 0))
-                    rank = int(cand.get("rank", start_r + idx + 1))
-                    score = float(cand.get("fusion_score") if "fusion_score" in cand else cand.get("score", 0.0))
-                    pts = float(cand.get("pts_time", 0.0) or 0.0)
-                    order = cand.get("keyframe_order")
+                vid = c.get("video_id", "")
+                fid = int(c.get("frame_id", 0))
+                rank = int(c.get("rank", 0))
+                pts = float(c.get("pts_time", 0.0) or (fid / 25.0))
+                score = float(c.get("score", 0.0))
+                order = int(c.get("keyframe_order", 0))
 
-                    if (order is None or order <= 0 or pts <= 0.0) and runtime is not None:
-                        try:
-                            store = runtime.registry.get_store(vid)
-                            if store is not None:
-                                for m in store.mappings:
-                                    if m.frame_id == fid:
-                                        if order is None or order <= 0:
-                                            order = m.keyframe_order
-                                        if pts <= 0.0:
-                                            pts = float(m.pts_time)
-                                        break
-                        except Exception:
-                            pass
-                    if pts <= 0.0:
-                        pts = float(fid) / 25.0
-
-                    dec_res = extract_image_for_frame(
-                        dataset_root=input_root,
+                try:
+                    dec_res = decode_exact_keyframe(
                         video_id=vid,
                         frame_id=fid,
                         keyframe_order=order,
@@ -2334,7 +2346,7 @@ def run_all_5_queries_top100_visual_export(
                     )
 
                     is_target = (vid == target_vid)
-                    is_true_cand = (vid == true_match_vid)
+                    is_true_cand = (vid == human_verified_vid)
 
                     if dec_res.image is not None:
                         ax.imshow(dec_res.image)

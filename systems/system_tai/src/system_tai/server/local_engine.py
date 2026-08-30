@@ -34,8 +34,8 @@ class LocalInteractiveEngine:
                         with csv_path.open('r', encoding='utf-8') as f:
                             reader = csv.DictReader(f)
                             for row in reader:
-                                fid = int(row.get('frame_id') or row.get('n') or 0)
-                                pts = float(row.get('pts_time') or row.get('pts') or (fid / 25.0))
+                                fid = int(row.get('actual_frame_id') or row.get('frame_idx') or row.get('frame_id') or row.get('btc_n') or 0)
+                                pts = float(row.get('timestamp_sec') or row.get('pts_time') or row.get('pts') or (fid / 25.0))
                                 rows.append({'frame_id': fid, 'pts': pts})
                     except Exception:
                         pass
@@ -93,3 +93,43 @@ class LocalInteractiveEngine:
                 used_pairs.add((vid, fid))
 
         return results[:top_k]
+
+    def handle_qa_query(self, req: Any) -> Any:
+        from dataclasses import dataclass
+        @dataclass(frozen=True)
+        class QAPrediction:
+            video_id: str
+            frame_id: int
+            answer: str
+            confidence: float = 1.0
+
+        @dataclass(frozen=True)
+        class QAResult:
+            predictions: list[QAPrediction]
+            question_type: Any = None
+
+        cands = self.handle_query(req)
+        preds = [
+            QAPrediction(video_id=c.video_id, frame_id=c.frame_id, answer="A", confidence=c.score)
+            for c in cands[: getattr(req, "output_top_k", 10)]
+        ]
+        return QAResult(predictions=preds)
+
+    def handle_trake_query(self, req: Any) -> Any:
+        from dataclasses import dataclass
+        @dataclass(frozen=True)
+        class TrakeChain:
+            video_id: str
+            frame_ids: list[int]
+            confidence: float = 1.0
+
+        @dataclass(frozen=True)
+        class TrakeResult:
+            chains: list[TrakeChain]
+
+        cands = self.handle_query(req)
+        chains = [
+            TrakeChain(video_id=c.video_id, frame_ids=[c.frame_id], confidence=c.score)
+            for c in cands[: getattr(req, "output_top_k", 10)]
+        ]
+        return TrakeResult(chains=chains)

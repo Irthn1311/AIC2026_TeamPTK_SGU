@@ -72,7 +72,10 @@ def _build_meta(request_id: str, t_start: float) -> ResponseMeta:
     )
 
 
-def create_app(engine: Any = None) -> FastAPI:
+_DEFAULT_SENTINEL = object()
+
+
+def create_app(engine: Any = _DEFAULT_SENTINEL) -> FastAPI:
     """Create and configure the FastAPI application conforming to Sheet 09."""
     app = FastAPI(
         title="system_tai API Gateway",
@@ -88,7 +91,7 @@ def create_app(engine: Any = None) -> FastAPI:
         allow_headers=["*"],
     )
 
-    if engine is None:
+    if engine is _DEFAULT_SENTINEL:
         try:
             from .local_engine import LocalInteractiveEngine
             app.state.engine = LocalInteractiveEngine()
@@ -285,7 +288,7 @@ def create_app(engine: Any = None) -> FastAPI:
                     execution_id=f"exec_{uuid.uuid4().hex[:8]}",
                     normalized_event=req.event_description,
                     normalized_question=req.question,
-                    detected_answer_type=result.question_type.value,
+                    detected_answer_type=getattr(getattr(result, "question_type", None), "value", "auto"),
                     total_candidates=len(candidates),
                     candidates=candidates,
                     answers=answers,
@@ -300,7 +303,7 @@ def create_app(engine: Any = None) -> FastAPI:
                 execution_id=f"exec_{uuid.uuid4().hex[:8]}",
                 normalized_event=req.event_description,
                 normalized_question=req.question,
-                detected_answer_type="UNKNOWN",
+                detected_answer_type="auto",
                 total_candidates=0,
                 candidates=[],
                 answers=[],
@@ -354,21 +357,32 @@ def create_app(engine: Any = None) -> FastAPI:
         active_engine = app.state.engine
 
         if active_engine is not None:
+            event_objs = tuple(
+                {
+                    "description": ev,
+                    "description_en": (
+                        req.events_en[i]
+                        if req.events_en and i < len(req.events_en)
+                        else None
+                    ),
+                }
+                for i, ev in enumerate(req.events)
+            )
             engine_req = EngineTRAKERequest(
                 request_id=req_id,
                 query_id=query_id,
-                event_descriptions=req.events,
-                event_descriptions_en=req.events_en,
+                events=event_objs,
                 output_top_k=req.top_k_chains,
             )
             result = active_engine.handle_trake_query(engine_req)
+            raw_chains = getattr(result, "predictions", getattr(result, "chains", []))
             chains = [
                 TrakeChainItem(
                     videoId=p.video_id,
-                    frames=list(p.frame_ids),
-                    confidence=float(p.confidence) if p.confidence is not None else 1.0,
+                    frames=list(getattr(p, "frame_ids", [getattr(p, "frame_id", 0)])),
+                    confidence=float(p.confidence) if getattr(p, "confidence", None) is not None else 1.0,
                 )
-                for p in result.predictions
+                for p in raw_chains
             ]
             return ApiResponse(
                 meta=_build_meta(req_id, t0),
