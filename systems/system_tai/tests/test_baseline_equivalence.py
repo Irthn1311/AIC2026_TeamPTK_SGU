@@ -123,3 +123,68 @@ def test_manual_reference_schema_and_tri_state_evaluator():
         assert q["human_annotated_intervals"] == []
         assert isinstance(q["human_verified_video_id"], str)
         assert len(q["human_verified_video_id"]) > 0
+
+
+def test_runner_py_compile_syntax():
+    import py_compile
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parent.parent.parent.parent
+    runner_script = repo_root / "scratch" / "run_kaggle_v2a_causal_closure.py"
+    assert runner_script.exists(), "run_kaggle_v2a_causal_closure.py must exist"
+
+    # Must compile cleanly without SyntaxError, IndentationError, or TabError
+    py_compile.compile(str(runner_script), doraise=True)
+
+
+def test_pts_time_and_variant_scores_preservation_through_rrf():
+    """Verify that pts_time and scores_by_variant are strictly preserved across fusion and serialization."""
+    from system_tai.common.schemas import CandidateFrame, KISResult
+
+    v1 = QueryVariant(variant_id="vi_primary", text="nón bảo hiểm", language=QueryLanguage.VIETNAMESE, variant_type=QueryVariantType.VIETNAMESE_DIRECT, weight=1.0)
+    v2 = QueryVariant(variant_id="en_translated", text="helmet", language=QueryLanguage.ENGLISH, variant_type=QueryVariantType.ENGLISH_TRANSLATION, weight=0.5)
+
+    hit1 = CandidateFrame(video_id="L30_V046", frame_id=2425, clip_row=0, keyframe_order=5, score=0.45, rank=1, source="clip", diagnostic_metadata={"pts_time": 97.123})
+    hit2 = CandidateFrame(video_id="L30_V046", frame_id=2425, clip_row=0, keyframe_order=5, score=0.42, rank=1, source="clip", diagnostic_metadata={"pts_time": 97.123})
+
+    rrf = WeightedRRFRetriever(object())
+    fused_res = rrf.fuse_rankings(
+        query_id="Q-TEST",
+        variants=(v1, v2),
+        rankings={
+            "vi_primary": KISResult(query_id="vi_primary", ranked_candidates=(hit1,)),
+            "en_translated": KISResult(query_id="en_translated", ranked_candidates=(hit2,)),
+        },
+        output_top_k=10,
+    )
+
+    top_cand = fused_res.ranked_candidates[0]
+    assert top_cand.diagnostic_metadata.get("pts_time") == 97.123, "pts_time must be preserved through WeightedRRFRetriever.fuse_rankings"
+
+    # Now verify fuse_restricted_frames preserves pts_time and produces scores_by_variant
+    restricted = VideoRestrictedSearchOutcome(
+        rankings={
+            "vi_primary": {"L30_V046": (RestrictedFrameHit(video_id="L30_V046", frame_id=2425, clip_row=0, keyframe_order=5, pts_time=97.123, cosine_score=0.45, rank=1),)},
+            "en_translated": {"L30_V046": (RestrictedFrameHit(video_id="L30_V046", frame_id=2425, clip_row=0, keyframe_order=5, pts_time=97.123, cosine_score=0.42, rank=1),)},
+        },
+        physical_rows_scored=1,
+        video_store_scan_count=1,
+    )
+    sel_vids = (FusedVideoEvidence(video_id="L30_V046", rank=1, fusion_score=0.9, variant_hit_count=2, primary_coverage_count=2, best_individual_rank=1, per_variant=()),)
+
+    final_res = fuse_restricted_frames(
+        query_id="Q-TEST",
+        variants=(v1, v2),
+        restricted=restricted,
+        selected_videos=sel_vids,
+        weighted_rrf=rrf,
+        output_top_k=10,
+        rrf_constant=60.0,
+    )
+
+    final_cand = final_res.ranked_candidates[0]
+    diag = final_cand.diagnostic_metadata
+    assert diag.get("pts_time") == 97.123, "pts_time must be preserved in final CandidateFrame"
+    assert "scores_by_variant" in diag
+    assert diag["scores_by_variant"] == {"vi_primary": 0.45, "en_translated": 0.42}
+

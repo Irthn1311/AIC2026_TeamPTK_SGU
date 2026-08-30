@@ -2198,13 +2198,15 @@ def run_all_5_queries_top100_visual_export(
         resp = runtime.handle_query(req)
         artifacts = resp.get("artifacts", {})
 
-        # 2. Load candidates with REAL fusion scores from internal artifacts
+        # 2. Load candidates with REAL fusion scores and diagnostic metadata from internal artifacts
         top100_csv_rel = artifacts.get("refined_top100_csv") or artifacts.get("top100_csv")
         candidates_json_rel = artifacts.get("candidates_json")
         candidates = []
+        enabled_features_list = []
         if candidates_json_rel and (runtime.output_root / candidates_json_rel).exists():
             try:
                 c_data = json.loads((runtime.output_root / candidates_json_rel).read_text(encoding="utf-8"))
+                enabled_features_list = c_data.get("enabled_features", [])
                 for r in c_data.get("records", []):
                     candidates.append({
                         "rank": int(r.get("rank", 0)),
@@ -2212,6 +2214,11 @@ def run_all_5_queries_top100_visual_export(
                         "frame_id": int(r.get("frame_id", 0)),
                         "score": float(r.get("fusion_score", r.get("score", 0.0))),
                         "pts_time": float(r.get("pts_time", 0.0) or (int(r.get("frame_id", 0))/25.0)),
+                        "keyframe_order": int(r.get("keyframe_order") or r.get("keyframe_order_diagnostic") or 0),
+                        "scores_by_variant": r.get("scores_by_variant", {}),
+                        "is_temporal_chain_winner": bool(r.get("is_temporal_chain_winner", False)),
+                        "video_nomination_rank": r.get("video_nomination_rank"),
+                        "enabled_features": enabled_features_list,
                     })
             except Exception:
                 pass
@@ -2229,6 +2236,11 @@ def run_all_5_queries_top100_visual_export(
                             "frame_id": int(row.get("frame_id", 0)),
                             "score": float(row.get("fusion_score", row.get("score", 0.0))),
                             "pts_time": float(row.get("pts_time", 0.0) or 0.0),
+                            "keyframe_order": 0,
+                            "scores_by_variant": {},
+                            "is_temporal_chain_winner": False,
+                            "video_nomination_rank": None,
+                            "enabled_features": [],
                         })
 
         # Load manual human reference manifest dynamically (isolated evaluation)
@@ -2299,7 +2311,10 @@ def run_all_5_queries_top100_visual_export(
                     "experimental_final": None,
                     "scores_by_variant": c.get("scores_by_variant", {}),
                 },
-                "enabled_features": [],
+                "enabled_features": c.get("enabled_features", enabled_features_list),
+                "is_temporal_chain_winner": c.get("is_temporal_chain_winner", False),
+                "video_nomination_rank": c.get("video_nomination_rank"),
+                "keyframe_order": c.get("keyframe_order", 0),
                 "human_verified_target": human_verified_vid,
                 "reference_sha256": ref_sha256,
                 "evaluation_status": status_label,
@@ -2327,17 +2342,35 @@ def run_all_5_queries_top100_visual_export(
             )
             axes_flat = axes.flatten()
 
-            for idx, c in enumerate(page_cands):
+            for idx in range(50):
                 ax = axes_flat[idx]
-                vid = c.get("video_id", "")
-                fid = int(c.get("frame_id", 0))
-                rank = int(c.get("rank", 0))
-                pts = float(c.get("pts_time", 0.0) or (fid / 25.0))
-                score = float(c.get("score", 0.0))
-                order = int(c.get("keyframe_order", 0))
+                if idx < len(page_cands):
+                    cand = page_cands[idx]
+                    vid = cand.get("video_id", "")
+                    fid = int(cand.get("frame_id", 0))
+                    rank = int(cand.get("rank", start_r + idx + 1))
+                    score = float(cand.get("score", 0.0))
+                    pts = float(cand.get("pts_time", 0.0) or (fid / 25.0))
+                    order = int(cand.get("keyframe_order", 0))
 
-                try:
-                    dec_res = decode_exact_keyframe(
+                    if (order <= 0 or pts <= 0.0) and runtime is not None:
+                        try:
+                            store = runtime.registry.get_store(vid)
+                            if store is not None:
+                                for m in store.mappings:
+                                    if m.frame_id == fid:
+                                        if order <= 0:
+                                            order = int(m.keyframe_order)
+                                        if pts <= 0.0:
+                                            pts = float(m.pts_time)
+                                        break
+                        except Exception:
+                            pass
+                    if pts <= 0.0:
+                        pts = float(fid) / 25.0
+
+                    dec_res = extract_image_for_frame(
+                        dataset_root=input_root,
                         video_id=vid,
                         frame_id=fid,
                         keyframe_order=order,

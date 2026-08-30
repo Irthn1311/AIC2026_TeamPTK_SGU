@@ -841,6 +841,33 @@ class OperationalKISRuntime:
                 for fid in sorted(frames_for_video):
                     evidence_frame_pool.append({"video_id": vid, "frame_id": fid})
 
+        def _get_cand_pts(c: CandidateFrame) -> float:
+            diag_pts = float((c.diagnostic_metadata or {}).get("pts_time") or 0.0)
+            if diag_pts > 0.0:
+                return diag_pts
+            try:
+                st = self.registry.get_store(c.video_id)
+                if st is not None:
+                    for mp in st.mappings:
+                        if mp.frame_id == c.frame_id:
+                            return float(mp.pts_time)
+            except Exception:
+                pass
+            return float(c.frame_id) / 25.0
+
+        def _get_cand_order(c: CandidateFrame) -> int:
+            if c.keyframe_order and c.keyframe_order > 0:
+                return c.keyframe_order
+            try:
+                st = self.registry.get_store(c.video_id)
+                if st is not None:
+                    for mp in st.mappings:
+                        if mp.frame_id == c.frame_id:
+                            return int(mp.keyframe_order)
+            except Exception:
+                pass
+            return 0
+
         candidates_json = query_dir / "candidates.json"
         candidates_data = {
             "query_id": request.query_id,
@@ -864,7 +891,7 @@ class OperationalKISRuntime:
                     "video_id": candidate.video_id,
                     "frame_id": candidate.frame_id,
                     "fusion_score": candidate.score,
-                    "pts_time": (candidate.diagnostic_metadata or {}).get("pts_time", 0.0),
+                    "pts_time": _get_cand_pts(candidate),
                     "scores_by_variant": (candidate.diagnostic_metadata or {}).get("scores_by_variant", {}),
                     "is_temporal_chain_winner": (candidate.diagnostic_metadata or {}).get("is_temporal_chain_winner", False),
                     "video_nomination_rank": (candidate.diagnostic_metadata or {}).get("video_nomination_rank"),
@@ -875,7 +902,8 @@ class OperationalKISRuntime:
                         "best_individual_rank"
                     ),
                     "clip_row_diagnostic": candidate.clip_row,
-                    "keyframe_order_diagnostic": candidate.keyframe_order,
+                    "keyframe_order_diagnostic": _get_cand_order(candidate),
+                    "keyframe_order": _get_cand_order(candidate),
                     "source": candidate.source,
                     "q3_policy": (candidate.diagnostic_metadata or {}).get("q3_policy"),
                 }

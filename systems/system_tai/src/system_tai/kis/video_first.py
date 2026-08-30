@@ -912,7 +912,6 @@ def fuse_restricted_frames(
     )
 
     if min_frame_gap > 0:
-        # Strict frame gap filter
         filtered_candidates: list[CandidateFrame] = []
         selected_frames_by_video: dict[str, list[int]] = {}
         for cand in enriched_sorted:

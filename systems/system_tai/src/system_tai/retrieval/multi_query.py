@@ -208,6 +208,7 @@ class WeightedRRFRetriever:
                 rank=rank,
                 source="weighted_rrf",
                 diagnostic_metadata={
+                    **dict(item.representative.diagnostic_metadata or {}),
                     "fusion_method": "weighted_reciprocal_rank_fusion",
                     "fusion_score": item.fusion_score,
                     "variant_hit_count": item.variant_hit_count,
