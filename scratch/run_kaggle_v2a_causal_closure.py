@@ -524,6 +524,148 @@ def extract_image_for_frame(
     )
 
 
+def generate_and_save_ablation_summary_table(
+    all_run_results: dict[str, dict],
+    base_out: Path,
+    runs_to_execute: list[str],
+    ablation_configs: dict[str, dict],
+) -> None:
+    manifest_path, manifest_sha, manifest_queries = load_canonical_frozen_manifest()
+    query_order = ["p1-1", "p1-2", "p1-4", "p1-5", "p1-6"]
+
+    target_info = {
+        "p1-1": {"human_vid": "L30_V046", "legacy_vid": "L30_V046", "valid_interval": (264.0, 274.0), "gt_frame": 6784},
+        "p1-2": {"human_vid": "L21_V003", "legacy_vid": "L29_V018", "valid_interval": None, "gt_frame": None},
+        "p1-4": {"human_vid": "L22_V021", "legacy_vid": "L22_V021", "valid_interval": None, "gt_frame": None},
+        "p1-5": {"human_vid": "L28_V012", "legacy_vid": "L28_V012", "valid_interval": None, "gt_frame": None},
+        "p1-6": {"human_vid": "L26_V035", "legacy_vid": "L26_V035", "valid_interval": None, "gt_frame": None},
+    }
+
+    summary_matrix = {
+        "generated_at": datetime.now(UTC).isoformat(),
+        "runs": {},
+    }
+
+    for run_key in runs_to_execute:
+        run_out = base_out / f"run_{run_key}"
+        run_spec = ablation_configs[run_key]
+        run_data = {
+            "run_key": run_key,
+            "name": run_spec["name"],
+            "config": run_spec,
+            "queries": {},
+        }
+
+        for q_short in query_order:
+            q_meta = manifest_queries.get(q_short, {})
+            qid = q_meta.get("query_id", f"query-{q_short}-kis")
+            cand_file = run_out / qid / "candidates.json"
+
+            q_summary = {
+                "query_id": qid,
+                "target_info": target_info[q_short],
+                "first_human_video_rank": None,
+                "first_legacy_video_rank": None,
+                "first_valid_interval_rank": None,
+                "valid_interval_hit": False,
+                "valid_interval_frame_id": None,
+                "valid_interval_source": None,
+                "total_candidates": 0,
+                "source_breakdown": {},
+                "semantic_variant_sha256": None,
+            }
+
+            if cand_file.exists():
+                try:
+                    cdata = json.loads(cand_file.read_text(encoding="utf-8"))
+                    trans = cdata.get("translation", {})
+                    seg_txt = "".join(trans.get("english_segments", []))
+                    if seg_txt:
+                        q_summary["semantic_variant_sha256"] = hashlib.sha256(seg_txt.encode("utf-8")).hexdigest()[:12]
+
+                    records = cdata.get("records", [])
+                    q_summary["total_candidates"] = len(records)
+
+                    src_counts = {}
+                    t_human = target_info[q_short]["human_vid"]
+                    t_legacy = target_info[q_short]["legacy_vid"]
+                    v_int = target_info[q_short]["valid_interval"]
+
+                    for r in records:
+                        vid = r.get("video_id")
+                        rk = r.get("rank")
+                        pts = r.get("pts_time", 0.0)
+                        fid = r.get("frame_id")
+
+                        sel_map = r.get("selection_by_variant", {})
+                        if sel_map:
+                            for var_id, var_info in sel_map.items():
+                                s = var_info.get("source", "RAW")
+                                src_counts[s] = src_counts.get(s, 0) + 1
+                        else:
+                            src_counts["RAW"] = src_counts.get("RAW", 0) + 1
+
+                        if vid == t_human and q_summary["first_human_video_rank"] is None:
+                            q_summary["first_human_video_rank"] = rk
+                        if vid == t_legacy and q_summary["first_legacy_video_rank"] is None:
+                            q_summary["first_legacy_video_rank"] = rk
+
+                        if vid == t_human and v_int is not None:
+                            if v_int[0] <= pts <= v_int[1]:
+                                if q_summary["first_valid_interval_rank"] is None:
+                                    q_summary["first_valid_interval_rank"] = rk
+                                    q_summary["valid_interval_hit"] = True
+                                    q_summary["valid_interval_frame_id"] = fid
+                                    q_summary["valid_interval_source"] = sel_map
+
+                    q_summary["source_breakdown"] = src_counts
+                except Exception as e:
+                    q_summary["error"] = str(e)
+
+            run_data["queries"][q_short] = q_summary
+
+        summary_matrix["runs"][run_key] = run_data
+
+    json_path = base_out / "ablation_matrix_summary.json"
+    json_path.write_text(json.dumps(summary_matrix, indent=2), encoding="utf-8")
+    print(f"\n📊 Ablation Summary JSON Artifact saved -> {json_path} ✅", flush=True)
+
+    print("\n" + "=" * 130, flush=True)
+    print("📋 PHASE B1 ABLATION MATRIX: MULTI-RUN STATISTICAL COMPARISON TABLE", flush=True)
+    print("=" * 130, flush=True)
+
+    header = f"| {'Target Query / Metric':<45} | " + " | ".join(f"{f'Run {rk}':<12}" for rk in runs_to_execute) + " |"
+    sep = f"|:{'-'*45}-|-" + "-|-".join(f"{'-'*12}" for _ in runs_to_execute) + "-|"
+    print(header, flush=True)
+    print(sep, flush=True)
+
+    p1_1_vid = [str(summary_matrix["runs"][rk]["queries"]["p1-1"]["first_human_video_rank"] or "MISS") for rk in runs_to_execute]
+    print(f"| {'P1-1 Target Video Rank (L30_V046)':<45} | " + " | ".join(f"{v:<12}" for v in p1_1_vid) + " |", flush=True)
+
+    p1_1_int = [str(summary_matrix["runs"][rk]["queries"]["p1-1"]["first_valid_interval_rank"] or "MISS") for rk in runs_to_execute]
+    print(f"| {'P1-1 GT Interval Rank (f6784, 271.36s)':<45} | " + " | ".join(f"{v:<12}" for v in p1_1_int) + " |", flush=True)
+
+    p1_2_hum = [str(summary_matrix["runs"][rk]["queries"]["p1-2"]["first_human_video_rank"] or "MISS") for rk in runs_to_execute]
+    print(f"| {'P1-2 Human Target Rank (L21_V003)':<45} | " + " | ".join(f"{v:<12}" for v in p1_2_hum) + " |", flush=True)
+
+    p1_2_leg = [str(summary_matrix["runs"][rk]["queries"]["p1-2"]["first_legacy_video_rank"] or "MISS") for rk in runs_to_execute]
+    print(f"| {'P1-2 Legacy Target Rank (L29_V018)':<45} | " + " | ".join(f"{v:<12}" for v in p1_2_leg) + " |", flush=True)
+
+    p1_4_vid = [str(summary_matrix["runs"][rk]["queries"]["p1-4"]["first_human_video_rank"] or "MISS") for rk in runs_to_execute]
+    print(f"| {'P1-4 Human Target Rank (L22_V021)':<45} | " + " | ".join(f"{v:<12}" for v in p1_4_vid) + " |", flush=True)
+
+    p1_5_vid = [str(summary_matrix["runs"][rk]["queries"]["p1-5"]["first_human_video_rank"] or "MISS") for rk in runs_to_execute]
+    print(f"| {'P1-5 Human Target Rank (L28_V012)':<45} | " + " | ".join(f"{v:<12}" for v in p1_5_vid) + " |", flush=True)
+
+    p1_6_vid = [str(summary_matrix["runs"][rk]["queries"]["p1-6"]["first_human_video_rank"] or "MISS") for rk in runs_to_execute]
+    print(f"| {'P1-6 Human Target Rank (L26_V035)':<45} | " + " | ".join(f"{v:<12}" for v in p1_6_vid) + " |", flush=True)
+
+    drift_hashes = [str(summary_matrix["runs"][rk]["queries"]["p1-1"]["semantic_variant_sha256"] or "N/A") for rk in runs_to_execute]
+    print(f"| {'Translation Hash (P1-1 Semantic SHA)':<45} | " + " | ".join(f"{v:<12}" for v in drift_hashes) + " |", flush=True)
+
+    print("=" * 130 + "\n", flush=True)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="KIS V2-A.3 Foundation Closure Audit")
     parser.add_argument(
@@ -618,7 +760,7 @@ def main() -> None:
 
     for run_key in runs_to_execute:
         run_spec = ablation_configs[run_key]
-        run_out = base_out if len(runs_to_execute) == 1 and ablation_mode != "ALL" else base_out / f"run_{run_key}"
+        run_out = base_out / f"run_{run_key}"
         run_out.mkdir(parents=True, exist_ok=True)
 
         print("-" * 120, flush=True)
@@ -674,7 +816,10 @@ def main() -> None:
         print_final_summary_table(coverage_results)
         all_run_results[run_key] = {"name": run_spec["name"], "coverage": coverage_results}
 
-    # 6. PACKAGE ALL VISUAL EVIDENCE ARTIFACTS INTO A SINGLE ZIP ARCHIVE
+    # 6. GENERATE CROSS-RUN STATISTICAL COMPARISON TABLE & JSON ARTIFACT
+    generate_and_save_ablation_summary_table(all_run_results, base_out, runs_to_execute, ablation_configs)
+
+    # 7. PACKAGE ALL VISUAL EVIDENCE ARTIFACTS INTO A SINGLE ZIP ARCHIVE
     zip_dest = Path("/kaggle/working/v2a3_visual_evidence_package") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "v2a3_visual_evidence_package"
     try:
         shutil.make_archive(str(zip_dest), "zip", base_out)

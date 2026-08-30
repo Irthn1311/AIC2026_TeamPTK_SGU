@@ -47,6 +47,7 @@ class VideoRestrictedSearchOutcome:
     rankings: Mapping[str, Mapping[str, tuple[RestrictedFrameHit, ...]]]
     physical_rows_scored: int
     video_store_scan_count: int
+    candidate_selection_telemetry: Mapping[str, Mapping[str, Mapping[str, int]]] | None = None
 
     def __post_init__(self) -> None:
         frozen = {
@@ -218,7 +219,8 @@ def rank_store_frames(
     enable_temporal_diversity: bool = False,
     temporal_diversity_gap_seconds: float = 5.0,
     raw_top_k: int = 10,
-) -> dict[str, tuple[RestrictedFrameHit, ...]]:
+    return_telemetry: bool = False,
+) -> dict[str, tuple[RestrictedFrameHit, ...]] | tuple[dict[str, tuple[RestrictedFrameHit, ...]], dict[str, dict[str, int]]]:
     """Rank distinct absolute frames for several vectors in one store traversal."""
 
     if not query_ids or len(query_ids) != len(query_vectors):
@@ -285,6 +287,7 @@ def rank_store_frames(
                     best_by_query_frame[query_index][hit.frame_id] = hit
 
     rankings: dict[str, tuple[RestrictedFrameHit, ...]] = {}
+    telemetries: dict[str, dict[str, int]] = {}
     compulsory_set = set(compulsory_frame_ids or ())
     for query_index, query_id in enumerate(query_ids):
         all_ordered = sorted(
@@ -292,7 +295,7 @@ def rank_store_frames(
             key=_frame_sort_key,
         )
         if enable_temporal_diversity and per_query_cap is not None:
-            hybrid_hits, _ = select_hybrid_candidates(
+            hybrid_hits, tel = select_hybrid_candidates(
                 all_ordered,
                 total_budget=per_query_cap,
                 raw_top_k=raw_top_k,
@@ -300,6 +303,7 @@ def rank_store_frames(
                 compulsory_frame_ids=compulsory_frame_ids,
             )
             rankings[query_id] = hybrid_hits
+            telemetries[query_id] = tel
         else:
             if per_query_cap is not None:
                 capped = all_ordered[:per_query_cap]
@@ -311,12 +315,15 @@ def rank_store_frames(
                     ]
                     ordered = capped + missing_compulsory
                 else:
+                    missing_compulsory = []
                     ordered = capped
             else:
+                capped = all_ordered
+                missing_compulsory = []
                 ordered = all_ordered
 
             raw_ranks = {hit.frame_id: idx for idx, hit in enumerate(all_ordered, start=1)}
-            capped_fid_set = {hit.frame_id for hit in (all_ordered[:per_query_cap] if per_query_cap is not None else all_ordered)}
+            capped_fid_set = {hit.frame_id for hit in capped}
 
             rankings[query_id] = tuple(
                 RestrictedFrameHit(
@@ -332,6 +339,17 @@ def rank_store_frames(
                 )
                 for rank, hit in enumerate(ordered, start=1)
             )
+            telemetries[query_id] = {
+                "nominal_budget": per_query_cap if per_query_cap is not None else len(all_ordered),
+                "normal_candidate_count": len(capped),
+                "compulsory_extra_count": len(missing_compulsory),
+                "effective_candidate_count": len(ordered),
+                "raw_count": len(capped),
+                "diverse_count": 0,
+                "tail_fill_count": 0,
+            }
+    if return_telemetry:
+        return rankings, telemetries
     return rankings
 
 
@@ -473,11 +491,14 @@ class VideoRestrictedFeatureSearcher:
         rankings: dict[str, dict[str, tuple[RestrictedFrameHit, ...]]] = {
             query_id: {} for query_id in query_ids
         }
+        telemetries: dict[str, dict[str, dict[str, int]]] = {
+            query_id: {} for query_id in query_ids
+        }
         rows_scored = 0
         compulsory_map = compulsory_frame_ids_by_video or {}
         for video_id in selected:
             store = self.registry.get(video_id)
-            per_store = rank_store_frames(
+            per_store, per_store_telemetry = rank_store_frames(
                 store,
                 query_ids=query_ids,
                 query_vectors=query_vectors,
@@ -488,12 +509,15 @@ class VideoRestrictedFeatureSearcher:
                 enable_temporal_diversity=enable_temporal_diversity,
                 temporal_diversity_gap_seconds=temporal_diversity_gap_seconds,
                 raw_top_k=raw_top_k,
+                return_telemetry=True,
             )
             rows_scored += store.descriptor.row_count
             for query_id in query_ids:
                 rankings[query_id][video_id] = per_store[query_id]
+                telemetries[query_id][video_id] = per_store_telemetry[query_id]
         return VideoRestrictedSearchOutcome(
             rankings=rankings,
             physical_rows_scored=rows_scored,
             video_store_scan_count=len(selected),
+            candidate_selection_telemetry=telemetries,
         )

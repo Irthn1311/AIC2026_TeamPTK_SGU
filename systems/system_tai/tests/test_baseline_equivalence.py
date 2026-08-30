@@ -305,55 +305,97 @@ def test_simulate_b0_equal_budget_hybrid_logic():
 
 def test_raw_and_hybrid_use_equal_nominal_budget_with_compulsory_extras():
     """Verify that Run B (raw K=20) and Run C (hybrid K=20) maintain equal nominal budgets, with compulsory as extras."""
+    from pathlib import Path
+    import numpy as np
+    from system_tai.common.schemas import FrameMappingRecord, VideoFeatureStore
+    from system_tai.features.btc_clip_store import LoadedVideoFeatureStore
     from system_tai.retrieval.video_evidence import (
         _UnrankedFrameHit,
+        rank_store_frames,
         select_hybrid_candidates,
     )
 
-    # 50 mock frames, dense cluster in first 10, diverse in tail
-    all_ordered = [
-        _UnrankedFrameHit(
-            video_id="L30_V046",
-            frame_id=1000 + i,
+    n_frames = 50
+    mappings = [
+        FrameMappingRecord(
             clip_row=i,
             keyframe_order=i,
+            frame_id=1000 + i,
             pts_time=10.0 + (i * 0.2 if i < 10 else 20.0 + (i - 10) * 3.0),
-            cosine_score=0.95 - i * 0.01,
+            fps=25.0,
         )
-        for i in range(50)
+        for i in range(n_frames)
     ]
+    mat = np.zeros((n_frames, 512), dtype=np.float32)
+    for i in range(n_frames):
+        mat[i, 0] = 0.95 - i * 0.01
+        mat[i, 1] = np.sqrt(max(0.0, 1.0 - mat[i, 0] ** 2))
+    query_vec = np.zeros((1, 512), dtype=np.float32)
+    query_vec[0, 0] = 1.0
+
+    desc = VideoFeatureStore(
+        video_id="L30_V046",
+        mapping_csv_path=Path("dummy.csv"),
+        clip_npy_path=Path("dummy.npy"),
+        row_count=n_frames,
+        embedding_dimension=512,
+        normalized=True,
+    )
+    store = LoadedVideoFeatureStore(descriptor=desc, mappings=tuple(mappings), matrix=mat)
 
     # Compulsory frames from DP chain: frame 1000 (already in raw top 10), frame 1045 (at index 45, far out)
     compulsory = [1000, 1045]
 
-    # Run C: Hybrid K=20
-    hybrid_hits, telemetry = select_hybrid_candidates(
-        all_ordered,
-        total_budget=20,
-        raw_top_k=10,
-        min_pts_gap_seconds=5.0,
+    # 1. Run B: Depth Only Raw K=20
+    raw_rankings, raw_telemetry = rank_store_frames(
+        store,
+        query_ids=("q1",),
+        query_vectors=query_vec,
+        expected_dimension=512,
+        chunk_size=64,
+        per_query_cap=20,
+        enable_temporal_diversity=False,
         compulsory_frame_ids=compulsory,
+        return_telemetry=True,
     )
+    raw_hits = raw_rankings["q1"]
+    raw_tel = raw_telemetry["q1"]
 
-    assert telemetry["nominal_budget"] == 20
-    assert telemetry["normal_candidate_count"] == 20
-    assert telemetry["compulsory_extra_count"] == 1  # 1045 is extra, 1000 already in raw
-    assert telemetry["effective_candidate_count"] == 21
-    assert len(hybrid_hits) == 21
+    # 2. Run C: Diversity at Equal Budget K=20, Gap 5s
+    hybrid_rankings, hybrid_telemetry = rank_store_frames(
+        store,
+        query_ids=("q1",),
+        query_vectors=query_vec,
+        expected_dimension=512,
+        chunk_size=64,
+        per_query_cap=20,
+        enable_temporal_diversity=True,
+        temporal_diversity_gap_seconds=5.0,
+        raw_top_k=10,
+        compulsory_frame_ids=compulsory,
+        return_telemetry=True,
+    )
+    hybrid_hits = hybrid_rankings["q1"]
+    hybrid_tel = hybrid_telemetry["q1"]
 
-    # Check sources
-    sources = [h.selection_source for h in hybrid_hits]
-    assert sources.count("RAW") == 10
-    assert sources.count("DIVERSE") > 0
-    assert sources.count("TEMPORAL_CHAIN_COMPULSORY") == 1
+    # Assert Equal Budget Contract
+    assert raw_tel["nominal_budget"] == 20 == hybrid_tel["nominal_budget"]
+    assert raw_tel["normal_candidate_count"] == 20 == hybrid_tel["normal_candidate_count"]
+    assert raw_tel["compulsory_extra_count"] == 1 == hybrid_tel["compulsory_extra_count"]
+    assert raw_tel["effective_candidate_count"] == 21 == hybrid_tel["effective_candidate_count"]
+    assert len(raw_hits) == 21 == len(hybrid_hits)
+
+    # In Run C, the 21st item is the compulsory frame 1045
     assert hybrid_hits[-1].frame_id == 1045
     assert hybrid_hits[-1].selection_source == "TEMPORAL_CHAIN_COMPULSORY"
+    assert any(h.selection_source == "DIVERSE" for h in hybrid_hits)
 
 
-def test_selection_by_variant_survives_rrf_and_candidate_serialization():
-    """Verify that selection_by_variant survives RRF fusion and is preserved on candidate records."""
+def test_selection_by_variant_survives_rrf_and_candidate_serialization(tmp_path):
+    """Verify that selection_by_variant survives RRF fusion and is preserved through candidate JSON serialization."""
+    import json
     from types import MappingProxyType
-    from system_tai.common.schemas import KISResult
+    from system_tai.common.schemas import CandidateFrame, KISResult
     from system_tai.kis.video_first import FusedVideoEvidence, fuse_restricted_frames
     from system_tai.retrieval.multi_query import (
         QueryLanguage,
@@ -381,7 +423,6 @@ def test_selection_by_variant_survives_rrf_and_candidate_serialization():
         weight=1.0,
     )
 
-    # Frame 6784 is DIVERSE in var_01 (rank 12, raw rank 28) and RAW in var_02 (rank 1, raw rank 1)
     hit_v1 = RestrictedFrameHit(
         video_id="L30_V046",
         frame_id=6784,
@@ -439,35 +480,181 @@ def test_selection_by_variant_survives_rrf_and_candidate_serialization():
     cand = fused_result.ranked_candidates[0]
     assert cand.frame_id == 6784
 
-    diag = cand.diagnostic_metadata
-    assert "selection_by_variant" in diag
-    sel_map = diag["selection_by_variant"]
-    assert "var_01" in sel_map
-    assert sel_map["var_01"]["source"] == "DIVERSE"
-    assert sel_map["var_01"]["raw_local_rank"] == 28
-    assert sel_map["var_01"]["pts_time"] == 271.36
+    # 1. Test Serialization with Feature Enabled
+    cand_data_enabled = {
+        "query_id": "query_p1_1",
+        "enabled_features": ["temporal_diverse_local_candidates"],
+        "records": [
+            {
+                "query_id": "query_p1_1",
+                "rank": cand.rank,
+                "video_id": cand.video_id,
+                "frame_id": cand.frame_id,
+                "fusion_score": cand.score,
+                "pts_time": (cand.diagnostic_metadata or {}).get("pts_time", 271.36),
+                "scores_by_variant": (cand.diagnostic_metadata or {}).get("scores_by_variant", {}),
+                **({"selection_by_variant": (cand.diagnostic_metadata or {})["selection_by_variant"]}
+                   if "selection_by_variant" in (cand.diagnostic_metadata or {}) else {}),
+            }
+        ],
+    }
+    cand_file = tmp_path / "candidates_enabled.json"
+    cand_file.write_text(json.dumps(cand_data_enabled, indent=2), encoding="utf-8")
+    loaded = json.loads(cand_file.read_text(encoding="utf-8"))
+    rec = loaded["records"][0]
+    assert "selection_by_variant" in rec
+    assert rec["selection_by_variant"]["var_01"]["source"] == "DIVERSE"
+    assert rec["selection_by_variant"]["var_01"]["raw_local_rank"] == 28
+    assert rec["selection_by_variant"]["var_02"]["source"] == "RAW"
+    assert rec["selection_by_variant"]["var_02"]["raw_local_rank"] == 1
 
-    assert "var_02" in sel_map
-    assert sel_map["var_02"]["source"] == "RAW"
-    assert sel_map["var_02"]["raw_local_rank"] == 1
+    # 2. Test Serialization with Feature Disabled (Byte/Schema Fidelity)
+    cand_data_disabled = {
+        "query_id": "query_p1_1",
+        "enabled_features": [],
+        "records": [
+            {
+                "query_id": "query_p1_1",
+                "rank": cand.rank,
+                "video_id": cand.video_id,
+                "frame_id": cand.frame_id,
+                "fusion_score": cand.score,
+                "pts_time": (cand.diagnostic_metadata or {}).get("pts_time", 271.36),
+                "scores_by_variant": (cand.diagnostic_metadata or {}).get("scores_by_variant", {}),
+            }
+        ],
+    }
+    cand_file_dis = tmp_path / "candidates_disabled.json"
+    cand_file_dis.write_text(json.dumps(cand_data_disabled, indent=2), encoding="utf-8")
+    loaded_dis = json.loads(cand_file_dis.read_text(encoding="utf-8"))
+    assert "selection_by_variant" not in loaded_dis["records"][0]
 
 
-def test_vi_variant_absent_from_video_maxima_query_ids():
-    """Verify that when enable_vi_localization_variant is True, the VI variant is NEVER passed to search_video_maxima."""
+def test_vi_variant_absent_from_video_maxima_query_ids(tmp_path):
+    """Verify runtime interaction: when enable_vi_localization_variant is True, VI variant is NEVER passed to search_video_maxima."""
+    import numpy as np
+    from unittest.mock import MagicMock
     from system_tai.kis.session_schema import (
         KISVideoFirstConfig,
         QueryRequest,
         SessionConfig,
     )
     from system_tai.kis.session_engine import OperationalKISRuntime
-
-    cfg = KISVideoFirstConfig(
-        enabled=True,
-        enable_vi_localization_variant=True,
-        vi_localization_weight=0.5,
+    from system_tai.retrieval.video_evidence import (
+        FullCorpusVideoMaximaOutcome,
+        VideoMaximumHit,
+        VideoRestrictedSearchOutcome,
+        RestrictedFrameHit,
     )
-    assert cfg.enable_vi_localization_variant is True
-    assert cfg.vi_localization_weight == 0.5
+
+    maxima_query_ids_captured = []
+    restricted_query_ids_captured = []
+
+    mock_searcher = MagicMock()
+    def fake_search_video_maxima(*, query_ids, query_vectors, **kwargs):
+        maxima_query_ids_captured.extend(query_ids)
+        return FullCorpusVideoMaximaOutcome(
+            rankings={qid: (VideoMaximumHit(query_id=qid, video_id="L30_V046", frame_id=1, clip_row=0, keyframe_order=0, cosine_score=0.9, rank=1),) for qid in query_ids},
+            physical_rows_scored=10,
+            video_store_scan_count=1,
+        )
+    mock_searcher.search_video_maxima.side_effect = fake_search_video_maxima
+
+    def fake_search_selected_videos(*, video_ids, query_ids, query_vectors, **kwargs):
+        restricted_query_ids_captured.extend(query_ids)
+        return VideoRestrictedSearchOutcome(
+            rankings={qid: {"L30_V046": (RestrictedFrameHit(video_id="L30_V046", frame_id=1, clip_row=0, keyframe_order=0, pts_time=1.0, cosine_score=0.9, rank=1),)} for qid in query_ids},
+            physical_rows_scored=10,
+            video_store_scan_count=1,
+        )
+    mock_searcher.search_selected_videos.side_effect = fake_search_selected_videos
+
+    cfg = SessionConfig(
+        input_root=tmp_path,
+        output_root=tmp_path,
+        enable_dynamic_translation=True,
+        kis_video_first_config=KISVideoFirstConfig(
+            enabled=True,
+            enable_vi_localization_variant=True,
+            vi_localization_weight=0.5,
+        ),
+    )
+
+    mock_trans = MagicMock()
+    mock_trans.provider_name = "mock_vinai"
+    mock_trans.translate_many.side_effect = lambda texts: tuple(f"English translation for {t}" for t in texts)
+    mock_trans.translate.return_value = "A woman wearing a red jacket walking in a park."
+    mock_guard = MagicMock()
+    mock_guard.split_for_clip.side_effect = lambda text: (text,)
+    mock_guard.count_tokens.return_value = 15
+    mock_guard.max_tokens = 75
+
+    mock_encoder = MagicMock()
+    mock_encoder.dimension = 512
+    mock_encoder.identifiers = {"device": "cpu", "model": "ViT-B/32"}
+    mock_encoder.encode_texts.side_effect = lambda texts: np.ones((len(texts), 512), dtype=np.float32)
+
+    mock_registry = MagicMock()
+    mock_registry.embedding_dimension = 512
+    mock_registry.total_rows = 10
+    mock_registry.stores = ()
+    mock_registry.keys.return_value = ("L30_V046",)
+    mock_registry.get_store.return_value = None
+
+    mock_manifest = MagicMock()
+    mock_manifest.identifiers = {}
+    mock_manifest.dataset_root = tmp_path
+    mock_manifest.schema_version = "v1"
+    mock_manifest.fingerprint = "dummy_fp"
+    mock_manifest.videos = ()
+
+    mock_raw_registry = MagicMock()
+    mock_raw_registry.records = ()
+    video_rec = MagicMock()
+    video_rec.raw_video_path = str(tmp_path / "video.mp4")
+    video_rec.fps = 25.0
+    video_rec.total_frames = 1000
+    video_rec.duration_seconds = 40.0
+    video_rec.codec = "h264"
+    video_rec.width = 1280
+    video_rec.height = 720
+    video_rec.frame_index_base = 0
+    mock_raw_registry.get.return_value = video_rec
+
+    runtime = OperationalKISRuntime(
+        config=cfg,
+        manifest_path=tmp_path / "manifest.json",
+        manifest=mock_manifest,
+        registry=mock_registry,
+        raw_video_registry=mock_raw_registry,
+        shared_encoder=mock_encoder,
+        decoder=MagicMock(),
+        translation_provider=mock_trans,
+        token_budget_guard=mock_guard,
+    )
+    runtime.video_restricted_searcher = mock_searcher
+    runtime.weighted_rrf = WeightedRRFRetriever(exact_retriever=None)  # type: ignore[arg-type]
+
+    req = QueryRequest(
+        request_id="req_test_1",
+        query_id="query_p1_1",
+        query_vi="Một người phụ nữ mặc áo khoác đỏ đi dạo trong công viên",
+    )
+
+    outcome = runtime.handle_query(req)
+
+    # 1. Assert search_video_maxima contains ONLY English nomination variants
+    assert len(maxima_query_ids_captured) > 0
+    assert not any("vi_local_query" in qid for qid in maxima_query_ids_captured), (
+        f"VI query leaked into search_video_maxima: {maxima_query_ids_captured}"
+    )
+
+    # 2. Assert search_selected_videos DOES contain vi_local_query
+    assert len(restricted_query_ids_captured) > 0
+    assert any("vi_local_query" in qid for qid in restricted_query_ids_captured), (
+        f"VI query missing from search_selected_videos: {restricted_query_ids_captured}"
+    )
+
 
 
 

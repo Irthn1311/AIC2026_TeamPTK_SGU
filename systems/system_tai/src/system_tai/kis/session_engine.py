@@ -15,6 +15,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from system_tai.checkpointing.exporter import CheckpointExporter
 from system_tai.common.schemas import KISResult
 from system_tai.data.corpus_discovery import (
@@ -153,6 +155,8 @@ class OperationalKISRuntime:
         validator: CheckpointValidator | None = None,
         object_answer_provider: ObjectEntityAnswerProvider | None = None,
         ocr_answer_provider: OCRAnswerProvider | None = None,
+        translation_provider: Any = None,
+        token_budget_guard: Any = None,
         clock: Callable[[], float] = time.perf_counter,
         bootstrap_timings: Mapping[str, Any] | None = None,
     ) -> None:
@@ -286,7 +290,9 @@ class OperationalKISRuntime:
             else:
                 cache_path = Path(config.output_root) / "translation_cache.json"
 
-            if (
+            if translation_provider is not None:
+                self.translation_provider = translation_provider
+            elif (
                 config.translation_model_name == "google-translate"
                 or "google" in config.translation_model_name.lower()
                 or getattr(config, "use_google_translation", False)
@@ -303,9 +309,13 @@ class OperationalKISRuntime:
                     allow_model_download=config.translation_allow_model_download,
                     revision=config.translation_revision,
                 )
-            self.token_budget_guard = TokenBudgetGuard(
-                max_tokens=config.translation_max_clip_tokens
-            )
+
+            if token_budget_guard is not None:
+                self.token_budget_guard = token_budget_guard
+            else:
+                self.token_budget_guard = TokenBudgetGuard(
+                    max_tokens=config.translation_max_clip_tokens
+                )
 
         self.session_id = config.session_id or f"session-{uuid.uuid4().hex[:8]}"
         self.start_time_utc = datetime.now(UTC).isoformat()
@@ -692,7 +702,7 @@ class OperationalKISRuntime:
             if video_first_config.enable_vi_localization_variant:
                 vi_embedding = self.shared_encoder.encode_texts((request.query_vi,))[0]
                 vi_token_count = self.token_budget_guard.count_tokens(request.query_vi)
-                vi_was_truncated = vi_token_count > self.token_budget_guard.max_tokens
+                vi_was_truncated = vi_token_count > (self.token_budget_guard.max_tokens + 2)
                 vi_variant = QueryVariant(
                     variant_id=f"{request.query_id}::vi_local_query",
                     text=request.query_vi,
@@ -910,6 +920,12 @@ class OperationalKISRuntime:
             "evidence_frame_pool": evidence_frame_pool,
             "translation": translation_metadata,
             "video_first": video_first_trace,
+            **({"candidate_selection_telemetry": {
+                qid: {vid: dict(tel) for vid, tel in per_vid.items()}
+                for qid, per_vid in restricted.candidate_selection_telemetry.items()
+            }} if (restricted is not None and getattr(restricted, "candidate_selection_telemetry", None)
+                   and (getattr(self.config.kis_video_first_config, "enable_temporal_diverse_local_candidates", False)
+                        or getattr(self.config.kis_video_first_config, "enable_vi_localization_variant", False))) else {}),
             "enabled_features": [
                 name for name, val in [
                     ("candidate_union", getattr(self.config.kis_video_first_config, "enable_candidate_union", False)),
@@ -929,7 +945,11 @@ class OperationalKISRuntime:
                     "fusion_score": candidate.score,
                     "pts_time": _get_cand_pts(candidate),
                     "scores_by_variant": (candidate.diagnostic_metadata or {}).get("scores_by_variant", {}),
-                    **({"selection_by_variant": (candidate.diagnostic_metadata or {})["selection_by_variant"]} if "selection_by_variant" in (candidate.diagnostic_metadata or {}) else {}),
+                    **({"selection_by_variant": (candidate.diagnostic_metadata or {})["selection_by_variant"]}
+                       if (getattr(self.config.kis_video_first_config, "enable_temporal_diverse_local_candidates", False)
+                           or getattr(self.config.kis_video_first_config, "enable_vi_localization_variant", False))
+                          and "selection_by_variant" in (candidate.diagnostic_metadata or {})
+                       else {}),
                     "is_temporal_chain_winner": (candidate.diagnostic_metadata or {}).get("is_temporal_chain_winner", False),
                     "video_nomination_rank": (candidate.diagnostic_metadata or {}).get("video_nomination_rank"),
                     "variant_hit_count": (candidate.diagnostic_metadata or {}).get(

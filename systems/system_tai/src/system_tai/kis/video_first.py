@@ -216,6 +216,7 @@ class KISVideoFirstOutcome:
     adaptive_diagnostic: AdaptiveBudgetDiagnostic | None = None
     per_scene_top128: Mapping[str, tuple[str, ...]] = MappingProxyType({})
     per_scene_ranks: Mapping[str, Mapping[str, int]] = MappingProxyType({})
+    candidate_selection_telemetry: Mapping[str, Mapping[str, Mapping[str, int]]] | None = None
 
     def to_trace(self) -> dict[str, object]:
         trace: dict[str, object] = {
@@ -266,6 +267,11 @@ class KISVideoFirstOutcome:
         }
         if self.adaptive_diagnostic is not None:
             trace["adaptive_budget"] = self.adaptive_diagnostic.to_dict()
+        if self.candidate_selection_telemetry:
+            trace["candidate_selection_telemetry"] = {
+                qid: {vid: dict(tel) for vid, tel in per_vid.items()}
+                for qid, per_vid in self.candidate_selection_telemetry.items()
+            }
         return trace
 
 
@@ -1038,4 +1044,5 @@ def build_kis_video_first_outcome(
         adaptive_diagnostic=adaptive_diagnostic,
         per_scene_top128=per_scene_top128,
         per_scene_ranks=per_scene_ranks,
+        candidate_selection_telemetry=restricted.candidate_selection_telemetry,
     )
