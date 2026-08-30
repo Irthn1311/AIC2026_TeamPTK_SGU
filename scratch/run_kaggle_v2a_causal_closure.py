@@ -602,14 +602,27 @@ def main() -> None:
 
 
 # ==============================================================================
-# SECTION 1: GT INDEX COVERAGE AUDIT WITH SOURCE <-> MAPPING PARITY
+# SECTION 1: LEGACY MANIFEST & HUMAN REFERENCE COVERAGE AUDIT WITH SOURCE <-> MAPPING PARITY
 # ==============================================================================
 def run_gt_index_coverage_audit(runtime: OperationalKISRuntime, input_root: Path) -> dict[str, dict]:
     print("=" * 120, flush=True)
-    print("1. GT INDEX COVERAGE & SOURCE ↔ MAPPING FRAME-SPACE PARITY AUDIT (ALL 5 TARGETS)", flush=True)
+    print("1. LEGACY MANIFEST & HUMAN REFERENCE INDEX COVERAGE AUDIT (ALL 5 TARGETS)", flush=True)
     print("=" * 120, flush=True)
 
     manifest_path, manifest_sha, manifest_queries = load_canonical_frozen_manifest()
+
+    ref_paths = [
+        SYSTEM_TAI_SRC.parent / "benchmarks" / "manual_kis_reference_v1.json",
+        REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "manual_kis_reference_v1.json",
+        Path("/kaggle/working/AIC2026_TeamPTK_SGU/systems/system_tai/benchmarks/manual_kis_reference_v1.json"),
+    ]
+    ref_data = {}
+    for p in ref_paths:
+        if p.is_file():
+            ref_data = json.loads(p.read_text(encoding="utf-8"))
+            break
+
+    ref_queries_map = {q.get("query_id"): q for q in ref_data.get("queries", [])}
 
     targets = [
         ("p1-1", manifest_queries["p1-1"]["target_video"], manifest_queries["p1-1"].get("locked_gt_frame", manifest_queries["p1-1"].get("official_gt_frame")), manifest_queries["p1-1"]["diagnostic_tolerance"]),
@@ -622,20 +635,24 @@ def run_gt_index_coverage_audit(runtime: OperationalKISRuntime, input_root: Path
     coverage_summary = {}
 
     for qid, vid, gt_fid, diag_tol in targets:
+        ref_entry = ref_queries_map.get(f"query-{qid}-kis", {})
+        human_vid = ref_entry.get("human_verified_video_id") or vid
+        human_pts_intervals = ref_entry.get("human_annotated_intervals_pts", [])
+        human_status = ref_entry.get("annotation_status", "VIDEO_ONLY_VERIFIED")
+
         gt_interval = (gt_fid - diag_tol, gt_fid + diag_tol)
         print(f"\n──────────────────────────────────────────────────────────────────────────────────────────────────", flush=True)
-        print(f"• Query [{qid}] | Target Video: {vid} | Locked GT Frame: {gt_fid} | Diagnostic Neighborhood: [{gt_interval[0]}, {gt_interval[1]}]", flush=True)
+        print(f"• Query [{qid}] | Human Verified Target: {human_vid} ({human_status}) | Legacy Target: {vid} (f{gt_fid})", flush=True)
         print(f"──────────────────────────────────────────────────────────────────────────────────────────────────", flush=True)
 
         try:
-            store = runtime.video_restricted_searcher.registry.get(vid)
+            store = runtime.video_restricted_searcher.registry.get(human_vid)
         except KeyError:
-            print(f"  ❌ FATAL: Store for {vid} not found in FeatureStoreRegistry!", flush=True)
+            print(f"  ❌ FATAL: Store for {human_vid} not found in FeatureStoreRegistry!", flush=True)
             coverage_summary[qid] = {
                 "query_id": qid,
-                "video_id": vid,
-                "gt_frame": gt_fid,
-                "gt_interval": gt_interval,
+                "video_id": human_vid,
+                "legacy_gt_frame": gt_fid,
                 "coverage_pass": False,
                 "status": "FAIL",
                 "classification": "UNRESOLVED_NOT_IN_REGISTRY",
@@ -648,18 +665,29 @@ def run_gt_index_coverage_audit(runtime: OperationalKISRuntime, input_root: Path
         min_pts = min(f.pts_time for f in store.mappings)
         max_pts = max(f.pts_time for f in store.mappings)
 
+        # Legacy check
         nearest_f = min(store.mappings, key=lambda f: abs(f.frame_id - gt_fid))
         delta = nearest_f.frame_id - gt_fid
-        in_window = [f for f in store.mappings if gt_interval[0] <= f.frame_id <= gt_interval[1]]
-        count_in_window = len(in_window)
-        coverage_pass = count_in_window > 0
+        in_legacy_window = [f for f in store.mappings if gt_interval[0] <= f.frame_id <= gt_interval[1]]
+        legacy_coverage_pass = len(in_legacy_window) > 0
 
-        print(f"  • Feature Store Metadata:")
+        # Human interval check
+        human_interval_hits = []
+        if human_pts_intervals:
+            for s_pts, e_pts in human_pts_intervals:
+                human_interval_hits.extend([f for f in store.mappings if s_pts <= f.pts_time <= e_pts])
+
+        print(f"  • Feature Store Metadata ({human_vid}):", flush=True)
         print(f"    - Keyframe Count (Rows)  : {store_rows}", flush=True)
         print(f"    - Frame ID Range         : [{min_fid}, {max_fid}]", flush=True)
         print(f"    - PTS Time Range         : [{min_pts:.3f}s, {max_pts:.3f}s]", flush=True)
-        print(f"    - Nearest Frame to GT    : Frame {nearest_f.frame_id} (Delta: {delta:+d} frames, PTS: {nearest_f.pts_time:.3f}s)", flush=True)
-        print(f"    - Keyframes in Neighborhood : {count_in_window} frames -> Coverage Pass: {'YES ✅' if coverage_pass else 'NO ❌'}", flush=True)
+        print(f"    - HUMAN_REFERENCE_VIDEO_COVERAGE : YES ✅ ({human_vid} loaded with {store_rows} keyframes)", flush=True)
+        if human_pts_intervals:
+            pts_str = ", ".join(f"[{s:.1f}s, {e:.1f}s]" for s, e in human_pts_intervals)
+            print(f"    - HUMAN_INTERVAL_COVERAGE        : {'YES ✅' if human_interval_hits else 'NO ❌'} ({len(human_interval_hits)} keyframes in {pts_str})", flush=True)
+        else:
+            print(f"    - HUMAN_INTERVAL_COVERAGE        : NOT_EVALUABLE (Intervals not yet annotated)", flush=True)
+        print(f"    - LEGACY_MANIFEST_COVERAGE       : {'YES ✅' if legacy_coverage_pass else 'NO ❌'} (Frame {nearest_f.frame_id}, Delta: {delta:+d} vs legacy {gt_fid})", flush=True)
 
         # Source video inspection and frame-space parity verification
         vid_file = find_source_video_file(input_root, vid, runtime=runtime)
