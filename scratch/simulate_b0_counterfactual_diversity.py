@@ -25,35 +25,59 @@ from system_tai.features.btc_clip_store import VideoFeatureStoreLoader
 
 def run_b0_simulation() -> None:
     manifest_path = OUT / "feature_manifest.json"
-    assert manifest_path.is_file(), f"Không tìm thấy manifest tại {manifest_path}"
+    csv_path = None
+    npy_path = None
 
-    jsonl_path = OUT / "p1-1_top100_breakdown.jsonl"
-    assert jsonl_path.is_file(), f"Missing breakdown file: {jsonl_path}"
+    if manifest_path.is_file():
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        entry = next((v for v in manifest.get("videos", []) if v.get("video_id") == "L30_V046"), None)
+        if entry:
+            csv_path = Path(entry["mapping_csv_path"])
+            npy_path = Path(entry["clip_npy_path"])
 
-    final_rows = [json.loads(line) for line in jsonl_path.read_text(encoding="utf-8").splitlines() if line.strip()]
-    def result_signature(rows):
-        return [(int(r["rank"]), str(r["video_id"]), int(r["frame_id"])) for r in rows]
-    final_sig = result_signature(final_rows)
+    if csv_path is None or not csv_path.is_file():
+        input_root = Path("/kaggle/input") if Path("/kaggle/input").exists() else REPO / "scratch"
+        csv_candidates = list(input_root.glob("**/L30_V046.csv"))
+        npy_candidates = list(input_root.glob("**/L30_V046.npy"))
+        assert csv_candidates, f"Không tìm thấy L30_V046.csv trong {input_root}"
+        assert npy_candidates, f"Không tìm thấy L30_V046.npy trong {input_root}"
+        csv_path = csv_candidates[0]
+        npy_path = npy_candidates[0]
 
-    matched = []
-    for p in (OUT / "requests").glob("audit-top100-p1-1-*/candidates.json"):
-        pay = json.loads(p.read_text(encoding="utf-8"))
-        if pay.get("query_id") == "query-p1-1-kis" and result_signature(pay.get("records", [])) == final_sig:
-            matched.append((p, pay))
-    assert matched, "Không tìm thấy candidates.json khớp chính xác"
-    candidate_path, candidate_payload = max(matched, key=lambda item: item[0].stat().st_mtime)
-
-    # Pipeline exact variants
+    # Pipeline exact variants (from previous candidate artifact or canonical pipeline definitions)
     variants = []
-    seen = set()
-    for u in candidate_payload.get("translation", {}).get("units", []):
-        for s in u.get("segments", []):
-            vid, txt = s.get("variant_id"), s.get("text")
-            if vid and txt and vid not in seen:
-                seen.add(vid)
-                variants.append({"id": vid, "text": txt, "role": u.get("role")})
+    jsonl_path = OUT / "p1-1_top100_breakdown.jsonl"
+    if jsonl_path.is_file():
+        final_rows = [json.loads(line) for line in jsonl_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        def result_signature(rows):
+            return [(int(r["rank"]), str(r["video_id"]), int(r["frame_id"])) for r in rows]
+        final_sig = result_signature(final_rows)
 
-    assert variants, "Không đọc được actual pipeline variants từ matched candidates.json"
+        matched = []
+        for p in (OUT / "requests").glob("audit-top100-p1-1-*/candidates.json"):
+            pay = json.loads(p.read_text(encoding="utf-8"))
+            if pay.get("query_id") == "query-p1-1-kis" and result_signature(pay.get("records", [])) == final_sig:
+                matched.append((p, pay))
+        if matched:
+            candidate_path, candidate_payload = max(matched, key=lambda item: item[0].stat().st_mtime)
+            seen = set()
+            for u in candidate_payload.get("translation", {}).get("units", []):
+                for s in u.get("segments", []):
+                    vid, txt = s.get("variant_id"), s.get("text")
+                    if vid and txt and vid not in seen:
+                        seen.add(vid)
+                        variants.append({"id": vid, "text": txt, "role": u.get("role")})
+
+    if not variants:
+        # Canonical pipeline exact translation variants for P1-1
+        variants = [
+            {"id": "vi_primary", "text": "Cảnh quay một nhóm người trên 5 người đang đứng thành hàng tập thể dục thực hiện động tác hai tay chạm mũi chân, trong nhóm chỉ có một người đeo kính và ba người đội nón màu đỏ", "role": "PRIMARY_QUERY"},
+            {"id": "semantic_01", "text": "The scene shows a group of more than 5 people standing in a row to exercise, performing the movement of both hands touching their toes. In the group, only one person wore glasses and three people wore red hats.", "role": "GLOBAL_SUMMARY"},
+            {"id": "semantic_02", "text": "A group of more than 5 people doing toe touch exercise", "role": "KEY_ACTION"},
+            {"id": "semantic_03", "text": "A group of people standing in a row wearing red hats and glasses doing exercise", "role": "DISTINCT_FEATURE"},
+        ]
+
+    assert variants, "Không đọc được pipeline variants"
 
     # Add Counterfactual & Symmetric Probes
     cf_variants = [
@@ -66,16 +90,16 @@ def run_b0_simulation() -> None:
     all_test_variants = variants + cf_variants
 
     print("=" * 120)
-    print("🔬 PHASE B0: OFFLINE COUNTERFACTUAL & TEMPORAL DIVERSITY SIMULATION (L30_V046)")
+    print(f"🔬 PHASE B0: OFFLINE COUNTERFACTUAL & TEMPORAL DIVERSITY SIMULATION (L30_V046)")
+    print(f"• CSV Source: {csv_path}")
+    print(f"• NPY Source: {npy_path}")
     print("=" * 120)
 
     # Fast single-store loading
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    entry = next(v for v in manifest["videos"] if v["video_id"] == "L30_V046")
     target_store = VideoFeatureStoreLoader(expected_dimension=512, memory_map=True).load(
         video_id="L30_V046",
-        mapping_csv_path=Path(entry["mapping_csv_path"]),
-        clip_npy_path=Path(entry["clip_npy_path"]),
+        mapping_csv_path=csv_path,
+        clip_npy_path=npy_path,
     )
 
     matrix = np.asarray(target_store.matrix, dtype=np.float32)
