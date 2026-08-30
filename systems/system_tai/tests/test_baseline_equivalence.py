@@ -191,3 +191,76 @@ def test_pts_time_and_variant_scores_preservation_through_rrf():
     assert "scores_by_variant" in diag
     assert diag["scores_by_variant"] == {"vi_primary": 0.45, "en_translated": 0.42}
 
+
+def test_coverage_audit_decoupled_branches():
+    """Verify that run_gt_index_coverage_audit runs without NameError and separates legacy vs human reference."""
+    import importlib.util
+    from pathlib import Path
+    from system_tai.common.schemas import FrameMappingRecord
+
+    repo_root = Path(__file__).resolve().parent.parent.parent.parent
+    runner_script = repo_root / "scratch" / "run_kaggle_v2a_causal_closure.py"
+    tmp_path = repo_root / "scratch" / "test_tmp"
+
+    spec = importlib.util.spec_from_file_location("runner_module", str(runner_script))
+    runner_mod = importlib.util.module_from_spec(spec)
+    import sys
+    sys.modules["runner_module"] = runner_mod
+    try:
+        spec.loader.exec_module(runner_mod)
+    except Exception:
+        sys.modules.pop("runner_module", None)
+        raise
+
+    # Mock Feature Store & Registry
+    class MockStore:
+        def __init__(self, vid, min_f, max_f, pts_min, pts_max):
+            self.mappings = [
+                FrameMappingRecord(clip_row=0, keyframe_order=1, frame_id=min_f, pts_time=pts_min, fps=25.0),
+                FrameMappingRecord(clip_row=1, keyframe_order=2, frame_id=max_f, pts_time=pts_max, fps=25.0),
+            ]
+
+    stores = {
+        "L30_V046": MockStore("L30_V046", 2400, 6784, 96.0, 271.36),
+        "L21_V003": MockStore("L21_V003", 1000, 2500, 40.0, 100.0),
+        "L29_V018": MockStore("L29_V018", 6050, 7000, 242.0, 280.0),
+        "L22_V021": MockStore("L22_V021", 1000, 18000, 40.0, 720.0),
+        "L28_V012": MockStore("L28_V012", 1000, 2000, 40.0, 80.0),
+        "L26_V035": MockStore("L26_V035", 100, 6000, 4.0, 240.0),
+        "L30_V021": MockStore("L30_V021", 100, 4000, 4.0, 160.0),
+        "L22_V023": MockStore("L22_V023", 100, 5000, 4.0, 200.0),
+    }
+
+    class MockRegistry:
+        def get(self, vid):
+            if vid in stores:
+                return stores[vid]
+            raise KeyError(vid)
+
+    class MockSearcher:
+        registry = MockRegistry()
+
+    class MockRuntime:
+        video_restricted_searcher = MockSearcher()
+
+    summary = runner_mod.run_gt_index_coverage_audit(MockRuntime(), tmp_path)
+
+    assert "p1-1" in summary
+    assert "p1-2" in summary
+
+    # P1-1 has verified interval 264-274s, MockStore for L30_V046 has pts 271.36 -> PASS
+    p1_1 = summary["p1-1"]
+    assert p1_1["human_reference"]["video_id"] == "L30_V046"
+    assert p1_1["human_reference"]["interval_status"] == "PASS"
+
+    # P1-2 has distinct human (L21_V003) vs legacy (L29_V018)
+    p1_2 = summary["p1-2"]
+    assert p1_2["human_reference"]["video_id"] == "L21_V003"
+    assert p1_2["legacy"]["video_id"] == "L29_V018"
+    assert p1_2["human_reference"]["interval_status"] == "NOT_EVALUABLE"
+    assert p1_2["legacy"]["coverage_pass"] is True
+
+    # Test final summary table printer works without error
+    runner_mod.print_final_summary_table(summary)
+
+

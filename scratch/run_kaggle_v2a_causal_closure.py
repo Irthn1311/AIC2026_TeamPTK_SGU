@@ -602,6 +602,7 @@ def main() -> None:
 
 
 # ==============================================================================
+# ==============================================================================
 # SECTION 1: LEGACY MANIFEST & HUMAN REFERENCE COVERAGE AUDIT WITH SOURCE <-> MAPPING PARITY
 # ==============================================================================
 def run_gt_index_coverage_audit(runtime: OperationalKISRuntime, input_root: Path) -> dict[str, dict]:
@@ -634,151 +635,126 @@ def run_gt_index_coverage_audit(runtime: OperationalKISRuntime, input_root: Path
 
     coverage_summary = {}
 
-    for qid, vid, gt_fid, diag_tol in targets:
+    for qid, legacy_vid, legacy_gt_fid, legacy_diag_tol in targets:
         ref_entry = ref_queries_map.get(f"query-{qid}-kis", {})
-        human_vid = ref_entry.get("human_verified_video_id") or vid
+        human_vid = ref_entry.get("human_verified_video_id") or legacy_vid
         human_pts_intervals = ref_entry.get("human_annotated_intervals_pts", [])
         human_status = ref_entry.get("annotation_status", "VIDEO_ONLY_VERIFIED")
 
-        gt_interval = (gt_fid - diag_tol, gt_fid + diag_tol)
         print(f"\n──────────────────────────────────────────────────────────────────────────────────────────────────", flush=True)
-        print(f"• Query [{qid}] | Human Verified Target: {human_vid} ({human_status}) | Legacy Target: {vid} (f{gt_fid})", flush=True)
+        print(f"• Query [{qid}] | Human Verified Target: {human_vid} ({human_status}) | Legacy Target: {legacy_vid} (f{legacy_gt_fid})", flush=True)
         print(f"──────────────────────────────────────────────────────────────────────────────────────────────────", flush=True)
 
+        # 1. HUMAN REFERENCE BRANCH
         try:
-            store = runtime.video_restricted_searcher.registry.get(human_vid)
+            human_store = runtime.video_restricted_searcher.registry.get(human_vid)
+            human_store_rows = len(human_store.mappings)
+            human_indexed = True
         except KeyError:
-            print(f"  ❌ FATAL: Store for {human_vid} not found in FeatureStoreRegistry!", flush=True)
-            coverage_summary[qid] = {
-                "query_id": qid,
-                "video_id": human_vid,
-                "legacy_gt_frame": gt_fid,
-                "coverage_pass": False,
-                "status": "FAIL",
-                "classification": "UNRESOLVED_NOT_IN_REGISTRY",
-            }
-            continue
+            human_store = None
+            human_store_rows = 0
+            human_indexed = False
 
-        store_rows = len(store.mappings)
-        min_fid = min(f.frame_id for f in store.mappings)
-        max_fid = max(f.frame_id for f in store.mappings)
-        min_pts = min(f.pts_time for f in store.mappings)
-        max_pts = max(f.pts_time for f in store.mappings)
-
-        # Legacy check
-        nearest_f = min(store.mappings, key=lambda f: abs(f.frame_id - gt_fid))
-        delta = nearest_f.frame_id - gt_fid
-        in_legacy_window = [f for f in store.mappings if gt_interval[0] <= f.frame_id <= gt_interval[1]]
-        legacy_coverage_pass = len(in_legacy_window) > 0
-
-        # Human interval check
         human_interval_hits = []
-        if human_pts_intervals:
+        human_evaluable = (human_status == "FRAME_INTERVAL_VERIFIED" and bool(human_pts_intervals))
+        if human_store is not None and human_pts_intervals:
             for s_pts, e_pts in human_pts_intervals:
-                human_interval_hits.extend([f for f in store.mappings if s_pts <= f.pts_time <= e_pts])
+                human_interval_hits.extend([f for f in human_store.mappings if s_pts <= f.pts_time <= e_pts])
 
-        print(f"  • Feature Store Metadata ({human_vid}):", flush=True)
-        print(f"    - Keyframe Count (Rows)  : {store_rows}", flush=True)
-        print(f"    - Frame ID Range         : [{min_fid}, {max_fid}]", flush=True)
-        print(f"    - PTS Time Range         : [{min_pts:.3f}s, {max_pts:.3f}s]", flush=True)
-        print(f"    - HUMAN_REFERENCE_VIDEO_COVERAGE : YES ✅ ({human_vid} loaded with {store_rows} keyframes)", flush=True)
+        if human_evaluable:
+            human_interval_status = "PASS" if human_interval_hits else "FAIL"
+        else:
+            human_interval_status = "NOT_EVALUABLE"
+
+        print(f"  • [Human Reference Audit: {human_vid}]", flush=True)
+        print(f"    - Video Indexed in Feature Store : {'YES ✅' if human_indexed else 'NO ❌'} ({human_store_rows} keyframes)", flush=True)
         if human_pts_intervals:
             pts_str = ", ".join(f"[{s:.1f}s, {e:.1f}s]" for s, e in human_pts_intervals)
-            print(f"    - HUMAN_INTERVAL_COVERAGE        : {'YES ✅' if human_interval_hits else 'NO ❌'} ({len(human_interval_hits)} keyframes in {pts_str})", flush=True)
+            print(f"    - Verified Interval PTS Coverage : {'PASS ✅' if human_interval_hits else 'FAIL ❌'} ({len(human_interval_hits)} keyframes in {pts_str})", flush=True)
         else:
-            print(f"    - HUMAN_INTERVAL_COVERAGE        : NOT_EVALUABLE (Intervals not yet annotated)", flush=True)
-        print(f"    - LEGACY_MANIFEST_COVERAGE       : {'YES ✅' if legacy_coverage_pass else 'NO ❌'} (Frame {nearest_f.frame_id}, Delta: {delta:+d} vs legacy {gt_fid})", flush=True)
+            print(f"    - Verified Interval PTS Coverage : NOT_EVALUABLE (Intervals not yet annotated)", flush=True)
 
-        # Source video inspection and frame-space parity verification
-        vid_file = find_source_video_file(input_root, vid, runtime=runtime)
-        src_info = {}
-        parity_passed = False
-        median_residual = float("nan")
-        max_residual = float("nan")
+        # 2. LEGACY MANIFEST BRANCH
+        try:
+            legacy_store = runtime.video_restricted_searcher.registry.get(legacy_vid)
+            legacy_store_rows = len(legacy_store.mappings)
+            legacy_interval = (legacy_gt_fid - legacy_diag_tol, legacy_gt_fid + legacy_diag_tol)
+            nearest_legacy_f = min(legacy_store.mappings, key=lambda f: abs(f.frame_id - legacy_gt_fid))
+            legacy_delta = nearest_legacy_f.frame_id - legacy_gt_fid
+            in_legacy_win = [f for f in legacy_store.mappings if legacy_interval[0] <= f.frame_id <= legacy_interval[1]]
+            legacy_coverage_pass = len(in_legacy_win) > 0
+            print(f"  • [Legacy Manifest Audit: {legacy_vid}]", flush=True)
+            print(f"    - Legacy Locked Frame Coverage   : {'PASS ✅' if legacy_coverage_pass else 'FAIL ❌'} (Frame {nearest_legacy_f.frame_id}, Delta: {legacy_delta:+d} vs legacy locked f{legacy_gt_fid})", flush=True)
+        except KeyError:
+            legacy_store = None
+            legacy_coverage_pass = False
+            print(f"  • [Legacy Manifest Audit: {legacy_vid}] -> Store not indexed", flush=True)
 
-        if vid_file and vid_file.is_file():
-            print(f"  • Source Video File Found  : {vid_file.resolve()}", flush=True)
+        # 3. SOURCE VIDEO FRAME-SPACE PARITY AUDIT (Strictly Scoped to Human Verified Video)
+        human_vid_file = find_source_video_file(input_root, human_vid, runtime=runtime)
+        human_src_info = {}
+        human_parity_passed = False
+
+        if human_vid_file and human_vid_file.is_file() and human_store is not None:
+            print(f"  • Human Target Source Video File  : {human_vid_file.resolve()}", flush=True)
             try:
                 import cv2
-                cap = cv2.VideoCapture(str(vid_file))
+                cap = cv2.VideoCapture(str(human_vid_file))
                 if cap.isOpened():
                     fc = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
                     fps = float(cap.get(cv2.CAP_PROP_FPS))
                     dur = fc / fps if fps > 0 else 0.0
                     cap.release()
-                    src_info = {
-                        "path": str(vid_file),
-                        "file": vid_file.name,
+                    human_src_info = {
+                        "path": str(human_vid_file),
+                        "file": human_vid_file.name,
                         "frame_count": fc,
                         "fps": fps,
                         "duration_s": dur,
                     }
                     print(f"    - Frame Count : {fc} frames | FPS: {fps:.2f} | Duration: {dur:.2f}s ({dur/60.0:.2f} mins)", flush=True)
 
-                    # Sample >= 10 FrameMappingRecords distributed across the video for Parity Check
-                    n_samples = min(10, store_rows)
-                    sample_indices = np.linspace(0, store_rows - 1, n_samples, dtype=int)
+                    n_samples = min(10, human_store_rows)
+                    sample_indices = np.linspace(0, human_store_rows - 1, n_samples, dtype=int)
                     residuals = []
 
-                    print(f"    - Sampling {n_samples} FrameMappingRecords for Frame-Space Parity Check:")
+                    print(f"    - Sampling {n_samples} FrameMappingRecords for Frame-Space Parity Check on {human_vid}:")
                     print(f"      {'Idx':<4} | {'Mapping Frame ID':<18} | {'Mapping PTS (s)':<16} | {'pts * fps':<14} | {'Residual (frames)':<18}")
                     print(f"      {'-'*4} | {'-'*18} | {'-'*16} | {'-'*14} | {'-'*18}")
 
                     for s_idx in sample_indices:
-                        m = store.mappings[s_idx]
+                        m = human_store.mappings[s_idx]
                         expected_f = m.pts_time * fps
                         res_f = m.frame_id - expected_f
                         residuals.append(abs(res_f))
                         print(f"      {s_idx:<4} | {m.frame_id:<18} | {m.pts_time:<16.3f} | {expected_f:<14.2f} | {res_f:<+18.2f}")
 
-                    median_residual = float(np.median(residuals))
-                    max_residual = float(np.max(residuals))
-                    parity_passed = max_residual <= 2.0 or median_residual <= 1.0
-
-                    print(f"    - Frame-Space Residuals  : Median |Residual| = {median_residual:.2f} frames | Max |Residual| = {max_residual:.2f} frames", flush=True)
-                    print(f"    - Frame-Space Parity     : {'PASS ✅ (Homogeneous coordinate space confirmed)' if parity_passed else 'FAIL ❌ (Non-homogeneous scale/offset)'}", flush=True)
-                else:
-                    print(f"    - Warning: cv2.VideoCapture failed to open {vid_file.name} ⚠️", flush=True)
-                    src_info = {"file": vid_file.name, "error": "CV2_OPEN_FAILED"}
+                    med_res = float(np.median(residuals))
+                    max_res = float(np.max(residuals))
+                    human_parity_passed = max_res <= 2.0 or med_res <= 1.0
+                    print(f"    - Frame-Space Parity on {human_vid}: {'PASS ✅ (Homogeneous coordinate space confirmed)' if human_parity_passed else 'FAIL ❌ (Non-homogeneous scale/offset)'}", flush=True)
             except Exception as e:
                 print(f"    - Warning: Exception during source video reading: {e} ⚠️", flush=True)
-                src_info = {"file": vid_file.name, "error": str(e)}
+                human_src_info = {"file": human_vid_file.name, "error": str(e)}
         else:
-            print(f"  • Source Video File        : NOT LOCATED ON RUNNER DISK ⚠️", flush=True)
-
-        # Strict Causal Classification based on Verified Parity
-        src_contains_center = False
-        src_contains_full_interval = False
-        if src_info and "frame_count" in src_info:
-            fc = src_info["frame_count"]
-            src_contains_center = fc >= gt_fid
-            src_contains_full_interval = fc >= gt_interval[1]
-
-        if coverage_pass:
-            classification = "COVERAGE_PASS"
-        else:
-            if parity_passed:
-                if src_contains_full_interval:
-                    classification = "A) EXTRACTION/INDEX COVERAGE BUG (Source has frames, store truncated)"
-                elif src_contains_center:
-                    classification = "A) EXTRACTION/INDEX COVERAGE BUG (Source contains center, lacks tail)"
-                else:
-                    classification = "SOURCE_GT_PROVENANCE_INCONSISTENCY_CONFIRMED (Source length 3153 < GT 3325)"
-            else:
-                if vid_file is None:
-                    classification = "C) UNRESOLVED_SOURCE_NOT_FOUND (Cannot verify on disk without source video)"
-                else:
-                    classification = "C) UNRESOLVED_FRAME_SPACE (Source frame-space parity not confirmed)"
+            print(f"  • Human Target Source Video File  : NOT LOCATED ON RUNNER DISK ⚠️", flush=True)
 
         coverage_summary[qid] = {
             "query_id": qid,
-            "video_id": vid,
-            "gt_frame": gt_fid,
-            "gt_interval": gt_interval,
-            "coverage_pass": coverage_pass,
-            "parity_passed": parity_passed,
-            "source_info": src_info,
-            "classification": classification,
+            "legacy": {
+                "video_id": legacy_vid,
+                "locked_gt_frame": legacy_gt_fid,
+                "coverage_pass": legacy_coverage_pass,
+            },
+            "human_reference": {
+                "video_id": human_vid,
+                "video_indexed": human_indexed,
+                "annotation_status": human_status,
+                "interval_status": human_interval_status,
+                "interval_hits": [f.frame_id for f in human_interval_hits],
+                "parity_passed": human_parity_passed,
+                "source_info": human_src_info,
+            },
         }
 
     print("=" * 120 + "\n", flush=True)
@@ -2453,33 +2429,56 @@ def run_all_5_queries_top100_visual_export(
 # SECTION 4: FINAL COMPACT SUMMARY TABLE
 # ==============================================================================
 def print_final_summary_table(coverage_summary: dict[str, dict]) -> None:
-    print("=" * 120, flush=True)
+    print("=" * 140, flush=True)
     print("4. FINAL FOUNDATION CLOSURE SUMMARY TABLE", flush=True)
-    print("=" * 120, flush=True)
+    print("=" * 140, flush=True)
 
     manifest_path, manifest_sha, manifest_queries = load_canonical_frozen_manifest()
 
-    print(f"| {'Query':<6} | {'Target Video':<12} | {'Locked GT':<12} | {'GT Coverage':<15} | {'Source Parity':<14} | {'Causal Classification / Loss Stage':<45} |")
-    print(f"| {'-'*6} | {'-'*12} | {'-'*12} | {'-'*15} | {'-'*14} | {'-'*45} |")
+    ref_paths = [
+        SYSTEM_TAI_SRC.parent / "benchmarks" / "manual_kis_reference_v1.json",
+        REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "manual_kis_reference_v1.json",
+        Path("/kaggle/working/AIC2026_TeamPTK_SGU/systems/system_tai/benchmarks/manual_kis_reference_v1.json"),
+    ]
+    ref_data = {}
+    for p in ref_paths:
+        if p.is_file():
+            ref_data = json.loads(p.read_text(encoding="utf-8"))
+            break
+    ref_queries_map = {q.get("query_id"): q for q in ref_data.get("queries", [])}
+
+    print(f"| {'Query':<6} | {'Human Target':<14} | {'Human Interval Status':<22} | {'Legacy Target':<14} | {'Legacy Locked Frame':<20} | {'Legacy Cov':<10} |")
+    print(f"| {'-'*6} | {'-'*14} | {'-'*22} | {'-'*14} | {'-'*20} | {'-'*10} |")
 
     for qid in ("p1-1", "p1-2", "p1-4", "p1-5", "p1-6"):
         entry = coverage_summary.get(qid)
         manifest_meta = manifest_queries.get(qid, {})
-        vid = manifest_meta.get("target_video", "N/A")
-        gt_f = str(manifest_meta.get("locked_gt_frame", manifest_meta.get("official_gt_frame", "N/A")))
+        legacy_vid = manifest_meta.get("target_video", "N/A")
+        legacy_gt_f = str(manifest_meta.get("locked_gt_frame", manifest_meta.get("official_gt_frame", "N/A")))
+
+        ref_entry = ref_queries_map.get(f"query-{qid}-kis", {})
+        human_vid = ref_entry.get("human_verified_video_id", legacy_vid)
 
         if entry is None:
-            cov = "NOT_RUN"
-            parity = "NOT_RUN"
-            loss_stage = "NOT_RUN (Section not requested in run)"
+            human_status_str = "NOT_RUN"
+            legacy_cov_str = "NOT_RUN"
         else:
-            cov = entry.get("coverage_str", "PASS ✅" if entry.get("coverage_pass") else "FAIL ❌")
-            parity = entry.get("parity_str", "PASS ✅" if entry.get("parity_passed") else ("FAIL ❌" if entry.get("source_info") else "NO_SOURCE"))
-            loss_stage = entry.get("loss_stage") or entry.get("classification", "FOUNDATION_DIAGNOSTIC")
+            human_entry = entry.get("human_reference", {})
+            legacy_entry = entry.get("legacy", {})
 
-        print(f"| {qid:<6} | {vid:<12} | {gt_f:<12} | {cov:<15} | {parity:<14} | {loss_stage:<45} |")
+            human_status = human_entry.get("interval_status", "NOT_EVALUABLE")
+            if human_status == "PASS":
+                human_status_str = "PASS ✅"
+            elif human_status == "FAIL":
+                human_status_str = "FAIL ❌"
+            else:
+                human_status_str = f"NOT_EVAL ({human_entry.get('annotation_status', 'VIDEO_ONLY')})"
 
-    print("=" * 120 + "\n", flush=True)
+            legacy_cov_str = "PASS ✅" if legacy_entry.get("coverage_pass") else "FAIL ❌"
+
+        print(f"| {qid:<6} | {human_vid:<14} | {human_status_str:<22} | {legacy_vid:<14} | f{legacy_gt_f:<19} | {legacy_cov_str:<10} |")
+
+    print("=" * 140 + "\n", flush=True)
 
 
 if __name__ == "__main__":
