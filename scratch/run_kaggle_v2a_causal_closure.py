@@ -690,52 +690,41 @@ def run_gt_index_coverage_audit(runtime: OperationalKISRuntime, input_root: Path
             legacy_coverage_pass = False
             print(f"  • [Legacy Manifest Audit: {legacy_vid}] -> Store not indexed", flush=True)
 
-        # 3. SOURCE VIDEO FRAME-SPACE PARITY AUDIT (Strictly Scoped to Human Verified Video)
-        human_vid_file = find_source_video_file(input_root, human_vid, runtime=runtime)
-        human_src_info = {}
-        human_parity_passed = False
-
-        if human_vid_file and human_vid_file.is_file() and human_store is not None:
-            print(f"  • Human Target Source Video File  : {human_vid_file.resolve()}", flush=True)
+        # 3. SOURCE VIDEO FRAME-SPACE PARITY AUDIT (Audits both human_vid and legacy_vid independently)
+        def _check_parity(target_v: str, target_s) -> tuple[bool, dict]:
+            if target_s is None:
+                return False, {}
+            v_file = find_source_video_file(input_root, target_v, runtime=runtime)
+            if not v_file or not v_file.is_file():
+                return False, {}
             try:
                 import cv2
-                cap = cv2.VideoCapture(str(human_vid_file))
-                if cap.isOpened():
-                    fc = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-                    fps = float(cap.get(cv2.CAP_PROP_FPS))
-                    dur = fc / fps if fps > 0 else 0.0
-                    cap.release()
-                    human_src_info = {
-                        "path": str(human_vid_file),
-                        "file": human_vid_file.name,
-                        "frame_count": fc,
-                        "fps": fps,
-                        "duration_s": dur,
-                    }
-                    print(f"    - Frame Count : {fc} frames | FPS: {fps:.2f} | Duration: {dur:.2f}s ({dur/60.0:.2f} mins)", flush=True)
-
-                    n_samples = min(10, human_store_rows)
-                    sample_indices = np.linspace(0, human_store_rows - 1, n_samples, dtype=int)
-                    residuals = []
-
-                    print(f"    - Sampling {n_samples} FrameMappingRecords for Frame-Space Parity Check on {human_vid}:")
-                    print(f"      {'Idx':<4} | {'Mapping Frame ID':<18} | {'Mapping PTS (s)':<16} | {'pts * fps':<14} | {'Residual (frames)':<18}")
-                    print(f"      {'-'*4} | {'-'*18} | {'-'*16} | {'-'*14} | {'-'*18}")
-
-                    for s_idx in sample_indices:
-                        m = human_store.mappings[s_idx]
-                        expected_f = m.pts_time * fps
-                        res_f = m.frame_id - expected_f
-                        residuals.append(abs(res_f))
-                        print(f"      {s_idx:<4} | {m.frame_id:<18} | {m.pts_time:<16.3f} | {expected_f:<14.2f} | {res_f:<+18.2f}")
-
-                    med_res = float(np.median(residuals))
-                    max_res = float(np.max(residuals))
-                    human_parity_passed = max_res <= 2.0 or med_res <= 1.0
-                    print(f"    - Frame-Space Parity on {human_vid}: {'PASS ✅ (Homogeneous coordinate space confirmed)' if human_parity_passed else 'FAIL ❌ (Non-homogeneous scale/offset)'}", flush=True)
+                cap = cv2.VideoCapture(str(v_file))
+                if not cap.isOpened():
+                    return False, {"file": v_file.name, "error": "CV2_OPEN_FAILED"}
+                fc = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                fps = float(cap.get(cv2.CAP_PROP_FPS))
+                dur = fc / fps if fps > 0 else 0.0
+                cap.release()
+                info = {"path": str(v_file), "file": v_file.name, "frame_count": fc, "fps": fps, "duration_s": dur}
+                n_samples = min(10, len(target_s.mappings))
+                sample_indices = np.linspace(0, len(target_s.mappings) - 1, n_samples, dtype=int)
+                residuals = [abs(target_s.mappings[i].frame_id - target_s.mappings[i].pts_time * fps) for i in sample_indices]
+                med_res = float(np.median(residuals))
+                max_res = float(np.max(residuals))
+                passed = max_res <= 2.0 or med_res <= 1.0
+                return passed, info
             except Exception as e:
-                print(f"    - Warning: Exception during source video reading: {e} ⚠️", flush=True)
-                human_src_info = {"file": human_vid_file.name, "error": str(e)}
+                return False, {"file": v_file.name, "error": str(e)}
+
+        human_parity_passed, human_src_info = _check_parity(human_vid, human_store)
+        if human_vid == legacy_vid:
+            legacy_parity_passed, legacy_src_info = human_parity_passed, human_src_info
+        else:
+            legacy_parity_passed, legacy_src_info = _check_parity(legacy_vid, legacy_store)
+
+        if human_src_info:
+            print(f"  • Human Target Source Video File  : {human_src_info.get('path')} (FPS: {human_src_info.get('fps'):.2f}, Parity: {'PASS ✅' if human_parity_passed else 'FAIL ❌'})", flush=True)
         else:
             print(f"  • Human Target Source Video File  : NOT LOCATED ON RUNNER DISK ⚠️", flush=True)
 
@@ -745,6 +734,8 @@ def run_gt_index_coverage_audit(runtime: OperationalKISRuntime, input_root: Path
                 "video_id": legacy_vid,
                 "locked_gt_frame": legacy_gt_fid,
                 "coverage_pass": legacy_coverage_pass,
+                "parity_passed": legacy_parity_passed,
+                "source_info": legacy_src_info,
             },
             "human_reference": {
                 "video_id": human_vid,

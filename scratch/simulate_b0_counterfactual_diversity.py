@@ -53,6 +53,8 @@ def run_b0_simulation() -> None:
                 seen.add(vid)
                 variants.append({"id": vid, "text": txt, "role": u.get("role")})
 
+    assert variants, "Không đọc được actual pipeline variants từ matched candidates.json"
+
     # Add Counterfactual & Symmetric Probes
     cf_variants = [
         {"id": "cf_full_without_standing", "text": "The scene shows a group of more than 5 people in a row to exercise, performing the movement of both hands touching their toes. In the group, only one person wore glasses and three people wore red hats.", "role": "COUNTERFACTUAL_NO_STANDING"},
@@ -92,6 +94,7 @@ def run_b0_simulation() -> None:
 
     scores = matrix @ q_vecs.T  # shape (97, num_variants)
     gt_rows = [i for i, m in enumerate(target_store.mappings) if 264.0 <= float(m.pts_time) <= 274.0]
+    assert gt_rows, "Không có keyframe trong HUMAN-VERIFIED INTERVAL [264,274]s"
 
     # 1. COUNTERFACTUAL TEXT IMPACT
     print("\n1. COUNTERFACTUAL TEXT IMPACT TRÊN L30_V046 / f6784")
@@ -161,17 +164,18 @@ def run_b0_simulation() -> None:
             gt_fids = [f"f{target_store.mappings[r].frame_id}@{target_store.mappings[r].pts_time:.1f}s" for r in gt_hit]
             print(f"  • Variant [{v['id'][:28]}]: {len(selected_rows)} candidates -> GT hit: {gt_fids or '[]'} ({status})")
 
-    # 5. SIMULATE HYBRID CANDIDATE POLICY (RAW TOP-10 + TOP DIVERSE FRAMES)
+    # 5. SIMULATE HYBRID CANDIDATE POLICY (RAW TOP-10 + TOP DIVERSE FRAMES + TAIL-FILL)
     print("\n" + "=" * 120)
-    print("5. HYBRID CANDIDATE POLICY SIMULATION (RAW TOP-10 + DIVERSE SLOTS)")
+    print("5. EQUAL-BUDGET HYBRID CANDIDATE POLICY (RAW TOP-10 + DIVERSE SLOTS + TAIL-FILL)")
     print("=" * 120)
     for total_budget in [15, 20, 25, 30]:
         diverse_budget = total_budget - 10
-        print(f"\n--- Total Budget K={total_budget} (Raw Top-10 + {diverse_budget} Diverse Slots with 5.0s Gap) ---")
+        print(f"\n--- Total Budget K={total_budget} (Raw Top-10 + up to {diverse_budget} Diverse Slots with 5.0s Gap + Raw Tail-Fill) ---")
         union_frames = set()
         for j in range(len(variants)):
-            sorted_rows = list(np.argsort(-scores[:, j]))
-            raw_top10 = sorted_rows[:10]
+            v = variants[j]
+            sorted_rows = [int(r) for r in np.argsort(-scores[:, j])]
+            raw_top10 = sorted_rows[:min(10, len(sorted_rows))]
             selected_pts = [float(target_store.mappings[r].pts_time) for r in raw_top10]
             selected_rows = list(raw_top10)
 
@@ -183,13 +187,27 @@ def run_b0_simulation() -> None:
                     selected_rows.append(r)
                     selected_pts.append(pts)
 
+            # Equal-budget tail-fill with remaining raw candidates
+            if len(selected_rows) < total_budget:
+                selected_set = set(selected_rows)
+                for r in sorted_rows:
+                    if r not in selected_set:
+                        selected_rows.append(r)
+                        selected_set.add(r)
+                    if len(selected_rows) >= total_budget:
+                        break
+
+            assert len(selected_rows) == min(total_budget, len(sorted_rows)), f"Budget mismatch: {len(selected_rows)} != {total_budget}"
+
             for r in selected_rows:
-                union_frames.add(int(r))
+                union_frames.add(r)
+
+            print(f"    - {v['id'][:28]}: {len(selected_rows)}/{total_budget} candidates allocated")
 
         gt_included = [r for r in gt_rows if r in union_frames]
         status = "INCLUDED ✅" if gt_included else "MISSED ❌"
         gt_fids = [f"f{target_store.mappings[r].frame_id}@{target_store.mappings[r].pts_time:.1f}s" for r in gt_included]
-        print(f"  • Budget K={total_budget:<2} -> Total Frames Nominated: {len(union_frames):>2}/97 | GT Frames: {gt_fids or '[]'} -> {status}")
+        print(f"  • Budget K={total_budget:<2} -> Total Unique Frames Nominated: {len(union_frames):>2}/97 | GT Frames: {gt_fids or '[]'} -> {status}")
 
     print("\n" + "=" * 120)
 

@@ -259,8 +259,50 @@ def test_coverage_audit_decoupled_branches():
     assert p1_2["legacy"]["video_id"] == "L29_V018"
     assert p1_2["human_reference"]["interval_status"] == "NOT_EVALUABLE"
     assert p1_2["legacy"]["coverage_pass"] is True
+    assert "parity_passed" in p1_2["legacy"]
+    assert "source_info" in p1_2["legacy"]
+    assert "parity_passed" in p1_2["human_reference"]
+    assert "source_info" in p1_2["human_reference"]
 
     # Test final summary table printer works without error
     runner_mod.print_final_summary_table(summary)
+
+
+def test_simulate_b0_equal_budget_hybrid_logic():
+    """Verify that the hybrid candidate selection logic guarantees exact equal budget allocation."""
+    import numpy as np
+
+    # 40 frames, dense cluster in first 10 frames (10.0 to 12.0s), diverse tail (20.0s to 80.0s)
+    n_frames = 40
+    timestamps = [10.0 + i * 0.2 for i in range(10)] + [20.0 + i * 3.0 for i in range(30)]
+    scores = np.linspace(0.9, 0.1, n_frames)
+
+    for total_budget in [15, 20, 25, 30]:
+        sorted_rows = [int(r) for r in np.argsort(-scores)]
+        raw_top10 = sorted_rows[:min(10, len(sorted_rows))]
+        selected_pts = [timestamps[r] for r in raw_top10]
+        selected_rows = list(raw_top10)
+
+        for r in sorted_rows[10:]:
+            if len(selected_rows) >= total_budget:
+                break
+            pts = timestamps[r]
+            if not any(abs(pts - p) < 5.0 for p in selected_pts):
+                selected_rows.append(r)
+                selected_pts.append(pts)
+
+        # Tail-fill
+        if len(selected_rows) < total_budget:
+            selected_set = set(selected_rows)
+            for r in sorted_rows:
+                if r not in selected_set:
+                    selected_rows.append(r)
+                    selected_set.add(r)
+                if len(selected_rows) >= total_budget:
+                    break
+
+        assert len(selected_rows) == min(total_budget, n_frames), f"Expected {total_budget} rows, got {len(selected_rows)}"
+        assert len(set(selected_rows)) == len(selected_rows), "Duplicates detected in candidate selection"
+
 
 
