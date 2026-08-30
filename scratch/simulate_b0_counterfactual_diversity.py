@@ -8,7 +8,7 @@ Runs instant offline simulation on existing manifest/matrix without re-running p
 4. Hard Temporal NMS simulation with gap in {3s, 5s, 10s} (15 candidates per variant).
 """
 
-import json, sys
+import os, json, sys, time, shutil, urllib.request
 from pathlib import Path
 import numpy as np
 import torch, clip
