@@ -45,6 +45,8 @@ class KISVideoFirstConfig:
     temporal_diversity_gap_seconds: float = 5.0
     enable_vi_localization_variant: bool = False
     vi_localization_weight: float = 0.5
+    internal_rrf_candidate_depth: int = 100
+    collect_fusion_trace: bool = False
 
     def __post_init__(self) -> None:
         if type(self.enabled) is not bool:
@@ -109,6 +111,13 @@ class KISVideoFirstConfig:
             or self.vi_localization_weight <= 0
         ):
             raise ValueError("vi_localization_weight must be finite and positive")
+        if (
+            type(self.internal_rrf_candidate_depth) is not int
+            or not (100 <= self.internal_rrf_candidate_depth <= 2000)
+        ):
+            raise ValueError("internal_rrf_candidate_depth must be an integer in [100, 2000]")
+        if type(self.collect_fusion_trace) is not bool:
+            raise ValueError("collect_fusion_trace must be a boolean")
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,6 +226,7 @@ class KISVideoFirstOutcome:
     per_scene_top128: Mapping[str, tuple[str, ...]] = MappingProxyType({})
     per_scene_ranks: Mapping[str, Mapping[str, int]] = MappingProxyType({})
     candidate_selection_telemetry: Mapping[str, Mapping[str, Mapping[str, int]]] | None = None
+    fusion_trace: Mapping[tuple[str, int], dict[str, object]] | None = None
 
     def to_trace(self) -> dict[str, object]:
         trace: dict[str, object] = {
@@ -271,6 +281,11 @@ class KISVideoFirstOutcome:
             trace["candidate_selection_telemetry"] = {
                 qid: {vid: dict(tel) for vid, tel in per_vid.items()}
                 for qid, per_vid in self.candidate_selection_telemetry.items()
+            }
+        if self.fusion_trace:
+            trace["fusion_trace"] = {
+                f"{vid}::{fid}": dict(info)
+                for (vid, fid), info in self.fusion_trace.items()
             }
         return trace
 
@@ -824,7 +839,10 @@ def fuse_restricted_frames(
     temporal_chain_bonus: float = 0.0,
     min_frame_gap: int = 0,
     max_candidates_per_video: int | None = None,
-) -> KISResult:
+    internal_rrf_candidate_depth: int = 100,
+    collect_fusion_trace: bool = False,
+    return_trace: bool = False,
+) -> KISResult | tuple[KISResult, dict[tuple[str, int], dict[str, object]]]:
     """Globally rank restricted frames per variant, then apply frame-identity RRF."""
 
     variants = tuple(variants)
@@ -873,15 +891,35 @@ def fuse_restricted_frames(
             ),
         )
 
-    fused_top_k = min(max(output_top_k, 100), 100)
+    fused_top_k = max(output_top_k, internal_rrf_candidate_depth)
 
-    fused = weighted_rrf.fuse_rankings(
-        query_id=query_id,
-        variants=variants,
-        rankings=rankings,
-        output_top_k=fused_top_k,
-        rrf_constant=rrf_constant,
-    )
+    if collect_fusion_trace:
+        unique_restricted_keys = {
+            (hit.video_id, hit.frame_id)
+            for per_video in restricted.rankings.values()
+            for hits in per_video.values()
+            for hit in hits
+        }
+        trace_depth = max(len(unique_restricted_keys), fused_top_k)
+        full_fused = weighted_rrf.fuse_rankings(
+            query_id=query_id,
+            variants=variants,
+            rankings=rankings,
+            output_top_k=trace_depth,
+            rrf_constant=rrf_constant,
+        )
+        production_fused_candidates = full_fused.ranked_candidates[:fused_top_k]
+    else:
+        fused = weighted_rrf.fuse_rankings(
+            query_id=query_id,
+            variants=variants,
+            rankings=rankings,
+            output_top_k=fused_top_k,
+            rrf_constant=rrf_constant,
+        )
+        production_fused_candidates = fused.ranked_candidates
+        full_fused = None
+
     video_by_id = {item.video_id: item for item in selected_videos}
 
     # Extract winning DP chain frames by video
@@ -897,7 +935,7 @@ def fuse_restricted_frames(
             )
 
     enriched_list: list[CandidateFrame] = []
-    for item in fused.ranked_candidates:
+    for item in production_fused_candidates:
         is_chain_winner = item.frame_id in chain_frames_by_video.get(item.video_id, ())
         vid_ev = video_by_id[item.video_id]
         vid_rank = vid_ev.rank
@@ -960,10 +998,12 @@ def fuse_restricted_frames(
                 filtered_candidates.append(cand)
                 selected_frames_by_video.setdefault(vid, []).append(cand.frame_id)
         final_candidates = filtered_candidates[:output_top_k]
+        primary_candidates = filtered_candidates
+        secondary_candidates = []
     else:
         # Segment-Level Decoupled Frame Localization (Distinct Temporal Action Clusters)
-        primary_candidates: list[CandidateFrame] = []
-        secondary_candidates: list[CandidateFrame] = []
+        primary_candidates = []
+        secondary_candidates = []
         selected_cluster_frames: dict[str, list[int]] = {}
         segment_gap = 75  # 3.0 seconds at 25 fps
 
@@ -981,6 +1021,75 @@ def fuse_restricted_frames(
 
         final_candidates = (primary_candidates + secondary_candidates)[:output_top_k]
 
+    fusion_trace_map: dict[tuple[str, int], dict[str, object]] = {}
+    if collect_fusion_trace and full_fused is not None:
+        post_boost_ranks = {
+            (c.video_id, c.frame_id): rank
+            for rank, c in enumerate(enriched_sorted, start=1)
+        }
+        primary_set = {(c.video_id, c.frame_id) for c in primary_candidates}
+        secondary_set = {(c.video_id, c.frame_id) for c in secondary_candidates}
+        final_rank_map = {
+            (c.video_id, c.frame_id): rank
+            for rank, c in enumerate(final_candidates, start=1)
+        }
+
+        variant_ranks_per_frame: dict[tuple[str, int], dict[str, int]] = {}
+        variant_scores_per_frame: dict[tuple[str, int], dict[str, float]] = {}
+        variant_selection_per_frame: dict[tuple[str, int], dict[str, dict[str, object]]] = {}
+        for var_id, r in rankings.items():
+            for hit in r.ranked_candidates:
+                k = (hit.video_id, hit.frame_id)
+                variant_ranks_per_frame.setdefault(k, {})[var_id] = hit.rank
+                variant_scores_per_frame.setdefault(k, {})[var_id] = float(hit.score)
+                if hit.diagnostic_metadata:
+                    variant_selection_per_frame.setdefault(k, {})[var_id] = {
+                        "selection_source": hit.diagnostic_metadata.get("selection_source", "RAW"),
+                        "raw_local_rank": hit.diagnostic_metadata.get("raw_local_rank", 0),
+                        "pts_time": hit.diagnostic_metadata.get("pts_time"),
+                    }
+
+        for item in full_fused.ranked_candidates:
+            k = (item.video_id, item.frame_id)
+            untruncated_rrf_rank = item.rank
+            passed_internal_cutoff = (untruncated_rrf_rank <= fused_top_k)
+
+            post_boost_rank = post_boost_ranks.get(k)
+            if k in primary_set:
+                group_bucket = "GROUP_BUCKET_PRIMARY"
+            elif k in secondary_set:
+                group_bucket = "GROUP_BUCKET_SECONDARY"
+            else:
+                group_bucket = None
+
+            final_rank = final_rank_map.get(k)
+            if final_rank is not None:
+                lifecycle_status = f"EXPORTED_AT_RANK_{final_rank}"
+            elif post_boost_rank is not None:
+                lifecycle_status = "PRUNED_BY_FINAL_TOPK"
+            else:
+                lifecycle_status = "PRUNED_BY_INTERNAL_RRF_CUTOFF"
+
+            sel_info = variant_selection_per_frame.get(k, {})
+            sources = {v.get("selection_source") for v in sel_info.values() if v.get("selection_source")}
+            source_str = "/".join(sorted(str(s) for s in sources)) if sources else "RAW"
+
+            fusion_trace_map[k] = {
+                "video_id": item.video_id,
+                "frame_id": item.frame_id,
+                "restricted_selection_status": f"SELECTED_RESTRICTED_{source_str}",
+                "selection_by_variant": sel_info,
+                "global_variant_ranks": variant_ranks_per_frame.get(k, {}),
+                "scores_by_variant": variant_scores_per_frame.get(k, {}),
+                "untruncated_rrf_rank": untruncated_rrf_rank,
+                "rrf_score": float(item.score),
+                "rrf_cutoff_status": "PASSED_RRF_CUTOFF" if passed_internal_cutoff else "PRUNED_BY_INTERNAL_RRF_CUTOFF",
+                "post_boost_rank": post_boost_rank,
+                "group_bucket": group_bucket,
+                "final_rank": final_rank,
+                "final_lifecycle_status": lifecycle_status,
+            }
+
     reranked = tuple(
         CandidateFrame(
             video_id=cand.video_id,
@@ -994,7 +1103,10 @@ def fuse_restricted_frames(
         )
         for rank, cand in enumerate(final_candidates, start=1)
     )
-    return KISResult(query_id=query_id, ranked_candidates=reranked)
+    result = KISResult(query_id=query_id, ranked_candidates=reranked)
+    if return_trace:
+        return result, fusion_trace_map
+    return result
 
 
 def build_kis_video_first_outcome(
@@ -1013,19 +1125,47 @@ def build_kis_video_first_outcome(
     chain_bonus = config.temporal_chain_frame_bonus if config else 0.0
     min_gap = config.restricted_frame_min_gap if config else 0
     max_cands = config.max_restricted_candidates_per_video if config else None
+    internal_depth = config.internal_rrf_candidate_depth if config else 100
+    collect_trace = config.collect_fusion_trace if config else False
 
-    result = fuse_restricted_frames(
-        query_id=query_id,
-        variants=variants,
-        restricted=restricted,
-        selected_videos=selected_videos,
-        weighted_rrf=weighted_rrf,
-        output_top_k=output_top_k,
-        rrf_constant=rrf_constant,
-        temporal_chain_bonus=chain_bonus,
-        min_frame_gap=min_gap,
-        max_candidates_per_video=max_cands,
-    )
+    if collect_trace:
+        fuse_res = fuse_restricted_frames(
+            query_id=query_id,
+            variants=variants,
+            restricted=restricted,
+            selected_videos=selected_videos,
+            weighted_rrf=weighted_rrf,
+            output_top_k=output_top_k,
+            rrf_constant=rrf_constant,
+            temporal_chain_bonus=chain_bonus,
+            min_frame_gap=min_gap,
+            max_candidates_per_video=max_cands,
+            internal_rrf_candidate_depth=internal_depth,
+            collect_fusion_trace=True,
+            return_trace=True,
+        )
+        assert isinstance(fuse_res, tuple)
+        result, fusion_trace_map = fuse_res
+    else:
+        fuse_res = fuse_restricted_frames(
+            query_id=query_id,
+            variants=variants,
+            restricted=restricted,
+            selected_videos=selected_videos,
+            weighted_rrf=weighted_rrf,
+            output_top_k=output_top_k,
+            rrf_constant=rrf_constant,
+            temporal_chain_bonus=chain_bonus,
+            min_frame_gap=min_gap,
+            max_candidates_per_video=max_cands,
+            internal_rrf_candidate_depth=internal_depth,
+            collect_fusion_trace=False,
+            return_trace=False,
+        )
+        assert isinstance(fuse_res, KISResult)
+        result = fuse_res
+        fusion_trace_map = None
+
     per_scene_top128 = {
         var_id: tuple(hit.video_id for hit in hits[:128])
         for var_id, hits in maxima.rankings.items()
@@ -1040,6 +1180,7 @@ def build_kis_video_first_outcome(
             config.restricted_frames_per_video_per_variant != 10
             or config.enable_temporal_diverse_local_candidates
             or config.enable_vi_localization_variant
+            or config.internal_rrf_candidate_depth != 100
         )
     )
     return KISVideoFirstOutcome(
@@ -1053,4 +1194,5 @@ def build_kis_video_first_outcome(
         per_scene_top128=per_scene_top128,
         per_scene_ranks=per_scene_ranks,
         candidate_selection_telemetry=restricted.candidate_selection_telemetry if is_exp else None,
+        fusion_trace=fusion_trace_map if collect_trace else None,
     )

@@ -125,6 +125,8 @@ def create_production_v2a_session_config(
     temporal_diversity_gap_seconds: float = 5.0,
     enable_vi_localization_variant: bool = False,
     vi_localization_weight: float = 0.5,
+    internal_rrf_candidate_depth: int = 100,
+    collect_fusion_trace: bool = False,
 ) -> SessionConfig:
     """Canonical production V2-A configuration factory matching production gate with ablation support."""
     config = SessionConfig(
@@ -158,6 +160,8 @@ def create_production_v2a_session_config(
             temporal_diversity_gap_seconds=temporal_diversity_gap_seconds,
             enable_vi_localization_variant=enable_vi_localization_variant,
             vi_localization_weight=vi_localization_weight,
+            internal_rrf_candidate_depth=internal_rrf_candidate_depth,
+            collect_fusion_trace=collect_fusion_trace,
         ),
     )
     # Field-by-field production gate contract assertions
@@ -594,11 +598,15 @@ def generate_and_save_ablation_summary_table(
                 "first_human_video_rank": None,
                 "first_legacy_video_rank": None,
                 "first_valid_interval_rank": None,
-                "valid_interval_hit": False,
+                "valid_interval_hit": False if human_pts_intervals else None,
                 "valid_interval_frame_id": None,
                 "valid_interval_source": None,
+                "frame_evaluation_status": "NO_VALID_INTERVAL_HIT" if human_pts_intervals else "NOT_EVALUABLE_NO_INTERVAL",
                 "total_candidates": 0,
-                "source_breakdown": {},
+                "source_assignment_breakdown": {},
+                "unique_candidates_with_diverse_source": 0,
+                "unique_candidates_with_raw_source": 0,
+                "multi_source_candidate_count": 0,
                 "semantic_variant_sha256": None,
             }
 
@@ -650,6 +658,10 @@ def generate_and_save_ablation_summary_table(
             q_summary["total_candidates"] = len(records)
 
             src_counts = {}
+            unique_diverse = 0
+            unique_raw = 0
+            multi_source = 0
+
             for r in records:
                 vid = r.get("video_id")
                 rk = r.get("rank")
@@ -657,12 +669,22 @@ def generate_and_save_ablation_summary_table(
                 fid = r.get("frame_id")
 
                 sel_map = r.get("selection_by_variant", {})
+                cand_sources = set()
                 if sel_map:
                     for var_id, var_info in sel_map.items():
                         s = var_info.get("source", "RAW")
                         src_counts[s] = src_counts.get(s, 0) + 1
+                        cand_sources.add(s)
                 else:
                     src_counts["RAW"] = src_counts.get("RAW", 0) + 1
+                    cand_sources.add("RAW")
+
+                if "DIVERSE" in cand_sources:
+                    unique_diverse += 1
+                if "RAW" in cand_sources:
+                    unique_raw += 1
+                if len(cand_sources) > 1:
+                    multi_source += 1
 
                 if vid == human_vid and q_summary["first_human_video_rank"] is None:
                     q_summary["first_human_video_rank"] = rk
@@ -677,8 +699,12 @@ def generate_and_save_ablation_summary_table(
                                 q_summary["valid_interval_hit"] = True
                                 q_summary["valid_interval_frame_id"] = fid
                                 q_summary["valid_interval_source"] = sel_map
+                                q_summary["frame_evaluation_status"] = "VALID_MANUAL_INTERVAL_HIT"
 
-            q_summary["source_breakdown"] = src_counts
+            q_summary["source_assignment_breakdown"] = src_counts
+            q_summary["unique_candidates_with_diverse_source"] = unique_diverse
+            q_summary["unique_candidates_with_raw_source"] = unique_raw
+            q_summary["multi_source_candidate_count"] = multi_source
             run_data["queries"][q_short] = q_summary
 
         summary_matrix["runs"][run_key] = run_data
@@ -812,44 +838,74 @@ def main() -> None:
     )
     ablation_configs = {
         "A": {
-            "name": "Run A: Baseline Control (K=10, Hybrid=Off, VI=Off)",
+            "name": "Run A: Baseline Control (K=10, Hybrid=Off, VI=Off, RRF=100)",
             "restricted_frames_per_video_per_variant": 10,
             "enable_temporal_diverse_local_candidates": False,
             "temporal_diversity_gap_seconds": 5.0,
             "enable_vi_localization_variant": False,
             "vi_localization_weight": 0.5,
+            "internal_rrf_candidate_depth": 100,
+            "collect_fusion_trace": True,
         },
         "B": {
-            "name": "Run B: Depth Only (K=20, Hybrid=Off, VI=Off)",
+            "name": "Run B: Depth Only (K=20, Hybrid=Off, VI=Off, RRF=100)",
             "restricted_frames_per_video_per_variant": 20,
             "enable_temporal_diverse_local_candidates": False,
             "temporal_diversity_gap_seconds": 5.0,
             "enable_vi_localization_variant": False,
             "vi_localization_weight": 0.5,
+            "internal_rrf_candidate_depth": 100,
+            "collect_fusion_trace": True,
         },
         "C": {
-            "name": "Run C: Diversity at Equal Budget (K=20, Hybrid=On, Gap=5s, VI=Off)",
+            "name": "Run C: Diversity at Equal Budget (K=20, Hybrid=On, Gap=5s, VI=Off, RRF=100)",
             "restricted_frames_per_video_per_variant": 20,
             "enable_temporal_diverse_local_candidates": True,
             "temporal_diversity_gap_seconds": 5.0,
             "enable_vi_localization_variant": False,
             "vi_localization_weight": 0.5,
+            "internal_rrf_candidate_depth": 100,
+            "collect_fusion_trace": True,
         },
         "D": {
-            "name": "Run D: VI Localizer Only (K=10, Hybrid=Off, VI=On, w=0.5)",
+            "name": "Run D: VI Localizer Only (K=10, Hybrid=Off, VI=On, w=0.5, RRF=100)",
             "restricted_frames_per_video_per_variant": 10,
             "enable_temporal_diverse_local_candidates": False,
             "temporal_diversity_gap_seconds": 5.0,
             "enable_vi_localization_variant": True,
             "vi_localization_weight": 0.5,
+            "internal_rrf_candidate_depth": 100,
+            "collect_fusion_trace": True,
         },
         "E": {
-            "name": "Run E: Combined Synergy (K=20, Hybrid=On, Gap=5s, VI=On, w=0.5)",
+            "name": "Run E: VI + Diversity (K=20, Hybrid=On, Gap=5s, VI=On, w=0.5, RRF=100)",
             "restricted_frames_per_video_per_variant": 20,
             "enable_temporal_diverse_local_candidates": True,
             "temporal_diversity_gap_seconds": 5.0,
             "enable_vi_localization_variant": True,
             "vi_localization_weight": 0.5,
+            "internal_rrf_candidate_depth": 100,
+            "collect_fusion_trace": True,
+        },
+        "F": {
+            "name": "Run F: RRF Candidate Depth (K=20, Hybrid=On, Gap=5s, VI=Off, RRF=500)",
+            "restricted_frames_per_video_per_variant": 20,
+            "enable_temporal_diverse_local_candidates": True,
+            "temporal_diversity_gap_seconds": 5.0,
+            "enable_vi_localization_variant": False,
+            "vi_localization_weight": 0.5,
+            "internal_rrf_candidate_depth": 500,
+            "collect_fusion_trace": True,
+        },
+        "G": {
+            "name": "Run G: Full Combined Synergy (K=20, Hybrid=On, Gap=5s, VI=On, w=0.5, RRF=500)",
+            "restricted_frames_per_video_per_variant": 20,
+            "enable_temporal_diverse_local_candidates": True,
+            "temporal_diversity_gap_seconds": 5.0,
+            "enable_vi_localization_variant": True,
+            "vi_localization_weight": 0.5,
+            "internal_rrf_candidate_depth": 500,
+            "collect_fusion_trace": True,
         },
     }
 
@@ -889,7 +945,7 @@ def main() -> None:
             reuse_manifest_path = p
             break
 
-    base_out = Path("/kaggle/working/output/v2a3_foundation_closure") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "v2a3_foundation_closure"
+    base_out = Path("/kaggle/working/output/v2a3_foundation_closure_phase_b11") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "v2a3_foundation_closure_phase_b11"
     manifest_cache = None if reuse_manifest_path else (
         Path("/kaggle/working/manifest_cache.json") if Path("/kaggle/working").exists() else REPO_ROOT / "scratch" / "manifest_cache.json"
     )
@@ -916,6 +972,8 @@ def main() -> None:
             temporal_diversity_gap_seconds=run_spec["temporal_diversity_gap_seconds"],
             enable_vi_localization_variant=run_spec["enable_vi_localization_variant"],
             vi_localization_weight=run_spec["vi_localization_weight"],
+            internal_rrf_candidate_depth=run_spec.get("internal_rrf_candidate_depth", 100),
+            collect_fusion_trace=run_spec.get("collect_fusion_trace", True),
         )
 
         # Purge stale translation cache if error-polluted
@@ -2512,6 +2570,56 @@ def run_p1_4_real_image_adjudication(
     print("=" * 120 + "\n", flush=True)
 
 
+def audit_p1_1_target_interval_trace(c_data: dict, run_dir_name: str) -> None:
+    target_vid = "L30_V046"
+    target_fids = [6605, 6613, 6742, 6784]
+
+    vf_data = c_data.get("video_first", {})
+    fusion_trace = vf_data.get("fusion_trace", {})
+    records = c_data.get("records", [])
+    final_rank_by_fid = {int(r.get("frame_id", 0)): r.get("rank") for r in records if r.get("video_id") == target_vid}
+
+    print("\n" + "─" * 140, flush=True)
+    print(f"🎯 P1-1 GROUND TRUTH INTERVAL TRACE AUDIT (Target: {target_vid} | Interval: 264.0s-274.0s) — {run_dir_name}", flush=True)
+    print("─" * 140, flush=True)
+
+    header = f"| {'Frame ID':<10} | {'In Restricted?':<16} | {'Selection Source':<24} | {'Global Var Ranks':<24} | {'RRF Rank':<10} | {'RRF Cutoff Status':<32} | {'Post-Boost':<12} | {'Group Bucket':<24} | {'Final Lifecycle Status':<28} |"
+    sep = f"|:{'-'*10}-|:{'-'*16}-|:{'-'*24}-|:{'-'*24}-|:{'-'*10}-|:{'-'*32}-|:{'-'*12}-|:{'-'*24}-|:{'-'*28}-|"
+    print(header, flush=True)
+    print(sep, flush=True)
+
+    for fid in target_fids:
+        k = f"{target_vid}::{fid}"
+        trace_info = fusion_trace.get(k)
+
+        if trace_info:
+            in_pool = "YES ✅"
+            sel_status = trace_info.get("restricted_selection_status", "SELECTED_RESTRICTED_RAW")
+            global_var_ranks = str(trace_info.get("global_variant_ranks", {}))
+            rrf_rank = str(trace_info.get("untruncated_rrf_rank", "N/A"))
+            rrf_cutoff_status = trace_info.get("rrf_cutoff_status", "N/A")
+            post_boost = str(trace_info.get("post_boost_rank") or "N/A")
+            group_bucket = str(trace_info.get("group_bucket") or "N/A")
+            lifecycle = trace_info.get("final_lifecycle_status", "N/A")
+        else:
+            in_pool = "NO ❌"
+            sel_status = "NOT_IN_RESTRICTED_POOL"
+            global_var_ranks = "N/A"
+            rrf_rank = "N/A"
+            rrf_cutoff_status = "NOT_IN_RESTRICTED_POOL"
+            post_boost = "N/A"
+            group_bucket = "N/A"
+            lifecycle = "NOT_IN_RESTRICTED_POOL"
+
+        final_r = final_rank_by_fid.get(fid)
+        if final_r is not None:
+            lifecycle = f"EXPORTED_AT_RANK_{final_r} ⭐"
+
+        print(f"| {f'f{fid}':<10} | {in_pool:<16} | {sel_status:<24} | {global_var_ranks:<24} | {rrf_rank:<10} | {rrf_cutoff_status:<32} | {post_boost:<12} | {group_bucket:<24} | {lifecycle:<28} |", flush=True)
+
+    print("─" * 140 + "\n", flush=True)
+
+
 # ==============================================================================
 # SECTION 3.5: FULL TOP-100 VISUAL CONTACT SHEET EXPORT (ALL 5 FOCUS QUERIES)
 # ==============================================================================
@@ -2576,6 +2684,7 @@ def run_all_5_queries_top100_visual_export(
         candidates_json_rel = artifacts.get("candidates_json")
         candidates = []
         enabled_features_list = []
+        c_data = {}
         if candidates_json_rel and (runtime.output_root / candidates_json_rel).exists():
             try:
                 c_data = json.loads((runtime.output_root / candidates_json_rel).read_text(encoding="utf-8"))
@@ -2593,6 +2702,8 @@ def run_all_5_queries_top100_visual_export(
                         "video_nomination_rank": r.get("video_nomination_rank"),
                         "enabled_features": enabled_features_list,
                     })
+                if q_short == "p1-1":
+                    audit_p1_1_target_interval_trace(c_data, runtime.output_root.name)
             except Exception:
                 pass
         

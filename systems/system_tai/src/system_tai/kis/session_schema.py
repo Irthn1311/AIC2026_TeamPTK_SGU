@@ -348,6 +348,12 @@ class SessionConfig:
                 vi_localization_weight=float(
                     kis_cfg.get("vi_localization_weight", 0.5)
                 ),
+                internal_rrf_candidate_depth=int(
+                    kis_cfg.get("internal_rrf_candidate_depth", 100)
+                ),
+                collect_fusion_trace=bool(
+                    kis_cfg.get("collect_fusion_trace", False)
+                ),
             ),
         }
         kwargs.update(overrides)

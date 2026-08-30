@@ -785,8 +785,19 @@ def test_ablation_summary_table_generation_success():
         loaded = json.loads(sum_file.read_text(encoding="utf-8"))
         assert "generated_at" in loaded
         assert set(loaded["runs"].keys()) == {"A", "B", "C"}
-        assert loaded["runs"]["A"]["queries"]["p1-1"]["valid_interval_hit"] is True
-        assert loaded["runs"]["A"]["queries"]["p1-1"]["first_human_video_rank"] == 1
+        p1_1 = loaded["runs"]["A"]["queries"]["p1-1"]
+        assert p1_1["valid_interval_hit"] is True
+        assert p1_1["frame_evaluation_status"] == "VALID_MANUAL_INTERVAL_HIT"
+        assert p1_1["first_human_video_rank"] == 1
+        assert "source_assignment_breakdown" in p1_1
+        assert "unique_candidates_with_diverse_source" in p1_1
+        assert "unique_candidates_with_raw_source" in p1_1
+        assert "multi_source_candidate_count" in p1_1
+
+        # Unannotated query tri-state evaluation
+        p1_2 = loaded["runs"]["A"]["queries"]["p1-2"]
+        assert p1_2["valid_interval_hit"] is None
+        assert p1_2["frame_evaluation_status"] == "NOT_EVALUABLE_NO_INTERVAL"
 
 
 def test_ablation_summary_detects_translation_drift_and_raises():
@@ -871,6 +882,259 @@ def test_ablation_summary_mismatched_query_id_raises():
                 runs_to_execute=runs,
                 ablation_configs=ablation_configs,
             )
+
+
+def test_internal_rrf_depth_rescues_distinct_segment_beyond_rank_100():
+    """Verify hypothesis: internal_rrf_candidate_depth=500 allows Segment Grouper to rescue
+
+    a distinct segment candidate at rank 101 into Top 100, while depth=100 prunes it.
+    """
+    from system_tai.kis.video_first import (
+        fuse_restricted_frames,
+        FusedVideoEvidence,
+        VariantVideoEvidence,
+    )
+    from system_tai.retrieval.video_evidence import (
+        VideoRestrictedSearchOutcome,
+        RestrictedFrameHit,
+    )
+    from system_tai.retrieval.multi_query import (
+        QueryVariant,
+        QueryVariantType,
+        QueryLanguage,
+        WeightedRRFRetriever,
+    )
+
+    var = QueryVariant(
+        variant_id="v1",
+        text="exercising",
+        language=QueryLanguage.ENGLISH,
+        variant_type=QueryVariantType.ENGLISH_TRANSLATION,
+        weight=1.0,
+    )
+    weighted_rrf = WeightedRRFRetriever(object())
+
+    # Create 120 hits in video L30_V046:
+    # - Cluster A (Rank 1-75): frame 0..74
+    # - Cluster B (Rank 76-100): frame 1000..1024
+    # - Target Segment C (Rank 101): frame 2000
+    # - Additional filler (Rank 102-120): frame 2001..2019
+    hits = []
+    # Cluster A: 75 frames (0..74)
+    for i in range(75):
+        hits.append(RestrictedFrameHit(
+            video_id="L30_V046",
+            frame_id=i,
+            clip_row=i,
+            keyframe_order=i + 1,
+            pts_time=float(i) / 25.0,
+            cosine_score=0.99 - (i * 0.001),
+            rank=i + 1,
+            selection_source="RAW",
+            raw_local_rank=i + 1,
+        ))
+    # Cluster B: 25 frames (1000..1024)
+    for i in range(25):
+        hits.append(RestrictedFrameHit(
+            video_id="L30_V046",
+            frame_id=1000 + i,
+            clip_row=75 + i,
+            keyframe_order=76 + i,
+            pts_time=float(1000 + i) / 25.0,
+            cosine_score=0.85 - (i * 0.001),
+            rank=76 + i,
+            selection_source="RAW",
+            raw_local_rank=76 + i,
+        ))
+    # Target Candidate (Rank 101): frame 2000 (Distinct segment > 75 frame gap)
+    hits.append(RestrictedFrameHit(
+        video_id="L30_V046",
+        frame_id=2000,
+        clip_row=100,
+        keyframe_order=101,
+        pts_time=80.0,
+        cosine_score=0.80,
+        rank=101,
+        selection_source="DIVERSE",
+        raw_local_rank=101,
+    ))
+    # Fillers: rank 102..120
+    for i in range(19):
+        hits.append(RestrictedFrameHit(
+            video_id="L30_V046",
+            frame_id=2001 + i,
+            clip_row=101 + i,
+            keyframe_order=102 + i,
+            pts_time=80.0 + float(i + 1) / 25.0,
+            cosine_score=0.79 - (i * 0.001),
+            rank=102 + i,
+            selection_source="DIVERSE",
+            raw_local_rank=102 + i,
+        ))
+
+    restricted_outcome = VideoRestrictedSearchOutcome(
+        rankings={"v1": {"L30_V046": tuple(hits)}},
+        physical_rows_scored=len(hits),
+        video_store_scan_count=1,
+    )
+    selected_videos = (
+        FusedVideoEvidence(
+            video_id="L30_V046",
+            rank=1,
+            fusion_score=0.99,
+            variant_hit_count=1,
+            primary_coverage_count=1,
+            best_individual_rank=1,
+            per_variant=(
+                VariantVideoEvidence(
+                    variant_id="v1",
+                    weight=1.0,
+                    video_rank=1,
+                    maximum_frame_id=0,
+                    maximum_clip_row=0,
+                    maximum_cosine_score=0.99,
+                ),
+            ),
+        ),
+    )
+
+    # 1. Run with depth 100: Frame 2000 is PRUNED_BY_INTERNAL_RRF_CUTOFF
+    res_100 = fuse_restricted_frames(
+        query_id="q1",
+        variants=(var,),
+        restricted=restricted_outcome,
+        selected_videos=selected_videos,
+        weighted_rrf=weighted_rrf,
+        output_top_k=100,
+        rrf_constant=60.0,
+        internal_rrf_candidate_depth=100,
+    )
+    assert len(res_100.ranked_candidates) == 100
+    frame_ids_100 = {c.frame_id for c in res_100.ranked_candidates}
+    assert 2000 not in frame_ids_100, "Frame 2000 must be pruned by RRF cutoff when depth=100"
+
+    # 2. Run with depth 500: Frame 2000 reaches Grouper, classified PRIMARY, promoted into Top 100!
+    res_500 = fuse_restricted_frames(
+        query_id="q1",
+        variants=(var,),
+        restricted=restricted_outcome,
+        selected_videos=selected_videos,
+        weighted_rrf=weighted_rrf,
+        output_top_k=100,
+        rrf_constant=60.0,
+        internal_rrf_candidate_depth=500,
+    )
+    assert len(res_500.ranked_candidates) == 100
+    frame_ids_500 = {c.frame_id for c in res_500.ranked_candidates}
+    assert 2000 in frame_ids_500, "Frame 2000 must be rescued into Top 100 by Segment Grouper when depth=500"
+
+    cand_2000 = next(c for c in res_500.ranked_candidates if c.frame_id == 2000)
+    assert cand_2000.rank <= 100
+
+
+def test_collect_fusion_trace_does_not_change_output():
+    """Verify invariance: collect_fusion_trace=True produces bit-for-bit identical candidates."""
+    from system_tai.kis.video_first import (
+        fuse_restricted_frames,
+        FusedVideoEvidence,
+        VariantVideoEvidence,
+    )
+    from system_tai.retrieval.video_evidence import (
+        VideoRestrictedSearchOutcome,
+        RestrictedFrameHit,
+    )
+    from system_tai.retrieval.multi_query import (
+        QueryVariant,
+        QueryVariantType,
+        QueryLanguage,
+        WeightedRRFRetriever,
+    )
+
+    var = QueryVariant(
+        variant_id="v1",
+        text="test query",
+        language=QueryLanguage.ENGLISH,
+        variant_type=QueryVariantType.ENGLISH_TRANSLATION,
+        weight=1.0,
+    )
+    weighted_rrf = WeightedRRFRetriever(object())
+
+    hits = [
+        RestrictedFrameHit(
+            video_id="L30_V046",
+            frame_id=i * 10,
+            clip_row=i,
+            keyframe_order=i + 1,
+            pts_time=float(i * 10) / 25.0,
+            cosine_score=0.9 - (i * 0.01),
+            rank=i + 1,
+            selection_source="RAW" if i % 2 == 0 else "DIVERSE",
+            raw_local_rank=i + 1,
+        )
+        for i in range(50)
+    ]
+    restricted_outcome = VideoRestrictedSearchOutcome(
+        rankings={"v1": {"L30_V046": tuple(hits)}},
+        physical_rows_scored=len(hits),
+        video_store_scan_count=1,
+    )
+    selected_videos = (
+        FusedVideoEvidence(
+            video_id="L30_V046",
+            rank=1,
+            fusion_score=0.9,
+            variant_hit_count=1,
+            primary_coverage_count=1,
+            best_individual_rank=1,
+            per_variant=(
+                VariantVideoEvidence(
+                    variant_id="v1",
+                    weight=1.0,
+                    video_rank=1,
+                    maximum_frame_id=0,
+                    maximum_clip_row=0,
+                    maximum_cosine_score=0.9,
+                ),
+            ),
+        ),
+    )
+
+    res_no_trace = fuse_restricted_frames(
+        query_id="q1",
+        variants=(var,),
+        restricted=restricted_outcome,
+        selected_videos=selected_videos,
+        weighted_rrf=weighted_rrf,
+        output_top_k=20,
+        rrf_constant=60.0,
+        collect_fusion_trace=False,
+    )
+
+    res_with_trace, trace_map = fuse_restricted_frames(
+        query_id="q1",
+        variants=(var,),
+        restricted=restricted_outcome,
+        selected_videos=selected_videos,
+        weighted_rrf=weighted_rrf,
+        output_top_k=20,
+        rrf_constant=60.0,
+        collect_fusion_trace=True,
+        return_trace=True,
+    )
+
+    assert len(res_no_trace.ranked_candidates) == len(res_with_trace.ranked_candidates)
+    for c1, c2 in zip(res_no_trace.ranked_candidates, res_with_trace.ranked_candidates, strict=True):
+        assert c1.video_id == c2.video_id
+        assert c1.frame_id == c2.frame_id
+        assert c1.score == c2.score
+        assert c1.rank == c2.rank
+
+    assert len(trace_map) == 50
+    target_info = trace_map[("L30_V046", 0)]
+    assert target_info["untruncated_rrf_rank"] == 1
+    assert target_info["group_bucket"] == "GROUP_BUCKET_PRIMARY"
+    assert target_info["final_lifecycle_status"] == "EXPORTED_AT_RANK_1"
+
 
 
 

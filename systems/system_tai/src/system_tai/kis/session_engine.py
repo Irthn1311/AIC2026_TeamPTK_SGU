@@ -917,6 +917,7 @@ class OperationalKISRuntime:
             getattr(self.config.kis_video_first_config, "restricted_frames_per_video_per_variant", 10) != 10
             or getattr(self.config.kis_video_first_config, "enable_temporal_diverse_local_candidates", False)
             or getattr(self.config.kis_video_first_config, "enable_vi_localization_variant", False)
+            or getattr(self.config.kis_video_first_config, "internal_rrf_candidate_depth", 100) != 100
         )
 
         candidates_data = {
@@ -939,6 +940,7 @@ class OperationalKISRuntime:
                     ("positive_chain_bonus", getattr(self.config.kis_video_first_config, "enable_positive_chain_bonus", False)),
                     ("temporal_diverse_local_candidates", getattr(self.config.kis_video_first_config, "enable_temporal_diverse_local_candidates", False)),
                     ("vi_localization_variant", getattr(self.config.kis_video_first_config, "enable_vi_localization_variant", False)),
+                    ("internal_rrf_candidate_depth_500", getattr(self.config.kis_video_first_config, "internal_rrf_candidate_depth", 100) == 500),
                 ] if val
             ],
             "records": [
