@@ -218,6 +218,19 @@ def _split_semantic_clauses(query_vi: str) -> tuple[str, ...]:
     return tuple(clauses)
 
 
+_BOILERPLATE_PREFIX = re.compile(
+    r"(?i)^(?:cảnh\s+quay|đoạn\s+phim|đoạn\s+clip|mẩu\s+tin|video|hình\s+ảnh)\s+"
+    r"(?:bắt\s+đầu\s+với\s+hình\s+ảnh|bắt\s+đầu\s+với|bắt\s+đầu\s+bằng\s+việc|bắt\s+đầu\s+bằng|"
+    r"cho\s+thấy|ghi\s+lại|mô\s+tả|về|chiếu\s+cảnh)?\s*",
+)
+
+
+def strip_boilerplate(text: str) -> str:
+    cleaned = _clean(text)
+    stripped = _BOILERPLATE_PREFIX.sub("", cleaned).strip(" ,:\t\r\n")
+    return stripped if len(stripped) >= 10 else cleaned
+
+
 def _classify_clause(text: str) -> SemanticUnitRole:
     has_primary = _PRIMARY_MARKERS.search(text) is not None
     has_supporting = _SUPPORTING_MARKERS.search(text) is not None
@@ -252,8 +265,8 @@ def decompose_vietnamese_semantic_units(
     if len(clauses) == 1 and clauses[0] == source:
         return tuple(units)
 
-    # Pre-classify clauses
-    classified = [(_classify_clause(clause), clause) for clause in clauses]
+    # Pre-classify clauses and clean boilerplate
+    classified = [(_classify_clause(clause), strip_boilerplate(clause)) for clause in clauses]
     scene_clause_count = sum(1 for role, _ in classified if role is not SemanticUnitRole.SUPPORTING_ATTRIBUTE)
     is_temporal = scene_clause_count >= 2
 

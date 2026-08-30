@@ -841,7 +841,7 @@ def fuse_restricted_frames(
             ),
         )
 
-    fused_top_k = min(output_top_k, 100)
+    fused_top_k = min(max(output_top_k, 100), 100)
 
     fused = weighted_rrf.fuse_rankings(
         query_id=query_id,
@@ -899,32 +899,23 @@ def fuse_restricted_frames(
         key=lambda c: (-c.score, c.video_id, c.frame_id),
     )
 
-    # Two-Stage Decoupled Frame Localization (Precision Top Selection + Recall Tail Fill)
+    # Segment-Level Decoupled Frame Localization (Distinct Temporal Action Clusters)
     primary_candidates: list[CandidateFrame] = []
     secondary_candidates: list[CandidateFrame] = []
-    video_primary_counts: dict[str, int] = {}
-    selected_frames: dict[str, list[int]] = {}
+    selected_cluster_frames: dict[str, list[int]] = {}
+    segment_gap = max(min_frame_gap, 75)  # 3.0 seconds at 25 fps
 
     for cand in enriched_sorted:
         vid = cand.video_id
         is_chain_winner = cand.diagnostic_metadata.get("is_temporal_chain_winner", False)
-        max_primary_for_vid = 2 if is_chain_winner else 1
+        existing_frames = selected_cluster_frames.get(vid, [])
+        is_new_segment = not any(abs(cand.frame_id - f) < segment_gap for f in existing_frames)
 
-        # Temporal suppression for non-chain winners
-        if not is_chain_winner and min_frame_gap > 0:
-            if any(
-                abs(cand.frame_id - existing) < min_frame_gap
-                for existing in selected_frames.get(vid, [])
-            ):
-                continue
-
-        if video_primary_counts.get(vid, 0) < max_primary_for_vid:
+        if is_chain_winner or is_new_segment:
             primary_candidates.append(cand)
-            selected_frames.setdefault(vid, []).append(cand.frame_id)
-            video_primary_counts[vid] = video_primary_counts.get(vid, 0) + 1
+            selected_cluster_frames.setdefault(vid, []).append(cand.frame_id)
         else:
             secondary_candidates.append(cand)
-            selected_frames.setdefault(vid, []).append(cand.frame_id)
 
     final_candidates = (primary_candidates + secondary_candidates)[:output_top_k]
 
