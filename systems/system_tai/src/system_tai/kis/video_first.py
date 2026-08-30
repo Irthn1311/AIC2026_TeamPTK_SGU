@@ -22,21 +22,25 @@ class KISVideoFirstConfig:
     enabled: bool = False
     v2_adaptive_enabled: bool = False
     selected_video_cap: int = 32
-    video_nomination_depth: int = 100
-    restricted_frames_per_video_per_variant: int = 10
+    video_nomination_depth: int = 32
+    restricted_frames_per_video_per_variant: int = 16
     full_query_weight: float = 1.0
     primary_scene_weight: float = 1.0
     supporting_attribute_weight: float = 0.35
-    top_m_evidence_cap: int = 3
-    top_m_min_frame_gap: int = 60
-    top_m_weights: tuple[float, ...] = (0.6, 0.3, 0.1)
+    coverage_threshold: float = 0.50
+    top_m_evidence_cap: int = 5
+    top_m_min_frame_gap: int = 25
+    top_m_weights: tuple[float, ...] = (1.0, 0.70, 0.50, 0.35, 0.25)
+    temporal_chain_frame_bonus: float = 0.05
+    restricted_frame_min_gap: int = 25
+    max_restricted_candidates_per_video: int | None = None
+    enable_candidate_union: bool = False
+    enable_score_normalization: bool = False
+    enable_late_interaction: bool = False
+    enable_positive_chain_bonus: bool = False
     adaptive_budget_base: int = 32
     adaptive_budget_medium: int = 48
     adaptive_budget_high: int = 64
-    coverage_threshold: float = 0.75
-    temporal_chain_frame_bonus: float = 0.05
-    restricted_frame_min_gap: int = 0
-    max_restricted_candidates_per_video: int | None = None
 
     def __post_init__(self) -> None:
         if type(self.enabled) is not bool:
@@ -873,12 +877,20 @@ def fuse_restricted_frames(
         # Additive bonus if this frame is a winning DP sequence frame + video concordance
         final_score = item.score + 0.10 * vid_rrf_boost + (temporal_chain_bonus if is_chain_winner else 0.0)
 
+        variant_scores: dict[str, float] = {}
+        for var_id, r in rankings.items():
+            for hit in r.ranked_candidates:
+                if hit.video_id == item.video_id and hit.frame_id == item.frame_id:
+                    variant_scores[var_id] = float(hit.score)
+                    break
+
         diag = {
             **dict(item.diagnostic_metadata or {}),
             "video_nomination_rank": vid_ev.rank,
             "video_fusion_score": vid_ev.fusion_score,
             "video_primary_coverage_count": vid_ev.primary_coverage_count,
             "is_temporal_chain_winner": is_chain_winner,
+            "scores_by_variant": variant_scores,
         }
         enriched_list.append(
             CandidateFrame(

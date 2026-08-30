@@ -28,6 +28,7 @@ class SemanticQueryConfig:
     full_query_weight: float = 1.0
     primary_scene_weight: float = 1.0
     supporting_attribute_weight: float = 0.35
+    enable_visual_content_filter: bool = False
 
     def __post_init__(self) -> None:
         for name, value in (
@@ -224,6 +225,19 @@ _BOILERPLATE_PREFIX = re.compile(
     r"cho\s+thấy|ghi\s+lại|mô\s+tả|về|chiếu\s+cảnh)?\s*",
 )
 
+_PURE_CONNECTIVE_PATTERN = re.compile(
+    r"(?i)^(?:\s*next\s*,?|\s*then\s*,?|\s*after\s+that\s*,?|\s*sau\s+đó\s*,?|\s*tiếp\s+theo\s*,?|\s*sau\s+vài\s+giây\s*,?)$"
+)
+
+
+def has_visual_content(text: str) -> bool:
+    cleaned = _clean(text)
+    if not cleaned:
+        return False
+    if _PURE_CONNECTIVE_PATTERN.match(cleaned):
+        return False
+    return True
+
 
 def strip_boilerplate(text: str) -> str:
     cleaned = _clean(text)
@@ -333,6 +347,8 @@ def compile_vietnamese_semantic_query(
             raise ValueError(f"translation for {unit.unit_id} produced no CLIP segments")
         segment_weight = unit.weight / len(segments)
         for segment_index, segment in enumerate(segments, start=1):
+            if config.enable_visual_content_filter and not has_visual_content(segment):
+                continue
             compiled.append(
                 CompiledSemanticVariant(
                     query_variant=QueryVariant(

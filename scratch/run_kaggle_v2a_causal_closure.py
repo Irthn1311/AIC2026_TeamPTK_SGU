@@ -2232,6 +2232,7 @@ def run_all_5_queries_top100_visual_export(
                             "pts_time": float(row.get("pts_time", 0.0) or 0.0),
                         })
 
+        # Tri-State Evaluator with Human-Verified Target Reference (Isolated Post-Retrieval Evaluation)
         true_vids = {
             "p1-1": "L30_V046",
             "p1-2": "L21_V003",
@@ -2239,18 +2240,49 @@ def run_all_5_queries_top100_visual_export(
             "p1-5": "L26_V035",
             "p1-6": "L22_V023",
         }
-        true_match_vid = true_vids.get(q_short, "")
+        human_verified_vid = true_vids.get(q_short, "")
 
         print(f"  • Top-100 Candidates Loaded: {len(candidates)} records", flush=True)
         print(f"  • Top-10 Frame Preview:", flush=True)
-        print(f"    {'Rank':<6} | {'Video ID':<10} | {'Frame ID':<10} | {'PTS (s)':<10} | {'Score':<10} | {'Is Target?'}", flush=True)
-        print(f"    {'-'*6} | {'-'*10} | {'-'*10} | {'-'*10} | {'-'*10} | {'-'*10}", flush=True)
-        for c in candidates[:10]:
+        print(f"    {'Rank':<6} | {'Video ID':<10} | {'Frame ID':<10} | {'PTS (s)':<10} | {'Score':<10} | {'Evaluation Status'}", flush=True)
+        print(f"    {'-'*6} | {'-'*10} | {'-'*10} | {'-'*10} | {'-'*10} | {'-'*20}", flush=True)
+        
+        breakdown_rows = []
+        for c in candidates:
             c_vid = c.get("video_id", "")
-            is_tgt = "YES (GT) ⭐" if c_vid == target_vid else ("TRUE MATCH ⭐ (" + c_vid + ")" if c_vid == true_match_vid else "No")
+            if c_vid == human_verified_vid:
+                status_label = "MATCHES_HUMAN_VERIFIED_VIDEO ⭐"
+            else:
+                status_label = "DIFFERENT_FROM_HUMAN_VERIFIED_VIDEO"
+
             pts = float(c.get("pts_time", 0.0) or (c.get("frame_id", 0)/25.0))
             score_val = float(c.get("score", 0.0))
-            print(f"    #{c.get('rank', 0):<5} | {c.get('video_id', ''):<10} | f{c.get('frame_id', 0):<9} | {pts:<10.3f} | {score_val:<10.4f} | {is_tgt}", flush=True)
+            
+            if c.get("rank", 0) <= 10:
+                print(f"    #{c.get('rank', 0):<5} | {c.get('video_id', ''):<10} | f{c.get('frame_id', 0):<9} | {pts:<10.3f} | {score_val:<10.4f} | {status_label}", flush=True)
+
+            breakdown_rows.append({
+                "query_id": qid,
+                "rank": int(c.get("rank", 0)),
+                "video_id": c_vid,
+                "frame_id": int(c.get("frame_id", 0)),
+                "pts_time": pts,
+                "scores": {
+                    "baseline_final": score_val,
+                    "experimental_final": None,
+                    "scores_by_variant": c.get("scores_by_variant", {}),
+                },
+                "enabled_features": [],
+                "human_verified_target": human_verified_vid,
+                "evaluation_status": status_label,
+                "frame_evaluation_status": "NOT_EVALUABLE_NO_INTERVAL",
+            })
+
+        # Save machine-readable JSONL breakdown
+        jsonl_path = runtime.output_root / f"{q_short}_top100_breakdown.jsonl"
+        with jsonl_path.open("w", encoding="utf-8") as f_jsonl:
+            for row in breakdown_rows:
+                f_jsonl.write(json.dumps(row, ensure_ascii=False) + "\n")
 
         # Render Page 1 (Rank 1-50) and Page 2 (Rank 51-100)
         for page_idx, (start_r, end_r) in enumerate([(0, 50), (50, 100)], start=1):
