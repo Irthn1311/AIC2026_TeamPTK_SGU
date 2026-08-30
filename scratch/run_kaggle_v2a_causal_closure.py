@@ -946,9 +946,11 @@ def main() -> None:
         if run_all or "p1-4" in selected_sections or "p1_4" in selected_sections:
             run_p1_4_real_image_adjudication(runtime, input_root, run_out, coverage_results)
 
-        # 4. FULL TOP-100 VISUAL CONTACT SHEET EXPORT FOR ALL 5 FOCUS QUERIES (50 frames x 2 pages / query)
-        if run_all or "top100" in selected_sections:
-            run_all_5_queries_top100_visual_export(runtime, input_root, run_out, coverage_results)
+        # 4. FULL TOP-100 EVALUATION FOR ALL 5 FOCUS QUERIES (ALWAYS RUN RETRIEVAL, OPTIONAL PNG RENDER)
+        render_sheets = run_all or "top100" in selected_sections
+        run_all_5_queries_top100_visual_export(
+            runtime, input_root, run_out, coverage_results, render_contact_sheets=render_sheets
+        )
 
         # 5. PRINT UNIFIED SUMMARY TABLE FOR THIS RUN
         print_final_summary_table(coverage_results)
@@ -2518,9 +2520,11 @@ def run_all_5_queries_top100_visual_export(
     input_root: Path,
     base_out: Path,
     coverage_results: dict[str, dict],
+    render_contact_sheets: bool = True,
 ) -> None:
     print("=" * 120, flush=True)
-    print("3.5 FULL TOP-100 VISUAL CONTACT SHEET EXPORT (ALL 5 FOCUS QUERIES: 50 FRAMES x 2 PAGES / QUERY)", flush=True)
+    header_suffix = " (RENDERING PNGS)" if render_contact_sheets else " (FAST RETRIEVAL MODE)"
+    print(f"3.5 FULL TOP-100 EVALUATION FOR ALL 5 FOCUS QUERIES{header_suffix}", flush=True)
     print("=" * 120, flush=True)
 
     manifest_path, manifest_sha, manifest_queries = load_canonical_frozen_manifest()
@@ -2697,97 +2701,99 @@ def run_all_5_queries_top100_visual_export(
             for row in breakdown_rows:
                 f_jsonl.write(json.dumps(row, ensure_ascii=False) + "\n")
 
-        # Render Page 1 (Rank 1-50) and Page 2 (Rank 51-100)
-        for page_idx, (start_r, end_r) in enumerate([(0, 50), (50, 100)], start=1):
-            page_cands = candidates[start_r:end_r]
-            if not page_cands:
-                continue
+        # Render Page 1 (Rank 1-50) and Page 2 (Rank 51-100) (if enabled)
+        if render_contact_sheets:
+            for page_idx, (start_r, end_r) in enumerate([(0, 50), (50, 100)], start=1):
+                page_cands = candidates[start_r:end_r]
+                if not page_cands:
+                    continue
 
-            fig, axes = plt.subplots(5, 10, figsize=(20, 10))
-            fig.suptitle(
-                f"Top-100 Keyframes: Query [{q_short}] ({qid}) — Page {page_idx} (Rank #{start_r+1} to #{end_r})\nQuery: {q_text[:100]}...",
-                fontsize=8,
-                fontweight="bold"
-            )
-            axes_flat = axes.flatten()
+                fig, axes = plt.subplots(5, 10, figsize=(20, 10))
+                fig.suptitle(
+                    f"Top-100 Keyframes: Query [{q_short}] ({qid}) — Page {page_idx} (Rank #{start_r+1} to #{end_r})\nQuery: {q_text[:100]}...",
+                    fontsize=8,
+                    fontweight="bold"
+                )
+                axes_flat = axes.flatten()
 
-            for idx in range(50):
-                ax = axes_flat[idx]
-                if idx < len(page_cands):
-                    cand = page_cands[idx]
-                    vid = cand.get("video_id", "")
-                    fid = int(cand.get("frame_id", 0))
-                    rank = int(cand.get("rank", start_r + idx + 1))
-                    score = float(cand.get("score", 0.0))
-                    pts = float(cand.get("pts_time", 0.0) or (fid / 25.0))
-                    order = int(cand.get("keyframe_order", 0))
+                for idx in range(50):
+                    ax = axes_flat[idx]
+                    if idx < len(page_cands):
+                        cand = page_cands[idx]
+                        vid = cand.get("video_id", "")
+                        fid = int(cand.get("frame_id", 0))
+                        rank = int(cand.get("rank", start_r + idx + 1))
+                        score = float(cand.get("score", 0.0))
+                        pts = float(cand.get("pts_time", 0.0) or (fid / 25.0))
+                        order = int(cand.get("keyframe_order", 0))
 
-                    if (order <= 0 or pts <= 0.0) and runtime is not None:
-                        try:
-                            store = runtime.registry.get_store(vid)
-                            if store is not None:
-                                for m in store.mappings:
-                                    if m.frame_id == fid:
-                                        if order <= 0:
-                                            order = int(m.keyframe_order)
-                                        if pts <= 0.0:
-                                            pts = float(m.pts_time)
-                                        break
-                        except Exception:
-                            pass
-                    if pts <= 0.0:
-                        pts = float(fid) / 25.0
+                        if (order <= 0 or pts <= 0.0) and runtime is not None:
+                            try:
+                                store = runtime.registry.get_store(vid)
+                                if store is not None:
+                                    for m in store.mappings:
+                                        if m.frame_id == fid:
+                                            if order <= 0:
+                                                order = int(m.keyframe_order)
+                                            if pts <= 0.0:
+                                                pts = float(m.pts_time)
+                                            break
+                            except Exception:
+                                pass
+                        if pts <= 0.0:
+                            pts = float(fid) / 25.0
 
-                    dec_res = extract_image_for_frame(
-                        dataset_root=input_root,
-                        video_id=vid,
-                        frame_id=fid,
-                        keyframe_order=order,
-                        pts_time=pts,
-                        runtime=runtime,
-                    )
+                        dec_res = extract_image_for_frame(
+                            dataset_root=input_root,
+                            video_id=vid,
+                            frame_id=fid,
+                            keyframe_order=order,
+                            pts_time=pts,
+                            runtime=runtime,
+                        )
 
-                    is_target = (vid == target_vid)
-                    is_true_cand = (vid == human_verified_vid)
+                        is_target = (vid == target_vid)
+                        is_true_cand = (vid == human_verified_vid)
 
-                    if dec_res.image is not None:
-                        ax.imshow(dec_res.image)
+                        if dec_res.image is not None:
+                            ax.imshow(dec_res.image)
+                        else:
+                            ax.text(0.5, 0.5, f"IMAGE MISSING\n{vid}\nf{fid}", ha="center", va="center", fontsize=8, color="red")
+
+                        header_color = "darkgreen" if is_true_cand else ("red" if is_target else "black")
+                        bg_color = "honeydew" if is_true_cand else ("mistyrose" if is_target else "lightyellow")
+                        ax.set_title(
+                            f"#{rank} {vid} f{fid}\n{pts:.1f}s | {score:.4f}",
+                            fontsize=7,
+                            color=header_color,
+                            fontweight="bold" if (is_target or is_true_cand) else "normal",
+                            bbox=dict(boxstyle="round,pad=0.2", fc=bg_color, ec=header_color, lw=1.5 if (is_target or is_true_cand) else 0.5),
+                        )
+
+                        if is_true_cand or is_target:
+                            for spine in ax.spines.values():
+                                spine.set_edgecolor("green" if is_true_cand else "red")
+                                spine.set_linewidth(2.0)
+                        else:
+                            for spine in ax.spines.values():
+                                spine.set_visible(False)
                     else:
-                        ax.text(0.5, 0.5, f"IMAGE MISSING\n{vid}\nf{fid}", ha="center", va="center", fontsize=8, color="red")
+                        ax.axis("off")
+                    ax.set_xticks([])
+                    ax.set_yticks([])
 
-                    header_color = "darkgreen" if is_true_cand else ("red" if is_target else "black")
-                    bg_color = "honeydew" if is_true_cand else ("mistyrose" if is_target else "lightyellow")
-                    ax.set_title(
-                        f"#{rank} {vid} f{fid}\n{pts:.1f}s | {score:.4f}",
-                        fontsize=7,
-                        color=header_color,
-                        fontweight="bold" if (is_target or is_true_cand) else "normal",
-                        bbox=dict(boxstyle="round,pad=0.2", fc=bg_color, ec=header_color, lw=1.5 if (is_target or is_true_cand) else 0.5),
-                    )
+                sheet_name = f"{q_short}_top100_page_{page_idx:02d}.png"
+                sheet_path = base_out / sheet_name
+                sheet_path.parent.mkdir(parents=True, exist_ok=True)
+                plt.tight_layout()
+                plt.savefig(sheet_path, dpi=100)
+                plt.close(fig)
+                print(f"  📸 Saved Top-100 Contact Sheet -> {sheet_name} (Rank #{start_r+1}..#{end_r}) ✅", flush=True)
 
-                    if is_true_cand or is_target:
-                        for spine in ax.spines.values():
-                            spine.set_edgecolor("green" if is_true_cand else "red")
-                            spine.set_linewidth(2.0)
-                    else:
-                        for spine in ax.spines.values():
-                            spine.set_visible(False)
-                else:
-                    ax.axis("off")
-                ax.set_xticks([])
-                ax.set_yticks([])
-
-            sheet_name = f"{q_short}_top100_page_{page_idx:02d}.png"
-            sheet_path = base_out / sheet_name
-            sheet_path.parent.mkdir(parents=True, exist_ok=True)
-            plt.tight_layout()
-            plt.savefig(sheet_path, dpi=100)
-            plt.close(fig)
-            print(f"  📸 Saved Top-100 Contact Sheet -> {sheet_name} (Rank #{start_r+1}..#{end_r}) ✅", flush=True)
-
-    print("\n" + "=" * 120, flush=True)
-    print("ALL 10 TOP-100 CONTACT SHEETS SUCCESSFULLY GENERATED ✅", flush=True)
-    print("=" * 120 + "\n", flush=True)
+    if render_contact_sheets:
+        print("\n" + "=" * 120, flush=True)
+        print("ALL 10 TOP-100 CONTACT SHEETS SUCCESSFULLY GENERATED ✅", flush=True)
+        print("=" * 120 + "\n", flush=True)
 
 
 # ==============================================================================
