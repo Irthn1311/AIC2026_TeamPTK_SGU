@@ -740,18 +740,27 @@ def _create_mock_ablation_artifacts(
             cand_file.write_text(json.dumps(cdata, indent=2), encoding="utf-8")
 
 
+def _get_runner_module():
+    import sys
+    import importlib.util
+    if "runner_module" in sys.modules:
+        return sys.modules["runner_module"]
+    runner_path = REPO_ROOT / "scratch" / "run_kaggle_v2a_causal_closure.py"
+    spec = importlib.util.spec_from_file_location("runner_module", runner_path)
+    assert spec and spec.loader
+    runner_mod = importlib.util.module_from_spec(spec)
+    sys.modules["runner_module"] = runner_mod
+    spec.loader.exec_module(runner_mod)
+    return runner_mod
+
+
 def test_ablation_summary_table_generation_success():
     """Verify that generate_and_save_ablation_summary_table runs successfully and outputs valid summary matrix."""
     import tempfile
     import json
     from pathlib import Path
-    import importlib.util
 
-    runner_path = REPO_ROOT / "scratch" / "run_kaggle_v2a_causal_closure.py"
-    spec = importlib.util.spec_from_file_location("runner_module", runner_path)
-    assert spec and spec.loader
-    runner_mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(runner_mod)
+    runner_mod = _get_runner_module()
 
     with tempfile.TemporaryDirectory() as td:
         base_out = Path(td)
@@ -785,13 +794,8 @@ def test_ablation_summary_detects_translation_drift_and_raises():
     import tempfile
     import pytest
     from pathlib import Path
-    import importlib.util
 
-    runner_path = REPO_ROOT / "scratch" / "run_kaggle_v2a_causal_closure.py"
-    spec = importlib.util.spec_from_file_location("runner_module", runner_path)
-    assert spec and spec.loader
-    runner_mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(runner_mod)
+    runner_mod = _get_runner_module()
 
     with tempfile.TemporaryDirectory() as td:
         base_out = Path(td)
@@ -818,13 +822,8 @@ def test_ablation_summary_missing_artifact_raises():
     import tempfile
     import pytest
     from pathlib import Path
-    import importlib.util
 
-    runner_path = REPO_ROOT / "scratch" / "run_kaggle_v2a_causal_closure.py"
-    spec = importlib.util.spec_from_file_location("runner_module", runner_path)
-    assert spec and spec.loader
-    runner_mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(runner_mod)
+    runner_mod = _get_runner_module()
 
     with tempfile.TemporaryDirectory() as td:
         base_out = Path(td)
@@ -851,13 +850,8 @@ def test_ablation_summary_mismatched_query_id_raises():
     import tempfile
     import pytest
     from pathlib import Path
-    import importlib.util
 
-    runner_path = REPO_ROOT / "scratch" / "run_kaggle_v2a_causal_closure.py"
-    spec = importlib.util.spec_from_file_location("runner_module", runner_path)
-    assert spec and spec.loader
-    runner_mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(runner_mod)
+    runner_mod = _get_runner_module()
 
     with tempfile.TemporaryDirectory() as td:
         base_out = Path(td)

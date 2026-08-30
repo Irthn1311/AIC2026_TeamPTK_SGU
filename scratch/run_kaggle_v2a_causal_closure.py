@@ -678,10 +678,6 @@ def generate_and_save_ablation_summary_table(
 
         summary_matrix["runs"][run_key] = run_data
 
-    json_path = base_out / "ablation_matrix_summary.json"
-    json_path.write_text(json.dumps(summary_matrix, indent=2), encoding="utf-8")
-    print(f"\n📊 Ablation Summary JSON Artifact saved -> {json_path} ✅", flush=True)
-
     if len(runs_to_execute) > 1:
         print("\n🔍 Verifying Zero Translation Drift across runs...", flush=True)
         for q_short in query_order:
@@ -694,6 +690,10 @@ def generate_and_save_ablation_summary_table(
             if len(set(hashes)) != 1:
                 raise RuntimeError(f"Translation drift detected for query [{q_short}]: {dict(zip(runs_to_execute, hashes))}")
             print(f"  ✅ Zero Translation Drift Strictly Verified for [{q_short}] (SHA={hashes[0]}) across {runs_to_execute}", flush=True)
+
+    json_path = base_out / "ablation_matrix_summary.json"
+    json_path.write_text(json.dumps(summary_matrix, indent=2), encoding="utf-8")
+    print(f"\n📊 Ablation Summary JSON Artifact saved -> {json_path} ✅", flush=True)
 
     print("\n" + "=" * 130, flush=True)
     print("📋 PHASE B1 ABLATION MATRIX: MULTI-RUN STATISTICAL COMPARISON TABLE", flush=True)
