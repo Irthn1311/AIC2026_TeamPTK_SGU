@@ -2644,7 +2644,7 @@ def run_all_5_queries_top100_visual_export(
     print("=" * 120, flush=True)
 
     manifest_path, manifest_sha, manifest_queries = load_canonical_frozen_manifest()
-    _, _, ref_data = load_frozen_reference_manifest()
+    ref_data = load_frozen_reference_manifest()
     ref_queries_map = {q.get("query_id"): q for q in ref_data.get("queries", [])}
     query_order = ["p1-1", "p1-2", "p1-4", "p1-5", "p1-6"]
 
