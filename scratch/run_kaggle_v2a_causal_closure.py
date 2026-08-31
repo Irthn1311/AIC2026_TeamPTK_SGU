@@ -148,6 +148,9 @@ def create_production_v2a_session_config(
     vi_localization_weight: float = 0.5,
     internal_rrf_candidate_depth: int = 100,
     collect_fusion_trace: bool = False,
+    enable_top_video_local_anchor: bool = False,
+    local_anchor_top_video_count: int = 3,
+    local_anchor_source: str = "SEMANTIC_LOCAL",
 ) -> SessionConfig:
     """Canonical production V2-A configuration factory matching production gate with ablation support."""
     config = SessionConfig(
@@ -183,6 +186,9 @@ def create_production_v2a_session_config(
             vi_localization_weight=vi_localization_weight,
             internal_rrf_candidate_depth=internal_rrf_candidate_depth,
             collect_fusion_trace=collect_fusion_trace,
+            enable_top_video_local_anchor=enable_top_video_local_anchor,
+            local_anchor_top_video_count=local_anchor_top_video_count,
+            local_anchor_source=local_anchor_source,
         ),
     )
     # Field-by-field production gate contract assertions
@@ -912,6 +918,33 @@ def main() -> None:
             "vi_localization_weight": 0.5,
             "internal_rrf_candidate_depth": 1000,
             "collect_fusion_trace": True,
+            "enable_top_video_local_anchor": False,
+        },
+        "H": {
+            "name": "Run H: Semantic-Local Anchor (K=20, Hybrid=On, Gap=5s, VI=Off, RRF=1000, Anchor=Semantic)",
+            "restricted_frames_per_video_per_variant": 20,
+            "enable_temporal_diverse_local_candidates": True,
+            "temporal_diversity_gap_seconds": 5.0,
+            "enable_vi_localization_variant": False,
+            "vi_localization_weight": 0.5,
+            "internal_rrf_candidate_depth": 1000,
+            "collect_fusion_trace": True,
+            "enable_top_video_local_anchor": True,
+            "local_anchor_top_video_count": 3,
+            "local_anchor_source": "SEMANTIC_LOCAL",
+        },
+        "I": {
+            "name": "Run I: VI-Local Anchor (K=20, Hybrid=On, Gap=5s, VI=On, w=0.5, RRF=1000, Anchor=VI)",
+            "restricted_frames_per_video_per_variant": 20,
+            "enable_temporal_diverse_local_candidates": True,
+            "temporal_diversity_gap_seconds": 5.0,
+            "enable_vi_localization_variant": True,
+            "vi_localization_weight": 0.5,
+            "internal_rrf_candidate_depth": 1000,
+            "collect_fusion_trace": True,
+            "enable_top_video_local_anchor": True,
+            "local_anchor_top_video_count": 3,
+            "local_anchor_source": "VI_LOCAL",
         },
     }
 
@@ -932,7 +965,7 @@ def main() -> None:
 
     full_sha = get_git_head()
     print("=" * 120, flush=True)
-    print("KIS V2-A.3 FOUNDATION CLOSURE — STRICT EMPIRICAL AUDIT & PHASE B1 ABLATIONS", flush=True)
+    print("KIS V2-A.3 FOUNDATION CLOSURE — STRICT EMPIRICAL AUDIT & PHASE B1/B2 ABLATIONS", flush=True)
     print("=" * 120, flush=True)
     print(f"• Exact Commit SHA: {full_sha}", flush=True)
     print(f"• Python Version  : {sys.version.split()[0]}", flush=True)
@@ -982,6 +1015,9 @@ def main() -> None:
             vi_localization_weight=run_spec["vi_localization_weight"],
             internal_rrf_candidate_depth=run_spec.get("internal_rrf_candidate_depth", 100),
             collect_fusion_trace=run_spec.get("collect_fusion_trace", True),
+            enable_top_video_local_anchor=run_spec.get("enable_top_video_local_anchor", False),
+            local_anchor_top_video_count=run_spec.get("local_anchor_top_video_count", 3),
+            local_anchor_source=run_spec.get("local_anchor_source", "SEMANTIC_LOCAL"),
         )
 
         # Purge stale translation cache if error-polluted
@@ -2631,12 +2667,18 @@ def audit_p1_1_target_interval_trace(c_data: dict, run_dir_name: str) -> None:
 
     print("─" * 165, flush=True)
     if alloc_summary:
-        print(f"  • Allocation Summary (Schema v{alloc_summary.get('fusion_trace_schema_version', '2.0.0')}): "
+        print(f"  • Allocation Summary (Schema v{alloc_summary.get('fusion_trace_schema_version', '2.1.0')}): "
               f"Output Cap = {alloc_summary.get('output_top_k')} | "
               f"Passed RRF = {alloc_summary.get('candidates_passed_internal_cutoff')} | "
               f"Primary Exported = {alloc_summary.get('exported_primary_count')}/{alloc_summary.get('total_primary_candidates')} | "
               f"Secondary Exported = {alloc_summary.get('exported_secondary_count')}/{alloc_summary.get('total_secondary_candidates')} | "
-              f"Primary Cutoff Score = {alloc_summary.get('primary_cutoff_score')}", flush=True)
+              f"Std Cutoff = {alloc_summary.get('standard_cutoff_score')} | "
+              f"Anchors Reserved = {alloc_summary.get('total_local_anchors_reserved', 0)} | "
+              f"Displaced = {alloc_summary.get('displaced_candidate_count', 0)}", flush=True)
+        if alloc_summary.get("anchor_decisions_by_video"):
+            print(f"  • Anchor Decisions: {json.dumps(alloc_summary.get('anchor_decisions_by_video'))}", flush=True)
+        if alloc_summary.get("displaced_candidates"):
+            print(f"  • Displaced Details: {json.dumps(alloc_summary.get('displaced_candidates'))}", flush=True)
     print("─" * 165 + "\n", flush=True)
 
 
@@ -2670,12 +2712,14 @@ def run_all_5_queries_top100_visual_export(
         human_vid = ref_entry.get("human_verified_video_id") or q_data.get("target_video", "")
         legacy_vid = ref_entry.get("legacy_manifest_target", {}).get("target_video") or q_data.get("target_video", "")
         locked_gt = q_data.get("locked_gt_frame", 0)
+        intervals = ref_entry.get("human_verified_pts_intervals", [])
+        int_str = f", interval {intervals[0][0]:.0f}–{intervals[0][1]:.0f}s" if intervals else ""
 
         print(f"\n──────────────────────────────────────────────────────────────────────────────────────────────────", flush=True)
         if human_vid != legacy_vid and legacy_vid:
-            print(f"• Processing Query [{q_short}] ({qid}) | Human Target: {human_vid} (Legacy: {legacy_vid})", flush=True)
+            print(f"• Processing Query [{q_short}] ({qid}) | Human Target: {human_vid}{int_str} | Legacy: {legacy_vid} (Frame: {locked_gt})", flush=True)
         else:
-            print(f"• Processing Query [{q_short}] ({qid}) | Target: {human_vid} (GT Frame: {locked_gt})", flush=True)
+            print(f"• Processing Query [{q_short}] ({qid}) | Human Target: {human_vid}{int_str} | Legacy Manifest Frame: {locked_gt}", flush=True)
         print(f"  VI Text: \"{q_text}\"", flush=True)
         print(f"──────────────────────────────────────────────────────────────────────────────────────────────────", flush=True)
 

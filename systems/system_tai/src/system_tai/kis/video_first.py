@@ -47,6 +47,9 @@ class KISVideoFirstConfig:
     vi_localization_weight: float = 0.5
     internal_rrf_candidate_depth: int = 100
     collect_fusion_trace: bool = False
+    enable_top_video_local_anchor: bool = False
+    local_anchor_top_video_count: int = 3
+    local_anchor_source: str = "SEMANTIC_LOCAL"
 
     def __post_init__(self) -> None:
         if type(self.enabled) is not bool:
@@ -66,6 +69,12 @@ class KISVideoFirstConfig:
             raise ValueError(
                 "restricted_frames_per_video_per_variant must be a positive integer"
             )
+        if type(self.enable_top_video_local_anchor) is not bool:
+            raise ValueError("enable_top_video_local_anchor must be a boolean")
+        if type(self.local_anchor_top_video_count) is not int or self.local_anchor_top_video_count <= 0:
+            raise ValueError("local_anchor_top_video_count must be a positive integer")
+        if self.local_anchor_source not in ("SEMANTIC_LOCAL", "VI_LOCAL"):
+            raise ValueError("local_anchor_source must be 'SEMANTIC_LOCAL' or 'VI_LOCAL'")
         for name, value in (
             ("full_query_weight", self.full_query_weight),
             ("primary_scene_weight", self.primary_scene_weight),
@@ -846,6 +855,9 @@ def fuse_restricted_frames(
     internal_rrf_candidate_depth: int = 100,
     collect_fusion_trace: bool = False,
     return_trace: bool = False,
+    enable_top_video_local_anchor: bool = False,
+    local_anchor_top_video_count: int = 3,
+    local_anchor_source: str = "SEMANTIC_LOCAL",
 ) -> KISResult | tuple[KISResult, dict[tuple[str, int], dict[str, object]]]:
     """Globally rank restricted frames per variant, then apply frame-identity RRF."""
 
@@ -871,58 +883,52 @@ def fuse_restricted_frames(
                 -hit.cosine_score,
                 hit.video_id,
                 hit.frame_id,
-                hit.clip_row,
             ),
+        )
+        ranked = tuple(
+            CandidateFrame(
+                video_id=hit.video_id,
+                frame_id=hit.frame_id,
+                clip_row=hit.clip_row,
+                keyframe_order=hit.keyframe_order,
+                score=hit.cosine_score,
+                rank=rank,
+                source=hit.selection_source,
+                diagnostic_metadata={
+                    "cosine_score": hit.cosine_score,
+                    "selection_source": hit.selection_source,
+                    "raw_local_rank": hit.raw_local_rank,
+                    "pts_time": hit.pts_time,
+                },
+            )
+            for rank, hit in enumerate(ordered, start=1)
         )
         rankings[variant.variant_id] = KISResult(
-            query_id=variant.variant_id,
-            ranked_candidates=tuple(
-                CandidateFrame(
-                    video_id=hit.video_id,
-                    frame_id=hit.frame_id,
-                    clip_row=hit.clip_row,
-                    keyframe_order=hit.keyframe_order,
-                    score=float(hit.cosine_score),
-                    rank=rank,
-                    source="video_restricted_exact",
-                    diagnostic_metadata={
-                        "pts_time": hit.pts_time,
-                        "selection_source": hit.selection_source,
-                        "raw_local_rank": hit.raw_local_rank,
-                    },
-                )
-                for rank, hit in enumerate(ordered, start=1)
-            ),
+            query_id=query_id,
+            ranked_candidates=ranked,
         )
 
-    fused_top_k = max(output_top_k, internal_rrf_candidate_depth)
-
+    fused_top_k = internal_rrf_candidate_depth
+    full_fused = None
     if collect_fusion_trace:
-        unique_restricted_keys = {
-            (hit.video_id, hit.frame_id)
-            for per_video in restricted.rankings.values()
-            for hits in per_video.values()
-            for hit in hits
-        }
-        trace_depth = max(len(unique_restricted_keys), fused_top_k)
+        # Untruncated full fusion across all unique restricted candidates
         full_fused = weighted_rrf.fuse_rankings(
             query_id=query_id,
             variants=variants,
             rankings=rankings,
-            output_top_k=trace_depth,
+            output_top_k=200000,
             rrf_constant=rrf_constant,
         )
-        production_fused_candidates = full_fused.ranked_candidates[:fused_top_k]
+        fused_candidates = full_fused.ranked_candidates[:fused_top_k]
     else:
-        fused = weighted_rrf.fuse_rankings(
+        fused_result = weighted_rrf.fuse_rankings(
             query_id=query_id,
             variants=variants,
             rankings=rankings,
             output_top_k=fused_top_k,
             rrf_constant=rrf_constant,
         )
-        production_fused_candidates = fused.ranked_candidates
-        full_fused = None
+        fused_candidates = fused_result.ranked_candidates
 
     video_by_id = {item.video_id: item for item in selected_videos}
 
@@ -938,36 +944,44 @@ def fuse_restricted_frames(
                 item.temporal_chain.selected_chain_frames
             )
 
+    # Extract selection info per frame across all variants
+    selection_info_per_frame: dict[tuple[str, int], dict[str, dict[str, object]]] = {}
+    for var_id, r in rankings.items():
+        for cand in r.ranked_candidates:
+            key = (cand.video_id, cand.frame_id)
+            if cand.diagnostic_metadata:
+                selection_info_per_frame.setdefault(key, {})[var_id] = {
+                    "source": cand.diagnostic_metadata.get("selection_source", "RAW"),
+                    "raw_local_rank": cand.diagnostic_metadata.get("raw_local_rank", 0),
+                    "pts_time": cand.diagnostic_metadata.get("pts_time"),
+                }
+
+    # Enrich candidates with video score & variant selection info
     enriched_list: list[CandidateFrame] = []
-    for item in production_fused_candidates:
+    for item in fused_candidates:
         is_chain_winner = item.frame_id in chain_frames_by_video.get(item.video_id, ())
         vid_ev = video_by_id[item.video_id]
         vid_rank = vid_ev.rank
         vid_rrf_boost = 1.0 / (60.0 + vid_rank)
-        # Additive bonus if this frame is a winning DP sequence frame + video concordance
         final_score = item.score + 0.10 * vid_rrf_boost + (temporal_chain_bonus if is_chain_winner else 0.0)
 
         variant_scores: dict[str, float] = {}
-        selection_by_variant: dict[str, dict[str, object]] = {}
         for var_id, r in rankings.items():
             for hit in r.ranked_candidates:
                 if hit.video_id == item.video_id and hit.frame_id == item.frame_id:
                     variant_scores[var_id] = float(hit.score)
-                    if hit.diagnostic_metadata and "selection_source" in hit.diagnostic_metadata:
-                        selection_by_variant[var_id] = {
-                            "source": hit.diagnostic_metadata.get("selection_source", "RAW"),
-                            "raw_local_rank": hit.diagnostic_metadata.get("raw_local_rank", 0),
-                            "pts_time": hit.diagnostic_metadata.get("pts_time"),
-                        }
                     break
 
-        diag = {
+        key = (item.video_id, item.frame_id)
+        selection_by_variant = selection_info_per_frame.get(key, {})
+        diag: dict[str, object] = {
             **dict(item.diagnostic_metadata or {}),
             "video_nomination_rank": vid_ev.rank,
             "video_fusion_score": vid_ev.fusion_score,
             "video_primary_coverage_count": vid_ev.primary_coverage_count,
             "is_temporal_chain_winner": is_chain_winner,
             "scores_by_variant": variant_scores,
+            "rrf_score": item.score,
         }
         if selection_by_variant:
             diag["selection_by_variant"] = selection_by_variant
@@ -998,15 +1012,13 @@ def fuse_restricted_frames(
 
         for cand in enriched_sorted:
             vid = cand.video_id
-            is_chain_winner = cand.diagnostic_metadata.get("is_temporal_chain_winner", False)
             existing = selected_frames_by_video.get(vid, [])
-            if is_chain_winner or not any(abs(cand.frame_id - f) < min_frame_gap for f in existing):
+            if not any(abs(cand.frame_id - f) < min_frame_gap for f in existing):
                 filtered_candidates.append(cand)
                 selected_frames_by_video.setdefault(vid, []).append(cand.frame_id)
             else:
                 temporal_dedup_pruned_keys.add((cand.video_id, cand.frame_id))
 
-        final_candidates = filtered_candidates[:output_top_k]
         primary_candidates = filtered_candidates
         secondary_candidates = []
     else:
@@ -1019,31 +1031,255 @@ def fuse_restricted_frames(
 
         for cand in enriched_sorted:
             vid = cand.video_id
-            is_chain_winner = cand.diagnostic_metadata.get("is_temporal_chain_winner", False)
             existing_frames = selected_cluster_frames.get(vid, [])
             is_new_segment = not any(abs(cand.frame_id - f) < segment_gap for f in existing_frames)
 
-            if is_chain_winner or is_new_segment:
+            if is_new_segment:
                 primary_candidates.append(cand)
                 selected_cluster_frames.setdefault(vid, []).append(cand.frame_id)
             else:
                 secondary_candidates.append(cand)
 
-        final_candidates = (primary_candidates + secondary_candidates)[:output_top_k]
+    # 1. Standard pre-anchor allocation
+    standard_final_candidates = (primary_candidates + secondary_candidates)[:output_top_k]
+    standard_top100_set = {(c.video_id, c.frame_id) for c in standard_final_candidates}
+    pre_anchor_final_rank_map = {
+        (c.video_id, c.frame_id): rank
+        for rank, c in enumerate(standard_final_candidates, start=1)
+    }
+    standard_cutoff_score = float(standard_final_candidates[-1].score) if standard_final_candidates else None
+
+    # 2. Hierarchical Local Anchor Selection (Two-Phase Membership Protocol)
+    naturally_satisfied_anchors: dict[str, tuple[str, int]] = {}  # vid -> (vid, fid)
+    queued_new_anchors: list[dict[str, object]] = []
+    anchor_decisions_by_video: dict[str, dict[str, object]] = {}
+
+    if enable_top_video_local_anchor:
+        top_vids_sorted = [
+            item.video_id
+            for item in sorted(selected_videos, key=lambda v: v.rank)[:local_anchor_top_video_count]
+        ]
+        vid_nomination_rank_map = {item.video_id: item.rank for item in selected_videos}
+        semantic_variant_weights = {
+            v.variant_id: v.weight
+            for v in variants
+        }
+
+        # Index primary candidates of top videos
+        primary_by_top_vid: dict[str, list[CandidateFrame]] = {}
+        for cand in primary_candidates:
+            if cand.video_id in top_vids_sorted:
+                primary_by_top_vid.setdefault(cand.video_id, []).append(cand)
+
+        for vid in top_vids_sorted:
+            cands_for_vid = primary_by_top_vid.get(vid, [])
+            nom_rank = vid_nomination_rank_map.get(vid, 1)
+
+            if not cands_for_vid:
+                anchor_decisions_by_video[vid] = {
+                    "status": "NO_ELIGIBLE_LOCAL_ANCHOR",
+                    "anchor_key": None,
+                    "nomination_rank": nom_rank,
+                }
+                continue
+
+            if local_anchor_source == "SEMANTIC_LOCAL":
+                eligible_ranked: list[tuple[tuple, CandidateFrame, int]] = []
+                for cand in cands_for_vid:
+                    diag = cand.diagnostic_metadata or {}
+                    sel_map = diag.get("selection_by_variant", {})
+                    sem_local_ranks = [
+                        vdata.get("raw_local_rank", 999999)
+                        for var_id, vdata in sel_map.items()
+                        if var_id in semantic_variant_weights and "raw_local_rank" in vdata
+                    ]
+                    if not sem_local_ranks:
+                        continue
+                    min_sem_rank = min(sem_local_ranks)
+                    sem_rrf = sum(
+                        semantic_variant_weights.get(var_id, 1.0) / (60.0 + vdata.get("raw_local_rank", 999999))
+                        for var_id, vdata in sel_map.items()
+                        if var_id in semantic_variant_weights and "raw_local_rank" in vdata
+                    )
+                    sort_key = (min_sem_rank, -sem_rrf, -cand.score, cand.frame_id)
+                    eligible_ranked.append((sort_key, cand, min_sem_rank))
+
+                if not eligible_ranked:
+                    anchor_decisions_by_video[vid] = {
+                        "status": "NO_ELIGIBLE_LOCAL_ANCHOR",
+                        "anchor_key": None,
+                        "nomination_rank": nom_rank,
+                    }
+                    continue
+
+                eligible_ranked.sort(key=lambda item: item[0])
+                _, best_cand, anchor_local_rank = eligible_ranked[0]
+
+            elif local_anchor_source == "VI_LOCAL":
+                eligible_ranked_vi: list[tuple[tuple, CandidateFrame, int]] = []
+                for cand in cands_for_vid:
+                    diag = cand.diagnostic_metadata or {}
+                    sel_map = diag.get("selection_by_variant", {})
+                    vi_entry = None
+                    vi_cosine = 0.0
+                    for var_id, vdata in sel_map.items():
+                        if "vi_local" in var_id:
+                            vi_entry = vdata
+                            # Check if candidate has cosine_score
+                            vi_cosine = float(diag.get("cosine_score", 0.0))
+                            break
+                    if vi_entry is None or "raw_local_rank" not in vi_entry:
+                        continue
+                    vi_rank = vi_entry["raw_local_rank"]
+                    sort_key = (vi_rank, -vi_cosine, -cand.score, cand.frame_id)
+                    eligible_ranked_vi.append((sort_key, cand, vi_rank))
+
+                if not eligible_ranked_vi:
+                    anchor_decisions_by_video[vid] = {
+                        "status": "NO_ELIGIBLE_LOCAL_ANCHOR",
+                        "anchor_key": None,
+                        "nomination_rank": nom_rank,
+                    }
+                    continue
+
+                eligible_ranked_vi.sort(key=lambda item: item[0])
+                _, best_cand, anchor_local_rank = eligible_ranked_vi[0]
+
+            best_k = (best_cand.video_id, best_cand.frame_id)
+            # Compute temporal distance to nearest exported frame of same video in standard Top 100
+            exported_same_vid_pts = [
+                c.diagnostic_metadata.get("selection_by_variant", {}).get(
+                    next(iter(c.diagnostic_metadata.get("selection_by_variant", {})), ""), {}
+                ).get("pts_time", c.frame_id / 25.0)
+                if c.diagnostic_metadata and "selection_by_variant" in c.diagnostic_metadata
+                else c.frame_id / 25.0
+                for c in standard_final_candidates
+                if c.video_id == vid
+            ]
+            best_pts = (
+                best_cand.diagnostic_metadata.get("selection_by_variant", {}).get(
+                    next(iter(best_cand.diagnostic_metadata.get("selection_by_variant", {})), ""), {}
+                ).get("pts_time", best_cand.frame_id / 25.0)
+                if best_cand.diagnostic_metadata and "selection_by_variant" in best_cand.diagnostic_metadata
+                else best_cand.frame_id / 25.0
+            )
+            temp_dist = (
+                min(abs(best_pts - p) for p in exported_same_vid_pts)
+                if exported_same_vid_pts
+                else None
+            )
+
+            if best_k in standard_top100_set:
+                naturally_satisfied_anchors[vid] = best_k
+                anchor_decisions_by_video[vid] = {
+                    "status": "LOCAL_ANCHOR_SATISFIED_NATURALLY",
+                    "anchor_key": f"{best_cand.video_id}::{best_cand.frame_id}",
+                    "nomination_rank": nom_rank,
+                    "anchor_local_rank": anchor_local_rank,
+                    "anchor_signal_source": local_anchor_source,
+                    "anchor_temporal_distance_to_nearest_exported": temp_dist,
+                }
+            else:
+                queued_new_anchors.append({
+                    "candidate": best_cand,
+                    "key": best_k,
+                    "nomination_rank": nom_rank,
+                    "anchor_local_rank": anchor_local_rank,
+                    "temporal_dist": temp_dist,
+                })
+                anchor_decisions_by_video[vid] = {
+                    "status": "VIDEO_LOCAL_RESERVED",
+                    "anchor_key": f"{best_cand.video_id}::{best_cand.frame_id}",
+                    "nomination_rank": nom_rank,
+                    "anchor_local_rank": anchor_local_rank,
+                    "anchor_signal_source": local_anchor_source,
+                    "anchor_temporal_distance_to_nearest_exported": temp_dist,
+                }
+
+    # 3. Batch Displacement
+    m = len(queued_new_anchors)
+    protected_keys = set(naturally_satisfied_anchors.values())
+    displaced_candidates: list[CandidateFrame] = []
+    displaced_details: list[dict[str, object]] = []
+
+    if m > 0:
+        # Sort queued anchors by (nomination_rank, anchor_local_rank, video_id, frame_id)
+        queued_new_anchors.sort(
+            key=lambda a: (
+                a["nomination_rank"],
+                a["anchor_local_rank"],
+                a["candidate"].video_id,
+                a["candidate"].frame_id,
+            )
+        )
+
+        # Identify m lowest-ranked candidates in standard_final_candidates that are NOT in protected_keys
+        vacant_indices: list[int] = []
+        for idx in range(len(standard_final_candidates) - 1, -1, -1):
+            cand = standard_final_candidates[idx]
+            if (cand.video_id, cand.frame_id) not in protected_keys:
+                vacant_indices.append(idx)
+                if len(vacant_indices) == m:
+                    break
+
+        vacant_indices.sort()
+        post_anchor_final_candidates = list(standard_final_candidates)
+
+        for anchor_item, v_idx in zip(queued_new_anchors, vacant_indices, strict=True):
+            disp_cand = post_anchor_final_candidates[v_idx]
+            displaced_candidates.append(disp_cand)
+            disp_key = f"{disp_cand.video_id}::{disp_cand.frame_id}"
+            anchor_cand = anchor_item["candidate"]
+            anchor_key = f"{anchor_cand.video_id}::{anchor_cand.frame_id}"
+            anchor_rank = v_idx + 1
+
+            displaced_details.append({
+                "displaced_key": disp_key,
+                "displaced_video": disp_cand.video_id,
+                "displaced_frame_id": disp_cand.frame_id,
+                "displaced_original_rank": anchor_rank,
+                "displaced_score": float(disp_cand.score),
+                "by_anchor_key": anchor_key,
+                "by_anchor_video": anchor_cand.video_id,
+            })
+
+            anchor_item["displaced_candidate_key"] = disp_key
+            anchor_item["displaced_candidate_score"] = float(disp_cand.score)
+            anchor_item["displaced_original_rank"] = anchor_rank
+            anchor_item["reserved_slot_index"] = anchor_rank
+
+            post_anchor_final_candidates[v_idx] = anchor_cand
+    else:
+        post_anchor_final_candidates = standard_final_candidates
+
+    post_anchor_final_rank_map = {
+        (c.video_id, c.frame_id): rank
+        for rank, c in enumerate(post_anchor_final_candidates, start=1)
+    }
+    post_anchor_min_exported_score = (
+        float(min(c.score for c in post_anchor_final_candidates))
+        if post_anchor_final_candidates
+        else None
+    )
+    displaced_keys_map = {
+        (d["displaced_video"], d["displaced_frame_id"]): d for d in displaced_details
+    }
+    queued_anchor_map = {
+        a["key"]: a for a in queued_new_anchors
+    }
 
     fusion_trace_map: dict[tuple[str, int], dict[str, object]] = {}
     if collect_fusion_trace and full_fused is not None:
         num_exported_primary = min(len(primary_candidates), output_top_k)
         remaining_slots = output_top_k - num_exported_primary
         num_exported_secondary = min(len(secondary_candidates), remaining_slots)
-        total_exported = len(final_candidates)
+        total_exported = len(post_anchor_final_candidates)
 
         primary_cutoff_cand = primary_candidates[num_exported_primary - 1] if num_exported_primary > 0 else None
         secondary_cutoff_cand = secondary_candidates[num_exported_secondary - 1] if num_exported_secondary > 0 else None
-        global_cutoff_cand = final_candidates[-1] if total_exported > 0 else None
 
         allocation_summary_payload: dict[str, object] = {
-            "fusion_trace_schema_version": "2.0.0",
+            "fusion_trace_schema_version": "2.1.0",
             "total_restricted_candidates_untruncated": len(full_fused.ranked_candidates),
             "internal_rrf_candidate_depth": fused_top_k,
             "candidates_passed_internal_cutoff": len(enriched_sorted),
@@ -1057,6 +1293,13 @@ def fuse_restricted_frames(
             "primary_cutoff_score": float(primary_cutoff_cand.score) if primary_cutoff_cand else None,
             "secondary_cutoff_candidate_key": f"{secondary_cutoff_cand.video_id}::{secondary_cutoff_cand.frame_id}" if secondary_cutoff_cand else None,
             "secondary_cutoff_score": float(secondary_cutoff_cand.score) if secondary_cutoff_cand else None,
+            "standard_cutoff_score": standard_cutoff_score,
+            "post_anchor_min_exported_score": post_anchor_min_exported_score,
+            "total_local_anchors_reserved": len(queued_new_anchors),
+            "naturally_satisfied_anchor_count": len(naturally_satisfied_anchors),
+            "displaced_candidate_count": len(displaced_details),
+            "anchor_decisions_by_video": anchor_decisions_by_video,
+            "displaced_candidates": displaced_details,
         }
         fusion_trace_map[("__summary__", 0)] = allocation_summary_payload
 
@@ -1072,10 +1315,6 @@ def fuse_restricted_frames(
         secondary_ranks: dict[tuple[str, int], int] = {
             (c.video_id, c.frame_id): rank
             for rank, c in enumerate(secondary_candidates, start=1)
-        }
-        final_rank_map: dict[tuple[str, int], int] = {
-            (c.video_id, c.frame_id): rank
-            for rank, c in enumerate(final_candidates, start=1)
         }
         enriched_cand_map: dict[tuple[str, int], CandidateFrame] = {
             (c.video_id, c.frame_id): c for c in enriched_sorted
@@ -1120,6 +1359,7 @@ def fuse_restricted_frames(
                     "group_bucket": None,
                     "final_selection_score": None,
                     "final_sort_key": None,
+                    "pre_anchor_sort_key": None,
                     "pre_dedup_sort_key": None,
                     "pre_allocation_global_rank": None,
                     "pre_allocation_bucket_rank": None,
@@ -1127,8 +1367,13 @@ def fuse_restricted_frames(
                     "effective_cutoff_scope": None,
                     "effective_cutoff_candidate_key": None,
                     "score_gap_to_effective_cutoff": None,
+                    "allocation_selection_reason": None,
                     "allocation_rejection_reason": None,
                     "tie_break_reason": None,
+                    "pre_anchor_final_rank": None,
+                    "pre_anchor_lifecycle_status": "PRUNED_BY_INTERNAL_RRF_CUTOFF",
+                    "pre_anchor_allocation_rejection_reason": None,
+                    "post_anchor_final_rank": None,
                     "final_rank": None,
                     "final_lifecycle_status": "PRUNED_BY_INTERNAL_RRF_CUTOFF",
                 }
@@ -1138,7 +1383,9 @@ def fuse_restricted_frames(
             cand = enriched_cand_map[k]
             pre_alloc_global_rank = pre_alloc_global_ranks[k]
             final_selection_score = float(cand.score)
-            final_rank = final_rank_map.get(k)
+            pre_anchor_rank = pre_anchor_final_rank_map.get(k)
+            post_anchor_rank = post_anchor_final_rank_map.get(k)
+            final_rank = post_anchor_rank
 
             pre_dedup_sort_key = None
             if min_frame_gap > 0:
@@ -1158,11 +1405,11 @@ def fuse_restricted_frames(
                     group_bucket = "GROUP_BUCKET_PRIMARY"
                     pre_alloc_bucket_rank = primary_ranks[k]
                     final_sort_key = [0, -final_selection_score, cand.video_id, cand.frame_id]
-                    effective_cutoff_score = float(global_cutoff_cand.score) if global_cutoff_cand else None
+                    effective_cutoff_score = float(primary_cutoff_cand.score) if primary_cutoff_cand else None
                     effective_cutoff_scope = "GLOBAL"
-                    effective_cutoff_cand_key = f"{global_cutoff_cand.video_id}::{global_cutoff_cand.frame_id}" if global_cutoff_cand else None
-                    if final_rank is not None:
-                        lifecycle_status = f"EXPORTED_AT_RANK_{final_rank}"
+                    effective_cutoff_cand_key = f"{primary_cutoff_cand.video_id}::{primary_cutoff_cand.frame_id}" if primary_cutoff_cand else None
+                    if pre_anchor_rank is not None:
+                        lifecycle_status = f"EXPORTED_AT_RANK_{pre_anchor_rank}"
                         rejection_reason = None
                         score_gap = None
                         tie_break_msg = None
@@ -1186,8 +1433,8 @@ def fuse_restricted_frames(
                     effective_cutoff_scope = "PRIMARY_BUCKET"
                     effective_cutoff_cand_key = f"{primary_cutoff_cand.video_id}::{primary_cutoff_cand.frame_id}" if primary_cutoff_cand else None
 
-                    if final_rank is not None:
-                        lifecycle_status = f"EXPORTED_AT_RANK_{final_rank}"
+                    if pre_anchor_rank is not None:
+                        lifecycle_status = f"EXPORTED_AT_RANK_{pre_anchor_rank}"
                         rejection_reason = None
                         score_gap = None
                         tie_break_msg = None
@@ -1207,7 +1454,6 @@ def fuse_restricted_frames(
                     final_sort_key = [1, -final_selection_score, cand.video_id, cand.frame_id]
 
                     if num_exported_primary >= output_top_k:
-                        # Output completely saturated by Primary candidates
                         effective_cutoff_score = float(primary_cutoff_cand.score) if primary_cutoff_cand else None
                         effective_cutoff_scope = "PRIMARY_BUCKET"
                         effective_cutoff_cand_key = f"{primary_cutoff_cand.video_id}::{primary_cutoff_cand.frame_id}" if primary_cutoff_cand else None
@@ -1219,8 +1465,8 @@ def fuse_restricted_frames(
                         effective_cutoff_score = float(secondary_cutoff_cand.score) if secondary_cutoff_cand else None
                         effective_cutoff_scope = "SECONDARY_BUCKET"
                         effective_cutoff_cand_key = f"{secondary_cutoff_cand.video_id}::{secondary_cutoff_cand.frame_id}" if secondary_cutoff_cand else None
-                        if final_rank is not None:
-                            lifecycle_status = f"EXPORTED_AT_RANK_{final_rank}"
+                        if pre_anchor_rank is not None:
+                            lifecycle_status = f"EXPORTED_AT_RANK_{pre_anchor_rank}"
                             rejection_reason = None
                             score_gap = None
                             tie_break_msg = None
@@ -1235,6 +1481,55 @@ def fuse_restricted_frames(
                                 rejection_reason = "SCORE_BELOW_EFFECTIVE_CUTOFF"
                                 tie_break_msg = None
 
+            pre_anchor_lifecycle_status = lifecycle_status
+            pre_anchor_rejection_reason = rejection_reason
+            selection_reason = None
+            anchor_sig_source = None
+            anchor_loc_rank = None
+            anchor_nom_rank = None
+            anchor_temp_dist = None
+            disp_cand_key = None
+            disp_cand_score = None
+            disp_orig_rank = None
+            res_slot_idx = None
+            displacing_key = None
+            displacing_vid = None
+
+            # Apply Phase B2 Post-Anchor Logic
+            if k in naturally_satisfied_anchors.values():
+                selection_reason = "LOCAL_ANCHOR_SATISFIED_NATURALLY"
+                rejection_reason = None
+                lifecycle_status = f"EXPORTED_AT_RANK_{final_rank}"
+                anchor_dec = anchor_decisions_by_video.get(k[0], {})
+                anchor_sig_source = anchor_dec.get("anchor_signal_source")
+                anchor_loc_rank = anchor_dec.get("anchor_local_rank")
+                anchor_nom_rank = anchor_dec.get("nomination_rank")
+                anchor_temp_dist = anchor_dec.get("anchor_temporal_distance_to_nearest_exported")
+            elif k in queued_anchor_map:
+                a_info = queued_anchor_map[k]
+                selection_reason = "VIDEO_LOCAL_RESERVED"
+                rejection_reason = None
+                lifecycle_status = f"EXPORTED_AT_RANK_{final_rank}"
+                anchor_sig_source = local_anchor_source
+                anchor_loc_rank = a_info.get("anchor_local_rank")
+                anchor_nom_rank = a_info.get("nomination_rank")
+                anchor_temp_dist = a_info.get("temporal_dist")
+                disp_cand_key = a_info.get("displaced_candidate_key")
+                disp_cand_score = a_info.get("displaced_candidate_score")
+                disp_orig_rank = a_info.get("displaced_original_rank")
+                res_slot_idx = a_info.get("reserved_slot_index")
+            elif k in displaced_keys_map:
+                d_info = displaced_keys_map[k]
+                selection_reason = None
+                rejection_reason = "DISPLACED_BY_LOCAL_ANCHOR"
+                lifecycle_status = "PRUNED_BY_LOCAL_ANCHOR_DISPLACEMENT"
+                displacing_key = d_info.get("by_anchor_key")
+                displacing_vid = d_info.get("by_anchor_video")
+            elif final_rank is not None:
+                selection_reason = "STANDARD_TOPK_SELECTION"
+                rejection_reason = None
+                lifecycle_status = f"EXPORTED_AT_RANK_{final_rank}"
+
             fusion_trace_map[k] = {
                 "video_id": item.video_id,
                 "frame_id": item.frame_id,
@@ -1248,6 +1543,7 @@ def fuse_restricted_frames(
                 "group_bucket": group_bucket,
                 "final_selection_score": final_selection_score,
                 "final_sort_key": final_sort_key,
+                "pre_anchor_sort_key": final_sort_key,
                 "pre_dedup_sort_key": pre_dedup_sort_key,
                 "pre_allocation_global_rank": pre_alloc_global_rank,
                 "pre_allocation_bucket_rank": pre_alloc_bucket_rank,
@@ -1255,10 +1551,25 @@ def fuse_restricted_frames(
                 "effective_cutoff_scope": effective_cutoff_scope,
                 "effective_cutoff_candidate_key": effective_cutoff_cand_key,
                 "score_gap_to_effective_cutoff": score_gap,
+                "allocation_selection_reason": selection_reason,
                 "allocation_rejection_reason": rejection_reason,
                 "tie_break_reason": tie_break_msg,
+                "pre_anchor_final_rank": pre_anchor_rank,
+                "pre_anchor_lifecycle_status": pre_anchor_lifecycle_status,
+                "pre_anchor_allocation_rejection_reason": pre_anchor_rejection_reason,
+                "post_anchor_final_rank": post_anchor_rank,
                 "final_rank": final_rank,
                 "final_lifecycle_status": lifecycle_status,
+                "anchor_signal_source": anchor_sig_source,
+                "anchor_local_rank": anchor_loc_rank,
+                "anchor_video_nomination_rank": anchor_nom_rank,
+                "anchor_temporal_distance_to_nearest_exported": anchor_temp_dist,
+                "displaced_candidate_key": disp_cand_key,
+                "displaced_candidate_score": disp_cand_score,
+                "displaced_original_rank": disp_orig_rank,
+                "reserved_slot_index": res_slot_idx,
+                "displacing_anchor_key": displacing_key,
+                "displacing_anchor_video": displacing_vid,
             }
 
     reranked = tuple(
@@ -1272,7 +1583,7 @@ def fuse_restricted_frames(
             source=cand.source,
             diagnostic_metadata=cand.diagnostic_metadata,
         )
-        for rank, cand in enumerate(final_candidates, start=1)
+        for rank, cand in enumerate(post_anchor_final_candidates, start=1)
     )
     result = KISResult(query_id=query_id, ranked_candidates=reranked)
     if return_trace:
@@ -1298,6 +1609,9 @@ def build_kis_video_first_outcome(
     max_cands = config.max_restricted_candidates_per_video if config else None
     internal_depth = config.internal_rrf_candidate_depth if config else 100
     collect_trace = config.collect_fusion_trace if config else False
+    enable_anchor = config.enable_top_video_local_anchor if config else False
+    anchor_count = config.local_anchor_top_video_count if config else 3
+    anchor_src = config.local_anchor_source if config else "SEMANTIC_LOCAL"
 
     if collect_trace:
         fuse_res = fuse_restricted_frames(
@@ -1314,6 +1628,9 @@ def build_kis_video_first_outcome(
             internal_rrf_candidate_depth=internal_depth,
             collect_fusion_trace=True,
             return_trace=True,
+            enable_top_video_local_anchor=enable_anchor,
+            local_anchor_top_video_count=anchor_count,
+            local_anchor_source=anchor_src,
         )
         assert isinstance(fuse_res, tuple)
         result, fusion_trace_map = fuse_res
@@ -1332,6 +1649,9 @@ def build_kis_video_first_outcome(
             internal_rrf_candidate_depth=internal_depth,
             collect_fusion_trace=False,
             return_trace=False,
+            enable_top_video_local_anchor=enable_anchor,
+            local_anchor_top_video_count=anchor_count,
+            local_anchor_source=anchor_src,
         )
         assert isinstance(fuse_res, KISResult)
         result = fuse_res
@@ -1352,6 +1672,7 @@ def build_kis_video_first_outcome(
             or config.enable_temporal_diverse_local_candidates
             or config.enable_vi_localization_variant
             or config.internal_rrf_candidate_depth != 100
+            or config.enable_top_video_local_anchor
         )
     )
     return KISVideoFirstOutcome(
