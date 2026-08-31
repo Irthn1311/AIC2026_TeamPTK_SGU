@@ -1139,11 +1139,13 @@ def fuse_restricted_frames(
             final_selection_score = float(cand.score)
             final_rank = final_rank_map.get(k)
 
+            pre_dedup_sort_key = None
             if min_frame_gap > 0:
                 if k in temporal_dedup_pruned_keys:
                     group_bucket = "TEMPORAL_DEDUP_PRUNED"
                     pre_alloc_bucket_rank = None
-                    final_sort_key = [2, -final_selection_score, cand.video_id, cand.frame_id]
+                    final_sort_key = None
+                    pre_dedup_sort_key = [-final_selection_score, cand.video_id, cand.frame_id]
                     effective_cutoff_score = None
                     effective_cutoff_scope = "TEMPORAL_DEDUP"
                     effective_cutoff_cand_key = None
@@ -1170,7 +1172,7 @@ def fuse_restricted_frames(
                             rejection_reason = "TIE_BREAK_REJECTED"
                             tie_break_msg = f"TIE_ON_SCORE_{cand.score:.8f}_RESOLVED_BY_LEXICOGRAPHICAL_KEY_{effective_cutoff_cand_key}"
                         else:
-                            score_gap = float(round(effective_cutoff_score - cand.score, 8)) if effective_cutoff_score is not None else None
+                            score_gap = float(effective_cutoff_score - cand.score) if effective_cutoff_score is not None else None
                             rejection_reason = "SCORE_BELOW_EFFECTIVE_CUTOFF"
                             tie_break_msg = None
             else:
@@ -1195,7 +1197,7 @@ def fuse_restricted_frames(
                             rejection_reason = "TIE_BREAK_REJECTED"
                             tie_break_msg = f"TIE_ON_SCORE_{cand.score:.8f}_RESOLVED_BY_LEXICOGRAPHICAL_KEY_{effective_cutoff_cand_key}"
                         else:
-                            score_gap = float(round(effective_cutoff_score - cand.score, 8)) if effective_cutoff_score is not None else None
+                            score_gap = float(effective_cutoff_score - cand.score) if effective_cutoff_score is not None else None
                             rejection_reason = "SCORE_BELOW_EFFECTIVE_CUTOFF"
                             tie_break_msg = None
                 else:
@@ -1228,7 +1230,7 @@ def fuse_restricted_frames(
                                 rejection_reason = "TIE_BREAK_REJECTED"
                                 tie_break_msg = f"TIE_ON_SCORE_{cand.score:.8f}_RESOLVED_BY_LEXICOGRAPHICAL_KEY_{effective_cutoff_cand_key}"
                             else:
-                                score_gap = float(round(effective_cutoff_score - cand.score, 8)) if effective_cutoff_score is not None else None
+                                score_gap = float(effective_cutoff_score - cand.score) if effective_cutoff_score is not None else None
                                 rejection_reason = "SCORE_BELOW_EFFECTIVE_CUTOFF"
                                 tie_break_msg = None
 
@@ -1245,6 +1247,7 @@ def fuse_restricted_frames(
                 "group_bucket": group_bucket,
                 "final_selection_score": final_selection_score,
                 "final_sort_key": final_sort_key,
+                "pre_dedup_sort_key": pre_dedup_sort_key,
                 "pre_allocation_global_rank": pre_alloc_global_rank,
                 "pre_allocation_bucket_rank": pre_alloc_bucket_rank,
                 "effective_cutoff_score": effective_cutoff_score,

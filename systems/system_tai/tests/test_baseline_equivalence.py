@@ -1450,6 +1450,111 @@ def test_candidate_pruned_before_allocation_has_null_allocation_reason():
     assert pruned_cand["final_lifecycle_status"] == "PRUNED_BY_INTERNAL_RRF_CUTOFF"
 
 
+def test_allocation_diagnostics_micro_gap_preservation():
+    """Verify micro score gap (< 1e-8) is preserved exactly without rounding to 0.0."""
+    from system_tai.kis.video_first import (
+        fuse_restricted_frames,
+        FusedVideoEvidence,
+        VariantVideoEvidence,
+    )
+    from system_tai.retrieval.video_evidence import (
+        VideoRestrictedSearchOutcome,
+        RestrictedFrameHit,
+    )
+    from system_tai.retrieval.multi_query import (
+        QueryVariant,
+        QueryVariantType,
+        QueryLanguage,
+        WeightedRRFRetriever,
+    )
+
+    var = QueryVariant(
+        variant_id="v1",
+        text="query text",
+        language=QueryLanguage.ENGLISH,
+        variant_type=QueryVariantType.ENGLISH_TRANSLATION,
+        weight=1.0,
+    )
+    weighted_rrf = WeightedRRFRetriever(object())
+
+    # Two frames where frame 2 is ranked 2nd in variant v1
+    # Frame 0: rank 1 -> RRF: 1/(60+1) = 1/61 = 0.01639344262295082
+    # Frame 100: rank 2 -> RRF: 1/(60+2) = 1/62 = 0.016129032258064516
+    hits = [
+        RestrictedFrameHit(
+            video_id="L30_V046",
+            frame_id=0,
+            clip_row=0,
+            keyframe_order=1,
+            pts_time=0.0,
+            cosine_score=0.90000000001,
+            rank=1,
+            selection_source="RAW",
+            raw_local_rank=1,
+        ),
+        RestrictedFrameHit(
+            video_id="L30_V046",
+            frame_id=100,
+            clip_row=1,
+            keyframe_order=2,
+            pts_time=4.0,
+            cosine_score=0.90000000000,
+            rank=2,
+            selection_source="RAW",
+            raw_local_rank=2,
+        ),
+    ]
+
+    restricted_outcome = VideoRestrictedSearchOutcome(
+        rankings={"v1": {"L30_V046": tuple(hits)}},
+        physical_rows_scored=2,
+        video_store_scan_count=1,
+    )
+    selected_videos = (
+        FusedVideoEvidence(
+            video_id="L30_V046",
+            rank=1,
+            fusion_score=0.9,
+            variant_hit_count=1,
+            primary_coverage_count=1,
+            best_individual_rank=1,
+            per_variant=(
+                VariantVideoEvidence(
+                    variant_id="v1",
+                    weight=1.0,
+                    video_rank=1,
+                    maximum_frame_id=0,
+                    maximum_clip_row=0,
+                    maximum_cosine_score=0.9,
+                ),
+            ),
+        ),
+    )
+
+    res, trace = fuse_restricted_frames(
+        query_id="q1",
+        variants=(var,),
+        restricted=restricted_outcome,
+        selected_videos=selected_videos,
+        weighted_rrf=weighted_rrf,
+        output_top_k=1,
+        rrf_constant=60.0,
+        collect_fusion_trace=True,
+        return_trace=True,
+    )
+
+    assert len(res.ranked_candidates) == 1
+    cand_rejected = trace[("L30_V046", 100)]
+    assert cand_rejected["allocation_rejection_reason"] == "SCORE_BELOW_EFFECTIVE_CUTOFF"
+    gap = cand_rejected["score_gap_to_effective_cutoff"]
+    assert gap is not None
+    assert gap > 0.0
+    # True mathematical gap is 1/61 - 1/62 = 1/(61*62) = 1/3782 = ~0.00026441036488630355
+    expected_gap = (1.0 / 61.0) - (1.0 / 62.0)
+    assert abs(gap - expected_gap) < 1e-12
+
+
+
 
 
 
