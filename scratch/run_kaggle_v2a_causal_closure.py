@@ -113,6 +113,27 @@ def load_canonical_frozen_manifest() -> tuple[Path, str, dict[str, dict[str, Any
     return manifest_path, manifest_sha, short_map
 
 
+def load_frozen_reference_manifest() -> dict[str, Any]:
+    """Load reference truth data from manual_kis_reference_v1.json."""
+    ref_paths = [
+        SYSTEM_TAI_SRC.parent / "benchmarks" / "manual_kis_reference_v1.json",
+        REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "manual_kis_reference_v1.json",
+        Path("/kaggle/working/AIC2026_TeamPTK_SGU/systems/system_tai/benchmarks/manual_kis_reference_v1.json"),
+    ]
+    ref_data = {}
+    for p in ref_paths:
+        if p.is_file():
+            try:
+                ref_data = json.loads(p.read_text(encoding="utf-8"))
+                break
+            except Exception:
+                pass
+
+    if not ref_data or "queries" not in ref_data:
+        raise RuntimeError(f"Manual reference manual_kis_reference_v1.json missing or invalid (searched: {ref_paths})")
+
+    return ref_data
+
 
 def create_production_v2a_session_config(
     input_root: Path,
@@ -550,22 +571,7 @@ def generate_and_save_ablation_summary_table(
     manifest_path, manifest_sha, manifest_queries = load_canonical_frozen_manifest()
     query_order = ["p1-1", "p1-2", "p1-4", "p1-5", "p1-6"]
 
-    ref_paths = [
-        SYSTEM_TAI_SRC.parent / "benchmarks" / "manual_kis_reference_v1.json",
-        REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "manual_kis_reference_v1.json",
-        Path("/kaggle/working/AIC2026_TeamPTK_SGU/systems/system_tai/benchmarks/manual_kis_reference_v1.json"),
-    ]
-    ref_data = {}
-    for p in ref_paths:
-        if p.is_file():
-            try:
-                ref_data = json.loads(p.read_text(encoding="utf-8"))
-                break
-            except Exception:
-                pass
-
-    if not ref_data or "queries" not in ref_data:
-        raise RuntimeError(f"Manual reference manual_kis_reference_v1.json missing or invalid (searched: {ref_paths})")
+    ref_data = load_frozen_reference_manifest()
 
     ref_queries_map = {q.get("query_id"): q for q in ref_data.get("queries", [])}
 
