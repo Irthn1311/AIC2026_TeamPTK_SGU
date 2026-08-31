@@ -1122,18 +1122,332 @@ def test_collect_fusion_trace_does_not_change_output():
         return_trace=True,
     )
 
-    assert len(res_no_trace.ranked_candidates) == len(res_with_trace.ranked_candidates)
-    for c1, c2 in zip(res_no_trace.ranked_candidates, res_with_trace.ranked_candidates, strict=True):
-        assert c1.video_id == c2.video_id
-        assert c1.frame_id == c2.frame_id
-        assert c1.score == c2.score
-        assert c1.rank == c2.rank
+    # Canonical projection comparison
+    def to_canonical_projection(res):
+        return [
+            (c.video_id, c.frame_id, c.rank, c.score, c.source)
+            for c in res.ranked_candidates
+        ]
 
-    assert len(trace_map) == 50
+    assert to_canonical_projection(res_no_trace) == to_canonical_projection(res_with_trace)
+
+    # Check trace map has 50 frame records + 1 summary record
+    assert len(trace_map) == 51
+    summary = trace_map[("__summary__", 0)]
+    assert summary["fusion_trace_schema_version"] == "2.0.0"
+    assert summary["output_top_k"] == 20
+    assert summary["total_exported"] == 20
+
     target_info = trace_map[("L30_V046", 0)]
     assert target_info["untruncated_rrf_rank"] == 1
     assert target_info["group_bucket"] == "GROUP_BUCKET_PRIMARY"
+    assert target_info["final_rank"] == 1
     assert target_info["final_lifecycle_status"] == "EXPORTED_AT_RANK_1"
+    assert target_info["allocation_rejection_reason"] is None
+    assert target_info["effective_cutoff_scope"] == "PRIMARY_BUCKET"
+
+
+def test_allocation_diagnostics_score_cutoff_and_bucket_saturation():
+    """Verify schema 2.0.0 allocation diagnostics: primary cutoff, score gap, and secondary saturation."""
+    from system_tai.kis.video_first import (
+        fuse_restricted_frames,
+        FusedVideoEvidence,
+        VariantVideoEvidence,
+    )
+    from system_tai.retrieval.video_evidence import (
+        VideoRestrictedSearchOutcome,
+        RestrictedFrameHit,
+    )
+    from system_tai.retrieval.multi_query import (
+        QueryVariant,
+        QueryVariantType,
+        QueryLanguage,
+        WeightedRRFRetriever,
+    )
+
+    var = QueryVariant(
+        variant_id="v1",
+        text="query text",
+        language=QueryLanguage.ENGLISH,
+        variant_type=QueryVariantType.ENGLISH_TRANSLATION,
+        weight=1.0,
+    )
+    weighted_rrf = WeightedRRFRetriever(object())
+
+    # Create 5 primary frames (gap >= 100) and 3 secondary frames (gap < 75 from frame 0)
+    hits = []
+    # Primary 1..5: frames 0, 100, 200, 300, 400
+    for i, fid in enumerate([0, 100, 200, 300, 400], start=1):
+        hits.append(RestrictedFrameHit(
+            video_id="L30_V046",
+            frame_id=fid,
+            clip_row=fid,
+            keyframe_order=i,
+            pts_time=float(fid) / 25.0,
+            cosine_score=0.90 - (i * 0.01),
+            rank=i,
+            selection_source="RAW",
+            raw_local_rank=i,
+        ))
+    # Secondary 1..3: frames 1, 2, 3 (close to frame 0)
+    for i, fid in enumerate([1, 2, 3], start=6):
+        hits.append(RestrictedFrameHit(
+            video_id="L30_V046",
+            frame_id=fid,
+            clip_row=fid,
+            keyframe_order=i,
+            pts_time=float(fid) / 25.0,
+            cosine_score=0.80 - (i * 0.01),
+            rank=i,
+            selection_source="RAW",
+            raw_local_rank=i,
+        ))
+
+    restricted_outcome = VideoRestrictedSearchOutcome(
+        rankings={"v1": {"L30_V046": tuple(hits)}},
+        physical_rows_scored=len(hits),
+        video_store_scan_count=1,
+    )
+    selected_videos = (
+        FusedVideoEvidence(
+            video_id="L30_V046",
+            rank=1,
+            fusion_score=0.9,
+            variant_hit_count=1,
+            primary_coverage_count=1,
+            best_individual_rank=1,
+            per_variant=(
+                VariantVideoEvidence(
+                    variant_id="v1",
+                    weight=1.0,
+                    video_rank=1,
+                    maximum_frame_id=0,
+                    maximum_clip_row=0,
+                    maximum_cosine_score=0.9,
+                ),
+            ),
+        ),
+    )
+
+    # Test 1: output_top_k=3 (Primary candidates 1..3 exported, primary candidate 4 rejected by score, secondary saturated)
+    res_top3, trace_top3 = fuse_restricted_frames(
+        query_id="q1",
+        variants=(var,),
+        restricted=restricted_outcome,
+        selected_videos=selected_videos,
+        weighted_rrf=weighted_rrf,
+        output_top_k=3,
+        rrf_constant=60.0,
+        collect_fusion_trace=True,
+        return_trace=True,
+    )
+    assert len(res_top3.ranked_candidates) == 3
+    # Check primary candidate #4 (frame 300)
+    p4 = trace_top3[("L30_V046", 300)]
+    assert p4["group_bucket"] == "GROUP_BUCKET_PRIMARY"
+    assert p4["pre_allocation_bucket_rank"] == 4
+    assert p4["allocation_rejection_reason"] == "SCORE_BELOW_EFFECTIVE_CUTOFF"
+    assert p4["effective_cutoff_scope"] == "PRIMARY_BUCKET"
+    assert p4["effective_cutoff_candidate_key"] == "L30_V046::200"
+    assert p4["score_gap_to_effective_cutoff"] > 0.0
+
+    # Check secondary candidate (frame 1) - primary saturated output!
+    s1 = trace_top3[("L30_V046", 1)]
+    assert s1["group_bucket"] == "GROUP_BUCKET_SECONDARY"
+    assert s1["allocation_rejection_reason"] == "PRIMARY_BUCKET_SATURATED_OUTPUT"
+    assert s1["effective_cutoff_scope"] == "PRIMARY_BUCKET"
+    assert s1["score_gap_to_effective_cutoff"] is None
+
+
+def test_allocation_diagnostics_tie_break_resolution():
+    """Verify tie-break reason recording when score matches cutoff exactly."""
+    from system_tai.kis.video_first import (
+        fuse_restricted_frames,
+        FusedVideoEvidence,
+        VariantVideoEvidence,
+    )
+    from system_tai.retrieval.video_evidence import (
+        VideoRestrictedSearchOutcome,
+        RestrictedFrameHit,
+    )
+    from system_tai.retrieval.multi_query import (
+        QueryVariant,
+        QueryVariantType,
+        QueryLanguage,
+        WeightedRRFRetriever,
+    )
+
+    var1 = QueryVariant(
+        variant_id="v1",
+        text="query 1",
+        language=QueryLanguage.ENGLISH,
+        variant_type=QueryVariantType.ENGLISH_TRANSLATION,
+        weight=1.0,
+    )
+    var2 = QueryVariant(
+        variant_id="v2",
+        text="query 2",
+        language=QueryLanguage.ENGLISH,
+        variant_type=QueryVariantType.ENGLISH_TRANSLATION,
+        weight=1.0,
+    )
+    weighted_rrf = WeightedRRFRetriever(object())
+
+    # Video A: rank 1 in v1 (cosine 0.95), rank 2 in v2 (cosine 0.85) -> RRF: 1/61 + 1/62
+    # Video B: rank 2 in v1 (cosine 0.85), rank 1 in v2 (cosine 0.95) -> RRF: 1/62 + 1/61
+    # Both have mathematically identical final score!
+    hits_a_v1 = [RestrictedFrameHit(video_id="L10_V001", frame_id=100, clip_row=1, keyframe_order=1, pts_time=4.0, cosine_score=0.95, rank=1, selection_source="RAW", raw_local_rank=1)]
+    hits_a_v2 = [RestrictedFrameHit(video_id="L10_V001", frame_id=100, clip_row=1, keyframe_order=1, pts_time=4.0, cosine_score=0.85, rank=2, selection_source="RAW", raw_local_rank=1)]
+
+    hits_b_v1 = [RestrictedFrameHit(video_id="L20_V002", frame_id=200, clip_row=2, keyframe_order=1, pts_time=8.0, cosine_score=0.85, rank=2, selection_source="RAW", raw_local_rank=1)]
+    hits_b_v2 = [RestrictedFrameHit(video_id="L20_V002", frame_id=200, clip_row=2, keyframe_order=1, pts_time=8.0, cosine_score=0.95, rank=1, selection_source="RAW", raw_local_rank=1)]
+
+    restricted_outcome = VideoRestrictedSearchOutcome(
+        rankings={
+            "v1": {"L10_V001": tuple(hits_a_v1), "L20_V002": tuple(hits_b_v1)},
+            "v2": {"L10_V001": tuple(hits_a_v2), "L20_V002": tuple(hits_b_v2)},
+        },
+        physical_rows_scored=4,
+        video_store_scan_count=4,
+    )
+    selected_videos = (
+        FusedVideoEvidence(
+            video_id="L10_V001",
+            rank=1,
+            fusion_score=0.9,
+            variant_hit_count=2,
+            primary_coverage_count=2,
+            best_individual_rank=1,
+            per_variant=(
+                VariantVideoEvidence(variant_id="v1", weight=1.0, video_rank=1, maximum_frame_id=100, maximum_clip_row=1, maximum_cosine_score=0.95),
+                VariantVideoEvidence(variant_id="v2", weight=1.0, video_rank=2, maximum_frame_id=100, maximum_clip_row=1, maximum_cosine_score=0.85),
+            ),
+        ),
+        FusedVideoEvidence(
+            video_id="L20_V002",
+            rank=1,
+            fusion_score=0.9,
+            variant_hit_count=2,
+            primary_coverage_count=2,
+            best_individual_rank=1,
+            per_variant=(
+                VariantVideoEvidence(variant_id="v1", weight=1.0, video_rank=2, maximum_frame_id=200, maximum_clip_row=2, maximum_cosine_score=0.85),
+                VariantVideoEvidence(variant_id="v2", weight=1.0, video_rank=1, maximum_frame_id=200, maximum_clip_row=2, maximum_cosine_score=0.95),
+            ),
+        ),
+    )
+
+    res, trace = fuse_restricted_frames(
+        query_id="q1",
+        variants=(var1, var2),
+        restricted=restricted_outcome,
+        selected_videos=selected_videos,
+        weighted_rrf=weighted_rrf,
+        output_top_k=1,
+        rrf_constant=60.0,
+        collect_fusion_trace=True,
+        return_trace=True,
+    )
+
+    assert len(res.ranked_candidates) == 1
+    assert res.ranked_candidates[0].video_id == "L10_V001"
+
+    cand_b = trace[("L20_V002", 200)]
+    assert cand_b["allocation_rejection_reason"] == "TIE_BREAK_REJECTED"
+    assert cand_b["score_gap_to_effective_cutoff"] == 0.0
+    assert cand_b["tie_break_reason"] is not None
+    assert "TIE_ON_SCORE" in cand_b["tie_break_reason"]
+    assert "L10_V001::100" in cand_b["tie_break_reason"]
+
+
+def test_candidate_pruned_before_allocation_has_null_allocation_reason():
+    """Verify candidates pruned by internal RRF cutoff have allocation_rejection_reason=None."""
+    from system_tai.kis.video_first import (
+        fuse_restricted_frames,
+        FusedVideoEvidence,
+        VariantVideoEvidence,
+    )
+    from system_tai.retrieval.video_evidence import (
+        VideoRestrictedSearchOutcome,
+        RestrictedFrameHit,
+    )
+    from system_tai.retrieval.multi_query import (
+        QueryVariant,
+        QueryVariantType,
+        QueryLanguage,
+        WeightedRRFRetriever,
+    )
+
+    var = QueryVariant(
+        variant_id="v1",
+        text="query text",
+        language=QueryLanguage.ENGLISH,
+        variant_type=QueryVariantType.ENGLISH_TRANSLATION,
+        weight=1.0,
+    )
+    weighted_rrf = WeightedRRFRetriever(object())
+
+    hits = [
+        RestrictedFrameHit(
+            video_id="L30_V046",
+            frame_id=i * 100,
+            clip_row=i,
+            keyframe_order=i + 1,
+            pts_time=float(i * 100) / 25.0,
+            cosine_score=0.99 - (i * 0.01),
+            rank=i + 1,
+            selection_source="RAW",
+            raw_local_rank=i + 1,
+        )
+        for i in range(5)
+    ]
+    restricted_outcome = VideoRestrictedSearchOutcome(
+        rankings={"v1": {"L30_V046": tuple(hits)}},
+        physical_rows_scored=5,
+        video_store_scan_count=1,
+    )
+    selected_videos = (
+        FusedVideoEvidence(
+            video_id="L30_V046",
+            rank=1,
+            fusion_score=0.99,
+            variant_hit_count=1,
+            primary_coverage_count=1,
+            best_individual_rank=1,
+            per_variant=(
+                VariantVideoEvidence(
+                    variant_id="v1",
+                    weight=1.0,
+                    video_rank=1,
+                    maximum_frame_id=0,
+                    maximum_clip_row=0,
+                    maximum_cosine_score=0.99,
+                ),
+            ),
+        ),
+    )
+
+    # Set internal_rrf_candidate_depth=2. Frames 0, 100 pass, frames 200, 300, 400 are pruned before allocation.
+    res, trace = fuse_restricted_frames(
+        query_id="q1",
+        variants=(var,),
+        restricted=restricted_outcome,
+        selected_videos=selected_videos,
+        weighted_rrf=weighted_rrf,
+        output_top_k=2,
+        rrf_constant=60.0,
+        internal_rrf_candidate_depth=2,
+        collect_fusion_trace=True,
+        return_trace=True,
+    )
+
+    pruned_cand = trace[("L30_V046", 400)]
+    assert pruned_cand["rrf_cutoff_status"] == "PRUNED_BY_INTERNAL_RRF_CUTOFF"
+    assert pruned_cand["group_bucket"] is None
+    assert pruned_cand["final_selection_score"] is None
+    assert pruned_cand["allocation_rejection_reason"] is None
+    assert pruned_cand["score_gap_to_effective_cutoff"] is None
+    assert pruned_cand["final_lifecycle_status"] == "PRUNED_BY_INTERNAL_RRF_CUTOFF"
 
 
 

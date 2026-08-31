@@ -283,10 +283,14 @@ class KISVideoFirstOutcome:
                 for qid, per_vid in self.candidate_selection_telemetry.items()
             }
         if self.fusion_trace:
+            trace["fusion_trace_schema_version"] = "2.0.0"
             trace["fusion_trace"] = {
                 f"{vid}::{fid}": dict(info)
                 for (vid, fid), info in self.fusion_trace.items()
+                if vid != "__summary__"
             }
+            if ("__summary__", 0) in self.fusion_trace:
+                trace["allocation_summary"] = dict(self.fusion_trace[("__summary__", 0)])
         return trace
 
 
@@ -990,6 +994,8 @@ def fuse_restricted_frames(
     if min_frame_gap > 0:
         filtered_candidates: list[CandidateFrame] = []
         selected_frames_by_video: dict[str, list[int]] = {}
+        temporal_dedup_pruned_keys: set[tuple[str, int]] = set()
+
         for cand in enriched_sorted:
             vid = cand.video_id
             is_chain_winner = cand.diagnostic_metadata.get("is_temporal_chain_winner", False)
@@ -997,6 +1003,9 @@ def fuse_restricted_frames(
             if is_chain_winner or not any(abs(cand.frame_id - f) < min_frame_gap for f in existing):
                 filtered_candidates.append(cand)
                 selected_frames_by_video.setdefault(vid, []).append(cand.frame_id)
+            else:
+                temporal_dedup_pruned_keys.add((cand.video_id, cand.frame_id))
+
         final_candidates = filtered_candidates[:output_top_k]
         primary_candidates = filtered_candidates
         secondary_candidates = []
@@ -1006,6 +1015,7 @@ def fuse_restricted_frames(
         secondary_candidates = []
         selected_cluster_frames: dict[str, list[int]] = {}
         segment_gap = 75  # 3.0 seconds at 25 fps
+        temporal_dedup_pruned_keys = set()
 
         for cand in enriched_sorted:
             vid = cand.video_id
@@ -1023,15 +1033,52 @@ def fuse_restricted_frames(
 
     fusion_trace_map: dict[tuple[str, int], dict[str, object]] = {}
     if collect_fusion_trace and full_fused is not None:
-        post_boost_ranks = {
+        num_exported_primary = min(len(primary_candidates), output_top_k)
+        remaining_slots = output_top_k - num_exported_primary
+        num_exported_secondary = min(len(secondary_candidates), remaining_slots)
+        total_exported = len(final_candidates)
+
+        primary_cutoff_cand = primary_candidates[num_exported_primary - 1] if num_exported_primary > 0 else None
+        secondary_cutoff_cand = secondary_candidates[num_exported_secondary - 1] if num_exported_secondary > 0 else None
+        global_cutoff_cand = final_candidates[-1] if total_exported > 0 else None
+
+        allocation_summary_payload: dict[str, object] = {
+            "fusion_trace_schema_version": "2.0.0",
+            "total_restricted_candidates_untruncated": len(full_fused.ranked_candidates),
+            "internal_rrf_candidate_depth": fused_top_k,
+            "candidates_passed_internal_cutoff": len(enriched_sorted),
+            "total_primary_candidates": len(primary_candidates),
+            "total_secondary_candidates": len(secondary_candidates),
+            "output_top_k": output_top_k,
+            "exported_primary_count": num_exported_primary,
+            "exported_secondary_count": num_exported_secondary,
+            "total_exported": total_exported,
+            "primary_cutoff_candidate_key": f"{primary_cutoff_cand.video_id}::{primary_cutoff_cand.frame_id}" if primary_cutoff_cand else None,
+            "primary_cutoff_score": float(primary_cutoff_cand.score) if primary_cutoff_cand else None,
+            "secondary_cutoff_candidate_key": f"{secondary_cutoff_cand.video_id}::{secondary_cutoff_cand.frame_id}" if secondary_cutoff_cand else None,
+            "secondary_cutoff_score": float(secondary_cutoff_cand.score) if secondary_cutoff_cand else None,
+        }
+        fusion_trace_map[("__summary__", 0)] = allocation_summary_payload
+
+        # Pre-compute rank maps in O(N)
+        pre_alloc_global_ranks: dict[tuple[str, int], int] = {
             (c.video_id, c.frame_id): rank
             for rank, c in enumerate(enriched_sorted, start=1)
         }
-        primary_set = {(c.video_id, c.frame_id) for c in primary_candidates}
-        secondary_set = {(c.video_id, c.frame_id) for c in secondary_candidates}
-        final_rank_map = {
+        primary_ranks: dict[tuple[str, int], int] = {
+            (c.video_id, c.frame_id): rank
+            for rank, c in enumerate(primary_candidates, start=1)
+        }
+        secondary_ranks: dict[tuple[str, int], int] = {
+            (c.video_id, c.frame_id): rank
+            for rank, c in enumerate(secondary_candidates, start=1)
+        }
+        final_rank_map: dict[tuple[str, int], int] = {
             (c.video_id, c.frame_id): rank
             for rank, c in enumerate(final_candidates, start=1)
+        }
+        enriched_cand_map: dict[tuple[str, int], CandidateFrame] = {
+            (c.video_id, c.frame_id): c for c in enriched_sorted
         }
 
         variant_ranks_per_frame: dict[tuple[str, int], dict[str, int]] = {}
@@ -1054,25 +1101,136 @@ def fuse_restricted_frames(
             untruncated_rrf_rank = item.rank
             passed_internal_cutoff = (untruncated_rrf_rank <= fused_top_k)
 
-            post_boost_rank = post_boost_ranks.get(k)
-            if k in primary_set:
-                group_bucket = "GROUP_BUCKET_PRIMARY"
-            elif k in secondary_set:
-                group_bucket = "GROUP_BUCKET_SECONDARY"
-            else:
-                group_bucket = None
-
-            final_rank = final_rank_map.get(k)
-            if final_rank is not None:
-                lifecycle_status = f"EXPORTED_AT_RANK_{final_rank}"
-            elif post_boost_rank is not None:
-                lifecycle_status = "PRUNED_BY_FINAL_TOPK"
-            else:
-                lifecycle_status = "PRUNED_BY_INTERNAL_RRF_CUTOFF"
-
             sel_info = variant_selection_per_frame.get(k, {})
             sources = {v.get("selection_source") for v in sel_info.values() if v.get("selection_source")}
             source_str = "/".join(sorted(str(s) for s in sources)) if sources else "RAW"
+
+            if not passed_internal_cutoff:
+                # Candidate pruned before reaching allocation stage
+                fusion_trace_map[k] = {
+                    "video_id": item.video_id,
+                    "frame_id": item.frame_id,
+                    "restricted_selection_status": f"SELECTED_RESTRICTED_{source_str}",
+                    "selection_by_variant": sel_info,
+                    "global_variant_ranks": variant_ranks_per_frame.get(k, {}),
+                    "scores_by_variant": variant_scores_per_frame.get(k, {}),
+                    "untruncated_rrf_rank": untruncated_rrf_rank,
+                    "rrf_score": float(item.score),
+                    "rrf_cutoff_status": "PRUNED_BY_INTERNAL_RRF_CUTOFF",
+                    "group_bucket": None,
+                    "final_selection_score": None,
+                    "final_sort_key": None,
+                    "pre_allocation_global_rank": None,
+                    "pre_allocation_bucket_rank": None,
+                    "effective_cutoff_score": None,
+                    "effective_cutoff_scope": None,
+                    "effective_cutoff_candidate_key": None,
+                    "score_gap_to_effective_cutoff": None,
+                    "allocation_rejection_reason": None,
+                    "tie_break_reason": None,
+                    "final_rank": None,
+                    "final_lifecycle_status": "PRUNED_BY_INTERNAL_RRF_CUTOFF",
+                }
+                continue
+
+            # Candidate reached allocation stage
+            cand = enriched_cand_map[k]
+            pre_alloc_global_rank = pre_alloc_global_ranks[k]
+            final_selection_score = float(cand.score)
+            final_rank = final_rank_map.get(k)
+
+            if min_frame_gap > 0:
+                if k in temporal_dedup_pruned_keys:
+                    group_bucket = "TEMPORAL_DEDUP_PRUNED"
+                    pre_alloc_bucket_rank = None
+                    final_sort_key = [2, -final_selection_score, cand.video_id, cand.frame_id]
+                    effective_cutoff_score = None
+                    effective_cutoff_scope = "TEMPORAL_DEDUP"
+                    effective_cutoff_cand_key = None
+                    score_gap = None
+                    rejection_reason = "TEMPORAL_DEDUP_REJECTED"
+                    tie_break_msg = None
+                    lifecycle_status = "PRUNED_BY_TEMPORAL_DEDUP"
+                else:
+                    group_bucket = "GROUP_BUCKET_PRIMARY"
+                    pre_alloc_bucket_rank = primary_ranks[k]
+                    final_sort_key = [0, -final_selection_score, cand.video_id, cand.frame_id]
+                    effective_cutoff_score = float(global_cutoff_cand.score) if global_cutoff_cand else None
+                    effective_cutoff_scope = "GLOBAL"
+                    effective_cutoff_cand_key = f"{global_cutoff_cand.video_id}::{global_cutoff_cand.frame_id}" if global_cutoff_cand else None
+                    if final_rank is not None:
+                        lifecycle_status = f"EXPORTED_AT_RANK_{final_rank}"
+                        rejection_reason = None
+                        score_gap = None
+                        tie_break_msg = None
+                    else:
+                        lifecycle_status = "PRUNED_BY_FINAL_TOPK"
+                        if effective_cutoff_score is not None and cand.score == effective_cutoff_score:
+                            score_gap = 0.0
+                            rejection_reason = "TIE_BREAK_REJECTED"
+                            tie_break_msg = f"TIE_ON_SCORE_{cand.score:.8f}_RESOLVED_BY_LEXICOGRAPHICAL_KEY_{effective_cutoff_cand_key}"
+                        else:
+                            score_gap = float(round(effective_cutoff_score - cand.score, 8)) if effective_cutoff_score is not None else None
+                            rejection_reason = "SCORE_BELOW_EFFECTIVE_CUTOFF"
+                            tie_break_msg = None
+            else:
+                # Segment Grouper mode
+                if k in primary_ranks:
+                    group_bucket = "GROUP_BUCKET_PRIMARY"
+                    pre_alloc_bucket_rank = primary_ranks[k]
+                    final_sort_key = [0, -final_selection_score, cand.video_id, cand.frame_id]
+                    effective_cutoff_score = float(primary_cutoff_cand.score) if primary_cutoff_cand else None
+                    effective_cutoff_scope = "PRIMARY_BUCKET"
+                    effective_cutoff_cand_key = f"{primary_cutoff_cand.video_id}::{primary_cutoff_cand.frame_id}" if primary_cutoff_cand else None
+
+                    if final_rank is not None:
+                        lifecycle_status = f"EXPORTED_AT_RANK_{final_rank}"
+                        rejection_reason = None
+                        score_gap = None
+                        tie_break_msg = None
+                    else:
+                        lifecycle_status = "PRUNED_BY_FINAL_TOPK"
+                        if effective_cutoff_score is not None and cand.score == effective_cutoff_score:
+                            score_gap = 0.0
+                            rejection_reason = "TIE_BREAK_REJECTED"
+                            tie_break_msg = f"TIE_ON_SCORE_{cand.score:.8f}_RESOLVED_BY_LEXICOGRAPHICAL_KEY_{effective_cutoff_cand_key}"
+                        else:
+                            score_gap = float(round(effective_cutoff_score - cand.score, 8)) if effective_cutoff_score is not None else None
+                            rejection_reason = "SCORE_BELOW_EFFECTIVE_CUTOFF"
+                            tie_break_msg = None
+                else:
+                    group_bucket = "GROUP_BUCKET_SECONDARY"
+                    pre_alloc_bucket_rank = secondary_ranks[k]
+                    final_sort_key = [1, -final_selection_score, cand.video_id, cand.frame_id]
+
+                    if num_exported_primary >= output_top_k:
+                        # Output completely saturated by Primary candidates
+                        effective_cutoff_score = float(primary_cutoff_cand.score) if primary_cutoff_cand else None
+                        effective_cutoff_scope = "PRIMARY_BUCKET"
+                        effective_cutoff_cand_key = f"{primary_cutoff_cand.video_id}::{primary_cutoff_cand.frame_id}" if primary_cutoff_cand else None
+                        lifecycle_status = "PRUNED_BY_FINAL_TOPK"
+                        rejection_reason = "PRIMARY_BUCKET_SATURATED_OUTPUT"
+                        score_gap = None
+                        tie_break_msg = None
+                    else:
+                        effective_cutoff_score = float(secondary_cutoff_cand.score) if secondary_cutoff_cand else None
+                        effective_cutoff_scope = "SECONDARY_BUCKET"
+                        effective_cutoff_cand_key = f"{secondary_cutoff_cand.video_id}::{secondary_cutoff_cand.frame_id}" if secondary_cutoff_cand else None
+                        if final_rank is not None:
+                            lifecycle_status = f"EXPORTED_AT_RANK_{final_rank}"
+                            rejection_reason = None
+                            score_gap = None
+                            tie_break_msg = None
+                        else:
+                            lifecycle_status = "PRUNED_BY_FINAL_TOPK"
+                            if effective_cutoff_score is not None and cand.score == effective_cutoff_score:
+                                score_gap = 0.0
+                                rejection_reason = "TIE_BREAK_REJECTED"
+                                tie_break_msg = f"TIE_ON_SCORE_{cand.score:.8f}_RESOLVED_BY_LEXICOGRAPHICAL_KEY_{effective_cutoff_cand_key}"
+                            else:
+                                score_gap = float(round(effective_cutoff_score - cand.score, 8)) if effective_cutoff_score is not None else None
+                                rejection_reason = "SCORE_BELOW_EFFECTIVE_CUTOFF"
+                                tie_break_msg = None
 
             fusion_trace_map[k] = {
                 "video_id": item.video_id,
@@ -1083,9 +1241,18 @@ def fuse_restricted_frames(
                 "scores_by_variant": variant_scores_per_frame.get(k, {}),
                 "untruncated_rrf_rank": untruncated_rrf_rank,
                 "rrf_score": float(item.score),
-                "rrf_cutoff_status": "PASSED_RRF_CUTOFF" if passed_internal_cutoff else "PRUNED_BY_INTERNAL_RRF_CUTOFF",
-                "post_boost_rank": post_boost_rank,
+                "rrf_cutoff_status": "PASSED_RRF_CUTOFF",
                 "group_bucket": group_bucket,
+                "final_selection_score": final_selection_score,
+                "final_sort_key": final_sort_key,
+                "pre_allocation_global_rank": pre_alloc_global_rank,
+                "pre_allocation_bucket_rank": pre_alloc_bucket_rank,
+                "effective_cutoff_score": effective_cutoff_score,
+                "effective_cutoff_scope": effective_cutoff_scope,
+                "effective_cutoff_candidate_key": effective_cutoff_cand_key,
+                "score_gap_to_effective_cutoff": score_gap,
+                "allocation_rejection_reason": rejection_reason,
+                "tie_break_reason": tie_break_msg,
                 "final_rank": final_rank,
                 "final_lifecycle_status": lifecycle_status,
             }

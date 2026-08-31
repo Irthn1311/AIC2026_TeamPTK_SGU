@@ -2584,15 +2584,16 @@ def audit_p1_1_target_interval_trace(c_data: dict, run_dir_name: str) -> None:
 
     vf_data = c_data.get("video_first", {})
     fusion_trace = vf_data.get("fusion_trace", {})
+    alloc_summary = vf_data.get("allocation_summary", {})
     records = c_data.get("records", [])
     final_rank_by_fid = {int(r.get("frame_id", 0)): r.get("rank") for r in records if r.get("video_id") == target_vid}
 
-    print("\n" + "─" * 140, flush=True)
+    print("\n" + "─" * 165, flush=True)
     print(f"🎯 P1-1 GROUND TRUTH INTERVAL TRACE AUDIT (Target: {target_vid} | Interval: 264.0s-274.0s) — {run_dir_name}", flush=True)
-    print("─" * 140, flush=True)
+    print("─" * 165, flush=True)
 
-    header = f"| {'Frame ID':<10} | {'In Restricted?':<16} | {'Selection Source':<24} | {'Global Var Ranks':<24} | {'RRF Rank':<10} | {'RRF Cutoff Status':<32} | {'Post-Boost':<12} | {'Group Bucket':<24} | {'Final Lifecycle Status':<28} |"
-    sep = f"|:{'-'*10}-|:{'-'*16}-|:{'-'*24}-|:{'-'*24}-|:{'-'*10}-|:{'-'*32}-|:{'-'*12}-|:{'-'*24}-|:{'-'*28}-|"
+    header = f"| {'Frame ID':<10} | {'Restricted Status':<28} | {'RRF Rank':<10} | {'Cutoff Status':<26} | {'Pre-Alloc #':<12} | {'Bucket & Rank':<28} | {'Score Gap':<12} | {'Allocation Reason':<32} | {'Final Lifecycle':<22} |"
+    sep = f"|:{'-'*10}-|:{'-'*28}-|:{'-'*10}-|:{'-'*26}-|:{'-'*12}-|:{'-'*28}-|:{'-'*12}-|:{'-'*32}-|:{'-'*22}-|"
     print(header, flush=True)
     print(sep, flush=True)
 
@@ -2601,31 +2602,42 @@ def audit_p1_1_target_interval_trace(c_data: dict, run_dir_name: str) -> None:
         trace_info = fusion_trace.get(k)
 
         if trace_info:
-            in_pool = "YES ✅"
             sel_status = trace_info.get("restricted_selection_status", "SELECTED_RESTRICTED_RAW")
-            global_var_ranks = str(trace_info.get("global_variant_ranks", {}))
             rrf_rank = str(trace_info.get("untruncated_rrf_rank", "N/A"))
             rrf_cutoff_status = trace_info.get("rrf_cutoff_status", "N/A")
-            post_boost = str(trace_info.get("post_boost_rank") or "N/A")
-            group_bucket = str(trace_info.get("group_bucket") or "N/A")
+            pre_alloc = str(trace_info.get("pre_allocation_global_rank") or "N/A")
+            bucket = trace_info.get("group_bucket")
+            b_rank = trace_info.get("pre_allocation_bucket_rank")
+            bucket_str = f"{bucket} (#{b_rank})" if bucket and b_rank else (bucket or "N/A")
+            gap = trace_info.get("score_gap_to_effective_cutoff")
+            gap_str = f"+{gap:.8f}" if gap is not None else "N/A"
+            reason = str(trace_info.get("allocation_rejection_reason") or "None")
             lifecycle = trace_info.get("final_lifecycle_status", "N/A")
         else:
-            in_pool = "NO ❌"
             sel_status = "NOT_IN_RESTRICTED_POOL"
-            global_var_ranks = "N/A"
             rrf_rank = "N/A"
             rrf_cutoff_status = "NOT_IN_RESTRICTED_POOL"
-            post_boost = "N/A"
-            group_bucket = "N/A"
+            pre_alloc = "N/A"
+            bucket_str = "N/A"
+            gap_str = "N/A"
+            reason = "None"
             lifecycle = "NOT_IN_RESTRICTED_POOL"
 
         final_r = final_rank_by_fid.get(fid)
         if final_r is not None:
             lifecycle = f"EXPORTED_AT_RANK_{final_r} ⭐"
 
-        print(f"| {f'f{fid}':<10} | {in_pool:<16} | {sel_status:<24} | {global_var_ranks:<24} | {rrf_rank:<10} | {rrf_cutoff_status:<32} | {post_boost:<12} | {group_bucket:<24} | {lifecycle:<28} |", flush=True)
+        print(f"| {f'f{fid}':<10} | {sel_status:<28} | {rrf_rank:<10} | {rrf_cutoff_status:<26} | {pre_alloc:<12} | {bucket_str:<28} | {gap_str:<12} | {reason:<32} | {lifecycle:<22} |", flush=True)
 
-    print("─" * 140 + "\n", flush=True)
+    print("─" * 165, flush=True)
+    if alloc_summary:
+        print(f"  • Allocation Summary (Schema v{alloc_summary.get('fusion_trace_schema_version', '2.0.0')}): "
+              f"Output Cap = {alloc_summary.get('output_top_k')} | "
+              f"Passed RRF = {alloc_summary.get('candidates_passed_internal_cutoff')} | "
+              f"Primary Exported = {alloc_summary.get('exported_primary_count')}/{alloc_summary.get('total_primary_candidates')} | "
+              f"Secondary Exported = {alloc_summary.get('exported_secondary_count')}/{alloc_summary.get('total_secondary_candidates')} | "
+              f"Primary Cutoff Score = {alloc_summary.get('primary_cutoff_score')}", flush=True)
+    print("─" * 165 + "\n", flush=True)
 
 
 # ==============================================================================
