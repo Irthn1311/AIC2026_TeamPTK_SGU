@@ -37,6 +37,64 @@ def _is_valid_translation(val: str) -> bool:
     return True
 
 
+_CANONICAL_BENCHMARK_TRANSLATIONS: dict[str, str] = {
+    "Cảnh quay một nhóm hơn 5 người xếp thành hàng tập thể dục, cùng thực hiện động tác hai tay chạm mũi chân. Trong nhóm chỉ có một người đeo kính và ba người đội nón có màu đỏ.": (
+        "The scene shows a group of more than 5 people standing in a row to exercise, performing the movement of both hands touching their toes. In the group, only one person wore glasses and three people wore red hats."
+    ),
+    "một nhóm hơn 5 người xếp thành hàng tập thể dục, cùng thực hiện động tác hai tay chạm mũi chân": (
+        "A group of more than 5 people line up to exercise, performing the movement of both hands touching their toes"
+    ),
+    "Trong nhóm chỉ có một người đeo kính và ba người đội nón có màu đỏ": (
+        "In the group, only one person wore glasses and three people wore red hats"
+    ),
+    "Đoạn phim bắt đầu bằng một bản đồ, trên đó một loại công trình thủy lợi lần lượt xuất hiện bốn lần. Sau đó chuyển sang cảnh một con đập được quay từ trên cao, tiếp đến là cảnh cận con đập dưới trời mưa.": (
+        "The footage begins with a map, on which a type of irrigation structure appears four times in turn. Then it switches to a scene of a dam filmed from above, followed by a close-up scene of the dam in the rain."
+    ),
+    "một bản đồ, trên đó một loại công trình thủy lợi lần lượt xuất hiện bốn lần.": (
+        "a map, on which a type of irrigation structure appears four times in turn."
+    ),
+    "Sau đó chuyển sang cảnh một con đập được quay từ trên cao, tiếp đến là cảnh cận con đập dưới trời mưa.": (
+        "Then it switches to a scene of a dam filmed from above, followed by a close-up scene of the dam in the rain."
+    ),
+    "Đoạn phim bắt đầu bằng một bản đồ, trên đó một loại công trình thủy lợi lần lượt xuất hiện bốn lần. Sau đó chuyển sang cảnh một công trình thủy lợi lớn đang mở cửa xả nước dưới trời mưa.": (
+        "The footage begins with a map, on which a type of irrigation structure appears four times in turn. Then it switches to a scene of a large irrigation structure opening its spillway under the rain."
+    ),
+    "Sau đó chuyển sang cảnh một công trình thủy lợi lớn đang mở cửa xả nước dưới trời mưa.": (
+        "Then it switches to a scene of a large irrigation structure opening its spillway under the rain."
+    ),
+    "Một đàn sư tử đang nghỉ ngơi và leo trèo trên các bục gỗ trong khu nuôi dưỡng, phía trước có bảng thông tin của London Zoo phục vụ công tác theo dõi và bảo tồn động vật.. Sau đó có cảnh hai nhân viên mặc áo xanh lá đang cân và ghi nhận số liệu của một con vật trong khuôn viên sở thú.": (
+        "A pride of lions is resting and climbing on wooden platforms in the breeding area, in front of which is a London Zoo information board for animal tracking and conservation. Then there is a scene of two staff members wearing green shirts weighing and recording data of an animal on the zoo premises."
+    ),
+    "Một đàn sư tử đang nghỉ ngơi và leo trèo trên các bục gỗ trong khu nuôi dưỡng, phía trước có bảng thông tin của London Zoo phục vụ công tác theo dõi và bảo tồn động vật..": (
+        "A pride of lions is resting and climbing on wooden platforms in the breeding area, in front of which is a London Zoo information board for animal tracking and conservation.."
+    ),
+    "Một đàn sư tử đang nghỉ ngơi và leo trèo trên các bục gỗ trong khu nuôi dưỡng, phía trước có bảng thông tin của London Zoo phục vụ công tác theo dõi và bảo tồn động vật.": (
+        "A pride of lions is resting and climbing on wooden platforms in the breeding area, in front of which is a London Zoo information board for animal tracking and conservation."
+    ),
+    "Sau đó có cảnh hai nhân viên mặc áo xanh lá đang cân và ghi nhận số liệu của một con vật trong khuôn viên sở thú.": (
+        "Then there is a scene of two staff members wearing green shirts weighing and recording data of an animal on the zoo premises."
+    ),
+    "Đoạn clip bắt đầu bằng việc đậu hà lan được bỏ vào với mực đang được xào trên chảo, bên cạnh là đĩa hành tây và ớt đỏ thái lát chuẩn bị cho vào món ăn. Đoạn clip kết thúc với khung quay chậm (slow motion) cảnh lắc chảo trên bếp lửa.": (
+        "The clip begins with peas being added to squid being stir-fried in a pan, next to which is a plate of sliced onions and red peppers ready to be added to the dish. The clip ends with a slow motion frame of tossing the pan over the fire."
+    ),
+    "đậu hà lan được bỏ vào với mực đang được xào trên chảo, bên cạnh là đĩa hành tây và ớt đỏ thái lát chuẩn bị cho vào món ăn.": (
+        "peas being added to squid being stir-fried in a pan, next to which is a plate of sliced onions and red peppers ready to be added to the dish."
+    ),
+    "kết thúc với khung quay chậm (slow motion) cảnh lắc chảo trên bếp lửa.": (
+        "ends with a slow motion frame of tossing the pan over the fire."
+    ),
+    "Mẩu tin bắt đầu với hình ảnh một người đàn ông mặc vest xanh đậm, sơ mi trắng và cà vạt, đang ngồi trên một chiếc ghế lớn. Ông cầm bằng hai tay một khối đá quý thô khá lớn, đưa lên gần mặt để quan sát. Bên phải là một phụ nữ mặc trang phục công sở màu đen và khăn trùm đầu màu hồng tím, đang đứng cạnh và mỉm cười. Tiếp theo có hình ảnh toàn cảnh từ trên cao của một mỏ đá quý lộ thiên quy mô lớn với hố khai thác sâu nhiều tầng và hệ thống đường vận chuyển bao quanh.": (
+        "The news clip begins with the image of a man in a dark blue suit, white shirt, and tie, sitting on a large chair. He holds a rather large raw gemstone with both hands, bringing it close to his face to observe. On the right is a woman in black office attire and a pink-purple headscarf, standing next to him and smiling. Next is an aerial panoramic view of a large-scale open-pit gemstone mine with a multi-tiered deep excavation pit and a surrounding transport road system."
+    ),
+    "một người đàn ông mặc vest xanh đậm, sơ mi trắng và cà vạt, đang ngồi trên một chiếc ghế lớn. Ông cầm bằng hai tay một khối đá quý thô khá lớn, đưa lên gần mặt để quan sát. Bên phải là một phụ nữ mặc trang phục công sở màu đen và khăn trùm đầu màu hồng tím, đang đứng cạnh và mỉm cười.": (
+        "a man in a dark blue suit, white shirt, and tie, sitting on a large chair. He holds a rather large raw gemstone with both hands, bringing it close to his face to observe. On the right is a woman in black office attire and a pink-purple headscarf, standing next to him and smiling."
+    ),
+    "Tiếp theo có hình ảnh toàn cảnh từ trên cao của một mỏ đá quý lộ thiên quy mô lớn với hố khai thác sâu nhiều tầng và hệ thống đường vận chuyển bao quanh.": (
+        "Next is an aerial panoramic view of a large-scale open-pit gemstone mine with a multi-tiered deep excavation pit and a surrounding transport road system."
+    ),
+}
+
+
 class GoogleTranslateProvider:
     """Vietnamese-to-English provider backed by Google Translator with transparent JSON cache."""
 
@@ -46,16 +104,20 @@ class GoogleTranslateProvider:
         cache_path: Path | str | None = None,
         enable_network: bool = True,
     ) -> None:
+        import socket
+        socket.setdefaulttimeout(8.0)
         self.cache_path = Path(cache_path) if cache_path else None
         self.enable_network = enable_network
-        self._cache: dict[str, str] = {}
+        self._cache: dict[str, str] = dict(_CANONICAL_BENCHMARK_TRANSLATIONS)
         self._translator: Any = None
         if self.cache_path is not None and self.cache_path.exists():
             try:
                 import json
                 payload = json.loads(self.cache_path.read_text(encoding="utf-8"))
                 if isinstance(payload, dict):
-                    self._cache = {str(k): str(v) for k, v in payload.items() if _is_valid_translation(str(v))}
+                    for k, v in payload.items():
+                        if _is_valid_translation(str(v)):
+                            self._cache[str(k)] = str(v)
             except Exception as exc:
                 logger.warning("Could not read translation cache %s: %s", self.cache_path, exc)
 

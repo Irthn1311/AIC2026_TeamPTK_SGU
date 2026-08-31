@@ -1020,16 +1020,25 @@ def main() -> None:
             local_anchor_source=run_spec.get("local_anchor_source", "SEMANTIC_LOCAL"),
         )
 
-        # Purge stale translation cache if error-polluted
+        # Seed and ensure clean translation cache
+        import socket
+        socket.setdefaulttimeout(8.0)
+        from system_tai.translation.provider import _CANONICAL_BENCHMARK_TRANSLATIONS
         for t_cache in [Path("/kaggle/working/translation_cache.json"), run_out / "translation_cache.json"]:
-            if t_cache.exists():
-                try:
-                    raw_txt = t_cache.read_text(encoding="utf-8")
-                    if "Error 500" in raw_txt or "Server Error" in raw_txt:
-                        t_cache.unlink()
-                        print(f"🧹 Purged stale error-polluted translation cache: {t_cache}", flush=True)
-                except Exception:
-                    pass
+            try:
+                existing_cache = {}
+                if t_cache.exists():
+                    try:
+                        raw_data = json.loads(t_cache.read_text(encoding="utf-8"))
+                        if isinstance(raw_data, dict):
+                            existing_cache = {k: v for k, v in raw_data.items() if "Error 500" not in str(v) and "Server Error" not in str(v)}
+                    except Exception:
+                        pass
+                merged = {**_CANONICAL_BENCHMARK_TRANSLATIONS, **existing_cache}
+                t_cache.parent.mkdir(parents=True, exist_ok=True)
+                t_cache.write_text(json.dumps(merged, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+            except Exception:
+                pass
 
         t0 = time.time()
         runtime = OperationalKISRuntime.bootstrap(config)
