@@ -292,7 +292,8 @@ class KISVideoFirstOutcome:
                 for qid, per_vid in self.candidate_selection_telemetry.items()
             }
         if self.fusion_trace:
-            trace["fusion_trace_schema_version"] = "2.0.0"
+            summary = self.fusion_trace.get(("__summary__", 0), {})
+            trace["fusion_trace_schema_version"] = summary.get("fusion_trace_schema_version", "2.1.0")
             trace["fusion_trace"] = {
                 f"{vid}::{fid}": dict(info)
                 for (vid, fid), info in self.fusion_trace.items()
@@ -883,6 +884,7 @@ def fuse_restricted_frames(
                 -hit.cosine_score,
                 hit.video_id,
                 hit.frame_id,
+                hit.clip_row,
             ),
         )
         ranked = tuple(
@@ -891,32 +893,37 @@ def fuse_restricted_frames(
                 frame_id=hit.frame_id,
                 clip_row=hit.clip_row,
                 keyframe_order=hit.keyframe_order,
-                score=hit.cosine_score,
+                score=float(hit.cosine_score),
                 rank=rank,
-                source=hit.selection_source,
+                source="video_restricted_exact",
                 diagnostic_metadata={
-                    "cosine_score": hit.cosine_score,
+                    "pts_time": hit.pts_time,
                     "selection_source": hit.selection_source,
                     "raw_local_rank": hit.raw_local_rank,
-                    "pts_time": hit.pts_time,
                 },
             )
             for rank, hit in enumerate(ordered, start=1)
         )
         rankings[variant.variant_id] = KISResult(
-            query_id=query_id,
+            query_id=variant.variant_id,
             ranked_candidates=ranked,
         )
 
-    fused_top_k = internal_rrf_candidate_depth
+    fused_top_k = max(output_top_k, internal_rrf_candidate_depth)
     full_fused = None
     if collect_fusion_trace:
-        # Untruncated full fusion across all unique restricted candidates
+        unique_restricted_keys = {
+            (hit.video_id, hit.frame_id)
+            for per_video in restricted.rankings.values()
+            for hits in per_video.values()
+            for hit in hits
+        }
+        trace_depth = max(len(unique_restricted_keys), fused_top_k)
         full_fused = weighted_rrf.fuse_rankings(
             query_id=query_id,
             variants=variants,
             rankings=rankings,
-            output_top_k=200000,
+            output_top_k=trace_depth,
             rrf_constant=rrf_constant,
         )
         fused_candidates = full_fused.ranked_candidates[:fused_top_k]
@@ -1012,8 +1019,9 @@ def fuse_restricted_frames(
 
         for cand in enriched_sorted:
             vid = cand.video_id
+            is_chain_winner = bool(cand.diagnostic_metadata.get("is_temporal_chain_winner", False)) if cand.diagnostic_metadata else False
             existing = selected_frames_by_video.get(vid, [])
-            if not any(abs(cand.frame_id - f) < min_frame_gap for f in existing):
+            if is_chain_winner or not any(abs(cand.frame_id - f) < min_frame_gap for f in existing):
                 filtered_candidates.append(cand)
                 selected_frames_by_video.setdefault(vid, []).append(cand.frame_id)
             else:
@@ -1031,10 +1039,11 @@ def fuse_restricted_frames(
 
         for cand in enriched_sorted:
             vid = cand.video_id
+            is_chain_winner = bool(cand.diagnostic_metadata.get("is_temporal_chain_winner", False)) if cand.diagnostic_metadata else False
             existing_frames = selected_cluster_frames.get(vid, [])
             is_new_segment = not any(abs(cand.frame_id - f) < segment_gap for f in existing_frames)
 
-            if is_new_segment:
+            if is_chain_winner or is_new_segment:
                 primary_candidates.append(cand)
                 selected_cluster_frames.setdefault(vid, []).append(cand.frame_id)
             else:
@@ -1120,13 +1129,13 @@ def fuse_restricted_frames(
                 for cand in cands_for_vid:
                     diag = cand.diagnostic_metadata or {}
                     sel_map = diag.get("selection_by_variant", {})
+                    scores_map = diag.get("scores_by_variant", {})
                     vi_entry = None
                     vi_cosine = 0.0
                     for var_id, vdata in sel_map.items():
                         if "vi_local" in var_id:
                             vi_entry = vdata
-                            # Check if candidate has cosine_score
-                            vi_cosine = float(diag.get("cosine_score", 0.0))
+                            vi_cosine = float(scores_map.get(var_id, 0.0))
                             break
                     if vi_entry is None or "raw_local_rank" not in vi_entry:
                         continue

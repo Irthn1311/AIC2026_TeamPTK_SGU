@@ -1964,3 +1964,335 @@ def test_local_anchor_trace_on_off_canonical_projection_invariance():
     proj_on = [(c.video_id, c.frame_id, c.rank, c.score, c.source) for c in res_on.ranked_candidates]
     assert proj_off == proj_on
 
+
+def test_local_anchor_feature_off_preserves_temporal_chain_winner():
+    """Verify feature-off preserves temporal chain winner through dedup/grouping identically to B1.2."""
+    from system_tai.kis.video_first import (
+        fuse_restricted_frames,
+        FusedVideoEvidence,
+        VariantVideoEvidence,
+        TemporalChainDiagnostic,
+    )
+    from system_tai.retrieval.video_evidence import (
+        VideoRestrictedSearchOutcome,
+        RestrictedFrameHit,
+    )
+    from system_tai.retrieval.multi_query import (
+        QueryVariant,
+        QueryVariantType,
+        QueryLanguage,
+        WeightedRRFRetriever,
+    )
+
+    var = QueryVariant(
+        variant_id="sem1",
+        text="exercise",
+        language=QueryLanguage.ENGLISH,
+        variant_type=QueryVariantType.ENGLISH_TRANSLATION,
+        weight=1.0,
+    )
+    weighted_rrf = WeightedRRFRetriever(object())
+
+    # Two frames within 3s segment gap (e.g. frame 10 and frame 20 in V1).
+    # Normally frame 20 would be secondary, but if frame 20 is a chain winner, it must be primary!
+    hits_v1 = [
+        RestrictedFrameHit(video_id="V1", frame_id=10, clip_row=0, keyframe_order=1, pts_time=0.4, cosine_score=0.95, rank=1, selection_source="RAW", raw_local_rank=1),
+        RestrictedFrameHit(video_id="V1", frame_id=20, clip_row=1, keyframe_order=2, pts_time=0.8, cosine_score=0.90, rank=2, selection_source="RAW", raw_local_rank=2),
+    ]
+    restricted_outcome = VideoRestrictedSearchOutcome(
+        rankings={"sem1": {"V1": tuple(hits_v1)}},
+        physical_rows_scored=2,
+        video_store_scan_count=1,
+    )
+    selected_videos = (
+        FusedVideoEvidence(
+            video_id="V1",
+            rank=1,
+            fusion_score=0.95,
+            variant_hit_count=1,
+            primary_coverage_count=1,
+            best_individual_rank=1,
+            per_variant=(
+                VariantVideoEvidence(variant_id="sem1", weight=1.0, video_rank=1, maximum_frame_id=10, maximum_clip_row=0, maximum_cosine_score=0.95),
+            ),
+            temporal_chain=TemporalChainDiagnostic(
+                is_temporal_compound=True,
+                temporal_scene_count=2,
+                has_valid_chain=True,
+                selected_chain_frames=(20,),
+                chain_score=0.9,
+                soft_and_score=0.9,
+                balance_ratio=1.0,
+                temporal_multiplier=1.0,
+            ),
+        ),
+    )
+
+    res, trace = fuse_restricted_frames(
+        query_id="q1",
+        variants=(var,),
+        restricted=restricted_outcome,
+        selected_videos=selected_videos,
+        weighted_rrf=weighted_rrf,
+        output_top_k=2,
+        rrf_constant=60.0,
+        collect_fusion_trace=True,
+        return_trace=True,
+        enable_top_video_local_anchor=False,
+    )
+
+    # Both frames must be primary candidates because frame 20 is chain winner
+    t20 = trace[("V1", 20)]
+    assert t20["group_bucket"] == "GROUP_BUCKET_PRIMARY"
+    assert t20["final_lifecycle_status"] == "EXPORTED_AT_RANK_2"
+
+
+def test_local_anchor_vi_selector_unexported_reservation_and_displacement():
+    """Verify VI selector when best VI candidate is unexported -> VIDEO_LOCAL_RESERVED and displaces lowest unprotected."""
+    from system_tai.kis.video_first import (
+        fuse_restricted_frames,
+        FusedVideoEvidence,
+        VariantVideoEvidence,
+    )
+    from system_tai.retrieval.video_evidence import (
+        VideoRestrictedSearchOutcome,
+        RestrictedFrameHit,
+    )
+    from system_tai.retrieval.multi_query import (
+        QueryVariant,
+        QueryVariantType,
+        QueryLanguage,
+        WeightedRRFRetriever,
+    )
+
+    sem_var1 = QueryVariant(variant_id="sem1", text="exercise", language=QueryLanguage.ENGLISH, variant_type=QueryVariantType.ENGLISH_TRANSLATION, weight=1.0)
+    sem_var2 = QueryVariant(variant_id="sem2", text="workout", language=QueryLanguage.ENGLISH, variant_type=QueryVariantType.ENGLISH_EXPANSION, weight=1.0)
+    vi_var = QueryVariant(variant_id="query-q1-kis::vi_local_query", text="tap the duc", language=QueryLanguage.VIETNAMESE, variant_type=QueryVariantType.VIETNAMESE_DIRECT, weight=0.5)
+    weighted_rrf = WeightedRRFRetriever(object())
+
+    # V1 (nom #1):
+    # frame 10: rank 1 in sem1, rank 1 in sem2 -> Standard RRF score = 1/61 + 1/61 = 0.03278 (Standard Rank #1)
+    # frame 500: rank 2 in sem1, rank 1 in vi_local -> Standard RRF score = 1/62 + 0.5/61 = 0.02431 (Standard Rank #2, unexported at output_top_k=1)
+    # Since V1 is nomination #1, VI anchor reserves (V1, 500) (VI local rank #1), displacing (V1, 10) at slot 1.
+    hits_v1_sem1 = [
+        RestrictedFrameHit(video_id="V1", frame_id=10, clip_row=0, keyframe_order=1, pts_time=0.4, cosine_score=0.95, rank=1, selection_source="RAW", raw_local_rank=1),
+        RestrictedFrameHit(video_id="V1", frame_id=500, clip_row=1, keyframe_order=2, pts_time=20.0, cosine_score=0.30, rank=100, selection_source="DIVERSE", raw_local_rank=2),
+    ]
+    hits_v1_sem2 = [
+        RestrictedFrameHit(video_id="V1", frame_id=10, clip_row=0, keyframe_order=1, pts_time=0.4, cosine_score=0.95, rank=1, selection_source="RAW", raw_local_rank=1),
+    ]
+    hits_v1_vi = [
+        RestrictedFrameHit(video_id="V1", frame_id=500, clip_row=1, keyframe_order=2, pts_time=20.0, cosine_score=0.92, rank=1, selection_source="RAW", raw_local_rank=1),
+    ]
+
+    restricted_outcome = VideoRestrictedSearchOutcome(
+        rankings={
+            "sem1": {"V1": tuple(hits_v1_sem1)},
+            "sem2": {"V1": tuple(hits_v1_sem2)},
+            "query-q1-kis::vi_local_query": {"V1": tuple(hits_v1_vi)},
+        },
+        physical_rows_scored=4,
+        video_store_scan_count=1,
+    )
+    selected_videos = (
+        FusedVideoEvidence(video_id="V1", rank=1, fusion_score=0.95, variant_hit_count=3, primary_coverage_count=1, best_individual_rank=1, per_variant=(VariantVideoEvidence(variant_id="sem1", weight=1.0, video_rank=1, maximum_frame_id=10, maximum_clip_row=0, maximum_cosine_score=0.95),)),
+    )
+
+    res, trace = fuse_restricted_frames(
+        query_id="q1",
+        variants=(sem_var1, sem_var2, vi_var),
+        restricted=restricted_outcome,
+        selected_videos=selected_videos,
+        weighted_rrf=weighted_rrf,
+        output_top_k=1,
+        rrf_constant=60.0,
+        collect_fusion_trace=True,
+        return_trace=True,
+        enable_top_video_local_anchor=True,
+        local_anchor_top_video_count=1,
+        local_anchor_source="VI_LOCAL",
+    )
+
+    exported_keys = [(c.video_id, c.frame_id) for c in res.ranked_candidates]
+    assert len(exported_keys) == 1
+    assert ("V1", 500) in exported_keys
+    assert ("V1", 10) not in exported_keys  # Displaced!
+
+    anchor_t = trace[("V1", 500)]
+    assert anchor_t["allocation_selection_reason"] == "VIDEO_LOCAL_RESERVED"
+    assert anchor_t["anchor_signal_source"] == "VI_LOCAL"
+    assert anchor_t["anchor_local_rank"] == 1
+    assert anchor_t["displaced_candidate_key"] == "V1::10"
+    assert anchor_t["post_anchor_final_rank"] == 1
+
+
+def test_local_anchor_multi_anchor_batch_displacement():
+    """Verify batch displacement with m=2 anchors displacing the 2 lowest unprotected slots."""
+    from system_tai.kis.video_first import (
+        fuse_restricted_frames,
+        FusedVideoEvidence,
+        VariantVideoEvidence,
+    )
+    from system_tai.retrieval.video_evidence import (
+        VideoRestrictedSearchOutcome,
+        RestrictedFrameHit,
+    )
+    from system_tai.retrieval.multi_query import (
+        QueryVariant,
+        QueryVariantType,
+        QueryLanguage,
+        WeightedRRFRetriever,
+    )
+
+    var = QueryVariant(variant_id="sem1", text="exercise", language=QueryLanguage.ENGLISH, variant_type=QueryVariantType.ENGLISH_TRANSLATION, weight=1.0)
+    weighted_rrf = WeightedRRFRetriever(object())
+
+    # V1 (nom #1): frame 10 (rank 1, local rank 2), frame 100 (rank 10, local rank 1) -> Reserved!
+    # V2 (nom #2): frame 20 (rank 2, local rank 2), frame 200 (rank 11, local rank 1) -> Reserved!
+    # V3 (nom #3): frame 30 (rank 3, local rank 1) -> Naturally satisfied, protected!
+    # V4 (nom #4): frame 40 (rank 4, local rank 1) -> Unprotected candidate
+    # V5 (nom #5): frame 50 (rank 5, local rank 1) -> Unprotected candidate
+    hits = {
+        "V1": (
+            RestrictedFrameHit(video_id="V1", frame_id=10, clip_row=0, keyframe_order=1, pts_time=0.4, cosine_score=0.95, rank=1, selection_source="RAW", raw_local_rank=2),
+            RestrictedFrameHit(video_id="V1", frame_id=100, clip_row=1, keyframe_order=2, pts_time=20.0, cosine_score=0.50, rank=10, selection_source="DIVERSE", raw_local_rank=1),
+        ),
+        "V2": (
+            RestrictedFrameHit(video_id="V2", frame_id=20, clip_row=0, keyframe_order=1, pts_time=0.8, cosine_score=0.90, rank=2, selection_source="RAW", raw_local_rank=2),
+            RestrictedFrameHit(video_id="V2", frame_id=200, clip_row=1, keyframe_order=2, pts_time=25.0, cosine_score=0.48, rank=11, selection_source="DIVERSE", raw_local_rank=1),
+        ),
+        "V3": (
+            RestrictedFrameHit(video_id="V3", frame_id=30, clip_row=0, keyframe_order=1, pts_time=1.2, cosine_score=0.85, rank=3, selection_source="RAW", raw_local_rank=1),
+        ),
+        "V4": (
+            RestrictedFrameHit(video_id="V4", frame_id=40, clip_row=0, keyframe_order=1, pts_time=1.6, cosine_score=0.80, rank=4, selection_source="RAW", raw_local_rank=1),
+        ),
+        "V5": (
+            RestrictedFrameHit(video_id="V5", frame_id=50, clip_row=0, keyframe_order=1, pts_time=2.0, cosine_score=0.75, rank=5, selection_source="RAW", raw_local_rank=1),
+        ),
+    }
+
+    restricted_outcome = VideoRestrictedSearchOutcome(
+        rankings={"sem1": hits},
+        physical_rows_scored=7,
+        video_store_scan_count=5,
+    )
+    selected_videos = tuple(
+        FusedVideoEvidence(
+            video_id=f"V{i}",
+            rank=i,
+            fusion_score=1.0 - 0.05 * i,
+            variant_hit_count=1,
+            primary_coverage_count=1,
+            best_individual_rank=i,
+            per_variant=(VariantVideoEvidence(variant_id="sem1", weight=1.0, video_rank=i, maximum_frame_id=i * 10, maximum_clip_row=0, maximum_cosine_score=1.0 - 0.05 * i),),
+        )
+        for i in range(1, 6)
+    )
+
+    # output_top_k = 5.
+    # Standard top 5: (V1, 10), (V2, 20), (V3, 30), (V4, 40), (V5, 50).
+    # Protected: (V3, 30).
+    # Queued anchors: (V1, 100) from nom #1, (V2, 200) from nom #2 (m=2).
+    # Unprotected bottom candidates to displace: slot 5 (V5, 50) and slot 4 (V4, 40).
+    res, trace = fuse_restricted_frames(
+        query_id="q1",
+        variants=(var,),
+        restricted=restricted_outcome,
+        selected_videos=selected_videos,
+        weighted_rrf=weighted_rrf,
+        output_top_k=5,
+        rrf_constant=60.0,
+        collect_fusion_trace=True,
+        return_trace=True,
+        enable_top_video_local_anchor=True,
+        local_anchor_top_video_count=3,
+        local_anchor_source="SEMANTIC_LOCAL",
+    )
+
+    exported_keys = [(c.video_id, c.frame_id) for c in res.ranked_candidates]
+    assert len(exported_keys) == 5
+    assert ("V1", 100) in exported_keys
+    assert ("V2", 200) in exported_keys
+    assert ("V3", 30) in exported_keys  # Protected natural anchor!
+    assert ("V4", 40) not in exported_keys  # Displaced!
+    assert ("V5", 50) not in exported_keys  # Displaced!
+
+    summary = trace[("__summary__", 0)]
+    assert summary["total_local_anchors_reserved"] == 2
+    assert summary["naturally_satisfied_anchor_count"] == 1
+    assert summary["displaced_candidate_count"] == 2
+
+
+def test_top_level_schema_version_matches_summary_schema():
+    """Verify KISVideoFirstOutcome.to_trace() produces top-level schema version matching summary schema."""
+    from system_tai.kis.video_first import (
+        build_kis_video_first_outcome,
+        KISVideoFirstConfig,
+        FusedVideoEvidence,
+        VariantVideoEvidence,
+    )
+    from system_tai.retrieval.video_evidence import (
+        FullCorpusVideoMaximaOutcome,
+        VideoMaximumHit,
+        VideoRestrictedSearchOutcome,
+        RestrictedFrameHit,
+    )
+    from system_tai.retrieval.multi_query import (
+        QueryVariant,
+        QueryVariantType,
+        QueryLanguage,
+        WeightedRRFRetriever,
+    )
+
+    var = QueryVariant(variant_id="sem1", text="exercise", language=QueryLanguage.ENGLISH, variant_type=QueryVariantType.ENGLISH_TRANSLATION, weight=1.0)
+    weighted_rrf = WeightedRRFRetriever(object())
+
+    maxima = FullCorpusVideoMaximaOutcome(
+        rankings={"sem1": (VideoMaximumHit(query_id="sem1", video_id="V1", frame_id=10, clip_row=0, keyframe_order=1, cosine_score=0.95, rank=1),)},
+        physical_rows_scored=1,
+        video_store_scan_count=1,
+    )
+    hits_v1 = [
+        RestrictedFrameHit(video_id="V1", frame_id=10, clip_row=0, keyframe_order=1, pts_time=0.4, cosine_score=0.95, rank=1, selection_source="RAW", raw_local_rank=1),
+    ]
+    restricted_outcome = VideoRestrictedSearchOutcome(
+        rankings={"sem1": {"V1": tuple(hits_v1)}},
+        physical_rows_scored=1,
+        video_store_scan_count=1,
+    )
+    selected_videos = (
+        FusedVideoEvidence(
+            video_id="V1",
+            rank=1,
+            fusion_score=0.95,
+            variant_hit_count=1,
+            primary_coverage_count=1,
+            best_individual_rank=1,
+            per_variant=(
+                VariantVideoEvidence(variant_id="sem1", weight=1.0, video_rank=1, maximum_frame_id=10, maximum_clip_row=0, maximum_cosine_score=0.95),
+            ),
+        ),
+    )
+
+    config = KISVideoFirstConfig(
+        enabled=True,
+        collect_fusion_trace=True,
+        enable_top_video_local_anchor=True,
+    )
+    outcome = build_kis_video_first_outcome(
+        query_id="q1",
+        variants=(var,),
+        maxima=maxima,
+        restricted=restricted_outcome,
+        selected_videos=selected_videos,
+        weighted_rrf=weighted_rrf,
+        config=config,
+        output_top_k=1,
+        rrf_constant=60.0,
+    )
+
+    trace = outcome.to_trace()
+    assert trace["fusion_trace_schema_version"] == "2.1.0"
+    assert trace["allocation_summary"]["fusion_trace_schema_version"] == "2.1.0"
+
