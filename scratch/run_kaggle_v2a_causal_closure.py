@@ -270,13 +270,20 @@ def find_keyframe_image(
             if p.is_dir() and p not in scoped_dirs:
                 scoped_dirs.append(p)
 
-        # Broad search across dataset mount points if standard paths missing
+        # Bounded search across dataset mount points if standard paths missing (depth <= 2)
         if not scoped_dirs:
             for root_p in [dataset_root, Path("/kaggle/input")]:
                 if root_p.is_dir():
-                    for match_dir in root_p.glob(f"**/{video_id}"):
-                        if match_dir.is_dir() and match_dir not in scoped_dirs:
-                            scoped_dirs.append(match_dir)
+                    try:
+                        for sub in root_p.iterdir():
+                            if sub.is_dir():
+                                if sub.name == video_id and sub not in scoped_dirs:
+                                    scoped_dirs.append(sub)
+                                for subsub in sub.iterdir():
+                                    if subsub.is_dir() and subsub.name == video_id and subsub not in scoped_dirs:
+                                        scoped_dirs.append(subsub)
+                    except Exception:
+                        pass
 
     # 2. Test exact keyframe order match (n)
     cand_by_order: Path | None = None
@@ -779,9 +786,16 @@ def ensure_clip_model_cached() -> None:
     if target_file.is_file() and target_file.stat().st_size > 100_000_000:
         return
 
-    # Check /kaggle/input for pre-cached weights
+    # Check direct known paths in /kaggle/input (shallow only, NO recursive glob across large datasets)
     if Path("/kaggle/input").exists():
-        for p in Path("/kaggle/input").glob("**/ViT-B-32.pt"):
+        direct_checks = [
+            Path("/kaggle/input/ViT-B-32.pt"),
+            Path("/kaggle/input/openai-clip-vit-b-32/ViT-B-32.pt"),
+            Path("/kaggle/input/clip-vit-b-32/ViT-B-32.pt"),
+            Path("/kaggle/input/clip-weights/ViT-B-32.pt"),
+            Path("/kaggle/input/clip/ViT-B-32.pt"),
+        ]
+        for p in direct_checks:
             if p.is_file() and p.stat().st_size > 100_000_000:
                 print(f"  • Found pre-cached CLIP model in dataset: {p}", flush=True)
                 shutil.copy(p, target_file)
@@ -809,20 +823,6 @@ def ensure_clip_model_cached() -> None:
 
 
 def main() -> None:
-    try:
-        import clip
-    except ModuleNotFoundError:
-        print("📦 Installing OpenAI CLIP dependency (git+https://github.com/openai/CLIP.git)...", flush=True)
-        try:
-            subprocess.run(
-                [sys.executable, "-m", "pip", "install", "-q", "git+https://github.com/openai/CLIP.git", "ftfy", "regex"],
-                check=False,
-            )
-        except Exception:
-            pass
-
-    ensure_clip_model_cached()
-
     parser = argparse.ArgumentParser(description="KIS V2-A.3 Foundation Closure Audit")
     parser.add_argument(
         "--sections",
@@ -932,6 +932,8 @@ def main() -> None:
     print(f"• Python Version  : {sys.version.split()[0]}", flush=True)
     print(f"• Ablation Plan   : {', '.join(runs_to_execute)}", flush=True)
     print(f"• Active Sections : {', '.join(selected_sections) if not run_all else 'ALL SECTIONS'}\n", flush=True)
+
+    ensure_clip_model_cached()
 
     input_root = Path("/kaggle/input/datasets") if Path("/kaggle/input/datasets").exists() else Path("/kaggle/input")
     reuse_manifest_path = None
