@@ -888,23 +888,23 @@ def main() -> None:
             "collect_fusion_trace": True,
         },
         "F": {
-            "name": "Run F: RRF Candidate Depth (K=20, Hybrid=On, Gap=5s, VI=Off, RRF=500)",
+            "name": "Run F: RRF Candidate Depth (K=20, Hybrid=On, Gap=5s, VI=Off, RRF=1000)",
             "restricted_frames_per_video_per_variant": 20,
             "enable_temporal_diverse_local_candidates": True,
             "temporal_diversity_gap_seconds": 5.0,
             "enable_vi_localization_variant": False,
             "vi_localization_weight": 0.5,
-            "internal_rrf_candidate_depth": 500,
+            "internal_rrf_candidate_depth": 1000,
             "collect_fusion_trace": True,
         },
         "G": {
-            "name": "Run G: Full Combined Synergy (K=20, Hybrid=On, Gap=5s, VI=On, w=0.5, RRF=500)",
+            "name": "Run G: Full Combined Synergy (K=20, Hybrid=On, Gap=5s, VI=On, w=0.5, RRF=1000)",
             "restricted_frames_per_video_per_variant": 20,
             "enable_temporal_diverse_local_candidates": True,
             "temporal_diversity_gap_seconds": 5.0,
             "enable_vi_localization_variant": True,
             "vi_localization_weight": 0.5,
-            "internal_rrf_candidate_depth": 500,
+            "internal_rrf_candidate_depth": 1000,
             "collect_fusion_trace": True,
         },
     }
@@ -2638,6 +2638,8 @@ def run_all_5_queries_top100_visual_export(
     print("=" * 120, flush=True)
 
     manifest_path, manifest_sha, manifest_queries = load_canonical_frozen_manifest()
+    _, _, ref_data = load_frozen_reference_manifest()
+    ref_queries_map = {q.get("query_id"): q for q in ref_data.get("queries", [])}
     query_order = ["p1-1", "p1-2", "p1-4", "p1-5", "p1-6"]
 
     for q_short in query_order:
@@ -2646,11 +2648,16 @@ def run_all_5_queries_top100_visual_export(
             continue
         qid = q_data["query_id"]
         q_text = q_data["query_vi"]
-        target_vid = q_data.get("target_video", "")
+        ref_entry = ref_queries_map.get(qid, {})
+        human_vid = ref_entry.get("human_verified_video_id") or q_data.get("target_video", "")
+        legacy_vid = ref_entry.get("legacy_manifest_target", {}).get("target_video") or q_data.get("target_video", "")
         locked_gt = q_data.get("locked_gt_frame", 0)
 
         print(f"\n──────────────────────────────────────────────────────────────────────────────────────────────────", flush=True)
-        print(f"• Processing Query [{q_short}] ({qid}) | Target: {target_vid} (GT Frame: {locked_gt})", flush=True)
+        if human_vid != legacy_vid and legacy_vid:
+            print(f"• Processing Query [{q_short}] ({qid}) | Human Target: {human_vid} (Legacy: {legacy_vid})", flush=True)
+        else:
+            print(f"• Processing Query [{q_short}] ({qid}) | Target: {human_vid} (GT Frame: {locked_gt})", flush=True)
         print(f"  VI Text: \"{q_text}\"", flush=True)
         print(f"──────────────────────────────────────────────────────────────────────────────────────────────────", flush=True)
 
