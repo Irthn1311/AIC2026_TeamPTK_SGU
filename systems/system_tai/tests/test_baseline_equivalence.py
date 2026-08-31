@@ -1531,6 +1531,7 @@ def test_allocation_diagnostics_micro_gap_preservation():
         ),
     )
 
+    test_rrf_constant = 100_000.0
     res, trace = fuse_restricted_frames(
         query_id="q1",
         variants=(var,),
@@ -1538,7 +1539,7 @@ def test_allocation_diagnostics_micro_gap_preservation():
         selected_videos=selected_videos,
         weighted_rrf=weighted_rrf,
         output_top_k=1,
-        rrf_constant=60.0,
+        rrf_constant=test_rrf_constant,
         collect_fusion_trace=True,
         return_trace=True,
     )
@@ -1548,14 +1549,12 @@ def test_allocation_diagnostics_micro_gap_preservation():
     assert cand_rejected["allocation_rejection_reason"] == "SCORE_BELOW_EFFECTIVE_CUTOFF"
     gap = cand_rejected["score_gap_to_effective_cutoff"]
     assert gap is not None
-    assert gap > 0.0
-    # True mathematical gap is 1/61 - 1/62 = 1/(61*62) = 1/3782 = ~0.00026441036488630355
-    expected_gap = (1.0 / 61.0) - (1.0 / 62.0)
-    assert abs(gap - expected_gap) < 1e-12
+    assert 0.0 < gap < 1e-8
 
-
-
-
-
-
+    video_boost = 0.10 / 61.0
+    expected_gap = (
+        (1.0 / (test_rrf_constant + 1.0) + video_boost)
+        - (1.0 / (test_rrf_constant + 2.0) + video_boost)
+    )
+    assert gap == expected_gap
 

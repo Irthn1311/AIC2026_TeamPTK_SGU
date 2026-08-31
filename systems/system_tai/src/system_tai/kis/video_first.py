@@ -1120,6 +1120,7 @@ def fuse_restricted_frames(
                     "group_bucket": None,
                     "final_selection_score": None,
                     "final_sort_key": None,
+                    "pre_dedup_sort_key": None,
                     "pre_allocation_global_rank": None,
                     "pre_allocation_bucket_rank": None,
                     "effective_cutoff_score": None,
