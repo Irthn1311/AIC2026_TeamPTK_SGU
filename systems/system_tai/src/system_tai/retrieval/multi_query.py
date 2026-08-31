@@ -112,8 +112,8 @@ class WeightedRRFRetriever:
             raise ValueError("variant_id values must be unique")
         if top_k_per_variant <= 0:
             raise ValueError("top_k_per_variant must be positive")
-        if output_top_k <= 0 or output_top_k > 2000:
-            raise ValueError("output_top_k must be between 1 and 2000")
+        if output_top_k <= 0:
+            raise ValueError("output_top_k must be positive")
         if not math.isfinite(rrf_constant) or rrf_constant <= 0:
             raise ValueError("rrf_constant must be finite and positive")
 
@@ -152,8 +152,8 @@ class WeightedRRFRetriever:
             raise ValueError("variant_id values must be unique")
         if set(rankings) != set(variant_ids):
             raise ValueError("rankings must contain exactly one result per variant_id")
-        if output_top_k <= 0 or output_top_k > 2000:
-            raise ValueError("output_top_k must be between 1 and 2000")
+        if output_top_k <= 0:
+            raise ValueError("output_top_k must be positive")
         if not math.isfinite(rrf_constant) or rrf_constant <= 0:
             raise ValueError("rrf_constant must be finite and positive")
 
