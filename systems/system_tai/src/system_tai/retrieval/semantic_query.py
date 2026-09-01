@@ -377,3 +377,157 @@ def compile_vietnamese_semantic_query(
         variants=tuple(compiled),
         provider_name=provider.provider_name,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class CompiledParaphraseGroup:
+    group_id: str
+    source_text: str
+    compiled_query: CompiledSemanticQuery
+    group_weight_mass: float
+
+
+@dataclass(frozen=True, slots=True)
+class CompiledParaphraseEnsemble:
+    query_id: str
+    source_vietnamese: str
+    groups: tuple[CompiledParaphraseGroup, ...]
+    normalized_weights: Mapping[str, float]
+    hierarchical_quotas_c1: Mapping[str, int]
+    hierarchical_quotas_c2: Mapping[str, int]
+    provider_name: str
+    baseline_weight_mass: float
+    total_semantic_budget_c1: int
+    total_semantic_budget_c2: int
+
+    @property
+    def all_variants(self) -> tuple[QueryVariant, ...]:
+        result = []
+        for g in self.groups:
+            for v in g.compiled_query.variants:
+                norm_w = self.normalized_weights[v.query_variant.variant_id]
+                result.append(
+                    QueryVariant(
+                        variant_id=v.query_variant.variant_id,
+                        text=v.query_variant.text,
+                        language=v.query_variant.language,
+                        variant_type=v.query_variant.variant_type,
+                        weight=norm_w,
+                    )
+                )
+        return tuple(result)
+
+    def to_metadata(self) -> dict[str, object]:
+        return {
+            "dynamic_translation_enabled": True,
+            "paraphrase_ensemble_enabled": True,
+            "provider": self.provider_name,
+            "source_vietnamese": self.source_vietnamese,
+            "group_count": len(self.groups),
+            "baseline_weight_mass": self.baseline_weight_mass,
+            "total_semantic_budget_c1": self.total_semantic_budget_c1,
+            "total_semantic_budget_c2": self.total_semantic_budget_c2,
+            "groups": [
+                {
+                    "group_id": g.group_id,
+                    "source_text": g.source_text,
+                    "group_weight_mass": g.group_weight_mass,
+                    "unit_count": len(g.compiled_query.units),
+                    "segment_count": len(g.compiled_query.variants),
+                    "is_temporal_compound": g.compiled_query.is_temporal_compound,
+                    "units": g.compiled_query.to_metadata().get("units", []),
+                }
+                for g in self.groups
+            ],
+            "normalized_weights": dict(self.normalized_weights),
+            "quotas_c1": dict(self.hierarchical_quotas_c1),
+            "quotas_c2": dict(self.hierarchical_quotas_c2),
+        }
+
+
+def allocate_hierarchical_quotas(
+    compiled_groups: Sequence[CompiledSemanticQuery],
+    *,
+    total_semantic_budget: int,
+) -> dict[str, int]:
+    """Hierarchical two-level deterministic divmod quota allocation across paraphrase groups and compiled variants."""
+    n_groups = len(compiled_groups)
+    if n_groups == 0:
+        raise ValueError("compiled_groups must not be empty")
+    if type(total_semantic_budget) is not int or total_semantic_budget <= 0:
+        raise ValueError("total_semantic_budget must be a positive integer")
+
+    total_variants = sum(len(g.variants) for g in compiled_groups)
+    if total_semantic_budget < total_variants:
+        raise ValueError(
+            f"Insufficient semantic budget: total_budget={total_semantic_budget} < total_variants={total_variants}"
+        )
+
+    # Level 1: divmod across groups
+    q_grp, r_grp = divmod(total_semantic_budget, n_groups)
+    group_budgets: list[int] = [
+        q_grp + 1 if i < r_grp else q_grp
+        for i in range(n_groups)
+    ]
+    assert sum(group_budgets) == total_semantic_budget
+
+    # Level 2: divmod across variants within each group
+    variant_quotas: dict[str, int] = {}
+    for g_idx, (group, b_i) in enumerate(zip(compiled_groups, group_budgets, strict=True)):
+        n_vars = len(group.variants)
+        assert n_vars > 0
+        q_i, r_i = divmod(b_i, n_vars)
+        allocated_for_group = 0
+        for v_idx, variant in enumerate(group.variants):
+            k_ij = q_i + 1 if v_idx < r_i else q_i
+            variant_quotas[variant.query_variant.variant_id] = k_ij
+            allocated_for_group += k_ij
+        assert allocated_for_group == b_i, f"Group {g_idx} allocation mismatch: {allocated_for_group} != {b_i}"
+
+    assert sum(variant_quotas.values()) == total_semantic_budget
+    return variant_quotas
+
+
+def compute_normalized_ensemble_weights(
+    compiled_groups: Sequence[CompiledSemanticQuery],
+    *,
+    baseline_weight_mass: float,
+    tolerance: float = 1e-9,
+) -> dict[str, float]:
+    """Compute strictly normalized RRF weights preserving total weight mass W_0 and intra-group relative importance."""
+    n_groups = len(compiled_groups)
+    if n_groups == 0:
+        raise ValueError("compiled_groups must not be empty")
+    if not math.isfinite(baseline_weight_mass) or baseline_weight_mass <= 0:
+        raise ValueError("baseline_weight_mass must be a positive finite float")
+
+    target_group_mass = baseline_weight_mass / n_groups
+    normalized_weights: dict[str, float] = {}
+
+    for g_idx, group in enumerate(compiled_groups):
+        raw_weights = [v.query_variant.weight for v in group.variants]
+        sum_raw = sum(raw_weights)
+        if not math.isfinite(sum_raw) or sum_raw <= 0:
+            raise ValueError(f"Group {g_idx} has non-positive or non-finite weight sum: {sum_raw}")
+
+        group_mass_sum = 0.0
+        for variant in group.variants:
+            raw_w = variant.query_variant.weight
+            norm_w = float(target_group_mass * (raw_w / sum_raw))
+            if not math.isfinite(norm_w) or norm_w <= 0:
+                raise ValueError(f"Variant {variant.query_variant.variant_id} computed invalid normalized weight: {norm_w}")
+            normalized_weights[variant.query_variant.variant_id] = norm_w
+            group_mass_sum += norm_w
+
+        if abs(group_mass_sum - target_group_mass) > tolerance:
+            raise ValueError(
+                f"Group {g_idx} normalized mass mismatch: computed={group_mass_sum}, target={target_group_mass}"
+            )
+
+    total_mass = sum(normalized_weights.values())
+    if abs(total_mass - baseline_weight_mass) > tolerance:
+        raise ValueError(
+            f"Total normalized ensemble mass mismatch: computed={total_mass}, target={baseline_weight_mass}"
+        )
+
+    return normalized_weights

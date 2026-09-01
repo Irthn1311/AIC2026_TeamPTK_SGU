@@ -51,6 +51,7 @@ from system_tai.kis.video_first import (
     build_kis_video_first_outcome,
     fuse_video_maxima,
     fuse_video_maxima_v2,
+    fuse_video_maxima_v2_paraphrase_ensemble,
 )
 from system_tai.preliminary.runtime_bridge import (
     audit_runtime_top100_artifact,
@@ -85,8 +86,15 @@ from system_tai.refinement.visual_verifier import (
 )
 from system_tai.retrieval.multi_query import WeightedRRFRetriever
 from system_tai.retrieval.semantic_query import (
+    CompiledParaphraseEnsemble,
+    CompiledParaphraseGroup,
+    CompiledSemanticQuery,
+    CompiledSemanticVariant,
     SemanticQueryConfig,
+    allocate_hierarchical_quotas,
     compile_vietnamese_semantic_query,
+    compute_normalized_ensemble_weights,
+    decompose_vietnamese_semantic_units,
 )
 from system_tai.retrieval.vector_search import ExactNumpyRetriever
 from system_tai.retrieval.video_evidence import VideoRestrictedFeatureSearcher
@@ -539,6 +547,8 @@ class OperationalKISRuntime:
         translation_metadata: dict[str, Any] = {"dynamic_translation_enabled": False}
         video_first_enabled = self.config.kis_video_first_config.enabled
         compiled_semantic_query = None
+        compiled_paraphrase_ensemble: CompiledParaphraseEnsemble | None = None
+        variant_quotas_mapping: dict[str, int] | None = None
 
         if video_first_enabled:
             if self.translation_provider is None or self.token_budget_guard is None:
@@ -552,63 +562,242 @@ class OperationalKISRuntime:
                 )
             t_trans = self.clock()
             video_first_config = self.config.kis_video_first_config
-            compiled_semantic_query = compile_vietnamese_semantic_query(
-                query_id=request.query_id,
-                query_vi=request.query_vi,
-                provider=self.translation_provider,
-                token_budget_guard=self.token_budget_guard,
-                config=SemanticQueryConfig(
-                    full_query_weight=video_first_config.full_query_weight,
-                    primary_scene_weight=video_first_config.primary_scene_weight,
-                    supporting_attribute_weight=(
-                        video_first_config.supporting_attribute_weight
-                    ),
+            sem_config = SemanticQueryConfig(
+                full_query_weight=video_first_config.full_query_weight,
+                primary_scene_weight=video_first_config.primary_scene_weight,
+                supporting_attribute_weight=(
+                    video_first_config.supporting_attribute_weight
                 ),
             )
-            variants = compiled_semantic_query.query_variants
-            translation_seconds = self.clock() - t_trans
-            translation_metadata = compiled_semantic_query.to_metadata()
-            translation_metadata["translation_seconds"] = translation_seconds
 
-            # Pre-retrieval golden verification when running with immutable sidecar
-            if callable(getattr(self.translation_provider, "expected_semantic_hash", None)):
-                exp_hash = self.translation_provider.expected_semantic_hash(request.query_id)
-                exp_var_count = self.translation_provider.expected_variant_count(request.query_id)
-                
-                u_meta = translation_metadata.get("units", [])
-                semantic_payload = [
-                    {
-                        "variant_id": seg.get("variant_id"),
-                        "text": seg.get("text"),
-                        "weight": seg.get("weight"),
-                    }
-                    for unit in u_meta
-                    for seg in unit.get("segments", [])
-                ]
-                actual_compiled_sha = hashlib.sha256(
-                    json.dumps(
-                        semantic_payload,
-                        ensure_ascii=False,
-                        sort_keys=True,
-                        separators=(",", ":"),
-                    ).encode("utf-8")
-                ).hexdigest()[:12]
+            if (
+                video_first_config.enable_paraphrase_ensemble
+                and hasattr(self.translation_provider, "get_paraphrase_groups")
+            ):
+                paraphrase_groups_data = self.translation_provider.get_paraphrase_groups(request.query_id)
+                n_groups = len(paraphrase_groups_data)
+                if n_groups == 0:
+                    raise ValueError(f"No paraphrase groups found for query '{request.query_id}'")
 
-                if isinstance(exp_hash, str) and actual_compiled_sha.lower() != exp_hash.lower():
-                    raise RuntimeError(
-                        f"Pre-retrieval golden hash mismatch for query '{request.query_id}': "
-                        f"expected {exp_hash}, got {actual_compiled_sha}"
+                compiled_groups: list[CompiledParaphraseGroup] = []
+                compiled_queries_list: list[CompiledSemanticQuery] = []
+
+                for grp in paraphrase_groups_data:
+                    gid = grp["group_id"]
+                    src_text = grp.get("source_text", request.query_vi)
+
+                    units = decompose_vietnamese_semantic_units(
+                        query_id=request.query_id,
+                        query_vi=src_text,
+                        config=sem_config,
                     )
-                if isinstance(exp_var_count, int) and not isinstance(exp_var_count, bool) and len(semantic_payload) != exp_var_count:
-                    raise RuntimeError(
-                        f"Pre-retrieval variant count mismatch for query '{request.query_id}': "
-                        f"expected {exp_var_count}, got {len(semantic_payload)}"
+                    translations: list[str] = []
+                    for u in units:
+                        en_text = self.translation_provider.translate_unit(
+                            query_id=request.query_id,
+                            group_id=gid,
+                            vi_text=u.text,
+                        )
+                        translations.append(en_text)
+
+                    compiled_vars: list[CompiledSemanticVariant] = []
+                    for unit_index, (unit, raw_english) in enumerate(
+                        zip(units, translations, strict=True),
+                        start=1,
+                    ):
+                        raw_english = raw_english.strip()
+                        if not raw_english:
+                            raise ValueError(f"translation for {unit.unit_id} in group {gid} is empty")
+                        segments = tuple(self.token_budget_guard.split_for_clip(raw_english))
+                        if not segments:
+                            raise ValueError(f"translation for {unit.unit_id} produced no CLIP segments")
+                        segment_weight = unit.weight / len(segments)
+                        for segment_index, segment in enumerate(segments, start=1):
+                            var_id = (
+                                f"{request.query_id}::{gid}::semantic_{unit_index:02d}_s{segment_index:02d}"
+                                if n_groups > 1
+                                else f"{request.query_id}::semantic_{unit_index:02d}_s{segment_index:02d}"
+                            )
+                            compiled_vars.append(
+                                CompiledSemanticVariant(
+                                    query_variant=QueryVariant(
+                                        variant_id=var_id,
+                                        text=segment,
+                                        language=QueryLanguage.ENGLISH,
+                                        variant_type=QueryVariantType.ENGLISH_TRANSLATION,
+                                        weight=segment_weight,
+                                    ),
+                                    semantic_unit_id=unit.unit_id,
+                                    semantic_role=unit.role,
+                                    source_vietnamese=unit.text,
+                                    raw_english=raw_english,
+                                    segment_index=segment_index,
+                                    segment_count=len(segments),
+                                    clip_token_count=self.token_budget_guard.count_tokens(segment),
+                                    temporal_index=unit.temporal_index,
+                                )
+                            )
+
+                    cq = CompiledSemanticQuery(
+                        query_id=request.query_id,
+                        source_vietnamese=src_text,
+                        units=units,
+                        variants=tuple(compiled_vars),
+                        provider_name=getattr(self.translation_provider, "sidecar_id", "paraphrase_ensemble_sidecar"),
+                    )
+                    compiled_queries_list.append(cq)
+                    compiled_groups.append(
+                        CompiledParaphraseGroup(
+                            group_id=gid,
+                            source_text=src_text,
+                            compiled_query=cq,
+                            group_weight_mass=1.0 / n_groups,
+                        )
                     )
 
-            if callable(getattr(self.translation_provider, "sidecar_metadata", None)):
-                sidecar_meta = self.translation_provider.sidecar_metadata()
-                if isinstance(sidecar_meta, dict):
-                    translation_metadata["sidecar_telemetry"] = sidecar_meta
+                w0 = sum(v.query_variant.weight for v in compiled_queries_list[0].variants)
+                normalized_weights = compute_normalized_ensemble_weights(
+                    compiled_queries_list,
+                    baseline_weight_mass=w0,
+                )
+
+                v0_count = len(compiled_queries_list[0].variants)
+                b_sem_c1 = 20 * v0_count
+                quotas_c1 = allocate_hierarchical_quotas(
+                    compiled_queries_list,
+                    total_semantic_budget=b_sem_c1,
+                )
+
+                total_all_vars = sum(len(cq.variants) for cq in compiled_queries_list)
+                b_sem_c2 = 20 * total_all_vars
+                quotas_c2 = {
+                    v.query_variant.variant_id: 20
+                    for cq in compiled_queries_list
+                    for v in cq.variants
+                }
+
+                compiled_paraphrase_ensemble = CompiledParaphraseEnsemble(
+                    query_id=request.query_id,
+                    source_vietnamese=request.query_vi,
+                    groups=tuple(compiled_groups),
+                    normalized_weights=normalized_weights,
+                    hierarchical_quotas_c1=quotas_c1,
+                    hierarchical_quotas_c2=quotas_c2,
+                    provider_name=getattr(self.translation_provider, "sidecar_id", "paraphrase_ensemble_sidecar"),
+                    baseline_weight_mass=w0,
+                    total_semantic_budget_c1=b_sem_c1,
+                    total_semantic_budget_c2=b_sem_c2,
+                )
+                variants = compiled_paraphrase_ensemble.all_variants
+                compiled_semantic_query = compiled_queries_list[0]
+                translation_seconds = self.clock() - t_trans
+                translation_metadata = compiled_paraphrase_ensemble.to_metadata()
+                translation_metadata["translation_seconds"] = translation_seconds
+
+                if video_first_config.paraphrase_ensemble_mode == "EQUAL_BUDGET":
+                    variant_quotas_mapping = dict(quotas_c1)
+                    active_sem_budget = b_sem_c1
+                else:
+                    variant_quotas_mapping = dict(quotas_c2)
+                    active_sem_budget = b_sem_c2
+
+                # Pre-retrieval golden verification per group
+                if hasattr(self.translation_provider, "expected_group_hashes"):
+                    exp_hashes = self.translation_provider.expected_group_hashes(request.query_id)
+                    exp_var_counts = self.translation_provider.expected_group_variant_counts(request.query_id)
+
+                    for grp in compiled_groups:
+                        gid = grp.group_id
+                        exp_hash = exp_hashes.get(gid)
+                        exp_var_count = exp_var_counts.get(gid)
+
+                        semantic_payload = [
+                            {
+                                "variant_id": v.query_variant.variant_id,
+                                "text": v.query_variant.text,
+                                "weight": v.query_variant.weight,
+                            }
+                            for v in grp.compiled_query.variants
+                        ]
+                        actual_sha = hashlib.sha256(
+                            json.dumps(
+                                semantic_payload,
+                                ensure_ascii=False,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ).encode("utf-8")
+                        ).hexdigest()[:12]
+
+                        if isinstance(exp_hash, str) and actual_sha.lower() != exp_hash.lower():
+                            raise RuntimeError(
+                                f"Pre-retrieval golden hash mismatch for query '{request.query_id}', group '{gid}': "
+                                f"expected {exp_hash}, got {actual_sha}"
+                            )
+                        if isinstance(exp_var_count, int) and not isinstance(exp_var_count, bool) and len(semantic_payload) != exp_var_count:
+                            raise RuntimeError(
+                                f"Pre-retrieval variant count mismatch for query '{request.query_id}', group '{gid}': "
+                                f"expected {exp_var_count}, got {len(semantic_payload)}"
+                            )
+
+                if hasattr(self.translation_provider, "sidecar_metadata"):
+                    translation_metadata["sidecar_telemetry"] = self.translation_provider.sidecar_metadata()
+            else:
+                compiled_semantic_query = compile_vietnamese_semantic_query(
+                    query_id=request.query_id,
+                    query_vi=request.query_vi,
+                    provider=self.translation_provider,
+                    token_budget_guard=self.token_budget_guard,
+                    config=sem_config,
+                )
+                variants = compiled_semantic_query.query_variants
+                translation_seconds = self.clock() - t_trans
+                translation_metadata = compiled_semantic_query.to_metadata()
+                translation_metadata["translation_seconds"] = translation_seconds
+                active_sem_budget = 20 * len(variants)
+                variant_quotas_mapping = {
+                    v.variant_id: video_first_config.restricted_frames_per_video_per_variant
+                    for v in variants
+                }
+
+                # Pre-retrieval golden verification when running with immutable sidecar
+                if callable(getattr(self.translation_provider, "expected_semantic_hash", None)):
+                    exp_hash = self.translation_provider.expected_semantic_hash(request.query_id)
+                    exp_var_count = self.translation_provider.expected_variant_count(request.query_id)
+
+                    u_meta = translation_metadata.get("units", [])
+                    semantic_payload = [
+                        {
+                            "variant_id": seg.get("variant_id"),
+                            "text": seg.get("text"),
+                            "weight": seg.get("weight"),
+                        }
+                        for unit in u_meta
+                        for seg in unit.get("segments", [])
+                    ]
+                    actual_compiled_sha = hashlib.sha256(
+                        json.dumps(
+                            semantic_payload,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ).encode("utf-8")
+                    ).hexdigest()[:12]
+
+                    if isinstance(exp_hash, str) and actual_compiled_sha.lower() != exp_hash.lower():
+                        raise RuntimeError(
+                            f"Pre-retrieval golden hash mismatch for query '{request.query_id}': "
+                            f"expected {exp_hash}, got {actual_compiled_sha}"
+                        )
+                    if isinstance(exp_var_count, int) and not isinstance(exp_var_count, bool) and len(semantic_payload) != exp_var_count:
+                        raise RuntimeError(
+                            f"Pre-retrieval variant count mismatch for query '{request.query_id}': "
+                            f"expected {exp_var_count}, got {len(semantic_payload)}"
+                        )
+
+                if callable(getattr(self.translation_provider, "sidecar_metadata", None)):
+                    sidecar_meta = self.translation_provider.sidecar_metadata()
+                    if isinstance(sidecar_meta, dict):
+                        translation_metadata["sidecar_telemetry"] = sidecar_meta
         elif self.config.enable_dynamic_translation and self.translation_provider is not None:
             t_trans = self.clock()
             raw_en = self.translation_provider.translate(request.query_vi)
@@ -630,8 +819,6 @@ class OperationalKISRuntime:
                 "was_truncated": False,
                 "translation_seconds": translation_seconds,
             }
-            # EN_ONLY variants. Long translations are losslessly segmented,
-            # then fused at ranking level; Vietnamese is not mixed into CLIP.
             variants = tuple(
                 QueryVariant(
                     variant_id=f"{request.query_id}::vinai_en_{index:02d}",
@@ -699,7 +886,17 @@ class OperationalKISRuntime:
 
             video_fusion_started = self.clock()
             adaptive_diag = None
-            if v2_adaptive:
+            if compiled_paraphrase_ensemble is not None:
+                selected_videos, adaptive_diag = fuse_video_maxima_v2_paraphrase_ensemble(
+                    ensemble=compiled_paraphrase_ensemble,
+                    maxima=maxima,
+                    rrf_constant=self.config.rrf_constant,
+                    nomination_depth=(
+                        self.config.kis_video_first_config.video_nomination_depth
+                    ),
+                    config=self.config.kis_video_first_config,
+                )
+            elif v2_adaptive:
                 selected_videos, adaptive_diag = fuse_video_maxima_v2(
                     variants=variants,
                     maxima=maxima,
@@ -754,6 +951,9 @@ class OperationalKISRuntime:
                 )
                 localization_variants = tuple(variants) + (vi_variant,)
                 localization_vectors = np.vstack([variant_embeddings, vi_embedding[None, :]])
+                if variant_quotas_mapping is not None:
+                    variant_quotas_mapping[vi_variant.variant_id] = 20
+                vi_nominal_budget = 20
                 translation_metadata["vi_localizer_telemetry"] = {
                     "vi_localizer_enabled": True,
                     "vi_localization_weight": video_first_config.vi_localization_weight,
@@ -763,14 +963,16 @@ class OperationalKISRuntime:
             else:
                 localization_variants = variants
                 localization_vectors = variant_embeddings
+                vi_nominal_budget = 0
 
             restricted = self.video_restricted_searcher.search_selected_videos(
                 video_ids=tuple(item.video_id for item in selected_videos),
                 query_ids=tuple(variant.variant_id for variant in localization_variants),
                 query_vectors=localization_vectors,
                 per_query_result_cap=(
-                    self.config.kis_video_first_config
-                    .restricted_frames_per_video_per_variant
+                    variant_quotas_mapping
+                    if variant_quotas_mapping is not None
+                    else self.config.kis_video_first_config.restricted_frames_per_video_per_variant
                 ),
                 compulsory_frame_ids_by_video=compulsory_by_video if v2_adaptive else None,
                 enable_temporal_diversity=(
@@ -814,6 +1016,73 @@ class OperationalKISRuntime:
                 video_first_outcome.restricted_store_scan_count
             )
             fusion_seconds = video_fusion_seconds + restricted_frame_fusion_seconds
+
+            # Phase C telemetry computation
+            candidate_tel = restricted.candidate_selection_telemetry or {}
+            compulsory_extra_count = 0
+            candidate_count_before_dedup = 0
+            effective_quota_by_group_variant_video: dict[str, dict[str, int]] = {}
+
+            for qid_key, vmap in candidate_tel.items():
+                effective_quota_by_group_variant_video[qid_key] = {}
+                for vid_key, tel_dict in vmap.items():
+                    compulsory_extra_count += tel_dict.get("compulsory_extra_count", 0)
+                    cand_cnt = tel_dict.get("effective_candidate_count", 0)
+                    candidate_count_before_dedup += cand_cnt
+                    effective_quota_by_group_variant_video[qid_key][vid_key] = cand_cnt
+
+            unique_candidates_after_dedup = len(fused_result.ranked_candidates)
+            dup_rate = (
+                1.0 - (unique_candidates_after_dedup / candidate_count_before_dedup)
+                if candidate_count_before_dedup > 0
+                else 0.0
+            )
+
+            maxima_dot_evals = video_first_full_corpus_rows_scored * len(variants)
+            restricted_dot_evals = video_first_restricted_rows_scored * len(localization_variants)
+            total_logical_similarity_evaluations = maxima_dot_evals + restricted_dot_evals
+
+            phase_c_telemetry = {
+                "semantic_nominal_budget": active_sem_budget,
+                "vi_nominal_budget": vi_nominal_budget,
+                "total_nominal_budget": active_sem_budget + vi_nominal_budget,
+                "requested_quota_by_variant": variant_quotas_mapping,
+                "effective_quota_by_variant_video": effective_quota_by_group_variant_video,
+                "compulsory_extra_count": compulsory_extra_count,
+                "candidate_count_before_dedup": candidate_count_before_dedup,
+                "effective_unique_candidate_count_after_dedup": unique_candidates_after_dedup,
+                "duplication_rate": dup_rate,
+                "selected_video_count": len(selected_videos),
+                "compiled_group_count": len(compiled_paraphrase_ensemble.groups) if compiled_paraphrase_ensemble else 1,
+                "compiled_variant_count": len(variants),
+                "text_embedding_count": len(localization_variants),
+                "logical_similarity_evaluations": {
+                    "maxima_dot_evals": maxima_dot_evals,
+                    "restricted_dot_evals": restricted_dot_evals,
+                    "total_evals": total_logical_similarity_evaluations,
+                },
+                "normalized_weight_mass_by_group": (
+                    {g.group_id: sum(compiled_paraphrase_ensemble.normalized_weights[v.query_variant.variant_id] for v in g.compiled_query.variants) for g in compiled_paraphrase_ensemble.groups}
+                    if compiled_paraphrase_ensemble
+                    else {"group_0": sum(v.weight for v in variants)}
+                ),
+                "total_normalized_weight_mass": (
+                    compiled_paraphrase_ensemble.baseline_weight_mass
+                    if compiled_paraphrase_ensemble
+                    else sum(v.weight for v in variants)
+                ),
+                "timings": {
+                    "translation_seconds": translation_seconds,
+                    "text_encode_seconds": text_encode_seconds,
+                    "full_corpus_video_search_seconds": full_corpus_video_search_seconds,
+                    "video_fusion_seconds": video_fusion_seconds,
+                    "restricted_frame_search_seconds": restricted_frame_search_seconds,
+                    "restricted_frame_fusion_seconds": restricted_frame_fusion_seconds,
+                    "total_retrieval_seconds": self.clock() - retrieval_start,
+                },
+            }
+            video_first_trace["phase_c_telemetry"] = phase_c_telemetry
+            translation_metadata["phase_c_telemetry"] = phase_c_telemetry
         else:
             rankings: dict[str, KISResult] = {}
             for variant, vector in zip(variants, variant_embeddings, strict=True):

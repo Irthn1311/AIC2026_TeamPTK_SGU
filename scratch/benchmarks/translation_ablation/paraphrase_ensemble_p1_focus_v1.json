@@ -1,0 +1,237 @@
+{
+  "$schema_version": "1.0.0",
+  "sidecar_id": "paraphrase-ensemble-p1-focus-v1",
+  "translation_policy": "PARAPHRASE_ENSEMBLE_INVARIANT_FUSION",
+  "created_at": "2026-09-01T10:15:00Z",
+  "target_queries_count": 5,
+  "queries": {
+    "query-p1-1-kis": {
+      "query_vi": "Cảnh quay một nhóm hơn 5 người xếp thành hàng tập thể dục, cùng thực hiện động tác hai tay chạm mũi chân. Trong nhóm chỉ có một người đeo kính và ba người đội nón có màu đỏ.",
+      "query_vi_sha256": "1579455bb7f5b2138e7887f3f7bb401951ddc74e44f72adfa72843ff1ddd453d",
+      "paraphrase_groups": [
+        {
+          "group_id": "group_canonical_new",
+          "source_text": "Cảnh quay một nhóm hơn 5 người xếp thành hàng tập thể dục, cùng thực hiện động tác hai tay chạm mũi chân. Trong nhóm chỉ có một người đeo kính và ba người đội nón có màu đỏ.",
+          "expected_semantic_variant_sha256": "7874635d65ba",
+          "expected_variant_count": 3,
+          "unit_count": 3,
+          "units": [
+            {
+              "unit_index": 0,
+              "role": "full_query",
+              "weight": 1.0,
+              "vi_text": "Cảnh quay một nhóm hơn 5 người xếp thành hàng tập thể dục, cùng thực hiện động tác hai tay chạm mũi chân. Trong nhóm chỉ có một người đeo kính và ba người đội nón có màu đỏ.",
+              "vi_text_sha256": "1579455bb7f5b2138e7887f3f7bb401951ddc74e44f72adfa72843ff1ddd453d",
+              "en_text": "The scene shows a group of more than 5 people standing in a row to exercise, performing the movement of both hands touching their toes. In the group, only one person wore glasses and three people wore red hats."
+            },
+            {
+              "unit_index": 1,
+              "role": "primary_scene",
+              "weight": 1.0,
+              "vi_text": "một nhóm hơn 5 người xếp thành hàng tập thể dục, cùng thực hiện động tác hai tay chạm mũi chân",
+              "vi_text_sha256": "4b22bfec620604095a337527e843011b7cf81c5483e5e30cfbd3015c123d90e8",
+              "en_text": "A group of more than 5 people line up to exercise, performing the movement of both hands touching their toes"
+            },
+            {
+              "unit_index": 2,
+              "role": "supporting_attribute",
+              "weight": 0.35,
+              "vi_text": "Trong nhóm chỉ có một người đeo kính và ba người đội nón có màu đỏ",
+              "vi_text_sha256": "611e6e2ba90b4056ab1ca154736c29ed2c35ae3b28d52403b5cba825f79ac201",
+              "en_text": "In the group, only one person wore glasses and three people wore red hats"
+            }
+          ]
+        }
+      ]
+    },
+    "query-p1-2-kis": {
+      "query_vi": "Đoạn phim bắt đầu bằng một bản đồ, trên đó một loại công trình thủy lợi lần lượt xuất hiện bốn lần. Sau đó chuyển sang cảnh một con đập được quay từ trên cao, tiếp đến là cảnh cận con đập dưới trời mưa.",
+      "query_vi_sha256": "d66b15c11d2f152ba64f2d89925fa300ce40846b0774d4a852fabaf37614add0",
+      "paraphrase_groups": [
+        {
+          "group_id": "group_canonical_new",
+          "source_text": "Đoạn phim bắt đầu bằng một bản đồ, trên đó một loại công trình thủy lợi lần lượt xuất hiện bốn lần. Sau đó chuyển sang cảnh một con đập được quay từ trên cao, tiếp đến là cảnh cận con đập dưới trời mưa.",
+          "expected_semantic_variant_sha256": "55fb2063a648",
+          "expected_variant_count": 3,
+          "unit_count": 3,
+          "units": [
+            {
+              "unit_index": 0,
+              "role": "full_query",
+              "weight": 1.0,
+              "vi_text": "Đoạn phim bắt đầu bằng một bản đồ, trên đó một loại công trình thủy lợi lần lượt xuất hiện bốn lần. Sau đó chuyển sang cảnh một con đập được quay từ trên cao, tiếp đến là cảnh cận con đập dưới trời mưa.",
+              "vi_text_sha256": "d66b15c11d2f152ba64f2d89925fa300ce40846b0774d4a852fabaf37614add0",
+              "en_text": "The footage begins with a map, on which a type of irrigation structure appears four times in turn. Then it switches to a scene of a dam filmed from above, followed by a close-up scene of the dam in the rain."
+            },
+            {
+              "unit_index": 1,
+              "role": "temporal_scene",
+              "weight": 1.0,
+              "vi_text": "một bản đồ, trên đó một loại công trình thủy lợi lần lượt xuất hiện bốn lần.",
+              "vi_text_sha256": "76ce38f419c2d22f828a5f0c7c1bb5a7101d113f07c51fa4bae5e83d5b9fcd20",
+              "en_text": "a map, on which a type of irrigation structure appears four times in turn."
+            },
+            {
+              "unit_index": 2,
+              "role": "temporal_scene",
+              "weight": 1.0,
+              "vi_text": "Sau đó chuyển sang cảnh một con đập được quay từ trên cao, tiếp đến là cảnh cận con đập dưới trời mưa.",
+              "vi_text_sha256": "339ed7ccb831ea208f712ced8e17c4fdaf5c80518e68c61dd0330803ab931a86",
+              "en_text": "Then it switches to a scene of a dam filmed from above, followed by a close-up scene of the dam in the rain."
+            }
+          ]
+        }
+      ]
+    },
+    "query-p1-4-kis": {
+      "query_vi": "Một đàn sư tử đang nghỉ ngơi và leo trèo trên các bục gỗ trong khu nuôi dưỡng, phía trước có bảng thông tin của London Zoo phục vụ công tác theo dõi và bảo tồn động vật.. Sau đó có cảnh hai nhân viên mặc áo xanh lá đang cân và ghi nhận số liệu của một con vật trong khuôn viên sở thú.",
+      "query_vi_sha256": "4daf2ca0fcdd4fba3a9753e6ac49ff2ad960804bd48bc61d6803ca29384aef3f",
+      "paraphrase_groups": [
+        {
+          "group_id": "group_canonical_new",
+          "source_text": "Một đàn sư tử đang nghỉ ngơi và leo trèo trên các bục gỗ trong khu nuôi dưỡng, phía trước có bảng thông tin của London Zoo phục vụ công tác theo dõi và bảo tồn động vật.. Sau đó có cảnh hai nhân viên mặc áo xanh lá đang cân và ghi nhận số liệu của một con vật trong khuôn viên sở thú.",
+          "expected_semantic_variant_sha256": "d6ca9eddc122",
+          "expected_variant_count": 3,
+          "unit_count": 3,
+          "units": [
+            {
+              "unit_index": 0,
+              "role": "full_query",
+              "weight": 1.0,
+              "vi_text": "Một đàn sư tử đang nghỉ ngơi và leo trèo trên các bục gỗ trong khu nuôi dưỡng, phía trước có bảng thông tin của London Zoo phục vụ công tác theo dõi và bảo tồn động vật.. Sau đó có cảnh hai nhân viên mặc áo xanh lá đang cân và ghi nhận số liệu của một con vật trong khuôn viên sở thú.",
+              "vi_text_sha256": "4daf2ca0fcdd4fba3a9753e6ac49ff2ad960804bd48bc61d6803ca29384aef3f",
+              "en_text": "A pride of lions is resting and climbing on wooden platforms in the breeding area, in front of which is a London Zoo information board for animal tracking and conservation. Then there is a scene of two staff members wearing green shirts weighing and recording data of an animal on the zoo premises."
+            },
+            {
+              "unit_index": 1,
+              "role": "temporal_scene",
+              "weight": 1.0,
+              "vi_text": "Một đàn sư tử đang nghỉ ngơi và leo trèo trên các bục gỗ trong khu nuôi dưỡng, phía trước có bảng thông tin của London Zoo phục vụ công tác theo dõi và bảo tồn động vật..",
+              "vi_text_sha256": "a208c01de2c1563bbde2830b9c063a8c4af262b5805f2eac4021558d0c498bec",
+              "en_text": "A pride of lions is resting and climbing on wooden platforms in the breeding area, in front of which is a London Zoo information board for animal tracking and conservation.."
+            },
+            {
+              "unit_index": 2,
+              "role": "temporal_scene",
+              "weight": 1.0,
+              "vi_text": "Sau đó có cảnh hai nhân viên mặc áo xanh lá đang cân và ghi nhận số liệu của một con vật trong khuôn viên sở thú.",
+              "vi_text_sha256": "a4fd9f84d4d4be8f9f002b7748367f6cb859210cf3836695decf7a3ebc0a3f37",
+              "en_text": "Then there is a scene of two staff members wearing green shirts weighing and recording data of an animal on the zoo premises."
+            }
+          ]
+        }
+      ]
+    },
+    "query-p1-6-kis": {
+      "query_vi": "Mẩu tin bắt đầu với hình ảnh một người đàn ông mặc vest xanh đậm, sơ mi trắng và cà vạt, đang ngồi trên một chiếc ghế lớn. Ông cầm bằng hai tay một khối đá quý thô khá lớn, đưa lên gần mặt để quan sát. Bên phải là một phụ nữ mặc trang phục công sở màu đen và khăn trùm đầu màu hồng tím, đang đứng cạnh và mỉm cười. Tiếp theo có hình ảnh toàn cảnh từ trên cao của một mỏ đá quý lộ thiên quy mô lớn với hố khai thác sâu nhiều tầng và hệ thống đường vận chuyển bao quanh.",
+      "query_vi_sha256": "5a53510b50eb9d2ee795b67913486d24f5edc3b55621b8c98964f9d7bf12e55e",
+      "paraphrase_groups": [
+        {
+          "group_id": "group_canonical_new",
+          "source_text": "Mẩu tin bắt đầu với hình ảnh một người đàn ông mặc vest xanh đậm, sơ mi trắng và cà vạt, đang ngồi trên một chiếc ghế lớn. Ông cầm bằng hai tay một khối đá quý thô khá lớn, đưa lên gần mặt để quan sát. Bên phải là một phụ nữ mặc trang phục công sở màu đen và khăn trùm đầu màu hồng tím, đang đứng cạnh và mỉm cười. Tiếp theo có hình ảnh toàn cảnh từ trên cao của một mỏ đá quý lộ thiên quy mô lớn với hố khai thác sâu nhiều tầng và hệ thống đường vận chuyển bao quanh.",
+          "expected_semantic_variant_sha256": "52f4082c4a3c",
+          "expected_variant_count": 11,
+          "unit_count": 3,
+          "units": [
+            {
+              "unit_index": 0,
+              "role": "full_query",
+              "weight": 1.0,
+              "vi_text": "Mẩu tin bắt đầu với hình ảnh một người đàn ông mặc vest xanh đậm, sơ mi trắng và cà vạt, đang ngồi trên một chiếc ghế lớn. Ông cầm bằng hai tay một khối đá quý thô khá lớn, đưa lên gần mặt để quan sát. Bên phải là một phụ nữ mặc trang phục công sở màu đen và khăn trùm đầu màu hồng tím, đang đứng cạnh và mỉm cười. Tiếp theo có hình ảnh toàn cảnh từ trên cao của một mỏ đá quý lộ thiên quy mô lớn với hố khai thác sâu nhiều tầng và hệ thống đường vận chuyển bao quanh.",
+              "vi_text_sha256": "5a53510b50eb9d2ee795b67913486d24f5edc3b55621b8c98964f9d7bf12e55e",
+              "en_text": "The news clip begins with the image of a man in a dark blue suit, white shirt, and tie, sitting on a large chair. He holds a rather large raw gemstone with both hands, bringing it close to his face to observe. On the right is a woman in black office attire and a pink-purple headscarf, standing next to him and smiling. Next is an aerial panoramic view of a large-scale open-pit gemstone mine with a multi-tiered deep excavation pit and a surrounding transport road system."
+            },
+            {
+              "unit_index": 1,
+              "role": "temporal_scene",
+              "weight": 1.0,
+              "vi_text": "một người đàn ông mặc vest xanh đậm, sơ mi trắng và cà vạt, đang ngồi trên một chiếc ghế lớn. Ông cầm bằng hai tay một khối đá quý thô khá lớn, đưa lên gần mặt để quan sát. Bên phải là một phụ nữ mặc trang phục công sở màu đen và khăn trùm đầu màu hồng tím, đang đứng cạnh và mỉm cười.",
+              "vi_text_sha256": "04a91baa75f1dbcd435b4cf7d190a944f05c393762662dc368f0aae3e4aa8e25",
+              "en_text": "a man in a dark blue suit, white shirt, and tie, sitting on a large chair. He holds a rather large raw gemstone with both hands, bringing it close to his face to observe. On the right is a woman in black office attire and a pink-purple headscarf, standing next to him and smiling."
+            },
+            {
+              "unit_index": 2,
+              "role": "temporal_scene",
+              "weight": 1.0,
+              "vi_text": "Tiếp theo có hình ảnh toàn cảnh từ trên cao của một mỏ đá quý lộ thiên quy mô lớn với hố khai thác sâu nhiều tầng và hệ thống đường vận chuyển bao quanh.",
+              "vi_text_sha256": "7b67e7ee8b8dcbbfdc6c75fe756983e0eab5370b3d4a2f1620162029b69d4d1f",
+              "en_text": "Next is an aerial panoramic view of a large-scale open-pit gemstone mine with a multi-tiered deep excavation pit and a surrounding transport road system."
+            }
+          ]
+        }
+      ]
+    },
+    "query-p1-5-kis": {
+      "query_vi": "Đoạn clip bắt đầu bằng việc đậu hà lan được bỏ vào với mực đang được xào trên chảo, bên cạnh là đĩa hành tây và ớt đỏ thái lát chuẩn bị cho vào món ăn. Đoạn clip kết thúc với khung quay chậm (slow motion) cảnh lắc chảo trên bếp lửa.",
+      "query_vi_sha256": "fc49ba8d25ebcdd43d0e2389205ec8f4dab5f80ef25263fad0cd5ffb37ac2e4f",
+      "paraphrase_groups": [
+        {
+          "group_id": "group_canonical_new",
+          "source_text": "Đoạn clip bắt đầu bằng việc đậu hà lan được bỏ vào với mực đang được xào trên chảo, bên cạnh là đĩa hành tây và ớt đỏ thái lát chuẩn bị cho vào món ăn. Đoạn clip kết thúc với khung quay chậm (slow motion) cảnh lắc chảo trên bếp lửa.",
+          "expected_semantic_variant_sha256": "243b0f915c63",
+          "expected_variant_count": 3,
+          "unit_count": 3,
+          "units": [
+            {
+              "unit_index": 0,
+              "role": "full_query",
+              "weight": 1.0,
+              "vi_text": "Đoạn clip bắt đầu bằng việc đậu hà lan được bỏ vào với mực đang được xào trên chảo, bên cạnh là đĩa hành tây và ớt đỏ thái lát chuẩn bị cho vào món ăn. Đoạn clip kết thúc với khung quay chậm (slow motion) cảnh lắc chảo trên bếp lửa.",
+              "vi_text_sha256": "fc49ba8d25ebcdd43d0e2389205ec8f4dab5f80ef25263fad0cd5ffb37ac2e4f",
+              "en_text": "The clip begins with peas being added to squid being stir-fried in a pan, next to which is a plate of sliced onions and red peppers ready to be added to the dish. The clip ends with a slow motion frame of tossing the pan over the fire."
+            },
+            {
+              "unit_index": 1,
+              "role": "temporal_scene",
+              "weight": 1.0,
+              "vi_text": "đậu hà lan được bỏ vào với mực đang được xào trên chảo, bên cạnh là đĩa hành tây và ớt đỏ thái lát chuẩn bị cho vào món ăn.",
+              "vi_text_sha256": "9cb25d7b75c99f86fcba6eafb62714d2de82f53866c8fb6deeeee84d8bdabe83",
+              "en_text": "peas being added to squid being stir-fried in a pan, next to which is a plate of sliced onions and red peppers ready to be added to the dish."
+            },
+            {
+              "unit_index": 2,
+              "role": "temporal_scene",
+              "weight": 1.0,
+              "vi_text": "kết thúc với khung quay chậm (slow motion) cảnh lắc chảo trên bếp lửa.",
+              "vi_text_sha256": "eea68792f1625eb8b1a48b32ae2bb2d358b557f516b86d4a9d0b90f2df152321",
+              "en_text": "ends with a slow motion frame of tossing the pan over the fire."
+            }
+          ]
+        },
+        {
+          "group_id": "group_candidate_old",
+          "source_text": "Đoạn clip bắt đầu bằng việc đậu hà lan được bỏ vào với mực đang được xào trên chảo, bên cạnh là đĩa hành tây và ớt đỏ thái lát chuẩn bị cho vào món ăn. Đoạn clip kết thúc với khung quay chậm (slow motion) cảnh lắc chảo trên bếp lửa.",
+          "expected_semantic_variant_sha256": "99f24deaaf56",
+          "expected_variant_count": 3,
+          "unit_count": 3,
+          "units": [
+            {
+              "unit_index": 0,
+              "role": "full_query",
+              "weight": 1.0,
+              "vi_text": "Đoạn clip bắt đầu bằng việc đậu hà lan được bỏ vào với mực đang được xào trên chảo, bên cạnh là đĩa hành tây và ớt đỏ thái lát chuẩn bị cho vào món ăn. Đoạn clip kết thúc với khung quay chậm (slow motion) cảnh lắc chảo trên bếp lửa.",
+              "vi_text_sha256": "fc49ba8d25ebcdd43d0e2389205ec8f4dab5f80ef25263fad0cd5ffb37ac2e4f",
+              "en_text": "The clip begins with peas being added to squid being stir-fried in a pan, next to a plate of sliced onions and red peppers ready to be added to the dish. The clip ends with a slow motion scene of shaking a pan on a stove."
+            },
+            {
+              "unit_index": 1,
+              "role": "temporal_scene",
+              "weight": 1.0,
+              "vi_text": "đậu hà lan được bỏ vào với mực đang được xào trên chảo, bên cạnh là đĩa hành tây và ớt đỏ thái lát chuẩn bị cho vào món ăn.",
+              "vi_text_sha256": "9cb25d7b75c99f86fcba6eafb62714d2de82f53866c8fb6deeeee84d8bdabe83",
+              "en_text": "Peas are added to the squid being stir-fried in the pan, next to a plate of sliced onions and red peppers ready to be added to the dish."
+            },
+            {
+              "unit_index": 2,
+              "role": "temporal_scene",
+              "weight": 1.0,
+              "vi_text": "kết thúc với khung quay chậm (slow motion) cảnh lắc chảo trên bếp lửa.",
+              "vi_text_sha256": "eea68792f1625eb8b1a48b32ae2bb2d358b557f516b86d4a9d0b90f2df152321",
+              "en_text": "ending with a slow motion scene of shaking the pan on the stove."
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

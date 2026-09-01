@@ -9,6 +9,7 @@ from types import MappingProxyType
 
 from system_tai.common.schemas import CandidateFrame, KISResult
 from system_tai.retrieval.multi_query import QueryVariant, WeightedRRFRetriever
+from system_tai.retrieval.semantic_query import CompiledParaphraseEnsemble
 from system_tai.retrieval.video_evidence import (
     FullCorpusVideoMaximaOutcome,
     VideoRestrictedSearchOutcome,
@@ -50,12 +51,18 @@ class KISVideoFirstConfig:
     enable_top_video_local_anchor: bool = False
     local_anchor_top_video_count: int = 3
     local_anchor_source: str = "SEMANTIC_LOCAL"
+    enable_paraphrase_ensemble: bool = False
+    paraphrase_ensemble_mode: str = "EQUAL_BUDGET"
 
     def __post_init__(self) -> None:
         if type(self.enabled) is not bool:
             raise ValueError("enabled must be a boolean")
         if type(self.v2_adaptive_enabled) is not bool:
             raise ValueError("v2_adaptive_enabled must be a boolean")
+        if type(self.enable_paraphrase_ensemble) is not bool:
+            raise ValueError("enable_paraphrase_ensemble must be a boolean")
+        if self.paraphrase_ensemble_mode not in ("EQUAL_BUDGET", "EXPANDED_RETENTION"):
+            raise ValueError("paraphrase_ensemble_mode must be 'EQUAL_BUDGET' or 'EXPANDED_RETENTION'")
         if type(self.selected_video_cap) is not int or not (
             1 <= self.selected_video_cap <= 1000
         ):
@@ -839,6 +846,155 @@ def fuse_video_maxima_v2(
         for rank, item in enumerate(ordered, start=1)
     )
     return final_selected, adaptive_diag
+
+
+def fuse_video_maxima_v2_paraphrase_ensemble(
+    *,
+    ensemble: CompiledParaphraseEnsemble,
+    maxima: FullCorpusVideoMaximaOutcome,
+    rrf_constant: float,
+    nomination_depth: int,
+    config: KISVideoFirstConfig,
+) -> tuple[tuple[FusedVideoEvidence, ...], AdaptiveBudgetDiagnostic]:
+    """Group-aware V2-A.2 Fusion: Evaluates each paraphrase group independently, then fuses via equal-weight group RRF."""
+    n_groups = len(ensemble.groups)
+    if n_groups == 0:
+        raise ValueError("ensemble must have at least one paraphrase group")
+    if n_groups == 1:
+        g0 = ensemble.groups[0]
+        c_query = g0.compiled_query
+        g0_maxima = FullCorpusVideoMaximaOutcome(
+            rankings={v.variant_id: maxima.rankings[v.variant_id] for v in c_query.query_variants},
+            physical_rows_scored=maxima.physical_rows_scored,
+            video_store_scan_count=maxima.video_store_scan_count,
+        )
+        return fuse_video_maxima_v2(
+            variants=c_query.query_variants,
+            maxima=g0_maxima,
+            primary_variant_ids=c_query.primary_variant_ids,
+            supporting_variant_ids=c_query.supporting_variant_ids,
+            temporal_variants=tuple(item.query_variant for item in c_query.temporal_scene_variants),
+            rrf_constant=rrf_constant,
+            nomination_depth=nomination_depth,
+            config=config,
+        )
+
+    group_rankings: list[tuple[FusedVideoEvidence, ...]] = []
+    group_diags: list[AdaptiveBudgetDiagnostic] = []
+
+    for group in ensemble.groups:
+        c_query = group.compiled_query
+        g_maxima = FullCorpusVideoMaximaOutcome(
+            rankings={v.variant_id: maxima.rankings[v.variant_id] for v in c_query.query_variants},
+            physical_rows_scored=maxima.physical_rows_scored,
+            video_store_scan_count=maxima.video_store_scan_count,
+        )
+        g_fused, g_diag = fuse_video_maxima_v2(
+            variants=c_query.query_variants,
+            maxima=g_maxima,
+            primary_variant_ids=c_query.primary_variant_ids,
+            supporting_variant_ids=c_query.supporting_variant_ids,
+            temporal_variants=tuple(item.query_variant for item in c_query.temporal_scene_variants),
+            rrf_constant=rrf_constant,
+            nomination_depth=nomination_depth,
+            config=config,
+        )
+        group_rankings.append(g_fused)
+        group_diags.append(g_diag)
+
+    group_rank_maps = [
+        {item.video_id: item.rank for item in g_fused}
+        for g_fused in group_rankings
+    ]
+    group_item_maps = [
+        {item.video_id: item for item in g_fused}
+        for g_fused in group_rankings
+    ]
+
+    all_videos = sorted(group_rank_maps[0].keys())
+    group_weight = 1.0 / n_groups
+
+    staged_ensemble: list[FusedVideoEvidence] = []
+    for video_id in all_videos:
+        ensemble_score = sum(
+            group_weight / (rrf_constant + g_map[video_id])
+            for g_map in group_rank_maps
+        )
+        best_chain: TemporalChainDiagnostic | None = None
+        best_chain_score = -1.0
+        best_coverage: ClauseCoverageMetadata | None = None
+        all_provenance: list[VariantVideoEvidence] = []
+        best_indiv_rank = 999999
+        sum_primary_cov = 0
+        sum_variant_hits = 0
+
+        for g_idx in range(n_groups):
+            g_item = group_item_maps[g_idx][video_id]
+            all_provenance.extend(g_item.per_variant)
+            best_indiv_rank = min(best_indiv_rank, g_item.best_individual_rank)
+            sum_primary_cov += g_item.primary_coverage_count
+            sum_variant_hits += g_item.variant_hit_count
+
+            if g_item.temporal_chain:
+                if g_item.temporal_chain.has_valid_chain and g_item.temporal_chain.chain_score > best_chain_score:
+                    best_chain = g_item.temporal_chain
+                    best_chain_score = g_item.temporal_chain.chain_score
+                elif best_chain is None:
+                    best_chain = g_item.temporal_chain
+
+            if best_coverage is None or (g_item.coverage_metadata and g_item.coverage_metadata.coverage_ratio > best_coverage.coverage_ratio):
+                best_coverage = g_item.coverage_metadata
+
+        avg_primary_cov = int(round(sum_primary_cov / n_groups))
+        avg_variant_hits = int(round(sum_variant_hits / n_groups))
+
+        staged_ensemble.append(
+            FusedVideoEvidence(
+                video_id=video_id,
+                rank=0,
+                fusion_score=float(ensemble_score),
+                variant_hit_count=avg_variant_hits,
+                primary_coverage_count=avg_primary_cov,
+                best_individual_rank=best_indiv_rank,
+                per_variant=tuple(all_provenance),
+                coverage_metadata=best_coverage,
+                temporal_chain=best_chain,
+            )
+        )
+
+    ordered = sorted(
+        staged_ensemble,
+        key=lambda item: (-item.fusion_score, item.video_id),
+    )
+
+    chosen_k = max(d.chosen_k for d in group_diags)
+    final_cap = min(chosen_k, config.selected_video_cap) if config.selected_video_cap else chosen_k
+    selected = tuple(
+        FusedVideoEvidence(
+            video_id=item.video_id,
+            rank=rank,
+            fusion_score=item.fusion_score,
+            variant_hit_count=item.variant_hit_count,
+            primary_coverage_count=item.primary_coverage_count,
+            best_individual_rank=item.best_individual_rank,
+            per_variant=item.per_variant,
+            coverage_metadata=item.coverage_metadata,
+            temporal_chain=item.temporal_chain,
+        )
+        for rank, item in enumerate(ordered[:final_cap], start=1)
+    )
+
+    combined_diag = AdaptiveBudgetDiagnostic(
+        chosen_k=final_cap,
+        complexity_k=group_diags[0].complexity_k,
+        uncertainty_k=group_diags[0].uncertainty_k,
+        normalized_entropy=group_diags[0].normalized_entropy,
+        top1_top5_margin=group_diags[0].top1_top5_margin,
+        top1_top16_margin=group_diags[0].top1_top16_margin,
+        is_flat=any(d.is_flat for d in group_diags),
+        adaptive_reasons=tuple(f"group_{i}:{','.join(d.adaptive_reasons)}" for i, d in enumerate(group_diags)),
+    )
+    return selected, combined_diag
 
 
 def fuse_restricted_frames(

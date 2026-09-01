@@ -213,7 +213,7 @@ def rank_store_frames(
     ),
     expected_dimension: int,
     chunk_size: int,
-    per_query_cap: int | None = None,
+    per_query_cap: int | Mapping[str, int] | None = None,
     query_vectors_are_normalized: bool = False,
     compulsory_frame_ids: Sequence[int] | None = None,
     enable_temporal_diversity: bool = False,
@@ -231,10 +231,16 @@ def rank_store_frames(
         raise ValueError("query_ids must contain non-empty strings")
     if type(chunk_size) is not int or chunk_size <= 0:
         raise ValueError("chunk_size must be a positive integer")
-    if per_query_cap is not None and (
-        type(per_query_cap) is not int or per_query_cap <= 0
-    ):
-        raise ValueError("per_query_cap must be a positive integer when provided")
+    if per_query_cap is not None:
+        if isinstance(per_query_cap, Mapping):
+            for qid in query_ids:
+                if qid not in per_query_cap:
+                    raise ValueError(f"Missing per_query_cap for query_id: '{qid}'")
+                cap_val = per_query_cap[qid]
+                if type(cap_val) is not int or cap_val <= 0:
+                    raise ValueError(f"per_query_cap for '{qid}' must be a positive integer, got {cap_val}")
+        elif type(per_query_cap) is not int or per_query_cap <= 0:
+            raise ValueError("per_query_cap must be a positive integer or Mapping[str, int] when provided")
     if store.descriptor.embedding_dimension != expected_dimension:
         raise ValueError(
             f"feature dimension mismatch for {store.descriptor.video_id}: "
@@ -294,23 +300,29 @@ def rank_store_frames(
             best_by_query_frame[query_index].values(),
             key=_frame_sort_key,
         )
-        if enable_temporal_diversity and per_query_cap is not None:
+        current_cap = (
+            per_query_cap[query_id]
+            if isinstance(per_query_cap, Mapping)
+            else per_query_cap
+        )
+        if enable_temporal_diversity and current_cap is not None:
+            current_raw_k = min(raw_top_k, current_cap)
             hybrid_hits, tel = select_hybrid_candidates(
                 all_ordered,
-                total_budget=per_query_cap,
-                raw_top_k=raw_top_k,
+                total_budget=current_cap,
+                raw_top_k=current_raw_k,
                 min_pts_gap_seconds=temporal_diversity_gap_seconds,
                 compulsory_frame_ids=compulsory_frame_ids,
             )
             rankings[query_id] = hybrid_hits
             telemetries[query_id] = tel
         else:
-            if per_query_cap is not None:
-                capped = all_ordered[:per_query_cap]
+            if current_cap is not None:
+                capped = all_ordered[:current_cap]
                 if compulsory_set:
                     capped_fids = {hit.frame_id for hit in capped}
                     missing_compulsory = [
-                        hit for hit in all_ordered[per_query_cap:]
+                        hit for hit in all_ordered[current_cap:]
                         if hit.frame_id in compulsory_set and hit.frame_id not in capped_fids
                     ]
                     ordered = capped + missing_compulsory
@@ -340,7 +352,7 @@ def rank_store_frames(
                 for rank, hit in enumerate(ordered, start=1)
             )
             telemetries[query_id] = {
-                "nominal_budget": per_query_cap if per_query_cap is not None else len(all_ordered),
+                "nominal_budget": current_cap if current_cap is not None else len(all_ordered),
                 "normal_candidate_count": len(capped),
                 "compulsory_extra_count": len(missing_compulsory),
                 "effective_candidate_count": len(ordered),
@@ -379,48 +391,56 @@ class VideoRestrictedFeatureSearcher:
             raise ValueError("top_m_evidence_cap must be a positive integer")
         if type(top_m_min_frame_gap) is not int or top_m_min_frame_gap < 0:
             raise ValueError("top_m_min_frame_gap must be a non-negative integer")
+        if not top_m_weights or any(
+            not math.isfinite(w) or w <= 0 for w in top_m_weights
+        ):
+            raise ValueError("top_m_weights must contain positive finite floats")
 
         by_query: dict[str, list[VideoMaximumHit]] = {
             query_id: [] for query_id in query_ids
         }
-        per_query_cap = max(1, top_m_evidence_cap * 5) if top_m_evidence_cap > 1 else 1
-
-        for store in self.registry.stores:
+        for video_id in sorted(self.registry.stores.keys()):
+            store = self.registry.get(video_id)
             per_store = rank_store_frames(
                 store,
                 query_ids=query_ids,
                 query_vectors=query_vectors,
                 expected_dimension=self.registry.embedding_dimension,
                 chunk_size=self.chunk_size,
-                per_query_cap=per_query_cap,
+                per_query_cap=None,
             )
+            assert isinstance(per_store, dict)
             for query_id in query_ids:
-                store_hits = per_store[query_id]
-                best_hit = store_hits[0]
-                selected_scores: list[float] = []
-                selected_frames: list[int] = []
-                selected_peaks: list[tuple[int, float]] = []
+                hits = per_store[query_id]
+                best_hit = hits[0]
+
+                # Top-M Multi-Evidence Pooling
                 if top_m_evidence_cap <= 1:
                     top_m_val = float(best_hit.cosine_score)
-                    selected_peaks = [(best_hit.frame_id, float(best_hit.cosine_score))]
+                    selected_peaks = ()
                 else:
-                    for h in store_hits:
-                        if all(
-                            abs(h.frame_id - prev_f) >= top_m_min_frame_gap
-                            for prev_f in selected_frames
-                        ):
-                            selected_scores.append(float(h.cosine_score))
-                            selected_frames.append(h.frame_id)
+                    selected_peaks: list[tuple[int, float]] = []
+                    weights = list(top_m_weights[:top_m_evidence_cap])
+                    if len(weights) < top_m_evidence_cap:
+                        weights.extend([weights[-1]] * (top_m_evidence_cap - len(weights)))
+
+                    for h in hits:
+                        if len(selected_peaks) >= top_m_evidence_cap:
+                            break
+                        if not selected_peaks:
                             selected_peaks.append((h.frame_id, float(h.cosine_score)))
-                            if len(selected_scores) >= top_m_evidence_cap:
-                                break
-                    weights = list(top_m_weights[:len(selected_scores)])
-                    w_sum = sum(weights)
+                        else:
+                            if all(abs(h.frame_id - peak_fid) >= top_m_min_frame_gap for peak_fid, _ in selected_peaks):
+                                selected_peaks.append((h.frame_id, float(h.cosine_score)))
+
+                    selected_scores = [p[1] for p in selected_peaks]
+                    w_sum = sum(weights[:len(selected_scores)])
                     top_m_val = (
                         sum(w * s for w, s in zip(weights, selected_scores)) / w_sum
                         if w_sum > 0
                         else float(best_hit.cosine_score)
                     )
+                    selected_peaks = tuple(selected_peaks)
 
                 by_query[query_id].append(
                     VideoMaximumHit(
@@ -432,7 +452,7 @@ class VideoRestrictedFeatureSearcher:
                         cosine_score=best_hit.cosine_score,
                         rank=0,
                         top_m_score=top_m_val,
-                        top_m_peaks=tuple(selected_peaks),
+                        top_m_peaks=selected_peaks,
                     )
                 )
 
@@ -474,7 +494,7 @@ class VideoRestrictedFeatureSearcher:
         query_vectors: (
             Sequence[Sequence[float] | NDArray[np.number]] | NDArray[np.number]
         ),
-        per_query_result_cap: int,
+        per_query_result_cap: int | Mapping[str, int],
         compulsory_frame_ids_by_video: Mapping[str, Sequence[int]] | None = None,
         enable_temporal_diversity: bool = False,
         temporal_diversity_gap_seconds: float = 5.0,
@@ -484,8 +504,15 @@ class VideoRestrictedFeatureSearcher:
             raise ValueError("video_ids must not be empty")
         if len(set(video_ids)) != len(video_ids):
             raise ValueError("video_ids must be unique")
-        if type(per_query_result_cap) is not int or per_query_result_cap <= 0:
-            raise ValueError("per_query_result_cap must be a positive integer")
+        if isinstance(per_query_result_cap, Mapping):
+            for qid in query_ids:
+                if qid not in per_query_result_cap:
+                    raise ValueError(f"Missing per_query_result_cap for query_id: '{qid}'")
+                cap_val = per_query_result_cap[qid]
+                if type(cap_val) is not int or cap_val <= 0:
+                    raise ValueError(f"per_query_result_cap for '{qid}' must be a positive integer, got {cap_val}")
+        elif type(per_query_result_cap) is not int or per_query_result_cap <= 0:
+            raise ValueError("per_query_result_cap must be a positive integer or Mapping[str, int]")
 
         selected = tuple(sorted(video_ids))
         rankings: dict[str, dict[str, tuple[RestrictedFrameHit, ...]]] = {
