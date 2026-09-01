@@ -450,3 +450,6 @@ class FeatureStoreRegistry:
     def contains(self, video_id: str, frame_id: int) -> bool:
         store = self._by_video.get(video_id)
         return store is not None and store.contains_frame(frame_id)
+
+    def keys(self) -> tuple[str, ...]:
+        return tuple(self._by_video.keys())
