@@ -946,6 +946,19 @@ def main() -> None:
             "local_anchor_top_video_count": 3,
             "local_anchor_source": "VI_LOCAL",
         },
+        "J": {
+            "name": "Run J: VI-Local Anchor Top-1 (K=20, Hybrid=On, Gap=5s, VI=On, w=0.5, RRF=1000, Anchor=VI, TopVideos=1)",
+            "restricted_frames_per_video_per_variant": 20,
+            "enable_temporal_diverse_local_candidates": True,
+            "temporal_diversity_gap_seconds": 5.0,
+            "enable_vi_localization_variant": True,
+            "vi_localization_weight": 0.5,
+            "internal_rrf_candidate_depth": 1000,
+            "collect_fusion_trace": True,
+            "enable_top_video_local_anchor": True,
+            "local_anchor_top_video_count": 1,
+            "local_anchor_source": "VI_LOCAL",
+        },
     }
 
     args, _ = parser.parse_known_args()
