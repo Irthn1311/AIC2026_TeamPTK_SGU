@@ -248,7 +248,7 @@ def run_phase_c_audit(
         try:
             # Audit corpus characteristics once
             if not corpus_verified:
-                v_count = len(runtime.registry.keys())
+                v_count = len(runtime.registry.stores)
                 r_count = runtime.registry.total_rows
                 d_count = runtime.registry.embedding_dimension
                 fp = getattr(runtime.manifest, "fingerprint", "UNKNOWN")
