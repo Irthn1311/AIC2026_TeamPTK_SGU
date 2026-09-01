@@ -603,6 +603,7 @@ def fuse_video_maxima_v2(
     rrf_constant: float,
     nomination_depth: int,
     config: KISVideoFirstConfig,
+    return_full_ranking: bool = False,
 ) -> tuple[tuple[FusedVideoEvidence, ...], AdaptiveBudgetDiagnostic]:
     """V2-A.2 Fusion: Soft-AND Multi-Clause Coverage + DP Temporal Chain Solver + Top-M Spacing."""
     variants = tuple(variants)
@@ -792,17 +793,30 @@ def fuse_video_maxima_v2(
             )
         )
 
-    # 3. Determine Candidate Budget K
-    if is_temporal_compound:
-        chosen_k = 64
-        # Compute diagnostics for logging
-        scores_sorted = sorted(raw_evidence_scores_list, reverse=True)
-        d1_5 = float(scores_sorted[0] - scores_sorted[min(4, len(scores_sorted)-1)]) if scores_sorted else 0.0
-        d1_16 = float(scores_sorted[0] - scores_sorted[min(15, len(scores_sorted)-1)]) if len(scores_sorted) > 15 else 0.0
+    # 3. Dynamic Video Budgeting
+    v2_adaptive = config.v2_adaptive_enabled
+    scores_sorted = sorted(raw_evidence_scores_list, reverse=True)
+    d1_5 = float(scores_sorted[0] - scores_sorted[min(4, len(scores_sorted)-1)]) if scores_sorted else 0.0
+    d1_16 = float(scores_sorted[0] - scores_sorted[min(15, len(scores_sorted)-1)]) if len(scores_sorted) > 15 else 0.0
+
+    if not v2_adaptive:
+        chosen_k = config.selected_video_cap
         adaptive_diag = AdaptiveBudgetDiagnostic(
-            chosen_k=64,
-            complexity_k=64,
-            uncertainty_k=64,
+            chosen_k=chosen_k,
+            complexity_k=chosen_k,
+            uncertainty_k=chosen_k,
+            normalized_entropy=0.5,
+            top1_top5_margin=d1_5,
+            top1_top16_margin=d1_16,
+            is_flat=False,
+            adaptive_reasons=("fixed_cap",),
+        )
+    elif is_temporal_compound and len(temporal_variants) >= 2:
+        chosen_k = config.selected_video_cap
+        adaptive_diag = AdaptiveBudgetDiagnostic(
+            chosen_k=chosen_k,
+            complexity_k=chosen_k,
+            uncertainty_k=chosen_k,
             normalized_entropy=0.85,
             top1_top5_margin=d1_5,
             top1_top16_margin=d1_16,
@@ -820,7 +834,7 @@ def fuse_video_maxima_v2(
             high_k=config.adaptive_budget_high,
         )
 
-    ordered = sorted(
+    ordered_all = sorted(
         staged,
         key=lambda item: (
             -item.fusion_score,
@@ -829,7 +843,8 @@ def fuse_video_maxima_v2(
             item.best_individual_rank,
             item.video_id,
         ),
-    )[:chosen_k]
+    )
+    ordered = ordered_all if return_full_ranking else ordered_all[:chosen_k]
 
     final_selected = tuple(
         FusedVideoEvidence(
@@ -856,7 +871,7 @@ def fuse_video_maxima_v2_paraphrase_ensemble(
     nomination_depth: int,
     config: KISVideoFirstConfig,
 ) -> tuple[tuple[FusedVideoEvidence, ...], AdaptiveBudgetDiagnostic]:
-    """Group-aware V2-A.2 Fusion: Evaluates each paraphrase group independently, then fuses via equal-weight group RRF."""
+    """Group-aware V2-A.2 Fusion: Evaluates each paraphrase group independently over full corpus, then fuses via equal-weight group RRF."""
     n_groups = len(ensemble.groups)
     if n_groups == 0:
         raise ValueError("ensemble must have at least one paraphrase group")
@@ -877,6 +892,7 @@ def fuse_video_maxima_v2_paraphrase_ensemble(
             rrf_constant=rrf_constant,
             nomination_depth=nomination_depth,
             config=config,
+            return_full_ranking=False,
         )
 
     group_rankings: list[tuple[FusedVideoEvidence, ...]] = []
@@ -898,6 +914,7 @@ def fuse_video_maxima_v2_paraphrase_ensemble(
             rrf_constant=rrf_constant,
             nomination_depth=nomination_depth,
             config=config,
+            return_full_ranking=True,
         )
         group_rankings.append(g_fused)
         group_diags.append(g_diag)
@@ -915,6 +932,8 @@ def fuse_video_maxima_v2_paraphrase_ensemble(
     group_weight = 1.0 / n_groups
 
     staged_ensemble: list[FusedVideoEvidence] = []
+    raw_ensemble_scores_list: list[float] = []
+
     for video_id in all_videos:
         ensemble_score = sum(
             group_weight / (rrf_constant + g_map[video_id])
@@ -948,11 +967,12 @@ def fuse_video_maxima_v2_paraphrase_ensemble(
         avg_primary_cov = int(round(sum_primary_cov / n_groups))
         avg_variant_hits = int(round(sum_variant_hits / n_groups))
 
+        raw_ensemble_scores_list.append(ensemble_score)
         staged_ensemble.append(
             FusedVideoEvidence(
                 video_id=video_id,
                 rank=0,
-                fusion_score=float(ensemble_score),
+                fusion_score=ensemble_score,
                 variant_hit_count=avg_variant_hits,
                 primary_coverage_count=avg_primary_cov,
                 best_individual_rank=best_indiv_rank,

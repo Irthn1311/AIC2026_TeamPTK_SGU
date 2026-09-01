@@ -381,3 +381,151 @@ def test_fixture_level_c0_c1_c2_negative_controls_parity():
     norm_weights = compute_normalized_ensemble_weights([g0], baseline_weight_mass=w0)
     for v in g0.variants:
         assert abs(norm_weights[v.query_variant.variant_id] - v.query_variant.weight) < 1e-9
+
+
+def test_paraphrase_sidecar_expected_group_hashes_real_values():
+    """Verify expected_group_hashes and variant counts return real non-None values across all 5 queries."""
+    sidecar_path = Path("scratch/benchmarks/translation_ablation/paraphrase_ensemble_p1_focus_v1.json")
+    provider = ImmutableParaphraseEnsembleSidecarProvider(sidecar_path)
+
+    # Treatment query P1-5
+    p15_hashes = provider.expected_group_hashes("query-p1-5-kis")
+    assert p15_hashes == {
+        "group_canonical_new": "243b0f915c63",
+        "group_candidate_old": "99f24deaaf56",
+    }
+    p15_counts = provider.expected_group_variant_counts("query-p1-5-kis")
+    assert p15_counts == {"group_canonical_new": 3, "group_candidate_old": 3}
+
+    # Also check short ID resolution
+    assert provider.expected_group_hashes("p1-5") == p15_hashes
+
+    # Negative controls
+    assert provider.expected_group_hashes("query-p1-1-kis") == {"group_canonical_new": "7874635d65ba"}
+    assert provider.expected_group_hashes("query-p1-2-kis") == {"group_canonical_new": "55fb2063a648"}
+    assert provider.expected_group_hashes("query-p1-4-kis") == {"group_canonical_new": "d6ca9eddc122"}
+    assert provider.expected_group_hashes("query-p1-6-kis") == {"group_canonical_new": "52f4082c4a3c"}
+
+
+def test_group_aware_disjoint_video_rankings_no_key_error():
+    """Verify that when 2 groups have completely disjoint top videos, fusion evaluates all corpus videos without KeyError."""
+    from system_tai.kis.video_first import KISVideoFirstConfig, fuse_video_maxima_v2_paraphrase_ensemble
+    from system_tai.retrieval.video_evidence import FullCorpusVideoMaximaOutcome, VideoMaximumHit
+
+    g0 = _make_mock_compiled_query("q_disjoint", "g0", 1)
+    g1 = _make_mock_compiled_query("q_disjoint", "g1", 1)
+
+    v0_id = g0.variants[0].query_variant.variant_id
+    v1_id = g1.variants[0].query_variant.variant_id
+
+    # 4 videos in corpus: V1, V2, V3, V4
+    # G0 ranks: V1 (#1), V2 (#2), V3 (#3), V4 (#4)
+    # G1 ranks: V3 (#1), V4 (#2), V1 (#3), V2 (#4)
+    hits_v0 = (
+        VideoMaximumHit(query_id=v0_id, video_id="V1", rank=1, frame_id=10, clip_row=0, keyframe_order=0, cosine_score=0.9, top_m_score=0.9, top_m_peaks=((10, 0.9),)),
+        VideoMaximumHit(query_id=v0_id, video_id="V2", rank=2, frame_id=10, clip_row=0, keyframe_order=0, cosine_score=0.8, top_m_score=0.8, top_m_peaks=((10, 0.8),)),
+        VideoMaximumHit(query_id=v0_id, video_id="V3", rank=3, frame_id=10, clip_row=0, keyframe_order=0, cosine_score=0.5, top_m_score=0.5, top_m_peaks=((10, 0.5),)),
+        VideoMaximumHit(query_id=v0_id, video_id="V4", rank=4, frame_id=10, clip_row=0, keyframe_order=0, cosine_score=0.4, top_m_score=0.4, top_m_peaks=((10, 0.4),)),
+    )
+    hits_v1 = (
+        VideoMaximumHit(query_id=v1_id, video_id="V3", rank=1, frame_id=20, clip_row=0, keyframe_order=0, cosine_score=0.95, top_m_score=0.95, top_m_peaks=((20, 0.95),)),
+        VideoMaximumHit(query_id=v1_id, video_id="V4", rank=2, frame_id=20, clip_row=0, keyframe_order=0, cosine_score=0.85, top_m_score=0.85, top_m_peaks=((20, 0.85),)),
+        VideoMaximumHit(query_id=v1_id, video_id="V1", rank=3, frame_id=20, clip_row=0, keyframe_order=0, cosine_score=0.6, top_m_score=0.6, top_m_peaks=((20, 0.6),)),
+        VideoMaximumHit(query_id=v1_id, video_id="V2", rank=4, frame_id=20, clip_row=0, keyframe_order=0, cosine_score=0.3, top_m_score=0.3, top_m_peaks=((20, 0.3),)),
+    )
+
+    maxima = FullCorpusVideoMaximaOutcome(
+        rankings={v0_id: hits_v0, v1_id: hits_v1},
+        physical_rows_scored=400,
+        video_store_scan_count=1,
+    )
+
+    ensemble = CompiledParaphraseEnsemble(
+        query_id="q_disjoint",
+        source_vietnamese="test vi",
+        groups=(
+            CompiledParaphraseGroup(group_id="g0", source_text="test vi", compiled_query=g0, group_weight_mass=0.5),
+            CompiledParaphraseGroup(group_id="g1", source_text="test vi", compiled_query=g1, group_weight_mass=0.5),
+        ),
+        normalized_weights={v0_id: 0.5, v1_id: 0.5},
+        hierarchical_quotas_c1={v0_id: 10, v1_id: 10},
+        hierarchical_quotas_c2={v0_id: 20, v1_id: 20},
+        provider_name="mock",
+        baseline_weight_mass=1.0,
+        total_semantic_budget_c1=20,
+        total_semantic_budget_c2=40,
+    )
+
+    cfg = KISVideoFirstConfig(enabled=True, v2_adaptive_enabled=False, selected_video_cap=2)
+    selected, diag = fuse_video_maxima_v2_paraphrase_ensemble(
+        ensemble=ensemble,
+        maxima=maxima,
+        rrf_constant=60.0,
+        nomination_depth=100,
+        config=cfg,
+    )
+
+    assert len(selected) == 2
+    # Ranks must be contiguous 1..2
+    assert [item.rank for item in selected] == [1, 2]
+    # No KeyError occurred and all 4 videos were scored
+
+
+def test_c0_immutable_sidecar_provider_contract():
+    """Verify C0 sidecar provider loads canonical T-new sidecar and has all query translations."""
+    from system_tai.translation.sidecar_provider import ImmutableSidecarTranslationProvider
+
+    tnew_path = Path("scratch/benchmarks/translation_ablation/translation_p1_focus_v2_new.json")
+    assert tnew_path.exists()
+
+    expected_sha = "545bd4a37c57af53713a1d9f382241ef729c287a1817a5671fdc923115b0be2a"
+    provider = ImmutableSidecarTranslationProvider(tnew_path, expected_content_sha256=expected_sha)
+    assert provider.sidecar_id == "translation-p1-focus-v2-new"
+
+    for qid in ["query-p1-1-kis", "query-p1-2-kis", "query-p1-4-kis", "query-p1-5-kis", "query-p1-6-kis"]:
+        exp_h = provider.expected_semantic_hash(qid)
+        assert isinstance(exp_h, str) and len(exp_h) == 12
+
+
+def test_session_config_validates_and_constructs():
+    """Verify SessionConfig constructs cleanly with runner fields."""
+    from system_tai.kis.session_schema import SessionConfig, KISVideoFirstConfig
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        tdp = Path(td)
+        vf_cfg = KISVideoFirstConfig(
+            enabled=True,
+            v2_adaptive_enabled=True,
+            selected_video_cap=64,
+            restricted_frames_per_video_per_variant=20,
+            enable_paraphrase_ensemble=True,
+            paraphrase_ensemble_mode="EQUAL_BUDGET",
+        )
+        cfg = SessionConfig(
+            input_root=tdp / "features",
+            reuse_manifest=tdp / "manifest.json",
+            output_root=tdp / "out",
+            enable_dynamic_translation=True,
+            allow_model_download=False,
+            rrf_constant=60.0,
+            kis_video_first_config=vf_cfg,
+        )
+        assert cfg.kis_video_first_config.enable_paraphrase_ensemble is True
+        assert cfg.kis_video_first_config.selected_video_cap == 64
+
+
+def test_non_ensemble_quota_preservation_k10():
+    """Verify that when paraphrase ensemble is disabled, semantic and VI caps both use restricted_frames_per_video_per_variant."""
+    from system_tai.kis.session_schema import KISVideoFirstConfig
+
+    cfg_k10 = KISVideoFirstConfig(
+        enabled=True,
+        v2_adaptive_enabled=True,
+        restricted_frames_per_video_per_variant=10,
+        enable_vi_localization_variant=True,
+        enable_paraphrase_ensemble=False,
+    )
+    assert cfg_k10.restricted_frames_per_video_per_variant == 10
+    assert cfg_k10.enable_paraphrase_ensemble is False
+

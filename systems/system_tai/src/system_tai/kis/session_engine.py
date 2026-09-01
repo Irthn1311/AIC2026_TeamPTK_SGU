@@ -711,9 +711,18 @@ class OperationalKISRuntime:
                         exp_hash = exp_hashes.get(gid)
                         exp_var_count = exp_var_counts.get(gid)
 
+                        if exp_hash is None:
+                            raise RuntimeError(
+                                f"Pre-retrieval golden verification failed: missing expected hash for query '{request.query_id}', group '{gid}'"
+                            )
+
                         semantic_payload = [
                             {
-                                "variant_id": v.query_variant.variant_id,
+                                "variant_id": (
+                                    v.query_variant.variant_id.replace(f"::{gid}::", "::")
+                                    if f"::{gid}::" in v.query_variant.variant_id
+                                    else v.query_variant.variant_id
+                                ),
                                 "text": v.query_variant.text,
                                 "weight": v.query_variant.weight,
                             }
@@ -728,7 +737,7 @@ class OperationalKISRuntime:
                             ).encode("utf-8")
                         ).hexdigest()[:12]
 
-                        if isinstance(exp_hash, str) and actual_sha.lower() != exp_hash.lower():
+                        if actual_sha.lower() != exp_hash.lower():
                             raise RuntimeError(
                                 f"Pre-retrieval golden hash mismatch for query '{request.query_id}', group '{gid}': "
                                 f"expected {exp_hash}, got {actual_sha}"
@@ -753,7 +762,7 @@ class OperationalKISRuntime:
                 translation_seconds = self.clock() - t_trans
                 translation_metadata = compiled_semantic_query.to_metadata()
                 translation_metadata["translation_seconds"] = translation_seconds
-                active_sem_budget = 20 * len(variants)
+                active_sem_budget = video_first_config.restricted_frames_per_video_per_variant * len(variants)
                 variant_quotas_mapping = {
                     v.variant_id: video_first_config.restricted_frames_per_video_per_variant
                     for v in variants
@@ -809,134 +818,132 @@ class OperationalKISRuntime:
             translation_seconds = self.clock() - t_trans
             translation_metadata = {
                 "dynamic_translation_enabled": True,
-                "provider": self.translation_provider.provider_name,
+                "provider": getattr(self.translation_provider, "provider_name", "dynamic_vinai"),
                 "source_vietnamese": request.query_vi,
-                "raw_english": raw_en,
-                "english_segments": list(english_segments),
-                "clip_token_counts": list(clip_token_counts),
-                "segment_count": len(english_segments),
-                "lossless_segmentation": True,
-                "was_truncated": False,
+                "translated_english": raw_en,
                 "translation_seconds": translation_seconds,
+                "english_segments": english_segments,
+                "clip_token_counts": clip_token_counts,
+                "total_clip_tokens": sum(clip_token_counts),
             }
             variants = tuple(
                 QueryVariant(
-                    variant_id=f"{request.query_id}::vinai_en_{index:02d}",
+                    variant_id=f"{request.query_id}::seg_{idx:02d}",
                     text=segment,
                     language=QueryLanguage.ENGLISH,
-                    variant_type=QueryVariantType.ENGLISH_TRANSLATION,
-                    weight=1.0,
+                    variant_type=QueryVariantType.PRIMARY_SCENE if idx == 0 else QueryVariantType.SUPPORTING_ATTRIBUTE,
+                    weight=1.0 if idx == 0 else 0.5,
                 )
-                for index, segment in enumerate(english_segments, start=1)
+                for idx, segment in enumerate(english_segments)
             )
         else:
-            variants = request.variants()
+            raw_segments = (request.query_vi,)
+            clip_token_counts = tuple(
+                self.token_budget_guard.count_tokens(segment)
+                for segment in raw_segments
+            )
+            translation_metadata = {
+                "dynamic_translation_enabled": False,
+                "provider": "none",
+                "source_vietnamese": request.query_vi,
+                "translated_english": None,
+                "translation_seconds": 0.0,
+                "english_segments": raw_segments,
+                "clip_token_counts": clip_token_counts,
+                "total_clip_tokens": sum(clip_token_counts),
+            }
+            variants = (
+                QueryVariant(
+                    variant_id=f"{request.query_id}::raw",
+                    text=request.query_vi,
+                    language=QueryLanguage.VIETNAMESE,
+                    variant_type=QueryVariantType.FULL_QUERY,
+                    weight=1.0,
+                ),
+            )
         validation_seconds = self.clock() - validation_start
 
+        if not variants:
+            raise RuntimeError(f"No query variants produced for query_id '{request.query_id}'")
+
         text_encode_start = self.clock()
-        texts = [variant.text for variant in variants]
-        variant_embeddings = self.shared_encoder.encode_texts(texts)
-        if variant_embeddings.shape[0] != len(variants):
-            raise ValueError(
-                "Batch text encode returned "
-                f"{variant_embeddings.shape[0]} rows for {len(variants)} variants"
-            )
+        variant_texts = tuple(v.text for v in variants)
+        variant_embeddings = self.shared_encoder.encode_texts(variant_texts)
         text_encode_seconds = self.clock() - text_encode_start
 
         retrieval_start = self.clock()
-        video_first_trace: Mapping[str, Any] = {
-            "policy": KIS_SEMANTIC_VIDEO_FIRST,
-            "enabled": False,
-        }
-        full_corpus_video_search_seconds = 0.0
-        video_fusion_seconds = 0.0
-        restricted_frame_search_seconds = 0.0
-        restricted_frame_fusion_seconds = 0.0
-        video_first_full_corpus_rows_scored = 0
-        video_first_full_corpus_store_scan_count = 0
-        video_first_restricted_rows_scored = 0
-        video_first_restricted_store_scan_count = 0
-        selected_videos = ()
-        video_first_outcome = None
-        restricted = None
         if video_first_enabled:
-            assert compiled_semantic_query is not None
-            v2_adaptive = self.config.kis_video_first_config.v2_adaptive_enabled
+            # Step 1: Video-level search
             maxima_started = self.clock()
-            if v2_adaptive:
-                maxima = self.video_restricted_searcher.search_video_maxima(
-                    query_ids=tuple(variant.variant_id for variant in variants),
-                    query_vectors=variant_embeddings,
-                    top_m_evidence_cap=(
-                        self.config.kis_video_first_config.top_m_evidence_cap
-                    ),
-                    top_m_min_frame_gap=(
-                        self.config.kis_video_first_config.top_m_min_frame_gap
-                    ),
-                    top_m_weights=(
-                        self.config.kis_video_first_config.top_m_weights
-                    ),
-                )
-            else:
-                maxima = self.video_restricted_searcher.search_video_maxima(
-                    query_ids=tuple(variant.variant_id for variant in variants),
-                    query_vectors=variant_embeddings,
-                )
+            primary_var_ids = (
+                compiled_semantic_query.primary_variant_ids
+                if compiled_semantic_query is not None
+                else frozenset([variants[0].variant_id] if variants else [])
+            )
+            supporting_var_ids = (
+                compiled_semantic_query.supporting_variant_ids
+                if compiled_semantic_query is not None
+                else frozenset(v.variant_id for v in variants[1:])
+            )
+            temporal_var_list = (
+                tuple(item.query_variant for item in compiled_semantic_query.temporal_scene_variants)
+                if compiled_semantic_query is not None
+                else ()
+            )
+
+            maxima = self.video_restricted_searcher.search_video_maxima(
+                query_ids=tuple(variant.variant_id for variant in variants),
+                query_vectors=variant_embeddings,
+                top_m_evidence_cap=self.config.kis_video_first_config.top_m_evidence_cap,
+                top_m_weights=self.config.kis_video_first_config.top_m_weights,
+                top_m_min_frame_gap=self.config.kis_video_first_config.top_m_min_frame_gap,
+            )
             full_corpus_video_search_seconds = self.clock() - maxima_started
 
+            # Step 2: Fuse video rankings
             video_fusion_started = self.clock()
-            adaptive_diag = None
-            if compiled_paraphrase_ensemble is not None:
-                selected_videos, adaptive_diag = fuse_video_maxima_v2_paraphrase_ensemble(
-                    ensemble=compiled_paraphrase_ensemble,
-                    maxima=maxima,
-                    rrf_constant=self.config.rrf_constant,
-                    nomination_depth=(
-                        self.config.kis_video_first_config.video_nomination_depth
-                    ),
-                    config=self.config.kis_video_first_config,
-                )
-            elif v2_adaptive:
-                selected_videos, adaptive_diag = fuse_video_maxima_v2(
-                    variants=variants,
-                    maxima=maxima,
-                    primary_variant_ids=compiled_semantic_query.primary_variant_ids,
-                    supporting_variant_ids=compiled_semantic_query.supporting_variant_ids,
-                    temporal_variants=tuple(item.query_variant for item in compiled_semantic_query.temporal_scene_variants),
-                    rrf_constant=self.config.rrf_constant,
-                    nomination_depth=(
-                        self.config.kis_video_first_config.video_nomination_depth
-                    ),
-                    config=self.config.kis_video_first_config,
-                )
+            v2_adaptive = self.config.kis_video_first_config.v2_adaptive_enabled
+            if v2_adaptive:
+                if compiled_paraphrase_ensemble is not None:
+                    selected_videos, adaptive_diag = fuse_video_maxima_v2_paraphrase_ensemble(
+                        ensemble=compiled_paraphrase_ensemble,
+                        maxima=maxima,
+                        rrf_constant=self.config.rrf_constant,
+                        nomination_depth=self.config.kis_video_first_config.video_nomination_depth,
+                        config=self.config.kis_video_first_config,
+                    )
+                else:
+                    selected_videos, adaptive_diag = fuse_video_maxima_v2(
+                        variants=variants,
+                        maxima=maxima,
+                        primary_variant_ids=primary_var_ids,
+                        supporting_variant_ids=supporting_var_ids,
+                        temporal_variants=temporal_var_list,
+                        rrf_constant=self.config.rrf_constant,
+                        nomination_depth=self.config.kis_video_first_config.video_nomination_depth,
+                        config=self.config.kis_video_first_config,
+                    )
             else:
                 selected_videos = fuse_video_maxima(
                     variants=variants,
                     maxima=maxima,
-                    primary_variant_ids=compiled_semantic_query.primary_variant_ids,
+                    primary_variant_ids=primary_var_ids,
                     rrf_constant=self.config.rrf_constant,
-                    nomination_depth=(
-                        self.config.kis_video_first_config.video_nomination_depth
-                    ),
-                    selected_video_cap=(
-                        self.config.kis_video_first_config.selected_video_cap
-                    ),
+                    nomination_depth=self.config.kis_video_first_config.video_nomination_depth,
+                    selected_video_cap=self.config.kis_video_first_config.selected_video_cap,
                 )
+                adaptive_diag = None
             video_fusion_seconds = self.clock() - video_fusion_started
 
+            # Step 3: Restricted frame search
             restricted_started = self.clock()
             compulsory_by_video: dict[str, list[int]] = {}
-            for item in selected_videos:
-                if (
-                    item.temporal_chain
-                    and item.temporal_chain.has_valid_chain
-                    and item.temporal_chain.selected_chain_frames
-                ):
-                    compulsory_by_video[item.video_id] = list(
-                        item.temporal_chain.selected_chain_frames
+            for vid_evidence in selected_videos:
+                if vid_evidence.temporal_chain and vid_evidence.temporal_chain.has_valid_chain:
+                    compulsory_by_video[vid_evidence.video_id] = list(
+                        vid_evidence.temporal_chain.selected_chain_frames
                     )
 
-            # Check auxiliary Vietnamese localization variant
             video_first_config = self.config.kis_video_first_config
             if video_first_config.enable_vi_localization_variant:
                 vi_embedding = self.shared_encoder.encode_texts((request.query_vi,))[0]
@@ -951,9 +958,14 @@ class OperationalKISRuntime:
                 )
                 localization_variants = tuple(variants) + (vi_variant,)
                 localization_vectors = np.vstack([variant_embeddings, vi_embedding[None, :]])
+                vi_cap = (
+                    20
+                    if video_first_config.enable_paraphrase_ensemble
+                    else video_first_config.restricted_frames_per_video_per_variant
+                )
                 if variant_quotas_mapping is not None:
-                    variant_quotas_mapping[vi_variant.variant_id] = 20
-                vi_nominal_budget = 20
+                    variant_quotas_mapping[vi_variant.variant_id] = vi_cap
+                vi_nominal_budget = vi_cap
                 translation_metadata["vi_localizer_telemetry"] = {
                     "vi_localizer_enabled": True,
                     "vi_localization_weight": video_first_config.vi_localization_weight,
@@ -1031,7 +1043,13 @@ class OperationalKISRuntime:
                     candidate_count_before_dedup += cand_cnt
                     effective_quota_by_group_variant_video[qid_key][vid_key] = cand_cnt
 
-            unique_candidates_after_dedup = len(fused_result.ranked_candidates)
+            all_restricted_frame_identities: set[tuple[str, int]] = set()
+            for qid_key, per_vid_map in restricted.rankings.items():
+                for vid_key, hits in per_vid_map.items():
+                    for h in hits:
+                        all_restricted_frame_identities.add((vid_key, h.frame_id))
+
+            unique_candidates_after_dedup = len(all_restricted_frame_identities)
             dup_rate = (
                 1.0 - (unique_candidates_after_dedup / candidate_count_before_dedup)
                 if candidate_count_before_dedup > 0
