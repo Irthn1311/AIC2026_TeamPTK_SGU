@@ -5,10 +5,14 @@ Verifies that when all experimental feature flags are False (default state),
 the system maintains exact equivalence to commit 5d9db1d.
 """
 
+import sys
 import pytest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+SRC_DIR = Path(__file__).resolve().parent.parent / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 
 from system_tai.kis.video_first import (
     KISVideoFirstConfig,
