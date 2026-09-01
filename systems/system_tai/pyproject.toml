@@ -33,7 +33,6 @@ filterwarnings = [
   "ignore:builtin type SwigPy.*:DeprecationWarning",
   "ignore:.*testclient.*:DeprecationWarning",
   "ignore:.*httpx.*:DeprecationWarning",
-  "ignore:.*:starlette.exceptions.StarletteDeprecationWarning",
   "ignore:.*Using `httpx` with `starlette.testclient` is deprecated.*",
   "ignore:.*deprecated.*:Warning",
 ]
