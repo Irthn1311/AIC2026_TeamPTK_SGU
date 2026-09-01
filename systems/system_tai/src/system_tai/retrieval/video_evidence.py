@@ -399,8 +399,8 @@ class VideoRestrictedFeatureSearcher:
         by_query: dict[str, list[VideoMaximumHit]] = {
             query_id: [] for query_id in query_ids
         }
-        for video_id in sorted(self.registry.stores.keys()):
-            store = self.registry.get(video_id)
+        for store in sorted(self.registry.stores, key=lambda s: s.descriptor.video_id):
+            video_id = store.descriptor.video_id
             per_store = rank_store_frames(
                 store,
                 query_ids=query_ids,
