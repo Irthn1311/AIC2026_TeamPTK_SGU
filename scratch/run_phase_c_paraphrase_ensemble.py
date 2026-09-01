@@ -197,9 +197,9 @@ def run_phase_c_audit(
     corpus_verified = False
 
     for arm_name, enable_ens, ens_mode, provider in arms:
-        print(f"\n================================================================================")
-        print(f"🚀 Running Arm: {arm_name} (enable_ensemble={enable_ens}, mode={ens_mode})")
-        print(f"================================================================================")
+        print(f"\n================================================================================", flush=True)
+        print(f"🚀 Running Arm: {arm_name} (enable_ensemble={enable_ens}, mode={ens_mode})", flush=True)
+        print(f"================================================================================", flush=True)
 
         arm_out_dir = output_dir / arm_name
         arm_out_dir.mkdir(parents=True, exist_ok=True)
@@ -252,7 +252,7 @@ def run_phase_c_audit(
                 r_count = runtime.registry.total_rows
                 d_count = runtime.registry.embedding_dimension
                 fp = getattr(runtime.manifest, "fingerprint", "UNKNOWN")
-                print(f"📦 Corpus loaded: {v_count} videos, {r_count} total rows, {d_count} dims (fingerprint: {fp[:16]}...)")
+                print(f"📦 Corpus loaded: {v_count} videos, {r_count} total rows, {d_count} dims (fingerprint: {fp[:16]}...)", flush=True)
 
                 if strict_corpus_gate or v_count >= 800:
                     if v_count != 873 or r_count != 177321 or d_count != 512:
@@ -260,7 +260,7 @@ def run_phase_c_audit(
                             f"Strict corpus gate failed! Expected 873 videos, 177321 rows, 512 dimensions. "
                             f"Got {v_count} videos, {r_count} rows, {d_count} dimensions."
                         )
-                    print("✅ Strict Corpus Gate PASS (873 videos / 177321 rows / 512 dimensions)")
+                    print("✅ Strict Corpus Gate PASS (873 videos / 177321 rows / 512 dimensions)", flush=True)
 
                 audit_results["corpus"] = {
                     "dataset_root": str(input_root),
@@ -278,7 +278,7 @@ def run_phase_c_audit(
                 qid = q_item["query_id"]
                 q_vi = q_item.get("query_vi", q_item.get("text", ""))
 
-                print(f"  • Processing Query {qid}: '{q_vi[:50]}...'")
+                print(f"  • Processing Query {qid}: '{q_vi[:50]}...'", flush=True)
                 req = QueryRequest(
                     request_id=f"{arm_name}_{qid}",
                     query_id=qid,
