@@ -346,6 +346,7 @@ class OperationalKISRuntime:
         validator: CheckpointValidator | None = None,
         object_answer_provider: ObjectEntityAnswerProvider | None = None,
         ocr_answer_provider: OCRAnswerProvider | None = None,
+        translation_provider: Any = None,
     ) -> OperationalKISRuntime:
         start_time = clock()
         output_root = Path(config.output_root)
@@ -490,6 +491,7 @@ class OperationalKISRuntime:
             validator=validator,
             object_answer_provider=object_answer_provider,
             ocr_answer_provider=ocr_answer_provider,
+            translation_provider=translation_provider,
             clock=clock,
             bootstrap_timings=bootstrap_timings,
         )
@@ -567,6 +569,46 @@ class OperationalKISRuntime:
             translation_seconds = self.clock() - t_trans
             translation_metadata = compiled_semantic_query.to_metadata()
             translation_metadata["translation_seconds"] = translation_seconds
+
+            # Pre-retrieval golden verification when running with immutable sidecar
+            if callable(getattr(self.translation_provider, "expected_semantic_hash", None)):
+                exp_hash = self.translation_provider.expected_semantic_hash(request.query_id)
+                exp_var_count = self.translation_provider.expected_variant_count(request.query_id)
+                
+                u_meta = translation_metadata.get("units", [])
+                semantic_payload = [
+                    {
+                        "variant_id": seg.get("variant_id"),
+                        "text": seg.get("text"),
+                        "weight": seg.get("weight"),
+                    }
+                    for unit in u_meta
+                    for seg in unit.get("segments", [])
+                ]
+                actual_compiled_sha = hashlib.sha256(
+                    json.dumps(
+                        semantic_payload,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest()[:12]
+
+                if isinstance(exp_hash, str) and actual_compiled_sha.lower() != exp_hash.lower():
+                    raise RuntimeError(
+                        f"Pre-retrieval golden hash mismatch for query '{request.query_id}': "
+                        f"expected {exp_hash}, got {actual_compiled_sha}"
+                    )
+                if isinstance(exp_var_count, int) and not isinstance(exp_var_count, bool) and len(semantic_payload) != exp_var_count:
+                    raise RuntimeError(
+                        f"Pre-retrieval variant count mismatch for query '{request.query_id}': "
+                        f"expected {exp_var_count}, got {len(semantic_payload)}"
+                    )
+
+            if callable(getattr(self.translation_provider, "sidecar_metadata", None)):
+                sidecar_meta = self.translation_provider.sidecar_metadata()
+                if isinstance(sidecar_meta, dict):
+                    translation_metadata["sidecar_telemetry"] = sidecar_meta
         elif self.config.enable_dynamic_translation and self.translation_provider is not None:
             t_trans = self.clock()
             raw_en = self.translation_provider.translate(request.query_vi)

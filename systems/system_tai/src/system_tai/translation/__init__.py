@@ -8,10 +8,17 @@ from .provider import (
     TranslationProvider,
     VinAITranslateProvider,
 )
+from .sidecar_provider import (
+    ImmutableSidecarTranslationProvider,
+    canonical_sidecar_sha256,
+)
 
 __all__ = [
     "TokenBudgetGuard",
     "TranslationError",
     "TranslationProvider",
     "VinAITranslateProvider",
+    "ImmutableSidecarTranslationProvider",
+    "canonical_sidecar_sha256",
 ]
+

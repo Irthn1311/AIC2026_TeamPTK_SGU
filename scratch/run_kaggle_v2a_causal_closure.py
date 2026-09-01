@@ -848,6 +848,18 @@ def main() -> None:
         default="A",
         help="Phase B1 ablation run: A, B, C, D, E, ABC, A,B,C, or all (default: A)",
     )
+    parser.add_argument(
+        "--translation-sidecar",
+        type=str,
+        default="",
+        help="Path to immutable translation sidecar JSON file",
+    )
+    parser.add_argument(
+        "--translation-sidecar-content-sha256",
+        type=str,
+        default="",
+        help="Expected canonical JSON content SHA256",
+    )
     ablation_configs = {
         "A": {
             "name": "Run A: Baseline Control (K=10, Hybrid=Off, VI=Off, RRF=100)",
@@ -959,6 +971,32 @@ def main() -> None:
             "local_anchor_top_video_count": 1,
             "local_anchor_source": "VI_LOCAL",
         },
+        "G_P15_OLD_CANDIDATE": {
+            "name": "Run G_P15_OLD_CANDIDATE: Hybrid=On, VI=On, w=0.5, RRF=1000, Sidecar=T_old_candidate",
+            "restricted_frames_per_video_per_variant": 20,
+            "enable_temporal_diverse_local_candidates": True,
+            "temporal_diversity_gap_seconds": 5.0,
+            "enable_vi_localization_variant": True,
+            "vi_localization_weight": 0.5,
+            "internal_rrf_candidate_depth": 1000,
+            "collect_fusion_trace": True,
+            "enable_top_video_local_anchor": False,
+            "translation_sidecar_path": "scratch/benchmarks/translation_ablation/translation_p1_focus_v1_old_candidate.json",
+            "translation_sidecar_content_sha256": "022a6c1db48d5fe00a223ec9f637aa1d64eea5d55c06e901caa42e04ff0e3367",
+        },
+        "G_P15_NEW": {
+            "name": "Run G_P15_NEW: Hybrid=On, VI=On, w=0.5, RRF=1000, Sidecar=T_new",
+            "restricted_frames_per_video_per_variant": 20,
+            "enable_temporal_diverse_local_candidates": True,
+            "temporal_diversity_gap_seconds": 5.0,
+            "enable_vi_localization_variant": True,
+            "vi_localization_weight": 0.5,
+            "internal_rrf_candidate_depth": 1000,
+            "collect_fusion_trace": True,
+            "enable_top_video_local_anchor": False,
+            "translation_sidecar_path": "scratch/benchmarks/translation_ablation/translation_p1_focus_v2_new.json",
+            "translation_sidecar_content_sha256": "545bd4a37c57af53713a1d9f382241ef729c287a1817a5671fdc923115b0be2a",
+        },
     }
 
     args, _ = parser.parse_known_args()
@@ -1053,8 +1091,28 @@ def main() -> None:
             except Exception:
                 pass
 
+        # Check and initialize Immutable Translation Sidecar if configured
+        sidecar_provider = None
+        s_path = run_spec.get("translation_sidecar_path") or args.translation_sidecar
+        s_sha = run_spec.get("translation_sidecar_content_sha256") or args.translation_sidecar_content_sha256
+        if s_path:
+            from system_tai.translation.sidecar_provider import ImmutableSidecarTranslationProvider
+            resolved_p = Path(s_path)
+            if not resolved_p.is_absolute():
+                candidates = [
+                    Path.cwd() / resolved_p,
+                    Path(__file__).resolve().parent.parent / resolved_p,
+                    Path("/kaggle/working/AIC2026_TeamPTK_SGU") / resolved_p,
+                ]
+                for c in candidates:
+                    if c.exists():
+                        resolved_p = c
+                        break
+            sidecar_provider = ImmutableSidecarTranslationProvider(resolved_p, s_sha if s_sha else None)
+            print(f"  • Using Immutable Translation Sidecar: {sidecar_provider.sidecar_id} (SHA={sidecar_provider.content_sha256[:12]}...)", flush=True)
+
         t0 = time.time()
-        runtime = OperationalKISRuntime.bootstrap(config)
+        runtime = OperationalKISRuntime.bootstrap(config, translation_provider=sidecar_provider)
         print(f"Runtime bootstrap completed in {time.time() - t0:.2f}s.\n", flush=True)
 
         coverage_results = {}
