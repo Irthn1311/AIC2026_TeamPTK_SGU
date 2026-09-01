@@ -131,7 +131,7 @@ def test_sidecar_translation_miss_raises_fail_fast():
         prov.translate("Câu tiếng Việt chưa từng xuất hiện trong benchmark")
 
 
-def test_compile_all_5_queries_against_golden_hashes_both_sidecars():
+def test_mock_segmentation_compile_all_5_queries_against_golden_hashes_both_sidecars():
     prov_new = ImmutableSidecarTranslationProvider(PATH_NEW, EXPECTED_SHA_NEW)
     prov_old = ImmutableSidecarTranslationProvider(PATH_OLD, EXPECTED_SHA_OLD)
     guard = MockBpeTokenBudgetGuard()
@@ -168,6 +168,32 @@ def test_compile_all_5_queries_against_golden_hashes_both_sidecars():
             assert h_old == "99f24deaaf56"
 
 
+def test_real_clip_tokenizer_golden_compilation_if_available():
+    try:
+        from system_tai.translation.provider import TokenBudgetGuard
+        guard = TokenBudgetGuard(max_tokens=75)
+        # Check if CLIP tokenizer is importable
+        guard._get_tokenizer()
+    except Exception:
+        pytest.skip("OpenAI CLIP tokenizer not installed in current environment; runtime Kaggle environment provides CLIP.")
+
+    prov_new = ImmutableSidecarTranslationProvider(PATH_NEW, EXPECTED_SHA_NEW)
+    prov_old = ImmutableSidecarTranslationProvider(PATH_OLD, EXPECTED_SHA_OLD)
+    cfg = SemanticQueryConfig()
+
+    for qid, qvi in FOCUS_QUERIES.items():
+        comp_new = compile_vietnamese_semantic_query(
+            query_id=qid,
+            query_vi=qvi,
+            provider=prov_new,
+            token_budget_guard=guard,
+            config=cfg,
+        )
+        h_new, cnt_new = compute_semantic_hash_from_compiled(comp_new)
+        assert h_new == prov_new.expected_semantic_hash(qid)
+        assert cnt_new == prov_new.expected_variant_count(qid)
+
+
 def test_global_translation_collision_fail_fast():
     with tempfile.TemporaryDirectory() as td:
         bad_sidecar = {
@@ -191,6 +217,6 @@ def test_global_translation_collision_fail_fast():
         }
         bad_file = Path(td) / "bad_sidecar.json"
         bad_file.write_text(json.dumps(bad_sidecar), encoding="utf-8")
-        
+
         with pytest.raises(ValueError, match="Translation collision detected"):
             ImmutableSidecarTranslationProvider(bad_file)

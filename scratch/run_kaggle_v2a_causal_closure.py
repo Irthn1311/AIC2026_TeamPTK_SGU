@@ -730,7 +730,14 @@ def generate_and_save_ablation_summary_table(
 
     if len(runs_to_execute) > 1:
         print("\n🔍 Verifying Zero Translation Drift across runs...", flush=True)
-        is_translation_ablation = any("G_P15_" in rk for rk in runs_to_execute)
+        expected_treatment = {
+            "G_P15_OLD_CANDIDATE": "99f24deaaf56",
+            "G_P15_NEW": "243b0f915c63",
+        }
+        is_translation_ablation = (
+            len(runs_to_execute) == 2
+            and set(runs_to_execute) == set(expected_treatment)
+        )
         for q_short in query_order:
             hashes = [
                 summary_matrix["runs"][rk]["queries"][q_short].get("semantic_variant_sha256")
@@ -739,7 +746,13 @@ def generate_and_save_ablation_summary_table(
             if any(h is None for h in hashes):
                 raise RuntimeError(f"Missing translation hash for query [{q_short}] in runs: {dict(zip(runs_to_execute, hashes))}")
             if is_translation_ablation and q_short == "p1-5":
-                print(f"  🧪 Translation Treatment Verified for [p1-5]: {dict(zip(runs_to_execute, hashes))}", flush=True)
+                observed = dict(zip(runs_to_execute, hashes))
+                expected = {rk: expected_treatment[rk] for rk in runs_to_execute}
+                if observed != expected:
+                    raise RuntimeError(
+                        f"P1-5 treatment contract mismatch: expected={expected}, observed={observed}"
+                    )
+                print(f"  🧪 Translation Treatment Verified for [p1-5]: {observed} ✅", flush=True)
             else:
                 if len(set(hashes)) != 1:
                     raise RuntimeError(f"Translation drift detected for query [{q_short}]: {dict(zip(runs_to_execute, hashes))}")
@@ -1004,6 +1017,10 @@ def main() -> None:
     }
 
     args, _ = parser.parse_known_args()
+    if bool(args.translation_sidecar) != bool(args.translation_sidecar_content_sha256):
+        raise ValueError(
+            "Both --translation-sidecar and --translation-sidecar-content-sha256 must be specified together!"
+        )
     selected_sections = [s.strip().lower() for s in args.sections.split(",") if s.strip()]
     run_all = "all" in selected_sections
     ablation_raw = args.ablation.strip().upper()
