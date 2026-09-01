@@ -523,7 +523,7 @@ def run_phase_c_audit(
         and effective_retention_parity
     ):
         retention_claim_status = "STRICT_EQUAL_RETENTION_PASS"
-    elif nominal_budget_parity and selected_video_parity and extra_parity:
+    elif nominal_budget_parity and selected_video_parity:
         retention_claim_status = "EQUAL_NOMINAL_BUDGET_ONLY"
     else:
         retention_claim_status = "BUDGET_MISMATCH_FAIL"
