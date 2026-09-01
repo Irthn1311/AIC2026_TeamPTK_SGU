@@ -4,10 +4,11 @@ KIS V2-A.3 PHASE C PARAPHRASE ENSEMBLE & INVARIANT FUSION AUDIT
 ================================================================================
 Scientific Evaluation Protocol:
 - Sidecar T-New (C0): scratch/benchmarks/translation_ablation/translation_p1_focus_v2_new.json
-  Canonical Content SHA256: 69b76e1f0e47087611a5118546b5278c2e64ca6583907c1bb43b9df09c8e10d2
+  Canonical Content SHA256: 545bd4a37c57af53713a1d9f382241ef729c287a1817a5671fdc923115b0be2a
 - Sidecar Paraphrase Ensemble (C1, C2): scratch/benchmarks/translation_ablation/paraphrase_ensemble_p1_focus_v1.json
   Canonical Content SHA256: 1bb2a15e7f55d9b1947552cdd33f5dba52b4316444781ff8d883aa359f163cf2
 - Ground Truth Reference: systems/system_tai/benchmarks/manual_kis_reference_v1.json
+- Query Benchmark Manifest: systems/system_tai/benchmarks/frozen_kis_v2a_stress_manifest.json
 - Arms:
   * C0: Single baseline translation (T_new), nominal semantic quota 20 per variant, Run G config
   * C1: Strict Equal-Budget Paraphrase Ensemble (B_sem = 20 * |V0|, hierarchical divmod quotas, normalized weight mass)
@@ -24,7 +25,10 @@ import hashlib
 import json
 import math
 import os
+import platform
+import statistics
 import struct
+import subprocess
 import sys
 import time
 from datetime import UTC, datetime
@@ -44,6 +48,7 @@ from system_tai.kis.session_schema import (
     QueryRequest,
     SessionConfig,
 )
+from system_tai.retrieval.canonical_projection import canonical_projection_digest
 from system_tai.translation.paraphrase_sidecar_provider import (
     ImmutableParaphraseEnsembleSidecarProvider,
     canonical_sidecar_sha256,
@@ -64,23 +69,12 @@ HISTORICAL_RUN_G_DIGESTS = {
 }
 
 
-def float_to_ieee754_hex(val: float) -> str:
-    """Convert 64-bit IEEE-754 float to exact uppercase 16-hex string."""
-    return f"{struct.unpack('>Q', struct.pack('>d', float(val)))[0]:016X}"
-
-
-def canonical_projection_digest(candidates: list[dict[str, Any]]) -> str:
-    """Compute deterministic SHA256 digest of top-100 (rank, video_id, frame_id, score_bits)."""
-    rows = []
-    for c in candidates:
-        rank = int(c["rank"])
-        vid = str(c["video_id"]).strip()
-        fid = int(c.get("frame_id", c.get("actual_frame_id", 0)))
-        score_val = float(c.get("fusion_score", c.get("score", 0.0)))
-        s_hex = float_to_ieee754_hex(score_val)
-        rows.append(f"{rank}:{vid}:{fid}:{s_hex}")
-    payload = "\n".join(rows).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
+def get_git_commit_sha() -> str:
+    try:
+        out = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT).decode().strip()
+        return out
+    except Exception:
+        return "UNKNOWN_COMMIT"
 
 
 def load_manual_reference(ref_path: Path) -> dict[str, dict[str, Any]]:
@@ -105,14 +99,20 @@ def load_manual_reference(ref_path: Path) -> dict[str, dict[str, Any]]:
 
 def run_phase_c_audit(
     *,
-    manifest_path: Path,
-    feature_root: Path,
+    query_manifest_path: Path,
+    input_root: Path,
+    reuse_manifest_path: Path | None = None,
+    manifest_cache_path: Path | None = None,
     output_dir: Path,
     tnew_sidecar_path: Path,
     paraphrase_sidecar_path: Path,
     manual_ref_path: Path,
+    allow_model_download: bool = True,
+    device: str = "auto",
+    strict_corpus_gate: bool = False,
 ) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
+    commit_sha = get_git_commit_sha()
 
     # 1. Sidecar integrity verification
     tnew_sha = canonical_sidecar_sha256(tnew_sidecar_path)
@@ -143,7 +143,9 @@ def run_phase_c_audit(
     gt_ref = load_manual_reference(manual_ref_path)
     print(f"✅ Loaded {len(gt_ref)} human-verified ground truth targets from {manual_ref_path.name}")
 
-    manifest_raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not query_manifest_path.exists():
+        raise FileNotFoundError(f"Query manifest file not found: {query_manifest_path}")
+    manifest_raw = json.loads(query_manifest_path.read_text(encoding="utf-8"))
     queries_data = manifest_raw.get("queries", manifest_raw)
 
     arms = [
@@ -154,12 +156,28 @@ def run_phase_c_audit(
 
     audit_results: dict[str, Any] = {
         "timestamp_utc": datetime.now(UTC).isoformat(),
-        "sidecar_tnew_canonical_sha256": tnew_sha,
-        "sidecar_paraphrase_canonical_sha256": para_sha,
+        "git_commit_sha": commit_sha,
+        "environment": {
+            "python_version": sys.version,
+            "platform": platform.platform(),
+        },
+        "sidecar_tnew": {
+            "sidecar_id": tnew_provider.sidecar_id,
+            "path": str(tnew_sidecar_path),
+            "canonical_sha256": tnew_sha,
+        },
+        "sidecar_paraphrase": {
+            "sidecar_id": para_provider.sidecar_id,
+            "path": str(paraphrase_sidecar_path),
+            "canonical_sha256": para_sha,
+        },
+        "corpus": {},
         "arms": {},
         "comparisons": {},
         "assertions": {},
     }
+
+    corpus_verified = False
 
     for arm_name, enable_ens, ens_mode, provider in arms:
         print(f"\n================================================================================")
@@ -194,147 +212,188 @@ def run_phase_c_audit(
 
         session_cfg = SessionConfig(
             session_id=f"phase_c_{arm_name}_{int(time.time())}",
-            input_root=feature_root,
-            reuse_manifest=manifest_path,
+            input_root=input_root,
+            reuse_manifest=reuse_manifest_path,
+            manifest_cache=manifest_cache_path,
             output_root=arm_out_dir,
             enable_dynamic_translation=True,
-            allow_model_download=False,
+            allow_model_download=allow_model_download,
+            device=device,
             rrf_constant=60.0,
             kis_video_first_config=vf_cfg,
         )
 
-        runtime = OperationalKISRuntime(
+        runtime = OperationalKISRuntime.bootstrap(
             config=session_cfg,
             translation_provider=provider,
         )
 
-        arm_query_results: dict[str, Any] = {}
+        try:
+            # Audit corpus characteristics once
+            if not corpus_verified:
+                v_count = len(runtime.registry.keys())
+                r_count = runtime.registry.total_rows
+                d_count = runtime.registry.embedding_dimension
+                fp = getattr(runtime.manifest, "fingerprint", "UNKNOWN")
+                print(f"📦 Corpus loaded: {v_count} videos, {r_count} total rows, {d_count} dims (fingerprint: {fp[:16]}...)")
 
-        for q_item in queries_data:
-            qid = q_item["query_id"]
-            q_vi = q_item.get("query_vi", q_item.get("text", ""))
+                if strict_corpus_gate or v_count >= 800:
+                    if v_count != 873 or r_count != 177321 or d_count != 512:
+                        raise AssertionError(
+                            f"Strict corpus gate failed! Expected 873 videos, 177321 rows, 512 dimensions. "
+                            f"Got {v_count} videos, {r_count} rows, {d_count} dimensions."
+                        )
+                    print("✅ Strict Corpus Gate PASS (873 videos / 177321 rows / 512 dimensions)")
 
-            print(f"  • Query {qid}: '{q_vi[:50]}...'")
-            req = QueryRequest(
-                request_id=f"{arm_name}_{qid}",
-                query_id=qid,
-                query_vi=q_vi,
-                output_top_k=100,
-            )
+                audit_results["corpus"] = {
+                    "dataset_root": str(input_root),
+                    "video_count": v_count,
+                    "total_rows": r_count,
+                    "embedding_dimension": d_count,
+                    "fingerprint": fp,
+                    "strict_corpus_gate_verified": (v_count == 873 and r_count == 177321 and d_count == 512),
+                }
+                corpus_verified = True
 
-            resp = runtime.handle_query(req)
-            cand_rel_path = resp["artifacts"]["candidates_json"]
-            cand_path = arm_out_dir / cand_rel_path
-            cand_json_data = json.loads(cand_path.read_text(encoding="utf-8"))
+            arm_query_results: dict[str, Any] = {}
 
-            records = cand_json_data.get("records", [])
-            if len(records) != 100:
-                raise ValueError(f"Expected 100 candidates for {qid}, got {len(records)}")
+            for q_item in queries_data:
+                qid = q_item["query_id"]
+                q_vi = q_item.get("query_vi", q_item.get("text", ""))
 
-            # Validate contiguous ranks and unique identities
-            ranks = [r["rank"] for r in records]
-            if ranks != list(range(1, 101)):
-                raise ValueError(f"Ranks for {qid} are not contiguous 1..100: {ranks[:5]}...{ranks[-5:]}")
+                print(f"  • Processing Query {qid}: '{q_vi[:50]}...'")
+                req = QueryRequest(
+                    request_id=f"{arm_name}_{qid}",
+                    query_id=qid,
+                    query_vi=q_vi,
+                    output_top_k=100,
+                )
 
-            identities = [(r["video_id"], r["frame_id"]) for r in records]
-            if len(set(identities)) != 100:
-                raise ValueError(f"Duplicate candidate identities found for {qid}")
+                resp = runtime.handle_query(req)
+                cand_rel_path = resp["artifacts"]["candidates_json"]
+                cand_path = arm_out_dir / cand_rel_path
+                cand_json_data = json.loads(cand_path.read_text(encoding="utf-8"))
 
-            proj_digest = canonical_projection_digest(records)
+                records = cand_json_data.get("records", [])
+                if len(records) != 100:
+                    raise ValueError(f"Expected 100 candidates for {qid}, got {len(records)}")
 
-            # Evaluate Ground Truth targets
-            gt_info = gt_ref.get(qid, {})
-            human_target_vid = gt_info.get("human_verified_video_id")
-            legacy_target_vid = gt_info.get("legacy_target_video")
-            human_intervals = gt_info.get("human_annotated_intervals", [])
-            status = gt_info.get("annotation_status", "VIDEO_ONLY_VERIFIED")
+                # Validate contiguous ranks and unique identities
+                ranks = [r["rank"] for r in records]
+                if ranks != list(range(1, 101)):
+                    raise ValueError(f"Ranks for {qid} are not contiguous 1..100: {ranks[:5]}...{ranks[-5:]}")
 
-            human_target_video_rank = None
-            human_target_best_score = None
-            human_target_count_top100 = 0
-            human_target_interval_rank = None
-            legacy_target_video_rank = None
+                identities = [(r["video_id"], r["frame_id"]) for r in records]
+                if len(set(identities)) != 100:
+                    raise ValueError(f"Duplicate candidate identities found for {qid}")
 
-            for r in records:
-                vid = r["video_id"]
-                fid = r["frame_id"]
-                score = float(r["fusion_score"])
+                proj_digest = canonical_projection_digest(records)
 
-                if vid == human_target_vid:
-                    human_target_count_top100 += 1
-                    if human_target_video_rank is None:
-                        human_target_video_rank = r["rank"]
-                        human_target_best_score = score
-                    if human_intervals:
-                        for (f_start, f_end) in human_intervals:
-                            if f_start <= fid <= f_end and human_target_interval_rank is None:
-                                human_target_interval_rank = r["rank"]
+                # Evaluate Ground Truth targets
+                gt_info = gt_ref.get(qid, {})
+                human_target_vid = gt_info.get("human_verified_video_id")
+                legacy_target_vid = gt_info.get("legacy_target_video")
+                human_intervals = gt_info.get("human_annotated_intervals", [])
+                status = gt_info.get("annotation_status", "VIDEO_ONLY_VERIFIED")
 
-                if vid == legacy_target_vid and legacy_target_video_rank is None:
-                    legacy_target_video_rank = r["rank"]
+                human_target_video_rank = None
+                human_target_best_score = None
+                human_target_count_top100 = 0
+                human_target_interval_rank = None
+                legacy_target_video_rank = None
 
-            # Extract telemetry from candidates.json
-            video_first_trace = cand_json_data.get("video_first", {})
-            phase_c_tel = video_first_trace.get("phase_c_telemetry")
-            if not phase_c_tel:
-                raise RuntimeError(f"Missing required phase_c_telemetry for query '{qid}' in arm '{arm_name}'!")
+                for r in records:
+                    vid = r["video_id"]
+                    fid = r["frame_id"]
+                    score = float(r["fusion_score"])
 
-            # Validate required telemetry fields
-            required_fields = [
-                "semantic_nominal_budget", "vi_nominal_budget", "total_nominal_budget",
-                "requested_quota_by_variant", "effective_quota_by_variant_video",
-                "compulsory_extra_count", "candidate_count_before_dedup",
-                "effective_unique_candidate_count_after_dedup", "duplication_rate",
-                "selected_video_count", "compiled_group_count", "compiled_variant_count",
-                "text_embedding_count", "logical_similarity_evaluations",
-            ]
-            for f in required_fields:
-                if f not in phase_c_tel:
-                    raise RuntimeError(f"Missing required telemetry field '{f}' for query '{qid}' in arm '{arm_name}'!")
+                    if vid == human_target_vid:
+                        human_target_count_top100 += 1
+                        if human_target_video_rank is None:
+                            human_target_video_rank = r["rank"]
+                            human_target_best_score = score
+                        if human_intervals:
+                            for (f_start, f_end) in human_intervals:
+                                if f_start <= fid <= f_end and human_target_interval_rank is None:
+                                    human_target_interval_rank = r["rank"]
 
-            arm_query_results[qid] = {
-                "query_id": qid,
-                "query_vi": q_vi,
-                "canonical_projection_digest": proj_digest,
-                "human_target_video": human_target_vid,
-                "human_target_video_rank": human_target_video_rank,
-                "human_target_best_score": human_target_best_score,
-                "human_target_count_top100": human_target_count_top100,
-                "human_target_interval_rank": human_target_interval_rank,
-                "legacy_target_video": legacy_target_vid,
-                "legacy_target_video_rank": legacy_target_video_rank,
-                "annotation_status": status,
-                "phase_c_telemetry": phase_c_tel,
-                "records_summary": records[:5],
-            }
+                    if vid == legacy_target_vid and legacy_target_video_rank is None:
+                        legacy_target_video_rank = r["rank"]
 
-        audit_results["arms"][arm_name] = arm_query_results
+                # Extract telemetry from candidates.json
+                video_first_trace = cand_json_data.get("video_first", {})
+                phase_c_tel = video_first_trace.get("phase_c_telemetry")
+                if not phase_c_tel:
+                    raise RuntimeError(f"Missing required phase_c_telemetry for query '{qid}' in arm '{arm_name}'!")
+
+                # Validate required telemetry fields
+                required_fields = [
+                    "semantic_nominal_budget", "vi_nominal_budget", "total_nominal_budget",
+                    "requested_quota_by_variant", "effective_quota_by_variant_video",
+                    "compulsory_extra_count", "candidate_count_before_dedup",
+                    "effective_unique_candidate_count_after_dedup", "duplication_rate",
+                    "selected_video_count", "compiled_group_count", "compiled_variant_count",
+                    "text_embedding_count", "logical_similarity_evaluations",
+                ]
+                for f in required_fields:
+                    if f not in phase_c_tel:
+                        raise RuntimeError(f"Missing required telemetry field '{f}' for query '{qid}' in arm '{arm_name}'!")
+
+                arm_query_results[qid] = {
+                    "query_id": qid,
+                    "query_vi": q_vi,
+                    "canonical_projection_digest": proj_digest,
+                    "human_target_video": human_target_vid,
+                    "human_target_video_rank": human_target_video_rank,
+                    "human_target_best_score": human_target_best_score,
+                    "human_target_count_top100": human_target_count_top100,
+                    "human_target_interval_rank": human_target_interval_rank,
+                    "legacy_target_video": legacy_target_vid,
+                    "legacy_target_video_rank": legacy_target_video_rank,
+                    "annotation_status": status,
+                    "phase_c_telemetry": phase_c_tel,
+                    "records_summary": records[:5],
+                }
+
+            audit_results["arms"][arm_name] = arm_query_results
+        finally:
+            runtime.close()
 
     # 4. Assertions & Parity Checks
     c0 = audit_results["arms"]["C0_baseline"]
     c1 = audit_results["arms"]["C1_equal_budget_ensemble"]
     c2 = audit_results["arms"]["C2_expanded_retention_ensemble"]
 
-    # Historical Run G Bit-Exact Parity Check for C0
+    # Historical Run G Bit-Exact Parity Check for C0 (applicable when on full dataset)
     historical_parity: dict[str, Any] = {}
+    all_historical_match = True
     for qid, exp_digest in HISTORICAL_RUN_G_DIGESTS.items():
-        actual_c0_digest = c0[qid]["canonical_projection_digest"]
-        matches = (actual_c0_digest == exp_digest)
-        historical_parity[qid] = {
-            "expected_run_g_digest": exp_digest,
-            "c0_actual_digest": actual_c0_digest,
-            "historical_run_g_parity": matches,
-        }
-        if not matches:
-            raise AssertionError(
-                f"Historical Run G parity failure for {qid}: expected {exp_digest}, got {actual_c0_digest}"
-            )
-    audit_results["assertions"]["historical_run_g_parity"] = historical_parity
-    print("\n✅ Arm C0 matches historical Run G canonical projection 100% BIT-EXACT across all 5 queries!")
+        if qid in c0:
+            actual_c0_digest = c0[qid]["canonical_projection_digest"]
+            matches = (actual_c0_digest == exp_digest)
+            historical_parity[qid] = {
+                "expected_run_g_digest": exp_digest,
+                "c0_actual_digest": actual_c0_digest,
+                "historical_run_g_parity": matches,
+            }
+            if not matches:
+                all_historical_match = False
+                if strict_corpus_gate or audit_results["corpus"].get("video_count", 0) >= 800:
+                    raise AssertionError(
+                        f"Historical Run G parity failure for {qid}: expected {exp_digest}, got {actual_c0_digest}"
+                    )
+
+    audit_results["assertions"]["historical_run_g_parity"] = {
+        "all_match": all_historical_match,
+        "queries": historical_parity,
+    }
+    if all_historical_match:
+        print("\n✅ Arm C0 matches historical Run G canonical projection 100% BIT-EXACT across all queries!")
 
     # Negative Controls Bit-Exact Parity across C0 / C1 / C2
-    neg_controls = ["query-p1-1-kis", "query-p1-2-kis", "query-p1-4-kis", "query-p1-6-kis"]
+    neg_controls = [q for q in ["query-p1-1-kis", "query-p1-2-kis", "query-p1-4-kis", "query-p1-6-kis"] if q in c0]
     neg_control_assertions: dict[str, Any] = {}
+    all_neg_match = True
 
     for qid in neg_controls:
         d0 = c0[qid]["canonical_projection_digest"]
@@ -348,10 +407,14 @@ def run_phase_c_audit(
             "bit_exact_parity": is_exact,
         }
         if not is_exact:
+            all_neg_match = False
             raise AssertionError(f"Negative control {qid} violation: C0/C1/C2 digests differ!")
 
-    audit_results["assertions"]["negative_controls"] = neg_control_assertions
-    print("✅ All 4 Negative Controls strictly verified with 100% Bit-Exact Parity across C0/C1/C2.")
+    audit_results["assertions"]["negative_controls"] = {
+        "all_match": all_neg_match,
+        "queries": neg_control_assertions,
+    }
+    print("✅ All Negative Controls strictly verified with 100% Bit-Exact Parity across C0/C1/C2.")
 
     # Treatment query P1-5 analysis
     p15_c0_path = list((output_dir / "C0_baseline" / "requests").glob("*p1-5*/candidates.json"))[0]
@@ -384,9 +447,10 @@ def run_phase_c_audit(
             "membership_replaced_ratio": round(replaced_ratio, 4),
             "common_candidates_count": len(inter),
             "mean_absolute_rank_shift": round(float(sum(rank_shifts) / len(rank_shifts)), 2) if rank_shifts else 0.0,
-            "median_rank_shift": round(float(sorted(rank_shifts)[len(rank_shifts) // 2]), 2) if rank_shifts else 0.0,
+            "median_rank_shift": round(float(statistics.median(rank_shifts)), 2) if rank_shifts else 0.0,
             "max_rank_shift": max(rank_shifts) if rank_shifts else 0,
             "mean_score_delta": round(float(sum(score_deltas) / len(score_deltas)), 6) if score_deltas else 0.0,
+            "median_score_delta": round(float(statistics.median(score_deltas)), 6) if score_deltas else 0.0,
         }
 
     p15_comparison = {
@@ -423,34 +487,56 @@ def run_phase_c_audit(
     c1_extra = c1_p15_tel["compulsory_extra_count"]
     c2_extra = c2_p15_tel["compulsory_extra_count"]
 
-    nominal_parity = (c0_p15_tel["semantic_nominal_budget"] == c1_p15_tel["semantic_nominal_budget"])
+    nominal_sem_parity = (c0_p15_tel["semantic_nominal_budget"] == c1_p15_tel["semantic_nominal_budget"])
+    nominal_vi_parity = (c0_p15_tel["vi_nominal_budget"] == c1_p15_tel["vi_nominal_budget"])
+    nominal_total_parity = (c0_p15_tel["total_nominal_budget"] == c1_p15_tel["total_nominal_budget"])
+    selected_video_parity = (c0_p15_tel["selected_video_count"] == c1_p15_tel["selected_video_count"])
     extra_delta = c1_extra - c0_extra
-    retention_claim_status = (
-        "STRICT_EQUAL_RETENTION_PASS"
-        if (nominal_parity and extra_delta == 0)
-        else "EQUAL_NOMINAL_ONLY"
-    )
+    extra_parity = (extra_delta == 0)
+
+    c0_effective = c0_p15_tel["effective_unique_candidate_count_after_dedup"]
+    c1_effective = c1_p15_tel["effective_unique_candidate_count_after_dedup"]
+    effective_retention_parity = (c0_effective == c1_effective)
+
+    if nominal_sem_parity and nominal_vi_parity and nominal_total_parity and selected_video_parity and extra_parity and effective_retention_parity:
+        retention_claim_status = "STRICT_EQUAL_RETENTION_PASS"
+    elif nominal_sem_parity and nominal_vi_parity and nominal_total_parity and selected_video_parity and extra_parity:
+        retention_claim_status = "EQUAL_NOMINAL_BUDGET_ONLY"
+    else:
+        retention_claim_status = "BUDGET_MISMATCH_FAIL"
 
     budget_gate_audit = {
-        "c0_semantic_nominal_budget": c0_p15_tel["semantic_nominal_budget"],
-        "c1_semantic_nominal_budget": c1_p15_tel["semantic_nominal_budget"],
-        "c2_semantic_nominal_budget": c2_p15_tel["semantic_nominal_budget"],
-        "nominal_budget_parity_c0_c1": nominal_parity,
-        "c0_compulsory_extra_count": c0_extra,
-        "c1_compulsory_extra_count": c1_extra,
-        "c2_compulsory_extra_count": c2_extra,
-        "compulsory_extra_delta_c1_c0": extra_delta,
-        "retention_claim_verdict": retention_claim_status,
-        "candidate_count_before_dedup": {
-            "C0": c0_p15_tel["candidate_count_before_dedup"],
-            "C1": c1_p15_tel["candidate_count_before_dedup"],
-            "C2": c2_p15_tel["candidate_count_before_dedup"],
+        "nominal_semantic_budget": {
+            "C0": c0_p15_tel["semantic_nominal_budget"],
+            "C1": c1_p15_tel["semantic_nominal_budget"],
+            "C2": c2_p15_tel["semantic_nominal_budget"],
         },
+        "nominal_vi_budget": {
+            "C0": c0_p15_tel["vi_nominal_budget"],
+            "C1": c1_p15_tel["vi_nominal_budget"],
+            "C2": c2_p15_tel["vi_nominal_budget"],
+        },
+        "nominal_total_budget": {
+            "C0": c0_p15_tel["total_nominal_budget"],
+            "C1": c1_p15_tel["total_nominal_budget"],
+            "C2": c2_p15_tel["total_nominal_budget"],
+        },
+        "nominal_budget_parity_c0_c1": (nominal_sem_parity and nominal_vi_parity and nominal_total_parity),
+        "selected_video_count_parity": selected_video_parity,
+        "compulsory_extra_count": {
+            "C0": c0_extra,
+            "C1": c1_extra,
+            "C2": c2_extra,
+        },
+        "compulsory_extra_delta_c1_c0": extra_delta,
+        "compulsory_extra_parity": extra_parity,
         "effective_unique_candidates_after_dedup": {
-            "C0": c0_p15_tel["effective_unique_candidate_count_after_dedup"],
-            "C1": c1_p15_tel["effective_unique_candidate_count_after_dedup"],
+            "C0": c0_effective,
+            "C1": c1_effective,
             "C2": c2_p15_tel["effective_unique_candidate_count_after_dedup"],
         },
+        "effective_retention_parity": effective_retention_parity,
+        "retention_claim_verdict": retention_claim_status,
         "duplication_rates": {
             "C0": c0_p15_tel["duplication_rate"],
             "C1": c1_p15_tel["duplication_rate"],
@@ -491,8 +577,10 @@ def run_phase_c_audit(
 
 def main():
     parser = argparse.ArgumentParser(description="Phase C Paraphrase Ensemble Audit")
-    parser.add_argument("--manifest", type=Path, required=True)
-    parser.add_argument("--features", type=Path, required=True)
+    parser.add_argument("--query-manifest", type=Path, required=True, help="Path to query benchmark manifest")
+    parser.add_argument("--input-root", type=Path, required=True, help="Path to corpus dataset root directory")
+    parser.add_argument("--reuse-manifest", type=Path, default=None, help="Path to precomputed corpus feature manifest")
+    parser.add_argument("--manifest-cache", type=Path, default=None, help="Path to corpus discovery manifest cache")
     parser.add_argument("--output", type=Path, default=Path("scratch/phase_c_audit"))
     parser.add_argument(
         "--tnew-sidecar",
@@ -509,15 +597,23 @@ def main():
         type=Path,
         default=REPO_ROOT / "systems/system_tai/benchmarks/manual_kis_reference_v1.json",
     )
+    parser.add_argument("--device", type=str, default="auto")
+    parser.add_argument("--allow-model-download", action="store_true", default=True)
+    parser.add_argument("--strict-corpus-gate", action="store_true", default=False)
     args = parser.parse_args()
 
     run_phase_c_audit(
-        manifest_path=args.manifest,
-        feature_root=args.features,
+        query_manifest_path=args.query_manifest,
+        input_root=args.input_root,
+        reuse_manifest_path=args.reuse_manifest,
+        manifest_cache_path=args.manifest_cache,
         output_dir=args.output,
         tnew_sidecar_path=args.tnew_sidecar,
         paraphrase_sidecar_path=args.paraphrase_sidecar,
         manual_ref_path=args.manual_ref,
+        allow_model_download=args.allow_model_download,
+        device=args.device,
+        strict_corpus_gate=args.strict_corpus_gate,
     )
 
 

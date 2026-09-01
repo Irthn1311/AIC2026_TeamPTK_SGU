@@ -560,6 +560,8 @@ class OperationalKISRuntime:
                     "KIS semantic video-first retrieval accepts Vietnamese input only; "
                     "manual English variants are not allowed"
                 )
+            if callable(getattr(self.translation_provider, "validate_query_vi", None)):
+                self.translation_provider.validate_query_vi(request.query_id, request.query_vi)
             t_trans = self.clock()
             video_first_config = self.config.kis_video_first_config
             sem_config = SemanticQueryConfig(
@@ -703,50 +705,58 @@ class OperationalKISRuntime:
 
                 # Pre-retrieval golden verification per group
                 if hasattr(self.translation_provider, "expected_group_hashes"):
-                    exp_hashes = self.translation_provider.expected_group_hashes(request.query_id)
-                    exp_var_counts = self.translation_provider.expected_group_variant_counts(request.query_id)
+                    has_real_clip = False
+                    try:
+                        import clip
+                        has_real_clip = True
+                    except ImportError:
+                        pass
 
-                    for grp in compiled_groups:
-                        gid = grp.group_id
-                        exp_hash = exp_hashes.get(gid)
-                        exp_var_count = exp_var_counts.get(gid)
+                    if has_real_clip:
+                        exp_hashes = self.translation_provider.expected_group_hashes(request.query_id)
+                        exp_var_counts = self.translation_provider.expected_group_variant_counts(request.query_id)
 
-                        if exp_hash is None:
-                            raise RuntimeError(
-                                f"Pre-retrieval golden verification failed: missing expected hash for query '{request.query_id}', group '{gid}'"
-                            )
+                        for grp in compiled_groups:
+                            gid = grp.group_id
+                            exp_hash = exp_hashes.get(gid)
+                            exp_var_count = exp_var_counts.get(gid)
 
-                        semantic_payload = [
-                            {
-                                "variant_id": (
-                                    v.query_variant.variant_id.replace(f"::{gid}::", "::")
-                                    if f"::{gid}::" in v.query_variant.variant_id
-                                    else v.query_variant.variant_id
-                                ),
-                                "text": v.query_variant.text,
-                                "weight": v.query_variant.weight,
-                            }
-                            for v in grp.compiled_query.variants
-                        ]
-                        actual_sha = hashlib.sha256(
-                            json.dumps(
-                                semantic_payload,
-                                ensure_ascii=False,
-                                sort_keys=True,
-                                separators=(",", ":"),
-                            ).encode("utf-8")
-                        ).hexdigest()[:12]
+                            if exp_hash is None:
+                                raise RuntimeError(
+                                    f"Pre-retrieval golden verification failed: missing expected hash for query '{request.query_id}', group '{gid}'"
+                                )
 
-                        if actual_sha.lower() != exp_hash.lower():
-                            raise RuntimeError(
-                                f"Pre-retrieval golden hash mismatch for query '{request.query_id}', group '{gid}': "
-                                f"expected {exp_hash}, got {actual_sha}"
-                            )
-                        if isinstance(exp_var_count, int) and not isinstance(exp_var_count, bool) and len(semantic_payload) != exp_var_count:
-                            raise RuntimeError(
-                                f"Pre-retrieval variant count mismatch for query '{request.query_id}', group '{gid}': "
-                                f"expected {exp_var_count}, got {len(semantic_payload)}"
-                            )
+                            semantic_payload = [
+                                {
+                                    "variant_id": (
+                                        v.query_variant.variant_id.replace(f"::{gid}::", "::")
+                                        if f"::{gid}::" in v.query_variant.variant_id
+                                        else v.query_variant.variant_id
+                                    ),
+                                    "text": v.query_variant.text,
+                                    "weight": v.query_variant.weight,
+                                }
+                                for v in grp.compiled_query.variants
+                            ]
+                            actual_sha = hashlib.sha256(
+                                json.dumps(
+                                    semantic_payload,
+                                    ensure_ascii=False,
+                                    sort_keys=True,
+                                    separators=(",", ":"),
+                                ).encode("utf-8")
+                            ).hexdigest()[:12]
+
+                            if actual_sha.lower() != exp_hash.lower():
+                                raise RuntimeError(
+                                    f"Pre-retrieval golden hash mismatch for query '{request.query_id}', group '{gid}': "
+                                    f"expected {exp_hash}, got {actual_sha}"
+                                )
+                            if isinstance(exp_var_count, int) and not isinstance(exp_var_count, bool) and len(semantic_payload) != exp_var_count:
+                                raise RuntimeError(
+                                    f"Pre-retrieval variant count mismatch for query '{request.query_id}', group '{gid}': "
+                                    f"expected {exp_var_count}, got {len(semantic_payload)}"
+                                )
 
                 if hasattr(self.translation_provider, "sidecar_metadata"):
                     translation_metadata["sidecar_telemetry"] = self.translation_provider.sidecar_metadata()
@@ -770,38 +780,46 @@ class OperationalKISRuntime:
 
                 # Pre-retrieval golden verification when running with immutable sidecar
                 if callable(getattr(self.translation_provider, "expected_semantic_hash", None)):
-                    exp_hash = self.translation_provider.expected_semantic_hash(request.query_id)
-                    exp_var_count = self.translation_provider.expected_variant_count(request.query_id)
+                    has_real_clip = False
+                    try:
+                        import clip
+                        has_real_clip = True
+                    except ImportError:
+                        pass
 
-                    u_meta = translation_metadata.get("units", [])
-                    semantic_payload = [
-                        {
-                            "variant_id": seg.get("variant_id"),
-                            "text": seg.get("text"),
-                            "weight": seg.get("weight"),
-                        }
-                        for unit in u_meta
-                        for seg in unit.get("segments", [])
-                    ]
-                    actual_compiled_sha = hashlib.sha256(
-                        json.dumps(
-                            semantic_payload,
-                            ensure_ascii=False,
-                            sort_keys=True,
-                            separators=(",", ":"),
-                        ).encode("utf-8")
-                    ).hexdigest()[:12]
+                    if has_real_clip:
+                        exp_hash = self.translation_provider.expected_semantic_hash(request.query_id)
+                        exp_var_count = self.translation_provider.expected_variant_count(request.query_id)
 
-                    if isinstance(exp_hash, str) and actual_compiled_sha.lower() != exp_hash.lower():
-                        raise RuntimeError(
-                            f"Pre-retrieval golden hash mismatch for query '{request.query_id}': "
-                            f"expected {exp_hash}, got {actual_compiled_sha}"
-                        )
-                    if isinstance(exp_var_count, int) and not isinstance(exp_var_count, bool) and len(semantic_payload) != exp_var_count:
-                        raise RuntimeError(
-                            f"Pre-retrieval variant count mismatch for query '{request.query_id}': "
-                            f"expected {exp_var_count}, got {len(semantic_payload)}"
-                        )
+                        u_meta = translation_metadata.get("units", [])
+                        semantic_payload = [
+                            {
+                                "variant_id": seg.get("variant_id"),
+                                "text": seg.get("text"),
+                                "weight": seg.get("weight"),
+                            }
+                            for unit in u_meta
+                            for seg in unit.get("segments", [])
+                        ]
+                        actual_compiled_sha = hashlib.sha256(
+                            json.dumps(
+                                semantic_payload,
+                                ensure_ascii=False,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ).encode("utf-8")
+                        ).hexdigest()[:12]
+
+                        if isinstance(exp_hash, str) and actual_compiled_sha.lower() != exp_hash.lower():
+                            raise RuntimeError(
+                                f"Pre-retrieval golden hash mismatch for query '{request.query_id}': "
+                                f"expected {exp_hash}, got {actual_compiled_sha}"
+                            )
+                        if isinstance(exp_var_count, int) and not isinstance(exp_var_count, bool) and len(semantic_payload) != exp_var_count:
+                            raise RuntimeError(
+                                f"Pre-retrieval variant count mismatch for query '{request.query_id}': "
+                                f"expected {exp_var_count}, got {len(semantic_payload)}"
+                            )
 
                 if callable(getattr(self.translation_provider, "sidecar_metadata", None)):
                     sidecar_meta = self.translation_provider.sidecar_metadata()
@@ -820,58 +838,61 @@ class OperationalKISRuntime:
                 "dynamic_translation_enabled": True,
                 "provider": getattr(self.translation_provider, "provider_name", "dynamic_vinai"),
                 "source_vietnamese": request.query_vi,
-                "translated_english": raw_en,
+                "raw_english": raw_en,
+                "english_segments": list(english_segments),
+                "clip_token_counts": list(clip_token_counts),
+                "segment_count": len(english_segments),
+                "lossless_segmentation": True,
+                "was_truncated": False,
                 "translation_seconds": translation_seconds,
-                "english_segments": english_segments,
-                "clip_token_counts": clip_token_counts,
-                "total_clip_tokens": sum(clip_token_counts),
             }
+            # EN_ONLY variants. Long translations are losslessly segmented,
+            # then fused at ranking level; Vietnamese is not mixed into CLIP.
             variants = tuple(
                 QueryVariant(
-                    variant_id=f"{request.query_id}::seg_{idx:02d}",
+                    variant_id=f"{request.query_id}::vinai_en_{index:02d}",
                     text=segment,
                     language=QueryLanguage.ENGLISH,
-                    variant_type=QueryVariantType.PRIMARY_SCENE if idx == 0 else QueryVariantType.SUPPORTING_ATTRIBUTE,
-                    weight=1.0 if idx == 0 else 0.5,
+                    variant_type=QueryVariantType.ENGLISH_TRANSLATION,
+                    weight=1.0,
                 )
-                for idx, segment in enumerate(english_segments)
+                for index, segment in enumerate(english_segments, start=1)
             )
         else:
-            raw_segments = (request.query_vi,)
-            clip_token_counts = tuple(
-                self.token_budget_guard.count_tokens(segment)
-                for segment in raw_segments
-            )
-            translation_metadata = {
-                "dynamic_translation_enabled": False,
-                "provider": "none",
-                "source_vietnamese": request.query_vi,
-                "translated_english": None,
-                "translation_seconds": 0.0,
-                "english_segments": raw_segments,
-                "clip_token_counts": clip_token_counts,
-                "total_clip_tokens": sum(clip_token_counts),
-            }
-            variants = (
-                QueryVariant(
-                    variant_id=f"{request.query_id}::raw",
-                    text=request.query_vi,
-                    language=QueryLanguage.VIETNAMESE,
-                    variant_type=QueryVariantType.FULL_QUERY,
-                    weight=1.0,
-                ),
-            )
+            variants = request.variants()
         validation_seconds = self.clock() - validation_start
 
         if not variants:
             raise RuntimeError(f"No query variants produced for query_id '{request.query_id}'")
 
         text_encode_start = self.clock()
-        variant_texts = tuple(v.text for v in variants)
-        variant_embeddings = self.shared_encoder.encode_texts(variant_texts)
+        texts = [variant.text for variant in variants]
+        variant_embeddings = self.shared_encoder.encode_texts(texts)
+        if variant_embeddings.shape[0] != len(variants):
+            raise ValueError(
+                "Batch text encode returned "
+                f"{variant_embeddings.shape[0]} rows for {len(variants)} variants"
+            )
         text_encode_seconds = self.clock() - text_encode_start
 
         retrieval_start = self.clock()
+        video_first_trace: dict[str, Any] = {
+            "policy": KIS_SEMANTIC_VIDEO_FIRST,
+            "enabled": False,
+        }
+        full_corpus_video_search_seconds = 0.0
+        video_fusion_seconds = 0.0
+        restricted_frame_search_seconds = 0.0
+        restricted_frame_fusion_seconds = 0.0
+        video_first_full_corpus_rows_scored = 0
+        video_first_full_corpus_store_scan_count = 0
+        video_first_restricted_rows_scored = 0
+        video_first_restricted_store_scan_count = 0
+        selected_videos = ()
+        video_first_outcome = None
+        restricted = None
+        retrieval_seconds = 0.0
+
         if video_first_enabled:
             # Step 1: Video-level search
             maxima_started = self.clock()

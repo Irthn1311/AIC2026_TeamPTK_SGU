@@ -154,6 +154,22 @@ class ImmutableSidecarTranslationProvider:
             return meta.get("expected_variant_count")
         return None
 
+    def validate_query_vi(self, query_id: str, query_vi: str) -> None:
+        """Validate NFC SHA256 of query_vi against sidecar metadata; raise ValueError if altered."""
+        clean = query_id.strip()
+        meta = self._query_meta.get(clean)
+        if meta is None:
+            short = clean.replace("query-", "").replace("-kis", "")
+            meta = self._query_meta.get(f"query-{short}-kis") or self._query_meta.get(short)
+        if meta:
+            vi_nfc = unicodedata.normalize("NFC", query_vi)
+            computed_sha = hashlib.sha256(vi_nfc.encode("utf-8")).hexdigest()
+            expected_sha = meta["query_vi_sha256"]
+            if computed_sha.lower() != expected_sha.lower():
+                raise ValueError(
+                    f"Query '{query_id}' Vietnamese text altered! Expected NFC SHA {expected_sha}, got {computed_sha}"
+                )
+
     def sidecar_metadata(self) -> dict[str, object]:
         """Return audit telemetry dictionary for candidates.json and summaries."""
         return {

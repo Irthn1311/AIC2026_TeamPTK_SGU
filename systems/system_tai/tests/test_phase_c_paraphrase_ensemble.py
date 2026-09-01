@@ -529,3 +529,323 @@ def test_non_ensemble_quota_preservation_k10():
     assert cfg_k10.restricted_frames_per_video_per_variant == 10
     assert cfg_k10.enable_paraphrase_ensemble is False
 
+
+def test_query_manifest_not_allowed_as_corpus_manifest():
+    """Verify that passing a query benchmark manifest to load_corpus_manifest raises ValueError."""
+    from system_tai.data.corpus_discovery import load_corpus_manifest
+    query_manifest = Path("systems/system_tai/benchmarks/frozen_kis_v2a_stress_manifest.json")
+    assert query_manifest.exists()
+
+    with pytest.raises(ValueError, match="unsupported feature manifest"):
+        load_corpus_manifest(query_manifest)
+
+
+def test_altered_vietnamese_query_text_raises_fail_fast():
+    """Verify that providing altered Vietnamese query text for an existing query_id raises ValueError."""
+    sidecar_path = Path("scratch/benchmarks/translation_ablation/paraphrase_ensemble_p1_focus_v1.json")
+    provider = ImmutableParaphraseEnsembleSidecarProvider(sidecar_path)
+
+    # Valid original text
+    original_p15_text = provider._query_meta["query-p1-5-kis"]["query_vi"]
+    provider.validate_query_vi("query-p1-5-kis", original_p15_text)
+
+    # Altered text must fail fast
+    with pytest.raises(ValueError, match="Vietnamese text altered"):
+        provider.validate_query_vi("query-p1-5-kis", "Một người phụ nữ mặc áo khoác đỏ")
+
+
+def test_canonical_projection_digest_ieee754_hex_format():
+    """Verify canonical_projection_digest produces exact deterministic IEEE-754 64-bit uppercase hex digests."""
+    from system_tai.retrieval.canonical_projection import canonical_projection_digest, float_to_ieee754_hex
+
+    # Test float hex encoding
+    assert float_to_ieee754_hex(1.0) == "3FF0000000000000"
+    assert float_to_ieee754_hex(0.0) == "0000000000000000"
+
+    candidates = [
+        {"rank": 1, "video_id": "L26_V035", "frame_id": 100, "fusion_score": 0.95},
+        {"rank": 2, "video_id": "L30_V046", "frame_id": 200, "fusion_score": 0.85},
+    ]
+    digest = canonical_projection_digest(candidates)
+    assert isinstance(digest, str) and len(digest) == 64
+
+
+def _create_mock_corpus_manifest(dataset_root: Path):
+    from unittest.mock import MagicMock
+    mm = MagicMock()
+    mm.dataset_root = dataset_root
+    mm.schema_version = "v1"
+    mm.discovery_version = "v1"
+    mm.path_mode = "portable"
+    mm.fingerprint = "fp_mock_1234567890abcdef"
+    mm.identifiers = {}
+    mm.videos = ()
+    mm.video_count = 100
+    mm.total_frames = 1000
+    mm.embedding_dimension = 512
+    return mm
+
+
+def _create_mock_raw_video_registry():
+    from unittest.mock import MagicMock
+    mock_raw = MagicMock()
+    mock_raw.records = ()
+    mock_rec = MagicMock()
+    mock_rec.raw_video_path = None
+    mock_rec.video_id = "V01"
+    mock_raw.get.return_value = mock_rec
+    return mock_raw
+
+
+def test_non_video_first_runtime_executes_without_unbound_error():
+    """Verify OperationalKISRuntime.handle_query executes without UnboundLocalError when video-first is disabled."""
+    import tempfile
+    import numpy as np
+    from unittest.mock import MagicMock
+    from system_tai.kis.session_schema import SessionConfig, KISVideoFirstConfig, QueryRequest
+    from system_tai.kis.session_engine import OperationalKISRuntime
+    from system_tai.retrieval.multi_query import WeightedRRFRetriever
+
+    with tempfile.TemporaryDirectory() as td:
+        tdp = Path(td)
+        cfg = SessionConfig(
+            input_root=tdp,
+            output_root=tdp,
+            enable_dynamic_translation=False,
+            kis_video_first_config=KISVideoFirstConfig(enabled=False),
+        )
+
+        mock_encoder = MagicMock()
+        mock_encoder.dimension = 512
+        mock_encoder.identifiers = {"device": "cpu", "model": "ViT-B/32"}
+        mock_encoder.encode_texts.side_effect = lambda texts: np.ones((len(texts), 512), dtype=np.float32)
+
+        mock_registry = MagicMock()
+        mock_registry.embedding_dimension = 512
+        mock_registry.total_rows = 10
+        mock_registry.stores = ()
+        mock_registry.keys.return_value = ("L30_V046",)
+        mock_registry.get_store.return_value = None
+
+        mock_manifest = _create_mock_corpus_manifest(tdp)
+
+        from system_tai.common.schemas import CandidateFrame
+        mock_retriever = MagicMock()
+        mock_cand = CandidateFrame(
+            video_id="L30_V046",
+            frame_id=100,
+            clip_row=0,
+            keyframe_order=0,
+            score=0.9,
+            rank=1,
+            source="exact_retriever",
+        )
+        mock_result = MagicMock()
+        mock_result.candidates = (mock_cand,)
+        mock_result.ranked_candidates = (mock_cand,)
+        mock_retriever.search_vector.return_value = mock_result
+
+        runtime = OperationalKISRuntime(
+            config=cfg,
+            manifest_path=tdp / "manifest.json",
+            manifest=mock_manifest,
+            registry=mock_registry,
+            raw_video_registry=_create_mock_raw_video_registry(),
+            shared_encoder=mock_encoder,
+            decoder=MagicMock(),
+            translation_provider=None,
+            token_budget_guard=None,
+        )
+        runtime.exact_retriever = mock_retriever
+        runtime.weighted_rrf = WeightedRRFRetriever(exact_retriever=None)  # type: ignore[arg-type]
+
+        req = QueryRequest(
+            request_id="req_non_vf_1",
+            query_id="query_p1_1",
+            query_vi="test query",
+            query_en="test query en",
+        )
+        resp = runtime.handle_query(req)
+        assert resp["status"] == "SUCCESS"
+
+
+def test_non_ensemble_k10_passes_exact_result_cap_to_searcher():
+    """Verify that when restricted_frames_per_video_per_variant=10, search_selected_videos receives 10."""
+    import tempfile
+    import numpy as np
+    from unittest.mock import MagicMock
+    from system_tai.kis.session_schema import SessionConfig, KISVideoFirstConfig, QueryRequest
+    from system_tai.kis.session_engine import OperationalKISRuntime
+    from system_tai.retrieval.video_evidence import (
+        FullCorpusVideoMaximaOutcome,
+        VideoMaximumHit,
+        VideoRestrictedSearchOutcome,
+        RestrictedFrameHit,
+    )
+
+    with tempfile.TemporaryDirectory() as td:
+        tdp = Path(td)
+        cap_received = []
+
+        mock_searcher = MagicMock()
+        mock_searcher.search_video_maxima.return_value = FullCorpusVideoMaximaOutcome(
+            rankings={"query_p1_1::semantic_01_s01": (VideoMaximumHit(query_id="query_p1_1::semantic_01_s01", video_id="V01", frame_id=10, clip_row=0, keyframe_order=0, cosine_score=0.9, rank=1),)},
+            physical_rows_scored=10,
+            video_store_scan_count=1,
+        )
+        def fake_search_selected_videos(*, per_query_result_cap, **kwargs):
+            cap_received.append(per_query_result_cap)
+            return VideoRestrictedSearchOutcome(
+                rankings={"query_p1_1::semantic_01_s01": {"V01": (RestrictedFrameHit(video_id="V01", frame_id=10, clip_row=0, keyframe_order=0, pts_time=1.0, cosine_score=0.9, rank=1),)}},
+                physical_rows_scored=10,
+                video_store_scan_count=1,
+            )
+        mock_searcher.search_selected_videos.side_effect = fake_search_selected_videos
+
+        cfg = SessionConfig(
+            input_root=tdp,
+            output_root=tdp,
+            enable_dynamic_translation=True,
+            kis_video_first_config=KISVideoFirstConfig(
+                enabled=True,
+                restricted_frames_per_video_per_variant=10,
+                enable_paraphrase_ensemble=False,
+            ),
+        )
+
+        mock_trans = MagicMock()
+        mock_trans.provider_name = "mock_provider"
+        mock_trans.sidecar_id = "mock_sidecar"
+        mock_trans.translate_many.side_effect = lambda texts, **kwargs: tuple(f"En {t}" for t in texts)
+        mock_trans.expected_semantic_hash.return_value = None
+        mock_trans.expected_variant_count.return_value = None
+        mock_trans.sidecar_metadata.return_value = {"sidecar_id": "mock_sidecar"}
+
+        mock_guard = MagicMock()
+        mock_guard.split_for_clip.side_effect = lambda t: (t,)
+        mock_guard.count_tokens.return_value = 5
+        mock_guard.max_tokens = 75
+
+        mock_encoder = MagicMock()
+        mock_encoder.dimension = 512
+        mock_encoder.identifiers = {"device": "cpu", "model": "ViT-B/32"}
+        mock_encoder.encode_texts.side_effect = lambda texts: np.ones((len(texts), 512), dtype=np.float32)
+
+        runtime = OperationalKISRuntime(
+            config=cfg,
+            manifest_path=tdp / "manifest.json",
+            manifest=_create_mock_corpus_manifest(tdp),
+            registry=MagicMock(embedding_dimension=512, total_rows=10, stores=(), keys=lambda: ("V01",), get_store=lambda x: None),
+            raw_video_registry=_create_mock_raw_video_registry(),
+            shared_encoder=mock_encoder,
+            decoder=MagicMock(),
+            translation_provider=mock_trans,
+            token_budget_guard=mock_guard,
+        )
+        runtime.video_restricted_searcher = mock_searcher
+
+        req = QueryRequest(
+            request_id="req_k10",
+            query_id="query_p1_1",
+            query_vi="test query vi",
+        )
+        runtime.handle_query(req)
+        assert len(cap_received) == 1
+        # The result cap passed to search_selected_videos must be 10 or a mapping with 10 (not 20!)
+        if isinstance(cap_received[0], dict):
+            assert all(v == 10 for v in cap_received[0].values())
+        else:
+            assert cap_received[0] == 10
+
+
+def test_phase_c_audit_runner_smoke_with_mock_bootstrap():
+    """Verify run_phase_c_audit executes end-to-end with bootstrap lifecycle."""
+    import tempfile
+    import numpy as np
+    from unittest.mock import patch, MagicMock
+    from scratch.run_phase_c_paraphrase_ensemble import run_phase_c_audit
+    from system_tai.kis.session_engine import OperationalKISRuntime
+    from system_tai.retrieval.multi_query import WeightedRRFRetriever
+    from system_tai.translation.provider import TokenBudgetGuard
+    from system_tai.retrieval.video_evidence import (
+        FullCorpusVideoMaximaOutcome,
+        VideoMaximumHit,
+        VideoRestrictedSearchOutcome,
+        RestrictedFrameHit,
+    )
+
+    with tempfile.TemporaryDirectory() as td:
+        tdp = Path(td)
+        out_dir = tdp / "phase_c_out"
+
+        query_manifest = Path("systems/system_tai/benchmarks/frozen_kis_v2a_stress_manifest.json")
+        tnew_sidecar = Path("scratch/benchmarks/translation_ablation/translation_p1_focus_v2_new.json")
+        para_sidecar = Path("scratch/benchmarks/translation_ablation/paraphrase_ensemble_p1_focus_v1.json")
+        manual_ref = Path("systems/system_tai/benchmarks/manual_kis_reference_v1.json")
+
+        def mock_bootstrap(config, *, translation_provider=None, **kwargs):
+            mock_encoder = MagicMock()
+            mock_encoder.dimension = 512
+            mock_encoder.identifiers = {"device": "cpu", "model": "ViT-B/32"}
+            mock_encoder.encode_texts.side_effect = lambda texts: np.ones((len(texts), 512), dtype=np.float32)
+
+            mock_searcher = MagicMock()
+            def fake_maxima(*, query_ids, **kwargs):
+                return FullCorpusVideoMaximaOutcome(
+                    rankings={qid: tuple(VideoMaximumHit(query_id=qid, video_id=f"L{i:02d}_V001", frame_id=i*10, clip_row=0, keyframe_order=0, cosine_score=0.9 - i*0.005, rank=i) for i in range(1, 101)) for qid in query_ids},
+                    physical_rows_scored=100,
+                    video_store_scan_count=1,
+                )
+            mock_searcher.search_video_maxima.side_effect = fake_maxima
+
+            def fake_restricted(*, video_ids, query_ids, **kwargs):
+                return VideoRestrictedSearchOutcome(
+                    rankings={
+                        qid: {
+                            vid: (
+                                RestrictedFrameHit(video_id=vid, frame_id=10, clip_row=0, keyframe_order=0, pts_time=1.0, cosine_score=0.9, rank=1),
+                                RestrictedFrameHit(video_id=vid, frame_id=20, clip_row=1, keyframe_order=1, pts_time=2.0, cosine_score=0.8, rank=2),
+                            )
+                            for vid in video_ids
+                        }
+                        for qid in query_ids
+                    },
+                    physical_rows_scored=100,
+                    video_store_scan_count=1,
+                    candidate_selection_telemetry={qid: {vid: {"effective_candidate_count": 20, "compulsory_extra_count": 0} for vid in video_ids} for qid in query_ids},
+                )
+            mock_searcher.search_selected_videos.side_effect = fake_restricted
+
+            real_guard = TokenBudgetGuard(max_tokens=75)
+
+            runtime = OperationalKISRuntime(
+                config=config,
+                manifest_path=tdp / "manifest.json",
+                manifest=_create_mock_corpus_manifest(tdp),
+                registry=MagicMock(embedding_dimension=512, total_rows=100, stores=(), keys=lambda: tuple(f"L{i:02d}_V001" for i in range(1, 101)), get_store=lambda x: None),
+                raw_video_registry=_create_mock_raw_video_registry(),
+                shared_encoder=mock_encoder,
+                decoder=MagicMock(),
+                translation_provider=translation_provider,
+                token_budget_guard=real_guard,
+            )
+            runtime.video_restricted_searcher = mock_searcher
+            runtime.weighted_rrf = WeightedRRFRetriever(exact_retriever=None)  # type: ignore[arg-type]
+            return runtime
+
+        with patch.object(OperationalKISRuntime, "bootstrap", side_effect=mock_bootstrap):
+            res = run_phase_c_audit(
+                query_manifest_path=query_manifest,
+                input_root=tdp,
+                output_dir=out_dir,
+                tnew_sidecar_path=tnew_sidecar,
+                paraphrase_sidecar_path=para_sidecar,
+                manual_ref_path=manual_ref,
+                allow_model_download=False,
+                strict_corpus_gate=False,
+            )
+            assert "arms" in res
+            assert "C0_baseline" in res["arms"]
+            assert "C1_equal_budget_ensemble" in res["arms"]
+            assert "C2_expanded_retention_ensemble" in res["arms"]
+            assert (out_dir / "phase_c_paraphrase_ensemble_audit.json").exists()

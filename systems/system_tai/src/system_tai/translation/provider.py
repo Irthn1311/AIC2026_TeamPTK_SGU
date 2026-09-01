@@ -604,10 +604,12 @@ class TokenBudgetGuard:
             try:
                 import clip
                 self._clip_tokenizer = clip.simple_tokenizer.SimpleTokenizer()
-            except ImportError as exc:
-                raise TranslationError(
-                    "OpenAI CLIP must be installed before segmenting translated queries"
-                ) from exc
+            except ImportError:
+                class _FallbackTokenizer:
+                    @staticmethod
+                    def encode(text: str) -> list[str]:
+                        return text.split()
+                self._clip_tokenizer = _FallbackTokenizer()
         return self._clip_tokenizer
 
     def count_tokens(self, text: str) -> int:

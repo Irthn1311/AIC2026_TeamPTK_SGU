@@ -172,6 +172,20 @@ class ImmutableParaphraseEnsembleSidecarProvider:
             "target_queries_count": self._unique_queries_count,
         }
 
+    def validate_query_vi(self, query_id: str, query_vi: str) -> None:
+        """Validate NFC SHA256 of query_vi against sidecar metadata; raise ValueError if altered."""
+        clean = query_id.strip()
+        for alias in _normalize_query_keys(clean):
+            if alias in self._query_meta:
+                vi_nfc = unicodedata.normalize("NFC", query_vi)
+                computed_sha = hashlib.sha256(vi_nfc.encode("utf-8")).hexdigest()
+                expected_sha = self._query_meta[alias]["query_vi_sha256"]
+                if computed_sha.lower() != expected_sha.lower():
+                    raise ValueError(
+                        f"Query '{query_id}' Vietnamese text altered! Expected NFC SHA {expected_sha}, got {computed_sha}"
+                    )
+                return
+
     def get_paraphrase_groups(self, query_id: str) -> tuple[dict[str, Any], ...]:
         clean = query_id.strip()
         for alias in _normalize_query_keys(clean):
