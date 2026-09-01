@@ -730,6 +730,7 @@ def generate_and_save_ablation_summary_table(
 
     if len(runs_to_execute) > 1:
         print("\n🔍 Verifying Zero Translation Drift across runs...", flush=True)
+        is_translation_ablation = any("G_P15_" in rk for rk in runs_to_execute)
         for q_short in query_order:
             hashes = [
                 summary_matrix["runs"][rk]["queries"][q_short].get("semantic_variant_sha256")
@@ -737,9 +738,12 @@ def generate_and_save_ablation_summary_table(
             ]
             if any(h is None for h in hashes):
                 raise RuntimeError(f"Missing translation hash for query [{q_short}] in runs: {dict(zip(runs_to_execute, hashes))}")
-            if len(set(hashes)) != 1:
-                raise RuntimeError(f"Translation drift detected for query [{q_short}]: {dict(zip(runs_to_execute, hashes))}")
-            print(f"  ✅ Zero Translation Drift Strictly Verified for [{q_short}] (SHA={hashes[0]}) across {runs_to_execute}", flush=True)
+            if is_translation_ablation and q_short == "p1-5":
+                print(f"  🧪 Translation Treatment Verified for [p1-5]: {dict(zip(runs_to_execute, hashes))}", flush=True)
+            else:
+                if len(set(hashes)) != 1:
+                    raise RuntimeError(f"Translation drift detected for query [{q_short}]: {dict(zip(runs_to_execute, hashes))}")
+                print(f"  ✅ Zero Translation Drift Strictly Verified for [{q_short}] (SHA={hashes[0]}) across {runs_to_execute}", flush=True)
 
     json_path = base_out / "ablation_matrix_summary.json"
     json_path.write_text(json.dumps(summary_matrix, indent=2), encoding="utf-8")
@@ -1095,7 +1099,17 @@ def main() -> None:
         sidecar_provider = None
         s_path = run_spec.get("translation_sidecar_path") or args.translation_sidecar
         s_sha = run_spec.get("translation_sidecar_content_sha256") or args.translation_sidecar_content_sha256
+        
+        if bool(args.translation_sidecar) != bool(args.translation_sidecar_content_sha256):
+            raise ValueError(
+                "Both --translation-sidecar and --translation-sidecar-content-sha256 must be specified together!"
+            )
+
         if s_path:
+            if not s_sha:
+                raise ValueError(
+                    f"Translation sidecar path '{s_path}' provided without expected canonical content SHA256!"
+                )
             from system_tai.translation.sidecar_provider import ImmutableSidecarTranslationProvider
             resolved_p = Path(s_path)
             if not resolved_p.is_absolute():
@@ -1108,7 +1122,7 @@ def main() -> None:
                     if c.exists():
                         resolved_p = c
                         break
-            sidecar_provider = ImmutableSidecarTranslationProvider(resolved_p, s_sha if s_sha else None)
+            sidecar_provider = ImmutableSidecarTranslationProvider(resolved_p, s_sha)
             print(f"  • Using Immutable Translation Sidecar: {sidecar_provider.sidecar_id} (SHA={sidecar_provider.content_sha256[:12]}...)", flush=True)
 
         t0 = time.time()

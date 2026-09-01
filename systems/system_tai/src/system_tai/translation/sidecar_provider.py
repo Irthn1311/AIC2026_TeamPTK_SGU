@@ -117,6 +117,11 @@ class ImmutableSidecarTranslationProvider:
                 seen_unit_hashes.add(u_sha)
 
                 self._translation_table[(qid_str, u_sha)] = en_text
+                if u_sha in self._global_translation_table and self._global_translation_table[u_sha] != en_text:
+                    raise ValueError(
+                        f"Translation collision detected for text SHA {u_sha}: "
+                        f"{self._global_translation_table[u_sha]!r} != {en_text!r}"
+                    )
                 self._global_translation_table[u_sha] = en_text
 
     @property
