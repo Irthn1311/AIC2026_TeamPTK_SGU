@@ -169,14 +169,10 @@ def test_mock_segmentation_compile_all_5_queries_against_golden_hashes_both_side
 
 
 def test_real_clip_tokenizer_golden_compilation_if_available():
-    try:
-        from system_tai.translation.provider import TokenBudgetGuard
-        guard = TokenBudgetGuard(max_tokens=75)
-        # Check if CLIP tokenizer is importable
-        guard._get_tokenizer()
-    except Exception:
-        pytest.skip("OpenAI CLIP tokenizer not installed in current environment; runtime Kaggle environment provides CLIP.")
+    pytest.importorskip("clip")
+    from system_tai.translation.provider import TokenBudgetGuard
 
+    guard = TokenBudgetGuard(max_tokens=75)
     prov_new = ImmutableSidecarTranslationProvider(PATH_NEW, EXPECTED_SHA_NEW)
     prov_old = ImmutableSidecarTranslationProvider(PATH_OLD, EXPECTED_SHA_OLD)
     cfg = SemanticQueryConfig()
@@ -192,6 +188,24 @@ def test_real_clip_tokenizer_golden_compilation_if_available():
         h_new, cnt_new = compute_semantic_hash_from_compiled(comp_new)
         assert h_new == prov_new.expected_semantic_hash(qid)
         assert cnt_new == prov_new.expected_variant_count(qid)
+
+        comp_old = compile_vietnamese_semantic_query(
+            query_id=qid,
+            query_vi=qvi,
+            provider=prov_old,
+            token_budget_guard=guard,
+            config=cfg,
+        )
+        h_old, cnt_old = compute_semantic_hash_from_compiled(comp_old)
+        assert h_old == prov_old.expected_semantic_hash(qid)
+        assert cnt_old == prov_old.expected_variant_count(qid)
+
+        if qid != "query-p1-5-kis":
+            assert h_new == h_old, f"Negative control {qid} drifted: {h_new} != {h_old}"
+            assert cnt_new == cnt_old
+        else:
+            assert h_new == "243b0f915c63"
+            assert h_old == "99f24deaaf56"
 
 
 def test_global_translation_collision_fail_fast():

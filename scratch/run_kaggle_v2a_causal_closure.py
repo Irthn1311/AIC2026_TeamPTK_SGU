@@ -1116,11 +1116,6 @@ def main() -> None:
         sidecar_provider = None
         s_path = run_spec.get("translation_sidecar_path") or args.translation_sidecar
         s_sha = run_spec.get("translation_sidecar_content_sha256") or args.translation_sidecar_content_sha256
-        
-        if bool(args.translation_sidecar) != bool(args.translation_sidecar_content_sha256):
-            raise ValueError(
-                "Both --translation-sidecar and --translation-sidecar-content-sha256 must be specified together!"
-            )
 
         if s_path:
             if not s_sha:
