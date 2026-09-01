@@ -705,58 +705,50 @@ class OperationalKISRuntime:
 
                 # Pre-retrieval golden verification per group
                 if hasattr(self.translation_provider, "expected_group_hashes"):
-                    has_real_clip = False
-                    try:
-                        import clip
-                        has_real_clip = True
-                    except ImportError:
-                        pass
+                    exp_hashes = self.translation_provider.expected_group_hashes(request.query_id)
+                    exp_var_counts = self.translation_provider.expected_group_variant_counts(request.query_id)
 
-                    if has_real_clip:
-                        exp_hashes = self.translation_provider.expected_group_hashes(request.query_id)
-                        exp_var_counts = self.translation_provider.expected_group_variant_counts(request.query_id)
+                    for grp in compiled_groups:
+                        gid = grp.group_id
+                        exp_hash = exp_hashes.get(gid)
+                        exp_var_count = exp_var_counts.get(gid)
 
-                        for grp in compiled_groups:
-                            gid = grp.group_id
-                            exp_hash = exp_hashes.get(gid)
-                            exp_var_count = exp_var_counts.get(gid)
+                        if exp_hash is None:
+                            raise RuntimeError(
+                                f"Pre-retrieval golden verification failed: missing expected hash for query '{request.query_id}', group '{gid}'"
+                            )
 
-                            if exp_hash is None:
-                                raise RuntimeError(
-                                    f"Pre-retrieval golden verification failed: missing expected hash for query '{request.query_id}', group '{gid}'"
-                                )
+                        semantic_payload = [
+                            {
+                                "variant_id": (
+                                    v.query_variant.variant_id.replace(f"::{gid}::", "::")
+                                    if f"::{gid}::" in v.query_variant.variant_id
+                                    else v.query_variant.variant_id
+                                ),
+                                "text": v.query_variant.text,
+                                "weight": v.query_variant.weight,
+                            }
+                            for v in grp.compiled_query.variants
+                        ]
+                        actual_sha = hashlib.sha256(
+                            json.dumps(
+                                semantic_payload,
+                                ensure_ascii=False,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ).encode("utf-8")
+                        ).hexdigest()[:12]
 
-                            semantic_payload = [
-                                {
-                                    "variant_id": (
-                                        v.query_variant.variant_id.replace(f"::{gid}::", "::")
-                                        if f"::{gid}::" in v.query_variant.variant_id
-                                        else v.query_variant.variant_id
-                                    ),
-                                    "text": v.query_variant.text,
-                                    "weight": v.query_variant.weight,
-                                }
-                                for v in grp.compiled_query.variants
-                            ]
-                            actual_sha = hashlib.sha256(
-                                json.dumps(
-                                    semantic_payload,
-                                    ensure_ascii=False,
-                                    sort_keys=True,
-                                    separators=(",", ":"),
-                                ).encode("utf-8")
-                            ).hexdigest()[:12]
-
-                            if actual_sha.lower() != exp_hash.lower():
-                                raise RuntimeError(
-                                    f"Pre-retrieval golden hash mismatch for query '{request.query_id}', group '{gid}': "
-                                    f"expected {exp_hash}, got {actual_sha}"
-                                )
-                            if isinstance(exp_var_count, int) and not isinstance(exp_var_count, bool) and len(semantic_payload) != exp_var_count:
-                                raise RuntimeError(
-                                    f"Pre-retrieval variant count mismatch for query '{request.query_id}', group '{gid}': "
-                                    f"expected {exp_var_count}, got {len(semantic_payload)}"
-                                )
+                        if actual_sha.lower() != exp_hash.lower():
+                            raise RuntimeError(
+                                f"Pre-retrieval golden hash mismatch for query '{request.query_id}', group '{gid}': "
+                                f"expected {exp_hash}, got {actual_sha}"
+                            )
+                        if isinstance(exp_var_count, int) and not isinstance(exp_var_count, bool) and len(semantic_payload) != exp_var_count:
+                            raise RuntimeError(
+                                f"Pre-retrieval variant count mismatch for query '{request.query_id}', group '{gid}': "
+                                f"expected {exp_var_count}, got {len(semantic_payload)}"
+                            )
 
                 if hasattr(self.translation_provider, "sidecar_metadata"):
                     translation_metadata["sidecar_telemetry"] = self.translation_provider.sidecar_metadata()
@@ -780,46 +772,38 @@ class OperationalKISRuntime:
 
                 # Pre-retrieval golden verification when running with immutable sidecar
                 if callable(getattr(self.translation_provider, "expected_semantic_hash", None)):
-                    has_real_clip = False
-                    try:
-                        import clip
-                        has_real_clip = True
-                    except ImportError:
-                        pass
+                    exp_hash = self.translation_provider.expected_semantic_hash(request.query_id)
+                    exp_var_count = self.translation_provider.expected_variant_count(request.query_id)
 
-                    if has_real_clip:
-                        exp_hash = self.translation_provider.expected_semantic_hash(request.query_id)
-                        exp_var_count = self.translation_provider.expected_variant_count(request.query_id)
+                    u_meta = translation_metadata.get("units", [])
+                    semantic_payload = [
+                        {
+                            "variant_id": seg.get("variant_id"),
+                            "text": seg.get("text"),
+                            "weight": seg.get("weight"),
+                        }
+                        for unit in u_meta
+                        for seg in unit.get("segments", [])
+                    ]
+                    actual_compiled_sha = hashlib.sha256(
+                        json.dumps(
+                            semantic_payload,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ).encode("utf-8")
+                    ).hexdigest()[:12]
 
-                        u_meta = translation_metadata.get("units", [])
-                        semantic_payload = [
-                            {
-                                "variant_id": seg.get("variant_id"),
-                                "text": seg.get("text"),
-                                "weight": seg.get("weight"),
-                            }
-                            for unit in u_meta
-                            for seg in unit.get("segments", [])
-                        ]
-                        actual_compiled_sha = hashlib.sha256(
-                            json.dumps(
-                                semantic_payload,
-                                ensure_ascii=False,
-                                sort_keys=True,
-                                separators=(",", ":"),
-                            ).encode("utf-8")
-                        ).hexdigest()[:12]
-
-                        if isinstance(exp_hash, str) and actual_compiled_sha.lower() != exp_hash.lower():
-                            raise RuntimeError(
-                                f"Pre-retrieval golden hash mismatch for query '{request.query_id}': "
-                                f"expected {exp_hash}, got {actual_compiled_sha}"
-                            )
-                        if isinstance(exp_var_count, int) and not isinstance(exp_var_count, bool) and len(semantic_payload) != exp_var_count:
-                            raise RuntimeError(
-                                f"Pre-retrieval variant count mismatch for query '{request.query_id}': "
-                                f"expected {exp_var_count}, got {len(semantic_payload)}"
-                            )
+                    if isinstance(exp_hash, str) and actual_compiled_sha.lower() != exp_hash.lower():
+                        raise RuntimeError(
+                            f"Pre-retrieval golden hash mismatch for query '{request.query_id}': "
+                            f"expected {exp_hash}, got {actual_compiled_sha}"
+                        )
+                    if isinstance(exp_var_count, int) and not isinstance(exp_var_count, bool) and len(semantic_payload) != exp_var_count:
+                        raise RuntimeError(
+                            f"Pre-retrieval variant count mismatch for query '{request.query_id}': "
+                            f"expected {exp_var_count}, got {len(semantic_payload)}"
+                        )
 
                 if callable(getattr(self.translation_provider, "sidecar_metadata", None)):
                     sidecar_meta = self.translation_provider.sidecar_metadata()

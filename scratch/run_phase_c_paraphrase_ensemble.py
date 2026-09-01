@@ -107,7 +107,7 @@ def run_phase_c_audit(
     tnew_sidecar_path: Path,
     paraphrase_sidecar_path: Path,
     manual_ref_path: Path,
-    allow_model_download: bool = True,
+    allow_model_download: bool = False,
     device: str = "auto",
     strict_corpus_gate: bool = False,
 ) -> dict[str, Any]:
@@ -129,7 +129,18 @@ def run_phase_c_audit(
         )
     print(f"✅ Canonical Paraphrase Ensemble Sidecar SHA256 verified: {para_sha}")
 
-    # 2. Providers
+    # 2. Benchmark manifest & reference provenance
+    if not query_manifest_path.exists():
+        raise FileNotFoundError(f"Query manifest file not found: {query_manifest_path}")
+    query_manifest_bytes = query_manifest_path.read_bytes()
+    query_manifest_sha = hashlib.sha256(query_manifest_bytes).hexdigest()
+
+    if not manual_ref_path.exists():
+        raise FileNotFoundError(f"Manual reference file not found: {manual_ref_path}")
+    manual_ref_bytes = manual_ref_path.read_bytes()
+    manual_ref_sha = hashlib.sha256(manual_ref_bytes).hexdigest()
+
+    # 3. Providers
     tnew_provider = ImmutableSidecarTranslationProvider(
         sidecar_path=tnew_sidecar_path,
         expected_content_sha256=CANONICAL_TNEW_SHA256,
@@ -139,13 +150,11 @@ def run_phase_c_audit(
         expected_content_sha256=CANONICAL_PARAPHRASE_SHA256,
     )
 
-    # 3. Ground Truth Reference
+    # 4. Ground Truth Reference
     gt_ref = load_manual_reference(manual_ref_path)
     print(f"✅ Loaded {len(gt_ref)} human-verified ground truth targets from {manual_ref_path.name}")
 
-    if not query_manifest_path.exists():
-        raise FileNotFoundError(f"Query manifest file not found: {query_manifest_path}")
-    manifest_raw = json.loads(query_manifest_path.read_text(encoding="utf-8"))
+    manifest_raw = json.loads(query_manifest_bytes.decode("utf-8"))
     queries_data = manifest_raw.get("queries", manifest_raw)
 
     arms = [
@@ -160,6 +169,14 @@ def run_phase_c_audit(
         "environment": {
             "python_version": sys.version,
             "platform": platform.platform(),
+        },
+        "query_manifest": {
+            "path": str(query_manifest_path),
+            "canonical_sha256": query_manifest_sha,
+        },
+        "manual_reference": {
+            "path": str(manual_ref_path),
+            "canonical_sha256": manual_ref_sha,
         },
         "sidecar_tnew": {
             "sidecar_id": tnew_provider.sidecar_id,
@@ -342,6 +359,8 @@ def run_phase_c_audit(
                 arm_query_results[qid] = {
                     "query_id": qid,
                     "query_vi": q_vi,
+                    "candidates_json_path": str(cand_path),
+                    "records": records,
                     "canonical_projection_digest": proj_digest,
                     "human_target_video": human_target_vid,
                     "human_target_video_rank": human_target_video_rank,
@@ -416,14 +435,10 @@ def run_phase_c_audit(
     }
     print("✅ All Negative Controls strictly verified with 100% Bit-Exact Parity across C0/C1/C2.")
 
-    # Treatment query P1-5 analysis
-    p15_c0_path = list((output_dir / "C0_baseline" / "requests").glob("*p1-5*/candidates.json"))[0]
-    p15_c1_path = list((output_dir / "C1_equal_budget_ensemble" / "requests").glob("*p1-5*/candidates.json"))[0]
-    p15_c2_path = list((output_dir / "C2_expanded_retention_ensemble" / "requests").glob("*p1-5*/candidates.json"))[0]
-
-    p15_c0_records = json.loads(p15_c0_path.read_text(encoding="utf-8"))["records"]
-    p15_c1_records = json.loads(p15_c1_path.read_text(encoding="utf-8"))["records"]
-    p15_c2_records = json.loads(p15_c2_path.read_text(encoding="utf-8"))["records"]
+    # Treatment query P1-5 analysis using exact runtime records (no globbing)
+    p15_c0_records = c0["query-p1-5-kis"]["records"]
+    p15_c1_records = c1["query-p1-5-kis"]["records"]
+    p15_c2_records = c2["query-p1-5-kis"]["records"]
 
     def compute_set_and_rank_metrics(recs_a, recs_b):
         map_a = {(r["video_id"], r["frame_id"]): r for r in recs_a}
@@ -490,17 +505,30 @@ def run_phase_c_audit(
     nominal_sem_parity = (c0_p15_tel["semantic_nominal_budget"] == c1_p15_tel["semantic_nominal_budget"])
     nominal_vi_parity = (c0_p15_tel["vi_nominal_budget"] == c1_p15_tel["vi_nominal_budget"])
     nominal_total_parity = (c0_p15_tel["total_nominal_budget"] == c1_p15_tel["total_nominal_budget"])
+    nominal_budget_parity = (nominal_sem_parity and nominal_vi_parity and nominal_total_parity)
     selected_video_parity = (c0_p15_tel["selected_video_count"] == c1_p15_tel["selected_video_count"])
     extra_delta = c1_extra - c0_extra
     extra_parity = (extra_delta == 0)
 
+    c0_cands_before = c0_p15_tel["candidate_count_before_dedup"]
+    c1_cands_before = c1_p15_tel["candidate_count_before_dedup"]
+    c2_cands_before = c2_p15_tel["candidate_count_before_dedup"]
+    cands_before_parity = (c0_cands_before == c1_cands_before)
+
     c0_effective = c0_p15_tel["effective_unique_candidate_count_after_dedup"]
     c1_effective = c1_p15_tel["effective_unique_candidate_count_after_dedup"]
+    c2_effective = c2_p15_tel["effective_unique_candidate_count_after_dedup"]
     effective_retention_parity = (c0_effective == c1_effective)
 
-    if nominal_sem_parity and nominal_vi_parity and nominal_total_parity and selected_video_parity and extra_parity and effective_retention_parity:
+    if (
+        nominal_budget_parity
+        and selected_video_parity
+        and extra_parity
+        and cands_before_parity
+        and effective_retention_parity
+    ):
         retention_claim_status = "STRICT_EQUAL_RETENTION_PASS"
-    elif nominal_sem_parity and nominal_vi_parity and nominal_total_parity and selected_video_parity and extra_parity:
+    elif nominal_budget_parity and selected_video_parity and extra_parity:
         retention_claim_status = "EQUAL_NOMINAL_BUDGET_ONLY"
     else:
         retention_claim_status = "BUDGET_MISMATCH_FAIL"
@@ -521,7 +549,12 @@ def run_phase_c_audit(
             "C1": c1_p15_tel["total_nominal_budget"],
             "C2": c2_p15_tel["total_nominal_budget"],
         },
-        "nominal_budget_parity_c0_c1": (nominal_sem_parity and nominal_vi_parity and nominal_total_parity),
+        "nominal_budget_parity_c0_c1": nominal_budget_parity,
+        "selected_video_count": {
+            "C0": c0_p15_tel["selected_video_count"],
+            "C1": c1_p15_tel["selected_video_count"],
+            "C2": c2_p15_tel["selected_video_count"],
+        },
         "selected_video_count_parity": selected_video_parity,
         "compulsory_extra_count": {
             "C0": c0_extra,
@@ -530,10 +563,16 @@ def run_phase_c_audit(
         },
         "compulsory_extra_delta_c1_c0": extra_delta,
         "compulsory_extra_parity": extra_parity,
+        "candidate_count_before_dedup": {
+            "C0": c0_cands_before,
+            "C1": c1_cands_before,
+            "C2": c2_cands_before,
+        },
+        "candidate_count_before_dedup_parity": cands_before_parity,
         "effective_unique_candidates_after_dedup": {
             "C0": c0_effective,
             "C1": c1_effective,
-            "C2": c2_p15_tel["effective_unique_candidate_count_after_dedup"],
+            "C2": c2_effective,
         },
         "effective_retention_parity": effective_retention_parity,
         "retention_claim_verdict": retention_claim_status,
@@ -569,7 +608,7 @@ def run_phase_c_audit(
         status_str = "BIT-EXACT ✅" if qid in neg_controls else f"TREATMENT (Jaccard Dist: {p15_comparison['c0_vs_c1']['jaccard_distance']*100:.1f}%)"
         print(f"{qid:<18} | {t_vid:<12} | #{str(r0):<9} | #{str(r1):<9} | #{str(r2):<9} | {status_str}")
     print("-" * 110)
-    print(f"Compulsory Extras Gate: {retention_claim_status} (C0 extra={c0_extra}, C1 extra={c1_extra})")
+    print(f"Retention Gate Verdict: {retention_claim_status} (C0 extra={c0_extra}, C1 extra={c1_extra})")
     print("=" * 110)
 
     return audit_results
@@ -598,7 +637,12 @@ def main():
         default=REPO_ROOT / "systems/system_tai/benchmarks/manual_kis_reference_v1.json",
     )
     parser.add_argument("--device", type=str, default="auto")
-    parser.add_argument("--allow-model-download", action="store_true", default=True)
+    parser.add_argument(
+        "--allow-model-download",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Allow downloading pretrained model checkpoints",
+    )
     parser.add_argument("--strict-corpus-gate", action="store_true", default=False)
     args = parser.parse_args()
 

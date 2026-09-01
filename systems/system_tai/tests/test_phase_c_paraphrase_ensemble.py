@@ -567,7 +567,18 @@ def test_canonical_projection_digest_ieee754_hex_format():
         {"rank": 2, "video_id": "L30_V046", "frame_id": 200, "fusion_score": 0.85},
     ]
     digest = canonical_projection_digest(candidates)
-    assert isinstance(digest, str) and len(digest) == 64
+    assert digest == "310f5d76d10a1d905ff0cd4a151eea5e02b9bc9e1765cf889481193a8c0f63cd"
+
+
+def test_missing_clip_tokenizer_raises_translation_error_fail_fast():
+    """Verify that when OpenAI CLIP is not installed, TokenBudgetGuard raises TranslationError."""
+    from unittest.mock import patch
+    from system_tai.translation.provider import TokenBudgetGuard, TranslationError
+
+    guard = TokenBudgetGuard(max_tokens=75)
+    with patch.dict("sys.modules", {"clip": None}):
+        with pytest.raises(TranslationError, match="OpenAI CLIP must be installed"):
+            guard.count_tokens("A test query text")
 
 
 def _create_mock_corpus_manifest(dataset_root: Path):
@@ -817,6 +828,11 @@ def test_phase_c_audit_runner_smoke_with_mock_bootstrap():
             mock_searcher.search_selected_videos.side_effect = fake_restricted
 
             real_guard = TokenBudgetGuard(max_tokens=75)
+            class _SimpleWordTokenizer:
+                @staticmethod
+                def encode(text: str) -> list[str]:
+                    return text.split()
+            real_guard._clip_tokenizer = _SimpleWordTokenizer()
 
             runtime = OperationalKISRuntime(
                 config=config,
@@ -849,3 +865,109 @@ def test_phase_c_audit_runner_smoke_with_mock_bootstrap():
             assert "C1_equal_budget_ensemble" in res["arms"]
             assert "C2_expanded_retention_ensemble" in res["arms"]
             assert (out_dir / "phase_c_paraphrase_ensemble_audit.json").exists()
+
+
+def test_preseeded_stale_candidates_not_used_by_audit():
+    """Verify run_phase_c_audit uses runtime output records directly, ignoring any pre-existing/stale candidate files."""
+    import tempfile
+    import json
+    import numpy as np
+    from unittest.mock import patch, MagicMock
+    from scratch.run_phase_c_paraphrase_ensemble import run_phase_c_audit
+    from system_tai.kis.session_engine import OperationalKISRuntime
+    from system_tai.retrieval.multi_query import WeightedRRFRetriever
+    from system_tai.translation.provider import TokenBudgetGuard
+    from system_tai.retrieval.video_evidence import (
+        FullCorpusVideoMaximaOutcome,
+        VideoMaximumHit,
+        VideoRestrictedSearchOutcome,
+        RestrictedFrameHit,
+    )
+
+    with tempfile.TemporaryDirectory() as td:
+        tdp = Path(td)
+        out_dir = tdp / "phase_c_out"
+
+        # Pre-seed a bogus stale candidate file inside the output directory structure
+        stale_dir = out_dir / "C0_baseline" / "requests" / "stale_p1_5"
+        stale_dir.mkdir(parents=True, exist_ok=True)
+        stale_file = stale_dir / "candidates.json"
+        stale_file.write_text(
+            json.dumps({"records": [{"rank": 1, "video_id": "BOGUS_VIDEO", "frame_id": 999, "fusion_score": 1.0}] * 100}),
+            encoding="utf-8",
+        )
+
+        query_manifest = Path("systems/system_tai/benchmarks/frozen_kis_v2a_stress_manifest.json")
+        tnew_sidecar = Path("scratch/benchmarks/translation_ablation/translation_p1_focus_v2_new.json")
+        para_sidecar = Path("scratch/benchmarks/translation_ablation/paraphrase_ensemble_p1_focus_v1.json")
+        manual_ref = Path("systems/system_tai/benchmarks/manual_kis_reference_v1.json")
+
+        def mock_bootstrap(config, *, translation_provider=None, **kwargs):
+            mock_encoder = MagicMock()
+            mock_encoder.dimension = 512
+            mock_encoder.identifiers = {"device": "cpu", "model": "ViT-B/32"}
+            mock_encoder.encode_texts.side_effect = lambda texts: np.ones((len(texts), 512), dtype=np.float32)
+
+            mock_searcher = MagicMock()
+            def fake_maxima(*, query_ids, **kwargs):
+                return FullCorpusVideoMaximaOutcome(
+                    rankings={qid: tuple(VideoMaximumHit(query_id=qid, video_id=f"L{i:02d}_V001", frame_id=i*10, clip_row=0, keyframe_order=0, cosine_score=0.9 - i*0.005, rank=i) for i in range(1, 101)) for qid in query_ids},
+                    physical_rows_scored=100,
+                    video_store_scan_count=1,
+                )
+            mock_searcher.search_video_maxima.side_effect = fake_maxima
+
+            def fake_restricted(*, video_ids, query_ids, **kwargs):
+                return VideoRestrictedSearchOutcome(
+                    rankings={
+                        qid: {
+                            vid: (
+                                RestrictedFrameHit(video_id=vid, frame_id=10, clip_row=0, keyframe_order=0, pts_time=1.0, cosine_score=0.9, rank=1),
+                                RestrictedFrameHit(video_id=vid, frame_id=20, clip_row=1, keyframe_order=1, pts_time=2.0, cosine_score=0.8, rank=2),
+                            )
+                            for vid in video_ids
+                        }
+                        for qid in query_ids
+                    },
+                    physical_rows_scored=100,
+                    video_store_scan_count=1,
+                    candidate_selection_telemetry={qid: {vid: {"effective_candidate_count": 20, "compulsory_extra_count": 0} for vid in video_ids} for qid in query_ids},
+                )
+            mock_searcher.search_selected_videos.side_effect = fake_restricted
+
+            real_guard = TokenBudgetGuard(max_tokens=75)
+            class _SimpleWordTokenizer:
+                @staticmethod
+                def encode(text: str) -> list[str]:
+                    return text.split()
+            real_guard._clip_tokenizer = _SimpleWordTokenizer()
+
+            runtime = OperationalKISRuntime(
+                config=config,
+                manifest_path=tdp / "manifest.json",
+                manifest=_create_mock_corpus_manifest(tdp),
+                registry=MagicMock(embedding_dimension=512, total_rows=100, stores=(), keys=lambda: tuple(f"L{i:02d}_V001" for i in range(1, 101)), get_store=lambda x: None),
+                raw_video_registry=_create_mock_raw_video_registry(),
+                shared_encoder=mock_encoder,
+                decoder=MagicMock(),
+                translation_provider=translation_provider,
+                token_budget_guard=real_guard,
+            )
+            runtime.video_restricted_searcher = mock_searcher
+            runtime.weighted_rrf = WeightedRRFRetriever(exact_retriever=None)  # type: ignore[arg-type]
+            return runtime
+
+        with patch.object(OperationalKISRuntime, "bootstrap", side_effect=mock_bootstrap):
+            res = run_phase_c_audit(
+                query_manifest_path=query_manifest,
+                input_root=tdp,
+                output_dir=out_dir,
+                tnew_sidecar_path=tnew_sidecar,
+                paraphrase_sidecar_path=para_sidecar,
+                manual_ref_path=manual_ref,
+                allow_model_download=False,
+                strict_corpus_gate=False,
+            )
+            c0_p15 = res["arms"]["C0_baseline"]["query-p1-5-kis"]
+            assert not any(r["video_id"] == "BOGUS_VIDEO" for r in c0_p15["records"])
+            assert "stale_p1_5" not in c0_p15["candidates_json_path"]
