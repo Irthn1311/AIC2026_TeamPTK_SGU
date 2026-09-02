@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0.0",
+  "description": "Golden canonical projection digests for C_NEW_SINGLE (Canonical New CPU baseline) on 5 stress queries",
+  "provenance": {
+    "corpus_fingerprint_prefix": "398bb60c6ea1c8eb",
+    "video_count": 873,
+    "total_rows": 177321,
+    "embedding_dimension": 512,
+    "device": "cpu",
+    "sidecar_canonical_sha256": "545bd4a37c57af53713a1d9f382241ef729c287a1817a5671fdc923115b0be2a"
+  },
+  "digests": {
+    "query-p1-1-kis": "73d7185cfd35b032ef29c35a24e6ed6be6e8683423ca2221700e22f281b5bac0",
+    "query-p1-2-kis": "05d3af38138cd7ac3b9aa70aab138c23b2136c2f723ca190729d90db8c64b95f",
+    "query-p1-4-kis": "65cd8647f4f1009715191abc3e743dd83d1d81c49406a8414d69558415696bc5",
+    "query-p1-5-kis": "445c6b0f590b9ecf3a34d3fe499c04a2d399e27e4ca782b5ec87f15ccf688b8f",
+    "query-p1-6-kis": "f955bec8d023bdd30bc9f62a21975763c4bbc071366e6c5d0b9a962bc9457084"
+  },
+  "target_ranks": {
+    "query-p1-1-kis": 1,
+    "query-p1-2-kis": 1,
+    "query-p1-4-kis": 1,
+    "query-p1-5-kis": 25,
+    "query-p1-6-kis": 1
+  }
+}

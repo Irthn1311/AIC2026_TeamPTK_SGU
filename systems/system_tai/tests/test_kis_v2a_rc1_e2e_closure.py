@@ -24,6 +24,7 @@ from scratch.run_kis_v2a_rc1_e2e_closure import (
     CANONICAL_TNEW_SHA256,
     CANONICAL_TOLD_SHA256,
     RELEASE_CANDIDATE_ID,
+    get_git_commit_sha,
     run_kis_v2a_rc1_e2e_closure,
 )
 
@@ -32,6 +33,7 @@ TNEW_SIDECAR_PATH = REPO_ROOT / "scratch" / "benchmarks" / "translation_ablation
 TOLD_SIDECAR_PATH = REPO_ROOT / "scratch" / "benchmarks" / "translation_ablation" / "translation_p1_focus_v1_old_candidate.json"
 QUERY_MANIFEST_PATH = REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "frozen_kis_v2a_stress_manifest.json"
 MANUAL_REF_PATH = REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "manual_kis_reference_v1.json"
+GOLDEN_DIGESTS_PATH = REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "golden_phase_c1_c_new_single_digests.json"
 
 
 def test_rc1_frozen_config_exact_contract():
@@ -59,7 +61,7 @@ def test_rc1_frozen_config_exact_contract():
     )
 
     assert vf_cfg.v2_adaptive_enabled is True
-    assert vf_cfg.selected_video_cap == 64  # ceiling ceiling cap
+    assert vf_cfg.selected_video_cap == 64
     assert vf_cfg.top_m_evidence_cap == 5
     assert vf_cfg.top_m_weights == (0.4, 0.25, 0.15, 0.1, 0.1)
     assert vf_cfg.internal_rrf_candidate_depth == 1000
@@ -67,8 +69,43 @@ def test_rc1_frozen_config_exact_contract():
     assert vf_cfg.enable_paraphrase_ensemble is False
 
 
+def test_rc1_device_not_cpu_raises_fail_closed():
+    """Verify that device != 'cpu' raises ValueError fail-closed."""
+    with tempfile.TemporaryDirectory() as td:
+        tdp = Path(td)
+        with pytest.raises(ValueError, match="device must be 'cpu'"):
+            run_kis_v2a_rc1_e2e_closure(
+                query_manifest_path=QUERY_MANIFEST_PATH,
+                input_root=tdp,
+                manifest_cache_path=tdp / "manifest_cache.json",
+                output_root=tdp / "out",
+                tnew_sidecar_path=TNEW_SIDECAR_PATH,
+                manual_ref_path=MANUAL_REF_PATH,
+                expected_commit="dummy_commit",
+                device="cuda",
+            )
+
+
+def test_rc1_mismatched_commit_raises_fail_closed():
+    """Verify that mismatched git commit raises AssertionError."""
+    with tempfile.TemporaryDirectory() as td:
+        tdp = Path(td)
+        with pytest.raises(AssertionError, match="Active git commit .* does not match"):
+            run_kis_v2a_rc1_e2e_closure(
+                query_manifest_path=QUERY_MANIFEST_PATH,
+                input_root=tdp,
+                manifest_cache_path=tdp / "manifest_cache.json",
+                output_root=tdp / "out",
+                tnew_sidecar_path=TNEW_SIDECAR_PATH,
+                manual_ref_path=MANUAL_REF_PATH,
+                expected_commit="0000000000000000000000000000000000000000",
+                device="cpu",
+            )
+
+
 def test_rc1_policy_selection_requires_told_sidecar():
     """Verify that policy 'benchmark_tuned' fails fast if no valid told_sidecar is provided."""
+    git_sha = get_git_commit_sha()
     with tempfile.TemporaryDirectory() as td:
         tdp = Path(td)
         with pytest.raises(FileNotFoundError, match="requires a valid --told-sidecar path"):
@@ -79,13 +116,17 @@ def test_rc1_policy_selection_requires_told_sidecar():
                 output_root=tdp / "out",
                 tnew_sidecar_path=TNEW_SIDECAR_PATH,
                 manual_ref_path=MANUAL_REF_PATH,
+                expected_commit=git_sha,
                 told_sidecar_path=None,
                 policy="benchmark_tuned",
+                device="cpu",
             )
 
 
 def test_rc1_e2e_closure_runner_smoke_with_mock_bootstrap():
-    """Verify run_kis_v2a_rc1_e2e_closure executes two clean sessions and asserts 100% bit-exact determinism."""
+    """Verify run_kis_v2a_rc1_e2e_closure executes two clean sessions and asserts full determinism."""
+    git_sha = get_git_commit_sha()
+
     def _create_mock_corpus_manifest(root: Path):
         from system_tai.data.corpus_discovery import CorpusManifest, DiscoveredVideo, DiscoveryMetrics, DiscoveryValidation
         ordered = tuple(
@@ -106,7 +147,7 @@ def test_rc1_e2e_closure_runner_smoke_with_mock_bootstrap():
         return CorpusManifest(
             input_root=root,
             dataset_root=root,
-            fingerprint="fp_mock_smoke_12345678",
+            fingerprint="398bb60c6ea1c8eb1234567890abcdef1234567890abcdef1234567890abcdef",
             videos=ordered,
             schema_version="1.0.0",
             discovery_version="1.0.0",
@@ -138,7 +179,7 @@ def test_rc1_e2e_closure_runner_smoke_with_mock_bootstrap():
         sessions_bootstrapped = []
 
         def mock_bootstrap(config, *, translation_provider=None, **kwargs):
-            sessions_bootstrapped.append(config.output_root)
+            sessions_bootstrapped.append((config.output_root, translation_provider))
             mock_encoder = MagicMock()
             mock_encoder.dimension = 512
             mock_encoder.identifiers = {"device": "cpu", "model": "ViT-B/32"}
@@ -227,6 +268,13 @@ def test_rc1_e2e_closure_runner_smoke_with_mock_bootstrap():
             runtime.weighted_rrf = WeightedRRFRetriever(exact_retriever=None)  # type: ignore[arg-type]
             return runtime
 
+        # Provide a mock golden digests file for this test
+        mock_golden_path = tdp / "mock_golden.json"
+        mock_golden_path.write_text(
+            json.dumps({"digests": {}}, indent=2),
+            encoding="utf-8"
+        )
+
         with patch.object(OperationalKISRuntime, "bootstrap", side_effect=mock_bootstrap):
             res = run_kis_v2a_rc1_e2e_closure(
                 query_manifest_path=query_manifest,
@@ -235,27 +283,36 @@ def test_rc1_e2e_closure_runner_smoke_with_mock_bootstrap():
                 output_root=out_dir,
                 tnew_sidecar_path=tnew_sidecar,
                 manual_ref_path=manual_ref,
+                expected_commit=git_sha,
+                golden_digests_path=mock_golden_path,
                 policy="general",
                 strict_corpus_gate=False,
                 device="cpu",
             )
 
-            # Assert 2 clean sessions executed
+            # Assert 2 clean sessions executed with distinct providers
             assert len(sessions_bootstrapped) == 2
-            assert sessions_bootstrapped[0] == out_dir / "run_1"
-            assert sessions_bootstrapped[1] == out_dir / "run_2"
+            out_1, prov_1 = sessions_bootstrapped[0]
+            out_2, prov_2 = sessions_bootstrapped[1]
+            assert out_1 == out_dir / "run_1"
+            assert out_2 == out_dir / "run_2"
+            assert prov_1 is not prov_2
 
             # Assert Bit-Exact Parity
-            assert res["verification_gates"]["two_pass_closure_bit_exact"] is True
+            assert res["verification_gates"]["two_pass_projection_bit_exact"] is True
+            assert res["verification_gates"]["two_pass_selected_videos_bit_exact"] is True
 
             # Assert Release Manifest exists
             manifest_file = out_dir / "kis_v2a_rc1_closure_manifest.json"
             assert manifest_file.exists()
             manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
             assert manifest_data["release_candidate"] == RELEASE_CANDIDATE_ID
+            # In mock smoke mode (strict_corpus_gate=False), it is correctly marked NOT release-qualified
+            assert manifest_data["release_qualified"] is False
+            assert manifest_data["is_production_default"] is False
             assert manifest_data["policy"] == "PRODUCTION_GENERAL_PURPOSE"
-            assert manifest_data["is_production_default"] is True
             assert len(manifest_data["queries"]) == 5
             for qid, qinfo in manifest_data["queries"].items():
-                assert qinfo["bit_exact"] is True
-                assert qinfo["digest_run_1"] == qinfo["digest_run_2"]
+                assert qinfo["two_pass_projection_bit_exact"] is True
+                assert qinfo["two_pass_selected_seq_bit_exact"] is True
+                assert qinfo["canonical_projection_digest"] is not None
