@@ -377,7 +377,8 @@ def run_kis_v2a_rc1_e2e_closure(
             "digest_run_1": d1,
             "digest_run_2": d2,
             "bit_exact": match,
-            "target_rank": r1,
+            "target_rank_run_1": r1,
+            "target_rank_run_2": r2,
             "target_coarse_rank": run1_results[qid]["target_coarse_rank"],
             "selected_videos": run1_results[qid]["selected_video_count"],
         }
