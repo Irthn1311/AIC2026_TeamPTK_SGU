@@ -53,8 +53,9 @@ CANONICAL_TNEW_SHA256 = "545bd4a37c57af53713a1d9f382241ef729c287a1817a5671fdc923
 CANONICAL_TOLD_SHA256 = "022a6c1db48d5fe00a223ec9f637aa1d64eea5d55c06e901caa42e04ff0e3367"
 CANONICAL_SHAM_SHA256 = "baeded42652804068378831b7478eee9535844e7d1c3acb40284b4c875d1a9a3"
 CANONICAL_PARAPHRASE_SHA256 = "1bb2a15e7f55d9b1947552cdd33f5dba52b4316444781ff8d883aa359f163cf2"
-CANONICAL_QUERY_MANIFEST_SHA256 = "843833e109fca147b69afd0d92dc9aa7c4be6f4c87905d82a8b9efd61e5e9ee9"
-CANONICAL_MANUAL_REF_SHA256 = "9e164063182641b2f9df5b8abbdf298e2e65ca5d11141a1faf0eba3e6c029d61"
+CANONICAL_QUERY_MANIFEST_SHA256 = "c7ee3b1168e681444d7a0b4059c81db4bbb8fe15b91c2d58f7641823a52d2fbf"
+CANONICAL_MANUAL_REF_SHA256 = "b23d45682f6159075b03c129104e1b41abeb065f610f65ec39860d204c78f65d"
+DIAGNOSTIC_RANK_DELTA_THRESHOLD = 2
 
 
 def get_git_commit_sha() -> str:
@@ -63,6 +64,25 @@ def get_git_commit_sha() -> str:
         return out
     except Exception:
         return "UNKNOWN_COMMIT"
+
+def load_manual_reference(ref_path: Path) -> dict[str, dict[str, Any]]:
+    if not ref_path.exists():
+        raise FileNotFoundError(f"Manual reference file not found: {ref_path}")
+    raw = json.loads(ref_path.read_text(encoding="utf-8"))
+    queries = raw.get("queries", [])
+    result = {}
+    for q in queries:
+        qid = q["query_id"]
+        result[qid] = {
+            "query_id": qid,
+            "query_vi": q["query_vi"],
+            "human_verified_video_id": q["human_verified_video_id"],
+            "human_annotated_intervals": q.get("human_annotated_intervals", []),
+            "human_annotated_intervals_pts": q.get("human_annotated_intervals_pts", []),
+            "legacy_target_video": q.get("legacy_manifest_target", {}).get("target_video"),
+            "annotation_status": q.get("annotation_status", "VIDEO_ONLY_VERIFIED"),
+        }
+    return result
 
 
 def compute_pairwise_comparison(
@@ -109,6 +129,7 @@ def classify_p15_findings(
     r_sham: int | None,
     r_mixed: int | None,
     selected_video_count_parity: bool,
+    threshold: int = DIAGNOSTIC_RANK_DELTA_THRESHOLD,
 ) -> tuple[dict[str, Any], str]:
     """Evaluate independent causal contrasts and primary verdict."""
     rr_new = 1.0 / r_new if (r_new is not None and r_new > 0) else 0.0
@@ -126,29 +147,29 @@ def classify_p15_findings(
 
     findings = {
         "ensemble_mechanics_effect": bool(
-            (r_sham is not None and r_new is not None and r_sham > r_new + 2)
+            (r_sham is not None and r_new is not None and r_sham > r_new + threshold)
             or (r_sham is None and r_new is not None)
         ),
         "old_wording_weaker_than_new": bool(
-            (r_old is not None and r_new is not None and r_old > r_new + 2)
+            (r_old is not None and r_new is not None and r_old > r_new + threshold)
             or (r_old is None and r_new is not None)
         ),
         "old_wording_stronger_than_new": bool(
-            r_old is not None and r_new is not None and r_old < r_new - 2
+            r_old is not None and r_new is not None and r_old < r_new - threshold
         ),
         "semantic_replacement_degradation": bool(
-            (r_mixed is not None and r_sham is not None and r_mixed > r_sham + 2)
+            (r_mixed is not None and r_sham is not None and r_mixed > r_sham + threshold)
             or (r_mixed is None and r_sham is not None)
         ),
         "destructive_interference": bool(
             r_old is not None and r_new is not None and r_mixed is not None
-            and r_old <= r_new + 2
-            and (r_sham is None or r_sham <= r_new + 2)
-            and r_mixed > max(r_new, r_old) + 2
+            and r_old <= r_new + threshold
+            and (r_sham is None or r_sham <= r_new + threshold)
+            and r_mixed > max(r_new, r_old) + threshold
         ),
         "complementarity": bool(
             r_mixed is not None and r_new is not None and r_old is not None
-            and r_mixed < min(r_new, r_old) - 2
+            and r_mixed < min(r_new, r_old) - threshold
         ),
         "adaptive_video_budget_confound": not selected_video_count_parity,
     }
@@ -241,51 +262,68 @@ def run_phase_c1_four_way_ablation(
         raise AssertionError(f"Paraphrase Sidecar SHA mismatch: expected {CANONICAL_PARAPHRASE_SHA256}, got {para_sha}")
     print(f"✅ Canonical Paraphrase Sidecar SHA256 verified: {para_sha}", flush=True)
 
-    qm_sha = hashlib.sha256(query_manifest_path.read_bytes()).hexdigest()
+    qm_sha = canonical_sidecar_sha256(query_manifest_path)
     if qm_sha.lower() != CANONICAL_QUERY_MANIFEST_SHA256.lower():
-        raise AssertionError(f"Query Manifest SHA mismatch: expected {CANONICAL_QUERY_MANIFEST_SHA256}, got {qm_sha}")
-    print(f"✅ Query Manifest SHA256 verified: {qm_sha}", flush=True)
+        raise AssertionError(f"Query Manifest canonical JSON SHA mismatch: expected {CANONICAL_QUERY_MANIFEST_SHA256}, got {qm_sha}")
+    print(f"✅ Query Manifest canonical JSON SHA256 verified: {qm_sha}", flush=True)
 
-    mr_sha = hashlib.sha256(manual_ref_path.read_bytes()).hexdigest()
+    mr_sha = canonical_sidecar_sha256(manual_ref_path)
     if mr_sha.lower() != CANONICAL_MANUAL_REF_SHA256.lower():
-        raise AssertionError(f"Manual Reference SHA mismatch: expected {CANONICAL_MANUAL_REF_SHA256}, got {mr_sha}")
-    print(f"✅ Manual Reference SHA256 verified: {mr_sha}", flush=True)
+        raise AssertionError(f"Manual Reference canonical JSON SHA mismatch: expected {CANONICAL_MANUAL_REF_SHA256}, got {mr_sha}")
+    print(f"✅ Manual Reference canonical JSON SHA256 verified: {mr_sha}", flush=True)
+
+    # 2. Build Dedicated Providers for Each Arm
+    tnew_provider = ImmutableSidecarTranslationProvider(
+        sidecar_path=tnew_sidecar_path,
+        expected_content_sha256=tnew_sha,
+    )
+    told_provider = ImmutableSidecarTranslationProvider(
+        sidecar_path=told_sidecar_path,
+        expected_content_sha256=told_sha,
+    )
+    sham_provider = ImmutableParaphraseEnsembleSidecarProvider(
+        sidecar_path=sham_sidecar_path,
+        expected_content_sha256=sham_sha,
+    )
+    paraphrase_provider = ImmutableParaphraseEnsembleSidecarProvider(
+        sidecar_path=paraphrase_sidecar_path,
+        expected_content_sha256=para_sha,
+    )
+
+    providers: dict[str, Any] = {
+        "C_NEW_SINGLE": tnew_provider,
+        "C_OLD_SINGLE": told_provider,
+        "C_NEW_DUP_SHAM": sham_provider,
+        "C_NEW_OLD_50_50": paraphrase_provider,
+    }
 
     # Load queries and ground truth
     queries_data = json.loads(query_manifest_path.read_text(encoding="utf-8")).get("queries", [])
-    gt_ref = json.loads(manual_ref_path.read_text(encoding="utf-8")).get("queries", {})
+    gt_ref = load_manual_reference(manual_ref_path)
     print(f"✅ Loaded {len(gt_ref)} human-verified ground truth targets from {manual_ref_path.name}", flush=True)
 
     arms_def = [
         {
             "name": "C_NEW_SINGLE",
             "description": "Canonical New-only Single Baseline (Current Control)",
-            "sidecar_type": "tnew",
-            "sidecar_path": tnew_sidecar_path,
             "enable_ensemble": False,
             "mode": "EQUAL_BUDGET",
         },
         {
             "name": "C_OLD_SINGLE",
             "description": "Candidate Old-only Single Baseline",
-            "sidecar_type": "told",
-            "sidecar_path": told_sidecar_path,
             "enable_ensemble": False,
             "mode": "EQUAL_BUDGET",
         },
         {
             "name": "C_NEW_DUP_SHAM",
             "description": "Sham Paraphrase Ensemble (2x Canonical New, Quota Split)",
-            "sidecar_type": "sham",
-            "sidecar_path": sham_sidecar_path,
             "enable_ensemble": True,
             "mode": "EQUAL_BUDGET",
         },
         {
             "name": "C_NEW_OLD_50_50",
             "description": "True Paraphrase Ensemble (Canonical New + Candidate Old 50/50)",
-            "sidecar_type": "paraphrase",
-            "sidecar_path": paraphrase_sidecar_path,
             "enable_ensemble": True,
             "mode": "EQUAL_BUDGET",
         },
@@ -298,6 +336,7 @@ def run_phase_c1_four_way_ablation(
             "timestamp": datetime.now(UTC).isoformat(),
             "git_commit_sha": git_sha,
             "device": device,
+            "diagnostic_rank_delta_threshold": DIAGNOSTIC_RANK_DELTA_THRESHOLD,
         },
         "provenance": {
             "query_manifest": {"path": str(query_manifest_path), "canonical_sha256": qm_sha},
@@ -328,41 +367,47 @@ def run_phase_c1_four_way_ablation(
         print(f"🚀 Running Arm: {arm_name} ({arm['description']})", flush=True)
         print("=" * 80, flush=True)
 
-        session_cfg = SessionConfig(
-            input_root=input_root,
-            output_root=arm_out_dir,
-            enable_dynamic_translation=True,
-            encoder_device=device,
-            allow_model_download=allow_model_download,
-            kis_video_first_config=KISVideoFirstConfig(
-                enabled=True,
-                v2_adaptive_enabled=True,
-                restricted_frames_per_video_per_variant=20,
-                enable_temporal_diverse_local_candidates=True,
-                temporal_diversity_gap_seconds=5.0,
-                enable_vi_localization_variant=True,
-                vi_localization_weight=0.5,
-                enable_paraphrase_ensemble=arm["enable_ensemble"],
-                paraphrase_ensemble_mode=arm["mode"],
-                enable_local_anchor_refinement=False,
-            ),
+        arm_provider = providers[arm_name]
+
+        vf_cfg = KISVideoFirstConfig(
+            enabled=True,
+            v2_adaptive_enabled=True,
+            selected_video_cap=64,
+            video_nomination_depth=100,
+            restricted_frames_per_video_per_variant=20,
+            full_query_weight=1.0,
+            primary_scene_weight=1.0,
+            supporting_attribute_weight=0.35,
+            top_m_evidence_cap=5,
+            top_m_weights=(0.4, 0.25, 0.15, 0.1, 0.1),
+            top_m_min_frame_gap=60,
+            enable_temporal_diverse_local_candidates=True,
+            temporal_diversity_gap_seconds=5.0,
+            enable_vi_localization_variant=True,
+            vi_localization_weight=0.5,
+            internal_rrf_candidate_depth=1000,
+            enable_top_video_local_anchor=False,
+            enable_paraphrase_ensemble=arm["enable_ensemble"],
+            paraphrase_ensemble_mode=arm["mode"],
         )
 
-        if arm["sidecar_type"] in ("tnew", "told"):
-            provider = ImmutableSidecarTranslationProvider(
-                sidecar_path=arm["sidecar_path"],
-                expected_content_sha256=(tnew_sha if arm["sidecar_type"] == "tnew" else told_sha),
-            )
-        else:
-            provider = ImmutableParaphraseEnsembleSidecarProvider(
-                sidecar_path=arm["sidecar_path"],
-                expected_content_sha256=(sham_sha if arm["sidecar_type"] == "sham" else para_sha),
-            )
+        session_cfg = SessionConfig(
+            session_id=f"phase_c1_{arm_name}_{int(time.time())}",
+            input_root=input_root,
+            manifest_cache=manifest_cache_path,
+            output_root=arm_out_dir,
+            enable_dynamic_translation=True,
+            allow_model_download=allow_model_download,
+            device=device,
+            rrf_constant=60.0,
+            continue_on_request_error=False,
+            fail_fast_protocol=True,
+            kis_video_first_config=vf_cfg,
+        )
 
-        runtime = OperationalKISRuntime.from_session_config(
+        runtime = OperationalKISRuntime.bootstrap(
             config=session_cfg,
-            manifest_cache_path=manifest_cache_path,
-            translation_provider=provider,
+            translation_provider=arm_provider,
         )
 
         try:
@@ -472,44 +517,78 @@ def run_phase_c1_four_way_ablation(
         finally:
             runtime.close()
 
-    # 2. Sham Invariants Verification on Treatment P1-5
+    # 3. Sham Invariants Verification on Treatment P1-5 (FAIL-CLOSED)
     p15_sham_data = audit_results["arms"]["C_NEW_DUP_SHAM"]["query-p1-5-kis"]
     p15_sham_tel = p15_sham_data["phase_c_telemetry"]
 
-    sham_exp_hashes = provider.expected_group_hashes("query-p1-5-kis") if hasattr(provider, "expected_group_hashes") else {}
+    sham_prov = providers["C_NEW_DUP_SHAM"]
+    sham_exp_hashes = sham_prov.expected_group_hashes("query-p1-5-kis") if hasattr(sham_prov, "expected_group_hashes") else {}
     sham_group_a_hash = sham_exp_hashes.get("group_sham_a")
     sham_group_b_hash = sham_exp_hashes.get("group_sham_b")
 
-    hash_match = (
+    hash_match = bool(
         sham_group_a_hash is not None
         and sham_group_a_hash == sham_group_b_hash
         and sham_group_a_hash.lower() == "243b0f915c63"
     )
+
     group_mass_map = p15_sham_tel.get("normalized_weight_mass_by_group", {})
-    mass_a = group_mass_map.get("group_sham_a", 0.0)
-    mass_b = group_mass_map.get("group_sham_b", 0.0)
-    total_mass = p15_sham_tel.get("total_normalized_weight_mass", 0.0)
-    mass_parity = math.isclose(mass_a, mass_b, rel_tol=1e-5) and math.isclose(mass_a + mass_b, total_mass, rel_tol=1e-5)
+    if "group_sham_a" not in group_mass_map or "group_sham_b" not in group_mass_map:
+        raise AssertionError(f"Fail-closed: group_sham_a or group_sham_b missing from normalized_weight_mass_by_group: {group_mass_map}")
+
+    mass_a = float(group_mass_map["group_sham_a"])
+    mass_b = float(group_mass_map["group_sham_b"])
+    total_mass = float(p15_sham_tel.get("total_normalized_weight_mass", 0.0))
+
+    if mass_a <= 0.0 or not math.isfinite(mass_a):
+        raise AssertionError(f"Fail-closed: mass_a must be positive and finite, got {mass_a}")
+    if mass_b <= 0.0 or not math.isfinite(mass_b):
+        raise AssertionError(f"Fail-closed: mass_b must be positive and finite, got {mass_b}")
+    if total_mass <= 0.0 or not math.isfinite(total_mass):
+        raise AssertionError(f"Fail-closed: total_mass must be positive and finite, got {total_mass}")
+
+    mass_parity = bool(
+        math.isclose(mass_a, mass_b, rel_tol=1e-5)
+        and math.isclose(mass_a, total_mass / 2.0, rel_tol=1e-5)
+    )
+
+    # Quota validation per variant
+    compiled_grp_count = p15_sham_tel.get("compiled_group_count")
+    compiled_var_count = p15_sham_tel.get("compiled_variant_count")
+    sem_nominal_budget = p15_sham_tel.get("semantic_nominal_budget")
+    req_quotas = p15_sham_tel.get("requested_quota_by_variant", {})
+    sem_quotas = [q for vid, q in req_quotas.items() if "vi_local" not in vid]
+
+    quotas_valid = bool(
+        compiled_grp_count == 2
+        and compiled_var_count == 6
+        and sem_nominal_budget == 60
+        and len(sem_quotas) == 6
+        and sum(sem_quotas) == 60
+        and all(q == 10 for q in sem_quotas)
+    )
 
     audit_results["sham_invariants"] = {
-        "group_count": p15_sham_tel.get("compiled_group_count"),
+        "group_count": compiled_grp_count,
+        "compiled_variant_count": compiled_var_count,
+        "semantic_nominal_budget": sem_nominal_budget,
         "expected_group_hashes": sham_exp_hashes,
         "hashes_identical_canonical_new": hash_match,
         "normalized_weight_mass_by_group": group_mass_map,
         "group_mass_parity": mass_parity,
-        "all_invariants_pass": (hash_match and mass_parity and p15_sham_tel.get("compiled_group_count") == 2),
+        "quotas_valid_10_per_variant": quotas_valid,
+        "all_invariants_pass": bool(hash_match and mass_parity and quotas_valid),
     }
 
     if not audit_results["sham_invariants"]["all_invariants_pass"]:
         raise AssertionError(f"Sham Invariants failed for C_NEW_DUP_SHAM on P1-5: {audit_results['sham_invariants']}")
-    print("\n✅ Sham Invariants strictly verified: group_sham_a ≡ group_sham_b with exact mass parity!", flush=True)
+    print("\n✅ Sham Invariants strictly verified (hash=243b0f915c63, mass=W0/2, quota=10/var, total=60)!", flush=True)
 
-    # 3. Negative Controls Bit-Exact Parity across ALL 4 Arms
-    neg_controls = [q for q in ["query-p1-1-kis", "query-p1-2-kis", "query-p1-4-kis", "query-p1-6-kis"] if q in queries_data[0]]
+    # 4. Negative Controls Bit-Exact Parity across ALL 4 Arms
+    arm_names = [a["name"] for a in arms_def]
     neg_control_assertions: dict[str, Any] = {}
     all_neg_match = True
 
-    arm_names = [a["name"] for a in arms_def]
     for qid in ["query-p1-1-kis", "query-p1-2-kis", "query-p1-4-kis", "query-p1-6-kis"]:
         digests = {aname: audit_results["arms"][aname][qid]["canonical_projection_digest"] for aname in arm_names}
         unique_digests = set(digests.values())
@@ -528,13 +607,15 @@ def run_phase_c1_four_way_ablation(
     }
     print("✅ All Negative Controls strictly verified with 100% Bit-Exact Parity across ALL 4 arms!", flush=True)
 
-    # 4. Detailed Comparisons & Causal Contrasts on Treatment P1-5
+    # 5. ALL SIX Pairwise Comparisons on Treatment P1-5
     p15_arms = {aname: audit_results["arms"][aname]["query-p1-5-kis"] for aname in arm_names}
 
     pairs_to_compare = [
         ("C_NEW_SINGLE", "C_OLD_SINGLE"),
         ("C_NEW_SINGLE", "C_NEW_DUP_SHAM"),
         ("C_NEW_SINGLE", "C_NEW_OLD_50_50"),
+        ("C_OLD_SINGLE", "C_NEW_DUP_SHAM"),
+        ("C_OLD_SINGLE", "C_NEW_OLD_50_50"),
         ("C_NEW_DUP_SHAM", "C_NEW_OLD_50_50"),
     ]
 
@@ -545,7 +626,7 @@ def run_phase_c1_four_way_ablation(
 
     audit_results["comparisons"]["p1-5_pairwise"] = pairwise_comparisons
 
-    # Selected video count parity
+    # Selected video count parity check
     sel_counts = {aname: p15_arms[aname]["phase_c_telemetry"]["selected_video_count"] for aname in arm_names}
     sel_parity = (len(set(sel_counts.values())) == 1)
 
