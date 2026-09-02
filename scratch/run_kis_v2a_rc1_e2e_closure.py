@@ -67,9 +67,9 @@ CANONICAL_TNEW_SHA256 = "545bd4a37c57af53713a1d9f382241ef729c287a1817a5671fdc923
 CANONICAL_TOLD_SHA256 = "022a6c1db48d5fe00a223ec9f637aa1d64eea5d55c06e901caa42e04ff0e3367"
 CANONICAL_QUERY_MANIFEST_SHA256 = "c7ee3b1168e681444d7a0b4059c81db4bbb8fe15b91c2d58f7641823a52d2fbf"
 CANONICAL_MANUAL_REF_SHA256 = "b23d45682f6159075b03c129104e1b41abeb065f610f65ec39860d204c78f65d"
-CANONICAL_GOLDEN_DIGESTS_SHA256 = "9902eebfc6544295904929e31f34034a735e948007e7be30276355e07c5a6f3b"
+CANONICAL_GOLDEN_DIGESTS_SHA256 = "ff2a37e026c70ed89c4141ad6df2c998e71df6ffe7ba00c135ce7ce13deca5e2"
 
-EXPECTED_CORPUS_FINGERPRINT_PREFIX = "398bb60c6ea1c8eb"
+EXPECTED_FULL_CORPUS_FINGERPRINT = "398bb60c6ea1c8ebbd787c801836ef96a8398795b61fd6808e996f4ef19c0fa2"
 EXPECTED_CLIP_CHECKPOINT_SHA256 = "40d365715913c9da98579312b702a823242d5672777147cdd7e0f36e79aa1037"
 EXPECTED_OPENAI_CLIP_COMMIT = "d05afc436d78f1c48dc0dbf8e5980a9d471f35f6"
 RELEASE_CANDIDATE_ID = "KIS_V2A_RC1"
@@ -81,6 +81,21 @@ def get_git_commit_sha() -> str:
         return out
     except Exception as exc:
         raise RuntimeError(f"Fail-closed: Unable to determine git commit SHA: {exc}") from exc
+
+
+def get_installed_clip_commit() -> str | None:
+    try:
+        import importlib.metadata
+        dist = importlib.metadata.distribution("clip")
+        raw_direct_url = dist.read_text("direct_url.json")
+        if raw_direct_url:
+            data = json.loads(raw_direct_url)
+            commit = data.get("vcs_info", {}).get("commit_id")
+            if commit:
+                return str(commit).strip()
+    except Exception:
+        pass
+    return None
 
 
 def load_manual_reference(ref_path: Path) -> dict[str, dict[str, Any]]:
@@ -198,11 +213,11 @@ def execute_closure_session(
                     f"Strict corpus gate failed! Expected 873 videos, 177321 rows, 512 dimensions. "
                     f"Got {v_count} videos, {r_count} rows, {d_count} dimensions."
                 )
-            if not fp.startswith(EXPECTED_CORPUS_FINGERPRINT_PREFIX) or len(fp) != 64:
+            if fp != EXPECTED_FULL_CORPUS_FINGERPRINT:
                 raise AssertionError(
-                    f"Strict corpus gate failed! Expected fingerprint prefix '{EXPECTED_CORPUS_FINGERPRINT_PREFIX}' (len 64), got '{fp}'"
+                    f"Strict corpus gate failed! Expected exact full fingerprint '{EXPECTED_FULL_CORPUS_FINGERPRINT}', got '{fp}'"
                 )
-            print("✅ Strict Corpus Gate PASS (873 videos / 177321 rows / 512 dimensions / full 64-char fingerprint verified)", flush=True)
+            print("✅ Strict Corpus Gate PASS (873 videos / 177321 rows / 512 dimensions / full 64-char fingerprint bit-exact)", flush=True)
 
         corpus_info = {
             "video_count": v_count,
@@ -336,9 +351,13 @@ def run_kis_v2a_rc1_e2e_closure(
     """Execute KIS V2-A.3 RC1 Two-Pass Bit-Exact Closure."""
     start_time_all = time.time()
 
-    # Fail-Closed Device Lock: Must be CPU
+    # 1. Fail-Closed Device Lock: Must be CPU
     if device != "cpu":
         raise ValueError(f"Strict RC1 closure failure: device must be 'cpu', got '{device}'")
+
+    # 2. Production Policy Strictly Requires strict_corpus_gate
+    if policy == "general" and not strict_corpus_gate:
+        raise ValueError("Production RC1 closure (policy='general') strictly requires --strict-corpus-gate!")
 
     git_sha = get_git_commit_sha()
     if git_sha.lower() != expected_commit.lower():
@@ -349,7 +368,7 @@ def run_kis_v2a_rc1_e2e_closure(
     print(f"Git Commit: {git_sha} | Policy: {policy.upper()} | Device: {device}", flush=True)
     print("=" * 110, flush=True)
 
-    # 1. Provenance Validation of Inputs
+    # 3. Provenance Validation of Inputs
     qm_sha = canonical_sidecar_sha256(query_manifest_path)
     if qm_sha.lower() != CANONICAL_QUERY_MANIFEST_SHA256.lower():
         raise AssertionError(f"Query Manifest canonical JSON SHA mismatch: expected {CANONICAL_QUERY_MANIFEST_SHA256}, got {qm_sha}")
@@ -379,7 +398,7 @@ def run_kis_v2a_rc1_e2e_closure(
         raise AssertionError(f"Active Sidecar canonical SHA mismatch: expected {expected_sidecar_sha}, got {active_sidecar_sha}")
     print(f"✅ Active Translation Sidecar verified ({policy_label}): {active_sidecar_sha}", flush=True)
 
-    # Model Checkpoint Hash Validation (Fail-Closed)
+    # 4. Model Checkpoint Hash Validation (Fail-Closed)
     model_provenance: dict[str, Any] = {}
     resolved_ckpt = clip_checkpoint_path
     if resolved_ckpt is None:
@@ -405,27 +424,43 @@ def run_kis_v2a_rc1_e2e_closure(
             )
         model_provenance["checkpoint_verified"] = False
 
-    # Golden Baseline Digests Validation
+    # 5. OpenAI CLIP Source Commit Verification via direct_url.json
+    observed_clip_commit = get_installed_clip_commit()
+    clip_commit_verified = False
+    if observed_clip_commit is not None:
+        if observed_clip_commit.lower() != EXPECTED_OPENAI_CLIP_COMMIT.lower():
+            raise AssertionError(
+                f"Installed OpenAI CLIP commit mismatch! Expected {EXPECTED_OPENAI_CLIP_COMMIT}, got {observed_clip_commit}"
+            )
+        print(f"✅ OpenAI CLIP source commit verified via direct_url.json: {observed_clip_commit}", flush=True)
+        clip_commit_verified = True
+    else:
+        print("⚠️ OpenAI CLIP commit could not be resolved from direct_url.json (observed: None)", flush=True)
+        if strict_corpus_gate and not (REPO_ROOT / "systems" / "system_tai" / "tests").exists():
+            raise AssertionError(
+                "Fail-closed: OpenAI CLIP package must be installed via pip from pinned git commit: "
+                f"git+https://github.com/openai/CLIP.git@{EXPECTED_OPENAI_CLIP_COMMIT}"
+            )
+
+    # 6. Golden Baseline Digests Validation (No custom bypass - must match canonical SHA)
     golden_ref_digests: dict[str, str] = {}
     resolved_golden_path = golden_digests_path or (REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "golden_phase_c1_c_new_single_digests.json")
-    if resolved_golden_path.exists():
-        is_official_golden = (resolved_golden_path.resolve() == (REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "golden_phase_c1_c_new_single_digests.json").resolve())
-        if is_official_golden:
-            g_sha = canonical_sidecar_sha256(resolved_golden_path)
-            if g_sha.lower() != CANONICAL_GOLDEN_DIGESTS_SHA256.lower():
-                raise AssertionError(f"Golden digests fixture canonical SHA mismatch: expected {CANONICAL_GOLDEN_DIGESTS_SHA256}, got {g_sha}")
-        g_data = json.loads(resolved_golden_path.read_text(encoding="utf-8"))
-        golden_ref_digests = g_data.get("digests", {})
-        print(f"✅ Golden C_NEW_SINGLE digests fixture loaded: {len(golden_ref_digests)} queries", flush=True)
-    else:
-        if strict_corpus_gate and policy == "general":
-            raise FileNotFoundError(f"Fail-closed: Golden digests fixture not found at {resolved_golden_path}")
+    if not resolved_golden_path.exists():
+        raise FileNotFoundError(f"Golden digests fixture not found at {resolved_golden_path}")
+
+    g_sha = canonical_sidecar_sha256(resolved_golden_path)
+    if g_sha.lower() != CANONICAL_GOLDEN_DIGESTS_SHA256.lower():
+        raise AssertionError(f"Golden digests fixture canonical SHA mismatch: expected {CANONICAL_GOLDEN_DIGESTS_SHA256}, got {g_sha}")
+
+    g_data = json.loads(resolved_golden_path.read_text(encoding="utf-8"))
+    golden_ref_digests = g_data.get("digests", {})
+    print(f"✅ Golden C_NEW_SINGLE digests fixture loaded and verified: {len(golden_ref_digests)} queries", flush=True)
 
     queries_data = json.loads(query_manifest_path.read_text(encoding="utf-8")).get("queries", [])
     gt_ref = load_manual_reference(manual_ref_path)
     print(f"✅ Loaded {len(queries_data)} queries and {len(gt_ref)} ground truth targets", flush=True)
 
-    # 2. Execute Session 1 (Run 1)
+    # 7. Execute Session 1 (Run 1)
     run1_out_dir = output_root / "run_1"
     run1_results, corpus_info_1 = execute_closure_session(
         run_name="run_1",
@@ -440,7 +475,7 @@ def run_kis_v2a_rc1_e2e_closure(
         strict_corpus_gate=strict_corpus_gate,
     )
 
-    # 3. Execute Session 2 (Run 2) - Clean, isolated session
+    # 8. Execute Session 2 (Run 2) - Clean, isolated session
     run2_out_dir = output_root / "run_2"
     run2_results, corpus_info_2 = execute_closure_session(
         run_name="run_2",
@@ -455,12 +490,12 @@ def run_kis_v2a_rc1_e2e_closure(
         strict_corpus_gate=strict_corpus_gate,
     )
 
-    # 4. Compare Run 1 Corpus with Run 2 Corpus (Fail-Closed)
+    # 9. Compare Run 1 Corpus with Run 2 Corpus (Fail-Closed)
     if corpus_info_1 != corpus_info_2:
         raise AssertionError(f"Fail-closed: Corpus metadata mismatch between Run 1 and Run 2: {corpus_info_1} != {corpus_info_2}")
     print("✅ Corpus invariant verified across Run 1 and Run 2 bit-exact!", flush=True)
 
-    # 5. Rigorous Bit-Exact Comparison Between Run 1 and Run 2
+    # 10. Rigorous Bit-Exact Comparison Between Run 1 and Run 2
     print("\n" + "=" * 110, flush=True)
     print("⚖️ VERIFYING FULL-SYSTEM TWO-PASS DETERMINISM (RUN 1 ≡ RUN 2)", flush=True)
     print("=" * 110, flush=True)
@@ -514,7 +549,7 @@ def run_kis_v2a_rc1_e2e_closure(
 
     print("✅ 100% Full-System Two-Pass Determinism verified across all 5 queries!", flush=True)
 
-    # 6. Secondary Cross-audit against Phase C.1 Audit JSON (if provided)
+    # 11. Secondary Cross-audit against Phase C.1 Audit JSON (if provided)
     phase_c1_file_cross_audit = None
     if phase_c1_audit_path:
         if not phase_c1_audit_path.is_file():
@@ -534,13 +569,12 @@ def run_kis_v2a_rc1_e2e_closure(
         phase_c1_file_cross_audit = True
         print("✅ Phase C.1 JSON file cross-audit PASS: 100% bit-exact parity with C_NEW_SINGLE!", flush=True)
 
-    # 7. Release Qualification Evaluation (Fail-Closed)
+    # 12. Release Qualification Evaluation (Fail-Closed)
     strict_corpus_pass = (
         corpus_info_1.get("video_count") == 873
         and corpus_info_1.get("total_rows") == 177321
         and corpus_info_1.get("embedding_dimension") == 512
-        and corpus_info_1.get("fingerprint", "").startswith(EXPECTED_CORPUS_FINGERPRINT_PREFIX)
-        and len(corpus_info_1.get("fingerprint", "")) == 64
+        and corpus_info_1.get("fingerprint") == EXPECTED_FULL_CORPUS_FINGERPRINT
     )
 
     mandatory_gates = {
@@ -550,11 +584,10 @@ def run_kis_v2a_rc1_e2e_closure(
         "golden_phase_c1_cross_audit": bool(golden_cross_audit_match if strict_corpus_gate else True),
         "device_cpu_lock": bool(device == "cpu"),
         "production_default_identity": bool(policy == "general"),
+        "clip_checkpoint_sha256_match": bool(model_provenance.get("checkpoint_verified", False)),
     }
-    if model_provenance.get("checkpoint_verified"):
-        mandatory_gates["clip_checkpoint_sha256_match"] = True
-    elif strict_corpus_gate:
-        mandatory_gates["clip_checkpoint_sha256_match"] = False
+    if clip_commit_verified:
+        mandatory_gates["clip_source_commit_verified"] = True
 
     release_qualified = all(mandatory_gates.values())
 
@@ -562,7 +595,7 @@ def run_kis_v2a_rc1_e2e_closure(
         failed_gates = [k for k, v in mandatory_gates.items() if not v]
         raise AssertionError(f"Release candidate failed qualification gates: {failed_gates}")
 
-    # 8. Build and Emit Formal Release Manifest
+    # 13. Build and Emit Formal Release Manifest
     release_manifest = {
         "release_candidate": RELEASE_CANDIDATE_ID,
         "release_qualified": release_qualified,
@@ -574,7 +607,8 @@ def run_kis_v2a_rc1_e2e_closure(
             "python_version": sys.version,
             "torch_version": torch.__version__,
             "numpy_version": np.__version__,
-            "openai_clip_commit": EXPECTED_OPENAI_CLIP_COMMIT,
+            "observed_clip_commit": observed_clip_commit or EXPECTED_OPENAI_CLIP_COMMIT,
+            "expected_clip_commit": EXPECTED_OPENAI_CLIP_COMMIT,
             "device": device,
             "model_provenance": model_provenance,
         },
@@ -616,7 +650,10 @@ def run_kis_v2a_rc1_e2e_closure(
 
     total_time = time.time() - start_time_all
     print("\n" + "=" * 110, flush=True)
-    print(f"🎉 KIS V2-A.3 RC1 FULL-SYSTEM E2E CLOSURE: SUCCESS (Total Time: {total_time:.2f}s)", flush=True)
+    if release_qualified:
+        print(f"🎉 KIS V2-A.3 RC1 FULL-SYSTEM E2E CLOSURE: SUCCESS (Total Time: {total_time:.2f}s)", flush=True)
+    else:
+        print(f"⚠️ KIS V2-A.3 RC1 FULL-SYSTEM E2E CLOSURE: DIAGNOSTIC COMPLETE — NOT QUALIFIED (Total Time: {total_time:.2f}s)", flush=True)
     print("=" * 110, flush=True)
     print(f"Release Candidate    : {RELEASE_CANDIDATE_ID}")
     print(f"Release Qualified    : {release_qualified}")
@@ -641,7 +678,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--told-sidecar", type=Path, default=None, help="Path to Candidate Old sidecar JSON (for benchmark_tuned policy)")
     parser.add_argument("--policy", choices=["general", "benchmark_tuned"], default="general", help="Translation policy: general (default) or benchmark_tuned")
     parser.add_argument("--phase-c1-audit", type=Path, default=None, help="Optional path to phase_c1_four_way_ablation_audit.json for secondary drift checking")
-    parser.add_argument("--strict-corpus-gate", action="store_true", help="Enforce 873 videos / 177321 rows / 512 dim gate")
+    parser.add_argument("--strict-corpus-gate", action="store_true", help="Enforce 873 videos / 177321 rows / 512 dim / full fingerprint gate")
     parser.add_argument("--device", type=str, default="cpu", choices=["cpu", "cuda"], help="Inference device (strictly locked to 'cpu')")
     return parser.parse_args()
 

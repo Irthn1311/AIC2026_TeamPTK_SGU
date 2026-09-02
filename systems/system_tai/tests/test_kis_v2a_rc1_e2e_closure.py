@@ -19,10 +19,13 @@ from system_tai.retrieval.video_evidence import (
 from system_tai.translation.provider import TokenBudgetGuard
 from system_tai.translation.sidecar_provider import canonical_sidecar_sha256
 from scratch.run_kis_v2a_rc1_e2e_closure import (
+    CANONICAL_GOLDEN_DIGESTS_SHA256,
     CANONICAL_MANUAL_REF_SHA256,
     CANONICAL_QUERY_MANIFEST_SHA256,
     CANONICAL_TNEW_SHA256,
     CANONICAL_TOLD_SHA256,
+    EXPECTED_FULL_CORPUS_FINGERPRINT,
+    EXPECTED_OPENAI_CLIP_COMMIT,
     RELEASE_CANDIDATE_ID,
     get_git_commit_sha,
     run_kis_v2a_rc1_e2e_closure,
@@ -86,6 +89,25 @@ def test_rc1_device_not_cpu_raises_fail_closed():
             )
 
 
+def test_rc1_general_policy_requires_strict_corpus_gate():
+    """Verify that policy 'general' strictly requires strict_corpus_gate=True."""
+    with tempfile.TemporaryDirectory() as td:
+        tdp = Path(td)
+        with pytest.raises(ValueError, match="strictly requires --strict-corpus-gate"):
+            run_kis_v2a_rc1_e2e_closure(
+                query_manifest_path=QUERY_MANIFEST_PATH,
+                input_root=tdp,
+                manifest_cache_path=tdp / "manifest_cache.json",
+                output_root=tdp / "out",
+                tnew_sidecar_path=TNEW_SIDECAR_PATH,
+                manual_ref_path=MANUAL_REF_PATH,
+                expected_commit="dummy_commit",
+                policy="general",
+                strict_corpus_gate=False,
+                device="cpu",
+            )
+
+
 def test_rc1_mismatched_commit_raises_fail_closed():
     """Verify that mismatched git commit raises AssertionError."""
     with tempfile.TemporaryDirectory() as td:
@@ -119,8 +141,70 @@ def test_rc1_policy_selection_requires_told_sidecar():
                 expected_commit=git_sha,
                 told_sidecar_path=None,
                 policy="benchmark_tuned",
+                strict_corpus_gate=False,
                 device="cpu",
             )
+
+
+def test_rc1_golden_fixture_canonical_sha_integrity():
+    """Verify that golden_phase_c1_c_new_single_digests.json matches canonical SHA256."""
+    assert GOLDEN_DIGESTS_PATH.exists()
+    computed_sha = canonical_sidecar_sha256(GOLDEN_DIGESTS_PATH)
+    assert computed_sha == CANONICAL_GOLDEN_DIGESTS_SHA256
+
+    data = json.loads(GOLDEN_DIGESTS_PATH.read_text(encoding="utf-8"))
+    assert data["provenance"]["full_corpus_fingerprint"] == EXPECTED_FULL_CORPUS_FINGERPRINT
+    assert data["provenance"]["source_phase_c1_commit"] == "184bd7dece0f719eecb9641a2aa7b5a0f88eee3b"
+    assert len(data["digests"]) == 5
+    assert data["target_ranks"]["query-p1-2-kis"] == 2  # Verified rank #2
+
+
+def test_rc1_custom_golden_path_tampered_sha_raises():
+    """Verify that passing an arbitrary golden digests file with wrong SHA raises AssertionError."""
+    git_sha = get_git_commit_sha()
+    with tempfile.TemporaryDirectory() as td:
+        tdp = Path(td)
+        tampered_golden = tdp / "tampered_golden.json"
+        tampered_golden.write_text(json.dumps({"tampered": True}), encoding="utf-8")
+
+        with pytest.raises(AssertionError, match="Golden digests fixture canonical SHA mismatch"):
+            run_kis_v2a_rc1_e2e_closure(
+                query_manifest_path=QUERY_MANIFEST_PATH,
+                input_root=tdp,
+                manifest_cache_path=tdp / "manifest_cache.json",
+                output_root=tdp / "out",
+                tnew_sidecar_path=TNEW_SIDECAR_PATH,
+                manual_ref_path=MANUAL_REF_PATH,
+                expected_commit=git_sha,
+                golden_digests_path=tampered_golden,
+                told_sidecar_path=TOLD_SIDECAR_PATH,
+                policy="benchmark_tuned",
+                strict_corpus_gate=False,
+                device="cpu",
+            )
+
+
+def test_rc1_clip_commit_mismatch_raises_fail_closed():
+    """Verify that an installed CLIP commit other than EXPECTED_OPENAI_CLIP_COMMIT raises AssertionError."""
+    git_sha = get_git_commit_sha()
+    with tempfile.TemporaryDirectory() as td:
+        tdp = Path(td)
+        with patch("scratch.run_kis_v2a_rc1_e2e_closure.get_installed_clip_commit", return_value="1111111111111111111111111111111111111111"):
+            with pytest.raises(AssertionError, match="Installed OpenAI CLIP commit mismatch"):
+                run_kis_v2a_rc1_e2e_closure(
+                    query_manifest_path=QUERY_MANIFEST_PATH,
+                    input_root=tdp,
+                    manifest_cache_path=tdp / "manifest_cache.json",
+                    output_root=tdp / "out",
+                    tnew_sidecar_path=TNEW_SIDECAR_PATH,
+                    manual_ref_path=MANUAL_REF_PATH,
+                    expected_commit=git_sha,
+                    golden_digests_path=GOLDEN_DIGESTS_PATH,
+                    told_sidecar_path=TOLD_SIDECAR_PATH,
+                    policy="benchmark_tuned",
+                    strict_corpus_gate=False,
+                    device="cpu",
+                )
 
 
 def test_rc1_e2e_closure_runner_smoke_with_mock_bootstrap():
@@ -147,7 +231,7 @@ def test_rc1_e2e_closure_runner_smoke_with_mock_bootstrap():
         return CorpusManifest(
             input_root=root,
             dataset_root=root,
-            fingerprint="398bb60c6ea1c8eb1234567890abcdef1234567890abcdef1234567890abcdef",
+            fingerprint=EXPECTED_FULL_CORPUS_FINGERPRINT,
             videos=ordered,
             schema_version="1.0.0",
             discovery_version="1.0.0",
@@ -174,6 +258,7 @@ def test_rc1_e2e_closure_runner_smoke_with_mock_bootstrap():
 
         query_manifest = QUERY_MANIFEST_PATH
         tnew_sidecar = TNEW_SIDECAR_PATH
+        told_sidecar = TOLD_SIDECAR_PATH
         manual_ref = MANUAL_REF_PATH
 
         sessions_bootstrapped = []
@@ -268,13 +353,6 @@ def test_rc1_e2e_closure_runner_smoke_with_mock_bootstrap():
             runtime.weighted_rrf = WeightedRRFRetriever(exact_retriever=None)  # type: ignore[arg-type]
             return runtime
 
-        # Provide a mock golden digests file for this test
-        mock_golden_path = tdp / "mock_golden.json"
-        mock_golden_path.write_text(
-            json.dumps({"digests": {}}, indent=2),
-            encoding="utf-8"
-        )
-
         with patch.object(OperationalKISRuntime, "bootstrap", side_effect=mock_bootstrap):
             res = run_kis_v2a_rc1_e2e_closure(
                 query_manifest_path=query_manifest,
@@ -284,8 +362,9 @@ def test_rc1_e2e_closure_runner_smoke_with_mock_bootstrap():
                 tnew_sidecar_path=tnew_sidecar,
                 manual_ref_path=manual_ref,
                 expected_commit=git_sha,
-                golden_digests_path=mock_golden_path,
-                policy="general",
+                golden_digests_path=GOLDEN_DIGESTS_PATH,
+                told_sidecar_path=told_sidecar,
+                policy="benchmark_tuned",
                 strict_corpus_gate=False,
                 device="cpu",
             )
@@ -310,7 +389,7 @@ def test_rc1_e2e_closure_runner_smoke_with_mock_bootstrap():
             # In mock smoke mode (strict_corpus_gate=False), it is correctly marked NOT release-qualified
             assert manifest_data["release_qualified"] is False
             assert manifest_data["is_production_default"] is False
-            assert manifest_data["policy"] == "PRODUCTION_GENERAL_PURPOSE"
+            assert manifest_data["policy"] == "EXPERIMENTAL_BENCHMARK_TUNED"
             assert len(manifest_data["queries"]) == 5
             for qid, qinfo in manifest_data["queries"].items():
                 assert qinfo["two_pass_projection_bit_exact"] is True
