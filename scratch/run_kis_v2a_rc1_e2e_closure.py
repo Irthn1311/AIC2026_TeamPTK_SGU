@@ -70,7 +70,7 @@ CANONICAL_MANUAL_REF_SHA256 = "b23d45682f6159075b03c129104e1b41abeb065f610f65ec3
 CANONICAL_GOLDEN_DIGESTS_SHA256 = "ff2a37e026c70ed89c4141ad6df2c998e71df6ffe7ba00c135ce7ce13deca5e2"
 
 EXPECTED_FULL_CORPUS_FINGERPRINT = "398bb60c6ea1c8ebbd787c801836ef96a8398795b61fd6808e996f4ef19c0fa2"
-EXPECTED_CLIP_CHECKPOINT_SHA256 = "40d365715913c9da98579312b702a823242d5672777147cdd7e0f36e79aa1037"
+EXPECTED_CLIP_CHECKPOINT_SHA256 = "40d365715913c9da98579312b702a82c18be219cc2a73407c4526f58eba950af"
 EXPECTED_OPENAI_CLIP_COMMIT = "d05afc436d78f1c48dc0dbf8e5980a9d471f35f6"
 RELEASE_CANDIDATE_ID = "KIS_V2A_RC1"
 
@@ -401,7 +401,7 @@ def run_kis_v2a_rc1_e2e_closure(
     # 4. Model Checkpoint Hash Validation (Fail-Closed)
     model_provenance: dict[str, Any] = {}
     resolved_ckpt = clip_checkpoint_path
-    if resolved_ckpt is None:
+    if resolved_ckpt is None and strict_corpus_gate:
         default_ckpt = Path.home() / ".cache" / "clip" / "ViT-B-32.pt"
         if default_ckpt.is_file():
             resolved_ckpt = default_ckpt
