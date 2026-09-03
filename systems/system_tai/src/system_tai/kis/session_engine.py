@@ -167,6 +167,7 @@ class OperationalKISRuntime:
         token_budget_guard: Any = None,
         clock: Callable[[], float] = time.perf_counter,
         bootstrap_timings: Mapping[str, Any] | None = None,
+        model_provenance: Mapping[str, Any] | None = None,
     ) -> None:
         self.config = config
         self.manifest_path = manifest_path
@@ -180,6 +181,7 @@ class OperationalKISRuntime:
         self.validator = validator or CheckpointValidator()
         self.clock = clock
         self.bootstrap_timings = dict(bootstrap_timings or {})
+        self.model_provenance = dict(model_provenance) if model_provenance is not None else None
 
         self.object_artifact_index: ObjectArtifactIndex | None = None
         if config.qa_object_answer_provider_config.enabled:
@@ -365,6 +367,7 @@ class OperationalKISRuntime:
         output_root.mkdir(parents=True, exist_ok=True)
         feature_manifest_path = output_root / "feature_manifest.json"
 
+        model_provenance = None
         if config.profile_name == "kis-v2a-rc1-replay":
             if translation_provider is None:
                 raise ValueError(
@@ -377,9 +380,10 @@ class OperationalKISRuntime:
             # 1. Validate full config contract strictly before work
             validate_kis_v2a_rc1_replay_config(config)
 
-            # 2. Condition 1: Validate CLIP commit and checkpoint SHA BEFORE clip.load()
-            if encoder_factory is None:
-                validate_kis_v2a_rc1_replay_model_pre_bootstrap(config.clip_cache_dir)
+            # 2. Condition 1: Validate CLIP commit and checkpoint SHA BEFORE clip.load() (fail-closed, no bypass)
+            model_provenance = validate_kis_v2a_rc1_replay_model_pre_bootstrap(
+                clip_cache_dir=config.clip_cache_dir,
+            )
 
         discovery_metrics = DiscoveryMetrics()
         manifest_source_status = "UNKNOWN"
@@ -457,31 +461,13 @@ class OperationalKISRuntime:
         model_seconds = clock() - model_start
 
         if config.profile_name == "kis-v2a-rc1-replay":
-            if registry_loader is None:
-                from system_tai.kis.profiles import validate_kis_v2a_rc1_replay_environment
-                validate_kis_v2a_rc1_replay_environment(
-                    manifest=manifest,
-                    registry=registry,
-                    translation_provider=translation_provider,
-                    shared_encoder=shared_encoder,
-                )
-            else:
-                from system_tai.translation.sidecar_provider import (
-                    ImmutableSidecarTranslationProvider,
-                    canonical_sidecar_sha256,
-                )
-                from system_tai.kis.profiles import CANONICAL_RC1_TNEW_SHA256
-                if translation_provider is None or not isinstance(
-                    translation_provider, ImmutableSidecarTranslationProvider
-                ):
-                    raise ValueError(
-                        "Profile 'kis-v2a-rc1-replay' strictly requires ImmutableSidecarTranslationProvider!"
-                    )
-                csha = canonical_sidecar_sha256(translation_provider.sidecar_path)
-                if csha.lower() != CANONICAL_RC1_TNEW_SHA256.lower():
-                    raise AssertionError(
-                        f"Fail-closed: Sidecar canonical SHA mismatch: expected {CANONICAL_RC1_TNEW_SHA256}, got {csha}"
-                    )
+            from system_tai.kis.profiles import validate_kis_v2a_rc1_replay_environment
+            validate_kis_v2a_rc1_replay_environment(
+                manifest=manifest,
+                registry=registry,
+                translation_provider=translation_provider,
+                shared_encoder=shared_encoder,
+            )
 
         decoder_make = decoder_factory or OpenCVVideoDecoder
         decoder = decoder_make()
@@ -549,6 +535,7 @@ class OperationalKISRuntime:
             translation_provider=translation_provider,
             clock=clock,
             bootstrap_timings=bootstrap_timings,
+            model_provenance=model_provenance,
         )
 
     def handle_health(self, request: HealthRequest) -> dict[str, Any]:
@@ -2466,6 +2453,8 @@ class OperationalKISRuntime:
         if self.config.profile_name is not None:
             manifest_payload["profile_name"] = self.config.profile_name
         manifest_payload["translation_provider_mode"] = self.config.translation_provider_mode
+        if self.model_provenance is not None:
+            manifest_payload["model_provenance"] = self.model_provenance
         if self.translation_provider is not None and hasattr(self.translation_provider, "sidecar_path"):
             manifest_payload["translation_provider_identity"] = {
                 "type": type(self.translation_provider).__name__,

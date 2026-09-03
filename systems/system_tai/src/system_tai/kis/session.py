@@ -165,7 +165,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=VisualVerifierFailurePolicy.FALLBACK_CLIP.value,
     )
     parser.add_argument("--rrf-constant", type=float, default=None)
-    parser.add_argument("--chunk-size", type=int, default=4096)
+    parser.add_argument("--chunk-size", type=int, default=None)
     parser.add_argument("--default-top-k-per-variant", type=int, default=None)
     parser.add_argument("--default-output-top-k", type=int, default=None)
     parser.add_argument("--default-refine-top-n", type=int, default=None)
@@ -243,12 +243,14 @@ def session_config_from_args(args: argparse.Namespace) -> SessionConfig:
             raise ValueError(f"--profile kis-v2a-rc1-replay strictly requires --kis-supporting-attribute-weight 0.35, got {args.kis_supporting_attribute_weight}")
         if args.rrf_constant is not None and args.rrf_constant != 60.0:
             raise ValueError(f"--profile kis-v2a-rc1-replay strictly requires --rrf-constant 60.0, got {args.rrf_constant}")
+        if args.chunk_size is not None and args.chunk_size != 256:
+            raise ValueError(f"--profile kis-v2a-rc1-replay strictly requires --chunk-size 256, got {args.chunk_size}")
         if args.default_output_top_k is not None and args.default_output_top_k != 100:
             raise ValueError(f"--profile kis-v2a-rc1-replay strictly requires --default-output-top-k 100, got {args.default_output_top_k}")
         if args.default_top_k_per_variant is not None and args.default_top_k_per_variant != 100:
             raise ValueError(f"--profile kis-v2a-rc1-replay strictly requires --default-top-k-per-variant 100, got {args.default_top_k_per_variant}")
-        if args.default_refine_top_n is not None and args.default_refine_top_n != 0:
-            raise ValueError(f"--profile kis-v2a-rc1-replay strictly requires --default-refine-top-n 0, got {args.default_refine_top_n}")
+        if args.default_refine_top_n is not None and args.default_refine_top_n != 3:
+            raise ValueError(f"--profile kis-v2a-rc1-replay strictly requires --default-refine-top-n 3, got {args.default_refine_top_n}")
 
         from system_tai.kis.profiles import (
             apply_kis_v2a_rc1_replay_profile,
@@ -339,7 +341,7 @@ def session_config_from_args(args: argparse.Namespace) -> SessionConfig:
         allow_model_download=args.allow_model_download,
         clip_cache_dir=args.clip_cache_dir,
         rrf_constant=args.rrf_constant if args.rrf_constant is not None else 60.0,
-        chunk_size=args.chunk_size,
+        chunk_size=args.chunk_size if args.chunk_size is not None else 4096,
         default_top_k_per_variant=(
             args.default_top_k_per_variant if args.default_top_k_per_variant is not None else 100
         ),

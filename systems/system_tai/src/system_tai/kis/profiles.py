@@ -132,9 +132,10 @@ def apply_kis_v2a_rc1_replay_profile(config: SessionConfig) -> SessionConfig:
         translation_provider_mode="immutable_sidecar",
         translation_allow_model_download=False,
         rrf_constant=60.0,
+        chunk_size=256,
         default_top_k_per_variant=100,
         default_output_top_k=100,
-        default_refine_top_n=0,
+        default_refine_top_n=3,
         continue_on_request_error=False,
         fail_fast_protocol=True,
         kis_video_first_config=vf_cfg,
@@ -166,10 +167,14 @@ def validate_kis_v2a_rc1_replay_config(config: SessionConfig) -> None:
         raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires translation_allow_model_download=False")
     if config.rrf_constant != 60.0:
         raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires rrf_constant=60.0, got {config.rrf_constant}")
+    if config.chunk_size != 256:
+        raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires chunk_size=256, got {config.chunk_size}")
     if config.default_top_k_per_variant != 100:
         raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires default_top_k_per_variant=100, got {config.default_top_k_per_variant}")
     if config.default_output_top_k != 100:
         raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires default_output_top_k=100, got {config.default_output_top_k}")
+    if config.default_refine_top_n != 3:
+        raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires default_refine_top_n=3, got {config.default_refine_top_n}")
     if config.continue_on_request_error is not False:
         raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires continue_on_request_error=False")
     if config.fail_fast_protocol is not True:
@@ -183,47 +188,18 @@ def validate_kis_v2a_rc1_replay_config(config: SessionConfig) -> None:
     if config.selected_video_visual_verifier_config.enabled:
         raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires visual verifier to be OFF")
 
-    vf = config.kis_video_first_config
-    if not vf.enabled:
-        raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires kis_video_first_config.enabled=True")
-    if not vf.v2_adaptive_enabled:
-        raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires v2_adaptive_enabled=True")
-    if vf.selected_video_cap != 64:
-        raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires selected_video_cap=64, got {vf.selected_video_cap}")
-    if vf.video_nomination_depth != 100:
-        raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires video_nomination_depth=100, got {vf.video_nomination_depth}")
-    if vf.restricted_frames_per_video_per_variant != 20:
-        raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires restricted_frames_per_video_per_variant=20, got {vf.restricted_frames_per_video_per_variant}")
-    if vf.full_query_weight != 1.0:
-        raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires full_query_weight=1.0, got {vf.full_query_weight}")
-    if vf.primary_scene_weight != 1.0:
-        raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires primary_scene_weight=1.0, got {vf.primary_scene_weight}")
-    if vf.supporting_attribute_weight != 0.35:
-        raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires supporting_attribute_weight=0.35, got {vf.supporting_attribute_weight}")
-    if vf.top_m_evidence_cap != 5:
-        raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires top_m_evidence_cap=5, got {vf.top_m_evidence_cap}")
-    if tuple(vf.top_m_weights) != (0.4, 0.25, 0.15, 0.1, 0.1):
-        raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires top_m_weights=(0.4, 0.25, 0.15, 0.1, 0.1), got {vf.top_m_weights}")
-    if vf.top_m_min_frame_gap != 60:
-        raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires top_m_min_frame_gap=60, got {vf.top_m_min_frame_gap}")
-    if not vf.enable_temporal_diverse_local_candidates:
-        raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires enable_temporal_diverse_local_candidates=True")
-    if vf.temporal_diversity_gap_seconds != 5.0:
-        raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires temporal_diversity_gap_seconds=5.0, got {vf.temporal_diversity_gap_seconds}")
-    if not vf.enable_vi_localization_variant:
-        raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires enable_vi_localization_variant=True")
-    if vf.vi_localization_weight != 0.5:
-        raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires vi_localization_weight=0.5, got {vf.vi_localization_weight}")
-    if vf.internal_rrf_candidate_depth != 1000:
-        raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires internal_rrf_candidate_depth=1000, got {vf.internal_rrf_candidate_depth}")
-    if vf.enable_top_video_local_anchor:
-        raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires enable_top_video_local_anchor=False")
-    if vf.enable_paraphrase_ensemble:
-        raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires enable_paraphrase_ensemble=False")
+    expected_vf = get_kis_v2a_rc1_video_first_config()
+    if config.kis_video_first_config != expected_vf:
+        raise ValueError(
+            f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires exact KISVideoFirstConfig match!\n"
+            f"Expected: {expected_vf}\n"
+            f"Got:      {config.kis_video_first_config}"
+        )
 
 
 def validate_kis_v2a_rc1_replay_model_pre_bootstrap(
     checkpoint_path: Path | None = None,
+    clip_cache_dir: Path | str | None = None,
 ) -> dict[str, Any]:
     """Validate OpenAI CLIP source commit and ViT-B-32 checkpoint SHA256 BEFORE clip.load()."""
     # 1. Inspect direct_url.json
@@ -234,8 +210,13 @@ def validate_kis_v2a_rc1_replay_model_pre_bootstrap(
         )
 
     # 2. Inspect checkpoint file
-    resolved_ckpt = checkpoint_path
-    if resolved_ckpt is None:
+    resolved_ckpt = None
+    if clip_cache_dir is not None:
+        resolved_ckpt = Path(clip_cache_dir) / "ViT-B-32.pt"
+    elif checkpoint_path is not None:
+        p = Path(checkpoint_path)
+        resolved_ckpt = p / "ViT-B-32.pt" if p.is_dir() else p
+    else:
         default_ckpt = Path.home() / ".cache" / "clip" / "ViT-B-32.pt"
         if default_ckpt.is_file():
             resolved_ckpt = default_ckpt
@@ -253,7 +234,7 @@ def validate_kis_v2a_rc1_replay_model_pre_bootstrap(
         )
 
     return {
-        "observed_clip_commit": observed_commit,
+        "clip_source_commit": observed_commit,
         "checkpoint_path": str(resolved_ckpt),
         "checkpoint_sha256": actual_ckpt_sha,
         "verified_bit_exact": True,

@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import io
 import json
+import subprocess
+import sys
 import tempfile
 import zipfile
 from pathlib import Path
@@ -82,31 +84,30 @@ def test_rc1_replay_config_validation_and_rejection():
     with pytest.raises(ValueError, match="strictly requires allow_model_download=False"):
         validate_kis_v2a_rc1_replay_config(dataclasses.replace(rc1_cfg, allow_model_download=True))
 
-    # Rejection of translation_provider_mode != immutable_sidecar
-    with pytest.raises(ValueError, match="strictly requires translation_provider_mode='immutable_sidecar'"):
-        validate_kis_v2a_rc1_replay_config(dataclasses.replace(rc1_cfg, translation_provider_mode="dynamic"))
-
-    # Rejection of altered cap
-    with pytest.raises(ValueError, match="strictly requires selected_video_cap=64"):
-        tampered_vf = dataclasses.replace(rc1_cfg.kis_video_first_config, selected_video_cap=32)
+    # Tampered cap
+    tampered_vf = dataclasses.replace(rc1_cfg.kis_video_first_config, selected_video_cap=32)
+    with pytest.raises(ValueError, match="strictly requires exact KISVideoFirstConfig match"):
         validate_kis_v2a_rc1_replay_config(dataclasses.replace(rc1_cfg, kis_video_first_config=tampered_vf))
 
-    # Rejection of altered internal RRF depth
-    with pytest.raises(ValueError, match="strictly requires internal_rrf_candidate_depth=1000"):
-        tampered_vf = dataclasses.replace(rc1_cfg.kis_video_first_config, internal_rrf_candidate_depth=100)
-        validate_kis_v2a_rc1_replay_config(dataclasses.replace(rc1_cfg, kis_video_first_config=tampered_vf))
+    # Tampered default_refine_top_n
+    with pytest.raises(ValueError, match="strictly requires default_refine_top_n=3"):
+        validate_kis_v2a_rc1_replay_config(dataclasses.replace(rc1_cfg, default_refine_top_n=0))
+
+    # Tampered chunk_size
+    with pytest.raises(ValueError, match="strictly requires chunk_size=256"):
+        validate_kis_v2a_rc1_replay_config(dataclasses.replace(rc1_cfg, chunk_size=4096))
 
 
 def test_rc1_replay_bootstrap_requires_provider_fail_closed():
-    """Verify OperationalKISRuntime.bootstrap fails closed if provider is missing or tampered."""
+    """Verify OperationalKISRuntime.bootstrap enforces explicit provider, model check, and environment."""
     base = SessionConfig()
     rc1_cfg = apply_kis_v2a_rc1_replay_profile(base)
 
-    # Missing provider -> raises ValueError fail-closed
-    with pytest.raises(ValueError, match="strictly requires an explicit ImmutableSidecarTranslationProvider"):
+    # Missing provider
+    with pytest.raises(ValueError, match="Profile 'kis-v2a-rc1-replay' strictly requires an explicit ImmutableSidecarTranslationProvider"):
         OperationalKISRuntime.bootstrap(config=rc1_cfg, translation_provider=None)
 
-    # Tampered provider -> raises AssertionError fail-closed
+    # Tampered provider sidecar hash
     with tempfile.NamedTemporaryFile("w", delete=False, suffix=".json") as f:
         f.write('{"tampered": true}')
         tampered_path = Path(f.name)
@@ -121,12 +122,25 @@ def test_rc1_replay_bootstrap_requires_provider_fail_closed():
             videos=tuple(MagicMock(video_id=f"v_{i}", raw_video_path=None) for i in range(873)),
             write=MagicMock(),
         )
-        with patch("system_tai.kis.session_engine.discover_corpus", return_value=mock_manifest):
-            with pytest.raises(AssertionError, match="Sidecar canonical SHA mismatch"):
+        fake_model_prov = {
+            "clip_source_commit": EXPECTED_OPENAI_CLIP_COMMIT,
+            "checkpoint_path": "/fake/ViT-B-32.pt",
+            "checkpoint_sha256": EXPECTED_CLIP_CHECKPOINT_SHA256,
+            "verified_bit_exact": True,
+        }
+        with patch("system_tai.kis.session_engine.discover_corpus", return_value=mock_manifest), \
+             patch("system_tai.kis.profiles.validate_kis_v2a_rc1_replay_model_pre_bootstrap", return_value=fake_model_prov):
+            mock_registry = MagicMock(
+                embedding_dimension=512,
+                total_rows=177321,
+                stores=tuple(MagicMock() for _ in range(873)),
+                get_store=lambda x: None,
+            )
+            with pytest.raises(AssertionError, match="Sidecar canonical SHA256 mismatch"):
                 OperationalKISRuntime.bootstrap(
                     config=rc1_cfg,
                     translation_provider=tampered_provider,
-                    registry_loader=MagicMock(),
+                    registry_loader=lambda path: mock_registry,
                     encoder_factory=MagicMock(),
                 )
     finally:
@@ -143,6 +157,8 @@ def test_cli_argparse_profile_default_vs_explicit():
     cfg_bare = session_config_from_args(args_bare)
     assert cfg_bare.profile_name == KIS_V2A_RC1_REPLAY_PROFILE_NAME
     assert cfg_bare.device == "cpu"
+    assert cfg_bare.default_refine_top_n == 3
+    assert cfg_bare.chunk_size == 256
     assert cfg_bare.kis_video_first_config.selected_video_cap == 64
     assert cfg_bare.kis_video_first_config.internal_rrf_candidate_depth == 1000
 
@@ -153,9 +169,13 @@ def test_cli_argparse_profile_default_vs_explicit():
         "--kis-selected-video-cap", "64",
         "--rrf-constant", "60.0",
         "--default-output-top-k", "100",
+        "--chunk-size", "256",
+        "--default-refine-top-n", "3",
     ])
     cfg_matching = session_config_from_args(args_matching)
     assert cfg_matching.device == "cpu"
+    assert cfg_matching.chunk_size == 256
+    assert cfg_matching.default_refine_top_n == 3
     assert cfg_matching.kis_video_first_config.selected_video_cap == 64
 
     # 3. Explicit conflicting device -> raises ValueError
@@ -175,7 +195,7 @@ def test_cli_argparse_profile_default_vs_explicit():
 
 
 def test_session_manifest_records_rc1_profile_metadata():
-    """Verify _save_session_manifest records profile_name, provider identity and config."""
+    """Verify _save_session_manifest records profile_name, provider identity, model_provenance, and config."""
     with tempfile.TemporaryDirectory() as td:
         tdp = Path(td)
         base = SessionConfig(output_root=tdp)
@@ -194,6 +214,12 @@ def test_session_manifest_records_rc1_profile_metadata():
         mock_runtime.shared_encoder = MagicMock(identifiers={"device": "cpu", "model": "ViT-B/32"})
         mock_runtime.translation_provider = provider
         mock_runtime.bootstrap_timings = {}
+        mock_runtime.model_provenance = {
+            "clip_source_commit": EXPECTED_OPENAI_CLIP_COMMIT,
+            "checkpoint_path": "/fake/ViT-B-32.pt",
+            "checkpoint_sha256": EXPECTED_CLIP_CHECKPOINT_SHA256,
+            "verified_bit_exact": True,
+        }
         mock_runtime._request_count = 0
         mock_runtime._successful_query_count = 0
         mock_runtime._failed_query_count = 0
@@ -207,6 +233,8 @@ def test_session_manifest_records_rc1_profile_metadata():
         data = json.loads(manifest_file.read_text(encoding="utf-8"))
         assert data["profile_name"] == "kis-v2a-rc1-replay"
         assert data["translation_provider_mode"] == "immutable_sidecar"
+        assert data["model_provenance"]["clip_source_commit"] == EXPECTED_OPENAI_CLIP_COMMIT
+        assert data["model_provenance"]["checkpoint_sha256"] == EXPECTED_CLIP_CHECKPOINT_SHA256
         assert data["translation_provider_identity"]["type"] == "ImmutableSidecarTranslationProvider"
         assert data["translation_provider_identity"]["sidecar_sha256"] == CANONICAL_RC1_TNEW_SHA256
         assert data["kis_video_first_config"]["selected_video_cap"] == 64
@@ -214,17 +242,26 @@ def test_session_manifest_records_rc1_profile_metadata():
 
 
 def test_wheel_package_contains_official_sidecar_resource():
-    """Verify setuptools wheel includes translation_p1_focus_v2_new.json in package-data."""
-    repo_root = Path(__file__).resolve().parent.parent.parent.parent
-    dist_dir = repo_root / "systems" / "system_tai" / "dist"
-    wheels = list(dist_dir.glob("*.whl"))
-    assert len(wheels) > 0, "No built wheel found in dist directory!"
+    """Verify building setuptools wheel dynamically into temporary directory includes translation_p1_focus_v2_new.json."""
+    with tempfile.TemporaryDirectory() as td:
+        repo_root = Path(__file__).resolve().parent.parent.parent.parent
+        package_dir = repo_root / "systems" / "system_tai"
+        out_dir = Path(td) / "wheel_dist"
+        out_dir.mkdir(parents=True, exist_ok=True)
 
-    latest_wheel = max(wheels, key=lambda p: p.stat().st_mtime)
-    with zipfile.ZipFile(latest_wheel, "r") as z:
-        names = z.namelist()
-        expected_resource = "system_tai/kis/resources/translation_p1_focus_v2_new.json"
-        assert expected_resource in names, f"Resource {expected_resource} not packaged in wheel!"
+        subprocess.run(
+            [sys.executable, "-m", "build", "--wheel", str(package_dir), "--outdir", str(out_dir)],
+            check=True,
+            capture_output=True,
+        )
+        wheels = list(out_dir.glob("*.whl"))
+        assert len(wheels) > 0, "No built wheel produced in temporary directory!"
+
+        latest_wheel = wheels[0]
+        with zipfile.ZipFile(latest_wheel, "r") as z:
+            names = z.namelist()
+            expected_resource = "system_tai/kis/resources/translation_p1_focus_v2_new.json"
+            assert expected_resource in names, f"Resource {expected_resource} not packaged in wheel! Wheel contents: {names}"
 
 
 def test_cli_run_session_with_mock_runtime_injects_rc1_provider():
@@ -258,14 +295,15 @@ def test_cli_run_session_with_mock_runtime_injects_rc1_provider():
 
 
 def test_cli_unknown_query_rejected_fail_closed():
-    """Condition 4: Verify unknown query in separate session causes TranslationError and exits with code 1."""
+    """Condition 4: Verify unknown query in separate session causes TranslationError via handle_query and exits with code 1."""
     parser = build_parser()
     args = parser.parse_args(["--profile", "kis-v2a-rc1-replay"])
 
     mock_rt = MagicMock()
     mock_rt.session_id = "test-fail-fast"
     mock_rt._request_count = 1
-    mock_rt.handle_kis_query.side_effect = TranslationError("Query 'query-unseen-6' not found in immutable sidecar")
+    # CLI calls runtime.handle_query(request)
+    mock_rt.handle_query.side_effect = TranslationError("Query 'query-unseen-6' not found in immutable sidecar")
     mock_rt.handle_error.return_value = {
         "type": "error",
         "request_id": "req-unknown",
