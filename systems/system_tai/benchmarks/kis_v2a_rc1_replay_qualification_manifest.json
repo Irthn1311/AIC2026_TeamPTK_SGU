@@ -1,0 +1,69 @@
+{
+  "manifest_schema_version": "1.0.0",
+  "profile_name": "kis-v2a-rc1-replay",
+  "qualification_status": "IN_TREE_FUNCTIONALLY_QUALIFIED_BIT_EXACT_FOR_FIVE_QUERY_REPLAY",
+  "audit_verdict": {
+    "core_runtime_integration": "PASS",
+    "official_cli_replay_five_query": "PASS",
+    "two_pass_determinism": "PASS",
+    "top_100_historical_golden_parity": "PASS",
+    "full_historical_selected_sequence_parity": "SELF_CONSISTENT_TWO_ENTRYPOINT_VERIFIED_INDEPENDENT_HISTORICAL_CROSS_AUDIT_PENDING",
+    "cli_conflict_rejection": "PASS",
+    "novel_live_queries": "PENDING_LIVE_QUALIFICATION",
+    "keyframe_temporal_localization_quality": "PENDING_LOCALIZATION_QUALIFICATION",
+    "latency_optimization_gate": "PENDING_BENCHMARKING"
+  },
+  "git_tag": "KIS_V2A_RC1_REPLAY",
+  "target_commit": "edfebede48f437479dfb03c7131aae64d863b240",
+  "provenance": {
+    "openai_clip_source_commit": "d05afc436d78f1c48dc0dbf8e5980a9d471f35f6",
+    "openai_clip_checkpoint_sha256": "40d365715913c9da98579312b702a82c18be219cc2a73407c4526f58eba950af",
+    "translation_sidecar_package_resource": "system_tai.kis.resources/translation_p1_focus_v2_new.json",
+    "translation_sidecar_canonical_sha256": "545bd4a37c57af53713a1d9f382241ef729c287a1817a5671fdc923115b0be2a",
+    "device_lock": "cpu",
+    "corpus": {
+      "video_count": 873,
+      "clip_row_count": 177321,
+      "embedding_dimension": 512,
+      "portable_fingerprint": "b0c5ea97a9d5e10dbb7e77dba18d153191218935e2a3275ef888e0a8a83ed6e4",
+      "absolute_fingerprint": "398bb60c6ea1c8ebbd787c801836ef96a8398795b61fd6808e996f4ef19c0fa2"
+    }
+  },
+  "queries": {
+    "query-p1-1-kis": {
+      "target_video_id": "L30_V046",
+      "target_coarse_rank": 1,
+      "target_final_rank": 1,
+      "canonical_projection_digest": "1ec8d8c03122de1a9e3083a7addadcbcb4f845b2c18deec16d978baf72e19c3e",
+      "selected_sequence_digest": "acf04f853f89070868f76fa9eec014b2d39aa4776100c5980ba9c32df46b1a20"
+    },
+    "query-p1-2-kis": {
+      "target_video_id": "L21_V003",
+      "target_coarse_rank": 25,
+      "target_final_rank": 2,
+      "canonical_projection_digest": "47a486ec387785ef95552642df7ed05542f2bfe80d37004dcc4a7287aca3219e",
+      "selected_sequence_digest": "86f875cfd66ecc1398c8c22731c36fe4a7faea825ee15d9aaee9db7fc8e5bfbb"
+    },
+    "query-p1-4-kis": {
+      "target_video_id": "L22_V021",
+      "target_coarse_rank": 1,
+      "target_final_rank": 1,
+      "canonical_projection_digest": "2d7f5ebacb8f040ed1c252feecfcbdee59e44550101a7754c76ebc1935f9770e",
+      "selected_sequence_digest": "393c06fb91975e47854d9c792376fb117bceca28ea03d65b7194fbe064c1264b"
+    },
+    "query-p1-5-kis": {
+      "target_video_id": "L26_V035",
+      "target_coarse_rank": 31,
+      "target_final_rank": 25,
+      "canonical_projection_digest": "0eccbb6d600bb2945cd80fe0126e5a2a5106b414da171ce79fd87ca487e3cb62",
+      "selected_sequence_digest": "80eb8ad5c38b2211ea4cfb87b7da7dfcae7975bf22e70e5b746c863dd24501a3"
+    },
+    "query-p1-6-kis": {
+      "target_video_id": "L22_V023",
+      "target_coarse_rank": 19,
+      "target_final_rank": 1,
+      "canonical_projection_digest": "9d4cd4ef703a106b515f087413d79a3755051aceaaf7be7de460511c9dfda6fb",
+      "selected_sequence_digest": "193ca3cc581d484c9ecf80ee0e816a7f05c48b067a9cfd414a9ca8c772cb3f0e"
+    }
+  }
+}
