@@ -121,7 +121,7 @@ def apply_kis_v2a_rc1_replay_profile(config: SessionConfig) -> SessionConfig:
     clean_ref_cfg = dataclasses.replace(
         config.refinement_config,
         device="cpu",
-        top_candidates_to_refine=1,
+        top_candidates_to_refine=20,
     )
     return dataclasses.replace(
         config,
@@ -132,7 +132,7 @@ def apply_kis_v2a_rc1_replay_profile(config: SessionConfig) -> SessionConfig:
         translation_provider_mode="immutable_sidecar",
         translation_allow_model_download=False,
         rrf_constant=60.0,
-        chunk_size=256,
+        chunk_size=4096,
         default_top_k_per_variant=100,
         default_output_top_k=100,
         default_refine_top_n=3,
@@ -167,14 +167,16 @@ def validate_kis_v2a_rc1_replay_config(config: SessionConfig) -> None:
         raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires translation_allow_model_download=False")
     if config.rrf_constant != 60.0:
         raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires rrf_constant=60.0, got {config.rrf_constant}")
-    if config.chunk_size != 256:
-        raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires chunk_size=256, got {config.chunk_size}")
+    if config.chunk_size != 4096:
+        raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires chunk_size=4096, got {config.chunk_size}")
     if config.default_top_k_per_variant != 100:
         raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires default_top_k_per_variant=100, got {config.default_top_k_per_variant}")
     if config.default_output_top_k != 100:
         raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires default_output_top_k=100, got {config.default_output_top_k}")
     if config.default_refine_top_n != 3:
         raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires default_refine_top_n=3, got {config.default_refine_top_n}")
+    if config.refinement_config.top_candidates_to_refine != 20:
+        raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires refinement_config.top_candidates_to_refine=20, got {config.refinement_config.top_candidates_to_refine}")
     if config.continue_on_request_error is not False:
         raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires continue_on_request_error=False")
     if config.fail_fast_protocol is not True:

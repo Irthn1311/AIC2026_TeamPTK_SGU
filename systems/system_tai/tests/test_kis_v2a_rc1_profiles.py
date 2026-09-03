@@ -70,14 +70,17 @@ def test_rc1_replay_profile_contract_and_resource_sha():
 
 def test_rc1_replay_config_validation_and_rejection():
     """Verify single source of truth validator accepts valid and rejects tampered configurations."""
+    import dataclasses
     base = SessionConfig()
     rc1_cfg = apply_kis_v2a_rc1_replay_profile(base)
     # Valid config passes cleanly
     validate_kis_v2a_rc1_replay_config(rc1_cfg)
+    assert rc1_cfg.chunk_size == 4096
+    assert rc1_cfg.default_refine_top_n == 3
+    assert rc1_cfg.refinement_config.top_candidates_to_refine == 20
 
     # Rejection of device != cpu
     with pytest.raises(ValueError, match="strictly requires device='cpu'"):
-        import dataclasses
         validate_kis_v2a_rc1_replay_config(dataclasses.replace(rc1_cfg, device="cuda"))
 
     # Rejection of allow_model_download=True
@@ -94,8 +97,13 @@ def test_rc1_replay_config_validation_and_rejection():
         validate_kis_v2a_rc1_replay_config(dataclasses.replace(rc1_cfg, default_refine_top_n=0))
 
     # Tampered chunk_size
-    with pytest.raises(ValueError, match="strictly requires chunk_size=256"):
-        validate_kis_v2a_rc1_replay_config(dataclasses.replace(rc1_cfg, chunk_size=4096))
+    with pytest.raises(ValueError, match="strictly requires chunk_size=4096"):
+        validate_kis_v2a_rc1_replay_config(dataclasses.replace(rc1_cfg, chunk_size=256))
+
+    # Tampered top_candidates_to_refine
+    with pytest.raises(ValueError, match="strictly requires refinement_config.top_candidates_to_refine=20"):
+        tampered_ref = dataclasses.replace(rc1_cfg.refinement_config, top_candidates_to_refine=1)
+        validate_kis_v2a_rc1_replay_config(dataclasses.replace(rc1_cfg, refinement_config=tampered_ref))
 
 
 def test_rc1_replay_bootstrap_requires_provider_fail_closed():
@@ -158,7 +166,8 @@ def test_cli_argparse_profile_default_vs_explicit():
     assert cfg_bare.profile_name == KIS_V2A_RC1_REPLAY_PROFILE_NAME
     assert cfg_bare.device == "cpu"
     assert cfg_bare.default_refine_top_n == 3
-    assert cfg_bare.chunk_size == 256
+    assert cfg_bare.chunk_size == 4096
+    assert cfg_bare.refinement_config.top_candidates_to_refine == 20
     assert cfg_bare.kis_video_first_config.selected_video_cap == 64
     assert cfg_bare.kis_video_first_config.internal_rrf_candidate_depth == 1000
 
@@ -169,13 +178,14 @@ def test_cli_argparse_profile_default_vs_explicit():
         "--kis-selected-video-cap", "64",
         "--rrf-constant", "60.0",
         "--default-output-top-k", "100",
-        "--chunk-size", "256",
+        "--chunk-size", "4096",
         "--default-refine-top-n", "3",
     ])
     cfg_matching = session_config_from_args(args_matching)
     assert cfg_matching.device == "cpu"
-    assert cfg_matching.chunk_size == 256
+    assert cfg_matching.chunk_size == 4096
     assert cfg_matching.default_refine_top_n == 3
+    assert cfg_matching.refinement_config.top_candidates_to_refine == 20
     assert cfg_matching.kis_video_first_config.selected_video_cap == 64
 
     # 3. Explicit conflicting device -> raises ValueError

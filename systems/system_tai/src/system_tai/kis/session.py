@@ -243,8 +243,8 @@ def session_config_from_args(args: argparse.Namespace) -> SessionConfig:
             raise ValueError(f"--profile kis-v2a-rc1-replay strictly requires --kis-supporting-attribute-weight 0.35, got {args.kis_supporting_attribute_weight}")
         if args.rrf_constant is not None and args.rrf_constant != 60.0:
             raise ValueError(f"--profile kis-v2a-rc1-replay strictly requires --rrf-constant 60.0, got {args.rrf_constant}")
-        if args.chunk_size is not None and args.chunk_size != 256:
-            raise ValueError(f"--profile kis-v2a-rc1-replay strictly requires --chunk-size 256, got {args.chunk_size}")
+        if args.chunk_size is not None and args.chunk_size != 4096:
+            raise ValueError(f"--profile kis-v2a-rc1-replay strictly requires --chunk-size 4096, got {args.chunk_size}")
         if args.default_output_top_k is not None and args.default_output_top_k != 100:
             raise ValueError(f"--profile kis-v2a-rc1-replay strictly requires --default-output-top-k 100, got {args.default_output_top_k}")
         if args.default_top_k_per_variant is not None and args.default_top_k_per_variant != 100:
