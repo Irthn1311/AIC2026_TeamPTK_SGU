@@ -12,6 +12,7 @@ Covers:
 
 from __future__ import annotations
 
+import dataclasses
 import io
 import json
 import subprocess
@@ -100,10 +101,52 @@ def test_rc1_replay_config_validation_and_rejection():
     with pytest.raises(ValueError, match="strictly requires chunk_size=4096"):
         validate_kis_v2a_rc1_replay_config(dataclasses.replace(rc1_cfg, chunk_size=256))
 
-    # Tampered top_candidates_to_refine
-    with pytest.raises(ValueError, match="strictly requires refinement_config.top_candidates_to_refine=20"):
-        tampered_ref = dataclasses.replace(rc1_cfg.refinement_config, top_candidates_to_refine=1)
+    # Tampered refinement config fields (e.g. window_before_seconds)
+    with pytest.raises(ValueError, match="strictly requires exact RefinementConfig match"):
+        tampered_ref = dataclasses.replace(rc1_cfg.refinement_config, window_before_seconds=99.0)
         validate_kis_v2a_rc1_replay_config(dataclasses.replace(rc1_cfg, refinement_config=tampered_ref))
+
+    # Tampered top_candidates_to_refine
+    with pytest.raises(ValueError, match="strictly requires exact RefinementConfig match"):
+        tampered_ref2 = dataclasses.replace(rc1_cfg.refinement_config, top_candidates_to_refine=1)
+        validate_kis_v2a_rc1_replay_config(dataclasses.replace(rc1_cfg, refinement_config=tampered_ref2))
+
+
+def test_rc1_replay_request_validation_fail_closed():
+    """Verify validate_kis_v2a_rc1_replay_request rejects parameter tampering in request JSONL."""
+    from system_tai.kis.profiles import validate_kis_v2a_rc1_replay_request
+    from system_tai.kis.session_schema import QueryRequest
+
+    # Valid request passes
+    valid_req = QueryRequest(
+        request_id="req-1",
+        query_id="query-p1-1-kis",
+        query_vi="test query",
+        output_top_k=100,
+        top_k_per_variant=100,
+        refine_top_n=3,
+    )
+    validate_kis_v2a_rc1_replay_request(valid_req)
+
+    # Tampered output_top_k=50 raises ValueError
+    bad_output_k = dataclasses.replace(valid_req, output_top_k=50)
+    with pytest.raises(ValueError, match="strictly requires request output_top_k=100"):
+        validate_kis_v2a_rc1_replay_request(bad_output_k)
+
+    # Tampered top_k_per_variant=50 raises ValueError
+    bad_variant_k = dataclasses.replace(valid_req, top_k_per_variant=50)
+    with pytest.raises(ValueError, match="strictly requires request top_k_per_variant=100"):
+        validate_kis_v2a_rc1_replay_request(bad_variant_k)
+
+    # Tampered refine_top_n=0 raises ValueError
+    bad_refine_n = dataclasses.replace(valid_req, refine_top_n=0)
+    with pytest.raises(ValueError, match="strictly requires request refine_top_n=3"):
+        validate_kis_v2a_rc1_replay_request(bad_refine_n)
+
+    # Manual English variant prohibited
+    bad_en = dataclasses.replace(valid_req, query_en="manual translation")
+    with pytest.raises(ValueError, match="accepts Vietnamese input only"):
+        validate_kis_v2a_rc1_replay_request(bad_en)
 
 
 def test_rc1_replay_bootstrap_requires_provider_fail_closed():

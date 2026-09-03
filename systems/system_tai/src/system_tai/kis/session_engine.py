@@ -559,6 +559,10 @@ class OperationalKISRuntime:
         }
 
     def handle_query(self, request: QueryRequest) -> dict[str, Any]:
+        if self.config.profile_name == "kis-v2a-rc1-replay":
+            from system_tai.kis.profiles import validate_kis_v2a_rc1_replay_request
+            validate_kis_v2a_rc1_replay_request(request)
+
         if request.request_id in self._seen_request_ids:
             raise DuplicateRequestIdError(
                 f"request_id '{request.request_id}' has already been processed"

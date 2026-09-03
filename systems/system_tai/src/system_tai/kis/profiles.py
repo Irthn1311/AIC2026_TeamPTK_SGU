@@ -16,7 +16,11 @@ from typing import Any
 from system_tai.kis.session_schema import SessionConfig
 from system_tai.kis.video_first import KISVideoFirstConfig
 from system_tai.refinement.models import (
+    CandidateFailurePolicy,
+    CoarseDecodeStrategy,
+    MissingRawVideoPolicy,
     Q3AnchorRefinementConfig,
+    RefinementConfig,
     SelectedVideoTimelineScoutConfig,
     SelectedVideoVisualVerifierConfig,
 )
@@ -115,14 +119,33 @@ def get_kis_v2a_rc1_replay_translation_provider(
     )
 
 
+def get_kis_v2a_rc1_refinement_config() -> RefinementConfig:
+    """Historical baseline RefinementConfig for RC1."""
+    return RefinementConfig(
+        top_candidates_to_refine=20,
+        window_before_seconds=5.0,
+        window_after_seconds=5.0,
+        coarse_stride_frames=15,
+        coarse_top_n=3,
+        fine_radius_frames=30,
+        fine_stride_frames=1,
+        image_batch_size=32,
+        max_decoded_frames_per_candidate=500,
+        output_top_k=100,
+        device="cpu",
+        missing_raw_video_policy=MissingRawVideoPolicy.KEEP_ORIGINAL,
+        candidate_failure_policy=CandidateFailurePolicy.KEEP_ORIGINAL,
+        allow_model_download=False,
+        clip_cache_dir=None,
+        rrf_constant=60.0,
+        coarse_decode_strategy=CoarseDecodeStrategy.SEQUENTIAL,
+    )
+
+
 def apply_kis_v2a_rc1_replay_profile(config: SessionConfig) -> SessionConfig:
     """Apply the frozen KIS_V2A_RC1 replay profile onto a base SessionConfig using dataclasses.replace."""
     vf_cfg = get_kis_v2a_rc1_video_first_config()
-    clean_ref_cfg = dataclasses.replace(
-        config.refinement_config,
-        device="cpu",
-        top_candidates_to_refine=20,
-    )
+    clean_ref_cfg = get_kis_v2a_rc1_refinement_config()
     return dataclasses.replace(
         config,
         profile_name=KIS_V2A_RC1_REPLAY_PROFILE_NAME,
@@ -175,8 +198,6 @@ def validate_kis_v2a_rc1_replay_config(config: SessionConfig) -> None:
         raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires default_output_top_k=100, got {config.default_output_top_k}")
     if config.default_refine_top_n != 3:
         raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires default_refine_top_n=3, got {config.default_refine_top_n}")
-    if config.refinement_config.top_candidates_to_refine != 20:
-        raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires refinement_config.top_candidates_to_refine=20, got {config.refinement_config.top_candidates_to_refine}")
     if config.continue_on_request_error is not False:
         raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires continue_on_request_error=False")
     if config.fail_fast_protocol is not True:
@@ -196,6 +217,42 @@ def validate_kis_v2a_rc1_replay_config(config: SessionConfig) -> None:
             f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires exact KISVideoFirstConfig match!\n"
             f"Expected: {expected_vf}\n"
             f"Got:      {config.kis_video_first_config}"
+        )
+
+    expected_ref = get_kis_v2a_rc1_refinement_config()
+    if config.refinement_config != expected_ref:
+        raise ValueError(
+            f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires exact RefinementConfig match!\n"
+            f"Expected: {expected_ref}\n"
+            f"Got:      {config.refinement_config}"
+        )
+
+
+def validate_kis_v2a_rc1_replay_request(request: Any) -> None:
+    """Fail-closed validation to prevent request JSONL from overriding frozen RC1 replay contract."""
+    output_top_k = getattr(request, "output_top_k", None)
+    if output_top_k is not None and output_top_k != 100:
+        raise ValueError(
+            f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires request output_top_k=100 (or default), got {output_top_k}"
+        )
+    top_k_per_variant = getattr(request, "top_k_per_variant", None)
+    if top_k_per_variant is not None and top_k_per_variant != 100:
+        raise ValueError(
+            f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires request top_k_per_variant=100 (or default), got {top_k_per_variant}"
+        )
+    refine_top_n = getattr(request, "refine_top_n", None)
+    if refine_top_n is not None and refine_top_n != 3:
+        raise ValueError(
+            f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires request refine_top_n=3 (or default), got {refine_top_n}"
+        )
+    include_vi = getattr(request, "include_vi_variant", True)
+    if include_vi is not True:
+        raise ValueError(
+            f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires request include_vi_variant=True"
+        )
+    if getattr(request, "query_en", None) is not None or getattr(request, "query_en_expansion", None) is not None:
+        raise ValueError(
+            f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' accepts Vietnamese input only; manual English variants are prohibited"
         )
 
 
