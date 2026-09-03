@@ -251,6 +251,28 @@ def session_config_from_args(args: argparse.Namespace) -> SessionConfig:
             raise ValueError(f"--profile kis-v2a-rc1-replay strictly requires --default-top-k-per-variant 100, got {args.default_top_k_per_variant}")
         if args.default_refine_top_n is not None and args.default_refine_top_n != 3:
             raise ValueError(f"--profile kis-v2a-rc1-replay strictly requires --default-refine-top-n 3, got {args.default_refine_top_n}")
+        if getattr(args, "window_before_seconds", 5.0) != 5.0:
+            raise ValueError(f"--profile kis-v2a-rc1-replay strictly requires --window-before-seconds 5.0, got {args.window_before_seconds}")
+        if getattr(args, "window_after_seconds", 5.0) != 5.0:
+            raise ValueError(f"--profile kis-v2a-rc1-replay strictly requires --window-after-seconds 5.0, got {args.window_after_seconds}")
+        if getattr(args, "coarse_stride_frames", 15) != 15:
+            raise ValueError(f"--profile kis-v2a-rc1-replay strictly requires --coarse-stride-frames 15, got {args.coarse_stride_frames}")
+        if getattr(args, "coarse_top_n", 3) != 3:
+            raise ValueError(f"--profile kis-v2a-rc1-replay strictly requires --coarse-top-n 3, got {args.coarse_top_n}")
+        if getattr(args, "fine_radius_frames", 30) != 30:
+            raise ValueError(f"--profile kis-v2a-rc1-replay strictly requires --fine-radius-frames 30, got {args.fine_radius_frames}")
+        if getattr(args, "fine_stride_frames", 1) != 1:
+            raise ValueError(f"--profile kis-v2a-rc1-replay strictly requires --fine-stride-frames 1, got {args.fine_stride_frames}")
+        if getattr(args, "image_batch_size", 32) != 32:
+            raise ValueError(f"--profile kis-v2a-rc1-replay strictly requires --image-batch-size 32, got {args.image_batch_size}")
+        if getattr(args, "max_decoded_frames_per_candidate", 500) != 500:
+            raise ValueError(f"--profile kis-v2a-rc1-replay strictly requires --max-decoded-frames-per-candidate 500, got {args.max_decoded_frames_per_candidate}")
+        if getattr(args, "missing_raw_video_policy", "keep-original") != "keep-original":
+            raise ValueError(f"--profile kis-v2a-rc1-replay strictly requires --missing-raw-video-policy keep-original, got {args.missing_raw_video_policy}")
+        if getattr(args, "candidate_failure_policy", "keep-original") != "keep-original":
+            raise ValueError(f"--profile kis-v2a-rc1-replay strictly requires --candidate-failure-policy keep-original, got {args.candidate_failure_policy}")
+        if getattr(args, "coarse_decode_strategy", "sequential") != "sequential":
+            raise ValueError(f"--profile kis-v2a-rc1-replay strictly requires --coarse-decode-strategy sequential, got {args.coarse_decode_strategy}")
 
         from system_tai.kis.profiles import (
             apply_kis_v2a_rc1_replay_profile,

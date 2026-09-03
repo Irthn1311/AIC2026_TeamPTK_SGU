@@ -375,3 +375,27 @@ def test_cli_unknown_query_rejected_fail_closed():
     out_text = out_stream.getvalue()
     assert "QUERY_EXECUTION_FAILED" in out_text
     assert "TranslationError" in out_text
+
+
+def test_cli_argparse_rc1_replay_refinement_flags_rejected_fail_fast():
+    """Verify that passing non-default refinement flags under kis-v2a-rc1-replay is rejected fail-fast."""
+    parser = build_parser()
+
+    bad_flags = [
+        (["--window-before-seconds", "99"], "strictly requires --window-before-seconds 5.0"),
+        (["--window-after-seconds", "99"], "strictly requires --window-after-seconds 5.0"),
+        (["--coarse-stride-frames", "999"], "strictly requires --coarse-stride-frames 15"),
+        (["--coarse-top-n", "10"], "strictly requires --coarse-top-n 3"),
+        (["--fine-radius-frames", "50"], "strictly requires --fine-radius-frames 30"),
+        (["--fine-stride-frames", "5"], "strictly requires --fine-stride-frames 1"),
+        (["--image-batch-size", "7"], "strictly requires --image-batch-size 32"),
+        (["--max-decoded-frames-per-candidate", "100"], "strictly requires --max-decoded-frames-per-candidate 500"),
+        (["--missing-raw-video-policy", "fail-query"], "strictly requires --missing-raw-video-policy keep-original"),
+        (["--candidate-failure-policy", "fail-query"], "strictly requires --candidate-failure-policy keep-original"),
+        (["--coarse-decode-strategy", "sparse-verified"], "strictly requires --coarse-decode-strategy sequential"),
+    ]
+    for flag_args, match_msg in bad_flags:
+        args = parser.parse_args(["--profile", "kis-v2a-rc1-replay"] + flag_args)
+        with pytest.raises(ValueError, match=match_msg):
+            session_config_from_args(args)
+
