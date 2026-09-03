@@ -7,6 +7,13 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from system_tai.kis.session_engine import OperationalKISRuntime
 from system_tai.kis.session_schema import KISVideoFirstConfig, SessionConfig
 from system_tai.retrieval.multi_query import WeightedRRFRetriever
@@ -31,7 +38,6 @@ from scratch.run_kis_v2a_rc1_e2e_closure import (
     run_kis_v2a_rc1_e2e_closure,
 )
 
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 TNEW_SIDECAR_PATH = REPO_ROOT / "scratch" / "benchmarks" / "translation_ablation" / "translation_p1_focus_v2_new.json"
 TOLD_SIDECAR_PATH = REPO_ROOT / "scratch" / "benchmarks" / "translation_ablation" / "translation_p1_focus_v1_old_candidate.json"
 QUERY_MANIFEST_PATH = REPO_ROOT / "systems" / "system_tai" / "benchmarks" / "frozen_kis_v2a_stress_manifest.json"
