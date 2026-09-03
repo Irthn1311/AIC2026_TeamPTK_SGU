@@ -63,15 +63,25 @@ from system_tai.translation.sidecar_provider import (
     canonical_sidecar_sha256,
 )
 
-CANONICAL_TNEW_SHA256 = "545bd4a37c57af53713a1d9f382241ef729c287a1817a5671fdc923115b0be2a"
+from system_tai.kis.profiles import (
+    CANONICAL_RC1_TNEW_SHA256,
+    EXPECTED_CLIP_CHECKPOINT_SHA256,
+    EXPECTED_FULL_CORPUS_FINGERPRINT,
+    EXPECTED_OPENAI_CLIP_COMMIT,
+    KIS_V2A_RC1_REPLAY_PROFILE_NAME,
+    OFFICIAL_RC1_REPLAY_SIDECAR,
+    apply_kis_v2a_rc1_replay_profile,
+    get_installed_clip_commit,
+    get_kis_v2a_rc1_replay_translation_provider,
+    validate_kis_v2a_rc1_replay_config,
+)
+
+CANONICAL_TNEW_SHA256 = CANONICAL_RC1_TNEW_SHA256
 CANONICAL_TOLD_SHA256 = "022a6c1db48d5fe00a223ec9f637aa1d64eea5d55c06e901caa42e04ff0e3367"
 CANONICAL_QUERY_MANIFEST_SHA256 = "c7ee3b1168e681444d7a0b4059c81db4bbb8fe15b91c2d58f7641823a52d2fbf"
 CANONICAL_MANUAL_REF_SHA256 = "b23d45682f6159075b03c129104e1b41abeb065f610f65ec39860d204c78f65d"
 CANONICAL_GOLDEN_DIGESTS_SHA256 = "ff2a37e026c70ed89c4141ad6df2c998e71df6ffe7ba00c135ce7ce13deca5e2"
 
-EXPECTED_FULL_CORPUS_FINGERPRINT = "398bb60c6ea1c8ebbd787c801836ef96a8398795b61fd6808e996f4ef19c0fa2"
-EXPECTED_CLIP_CHECKPOINT_SHA256 = "40d365715913c9da98579312b702a82c18be219cc2a73407c4526f58eba950af"
-EXPECTED_OPENAI_CLIP_COMMIT = "d05afc436d78f1c48dc0dbf8e5980a9d471f35f6"
 RELEASE_CANDIDATE_ID = "KIS_V2A_RC1"
 
 
@@ -81,21 +91,6 @@ def get_git_commit_sha() -> str:
         return out
     except Exception as exc:
         raise RuntimeError(f"Fail-closed: Unable to determine git commit SHA: {exc}") from exc
-
-
-def get_installed_clip_commit() -> str | None:
-    try:
-        import importlib.metadata
-        dist = importlib.metadata.distribution("clip")
-        raw_direct_url = dist.read_text("direct_url.json")
-        if raw_direct_url:
-            data = json.loads(raw_direct_url)
-            commit = data.get("vcs_info", {}).get("commit_id")
-            if commit:
-                return str(commit).strip()
-    except Exception:
-        pass
-    return None
 
 
 def load_manual_reference(ref_path: Path) -> dict[str, dict[str, Any]]:
@@ -156,41 +151,15 @@ def execute_closure_session(
         expected_content_sha256=sidecar_sha,
     )
 
-    vf_cfg = KISVideoFirstConfig(
-        enabled=True,
-        v2_adaptive_enabled=True,
-        selected_video_cap=64,
-        video_nomination_depth=100,
-        restricted_frames_per_video_per_variant=20,
-        full_query_weight=1.0,
-        primary_scene_weight=1.0,
-        supporting_attribute_weight=0.35,
-        top_m_evidence_cap=5,
-        top_m_weights=(0.4, 0.25, 0.15, 0.1, 0.1),
-        top_m_min_frame_gap=60,
-        enable_temporal_diverse_local_candidates=True,
-        temporal_diversity_gap_seconds=5.0,
-        enable_vi_localization_variant=True,
-        vi_localization_weight=0.5,
-        internal_rrf_candidate_depth=1000,
-        enable_top_video_local_anchor=False,
-        enable_paraphrase_ensemble=False,
-        paraphrase_ensemble_mode="EQUAL_BUDGET",
-    )
-
-    session_cfg = SessionConfig(
+    base_cfg = SessionConfig(
         session_id=f"rc1_{run_name}_{int(session_start_time)}",
         input_root=input_root,
         manifest_cache=manifest_cache_path,
         output_root=run_out_dir,
-        enable_dynamic_translation=True,
-        allow_model_download=False,
         device=device,
-        rrf_constant=60.0,
-        continue_on_request_error=False,
-        fail_fast_protocol=True,
-        kis_video_first_config=vf_cfg,
     )
+    session_cfg = apply_kis_v2a_rc1_replay_profile(base_cfg)
+    validate_kis_v2a_rc1_replay_config(session_cfg)
 
     runtime = OperationalKISRuntime.bootstrap(
         config=session_cfg,
@@ -425,7 +394,12 @@ def run_kis_v2a_rc1_e2e_closure(
         model_provenance["checkpoint_verified"] = False
 
     # 5. OpenAI CLIP Source Commit Verification via direct_url.json
-    observed_clip_commit = get_installed_clip_commit()
+    observed_clip_commit = None
+    try:
+        observed_clip_commit = get_installed_clip_commit()
+    except Exception:
+        if strict_corpus_gate:
+            raise
     clip_commit_verified = False
     if observed_clip_commit is not None:
         if observed_clip_commit.lower() != EXPECTED_OPENAI_CLIP_COMMIT.lower():
@@ -435,12 +409,12 @@ def run_kis_v2a_rc1_e2e_closure(
         print(f"✅ OpenAI CLIP source commit verified via direct_url.json: {observed_clip_commit}", flush=True)
         clip_commit_verified = True
     else:
-        print("⚠️ OpenAI CLIP commit could not be resolved from direct_url.json (observed: None)", flush=True)
-        if strict_corpus_gate and not (REPO_ROOT / "systems" / "system_tai" / "tests").exists():
+        if strict_corpus_gate:
             raise AssertionError(
-                "Fail-closed: OpenAI CLIP package must be installed via pip from pinned git commit: "
+                "Fail-closed: OpenAI CLIP package must be installed via pip from pinned git commit with direct_url.json: "
                 f"git+https://github.com/openai/CLIP.git@{EXPECTED_OPENAI_CLIP_COMMIT}"
             )
+        print("⚠️ OpenAI CLIP commit could not be resolved from direct_url.json (observed: None)", flush=True)
 
     # 6. Golden Baseline Digests Validation (No custom bypass - must match canonical SHA)
     golden_ref_digests: dict[str, str] = {}

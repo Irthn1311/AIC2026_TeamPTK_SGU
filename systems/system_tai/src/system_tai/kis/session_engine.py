@@ -300,6 +300,10 @@ class OperationalKISRuntime:
 
             if translation_provider is not None:
                 self.translation_provider = translation_provider
+            elif config.profile_name == "kis-v2a-rc1-replay":
+                raise ValueError(
+                    "Profile 'kis-v2a-rc1-replay' strictly requires an explicit ImmutableSidecarTranslationProvider!"
+                )
             elif (
                 config.translation_model_name == "google-translate"
                 or "google" in config.translation_model_name.lower()
@@ -360,6 +364,22 @@ class OperationalKISRuntime:
         output_root = Path(config.output_root)
         output_root.mkdir(parents=True, exist_ok=True)
         feature_manifest_path = output_root / "feature_manifest.json"
+
+        if config.profile_name == "kis-v2a-rc1-replay":
+            if translation_provider is None:
+                raise ValueError(
+                    "Profile 'kis-v2a-rc1-replay' strictly requires an explicit ImmutableSidecarTranslationProvider!"
+                )
+            from system_tai.kis.profiles import (
+                validate_kis_v2a_rc1_replay_config,
+                validate_kis_v2a_rc1_replay_model_pre_bootstrap,
+            )
+            # 1. Validate full config contract strictly before work
+            validate_kis_v2a_rc1_replay_config(config)
+
+            # 2. Condition 1: Validate CLIP commit and checkpoint SHA BEFORE clip.load()
+            if encoder_factory is None:
+                validate_kis_v2a_rc1_replay_model_pre_bootstrap(config.clip_cache_dir)
 
         discovery_metrics = DiscoveryMetrics()
         manifest_source_status = "UNKNOWN"
@@ -435,6 +455,33 @@ class OperationalKISRuntime:
             cache_dir=config.clip_cache_dir,
         )
         model_seconds = clock() - model_start
+
+        if config.profile_name == "kis-v2a-rc1-replay":
+            if registry_loader is None:
+                from system_tai.kis.profiles import validate_kis_v2a_rc1_replay_environment
+                validate_kis_v2a_rc1_replay_environment(
+                    manifest=manifest,
+                    registry=registry,
+                    translation_provider=translation_provider,
+                    shared_encoder=shared_encoder,
+                )
+            else:
+                from system_tai.translation.sidecar_provider import (
+                    ImmutableSidecarTranslationProvider,
+                    canonical_sidecar_sha256,
+                )
+                from system_tai.kis.profiles import CANONICAL_RC1_TNEW_SHA256
+                if translation_provider is None or not isinstance(
+                    translation_provider, ImmutableSidecarTranslationProvider
+                ):
+                    raise ValueError(
+                        "Profile 'kis-v2a-rc1-replay' strictly requires ImmutableSidecarTranslationProvider!"
+                    )
+                csha = canonical_sidecar_sha256(translation_provider.sidecar_path)
+                if csha.lower() != CANONICAL_RC1_TNEW_SHA256.lower():
+                    raise AssertionError(
+                        f"Fail-closed: Sidecar canonical SHA mismatch: expected {CANONICAL_RC1_TNEW_SHA256}, got {csha}"
+                    )
 
         decoder_make = decoder_factory or OpenCVVideoDecoder
         decoder = decoder_make()
@@ -2415,6 +2462,19 @@ class OperationalKISRuntime:
             assert self.visual_ontology_provider is not None
             manifest_payload["qa_visual_ontology_identity"] = dict(
                 self.visual_ontology_provider.identifiers
+            )
+        if self.config.profile_name is not None:
+            manifest_payload["profile_name"] = self.config.profile_name
+        manifest_payload["translation_provider_mode"] = self.config.translation_provider_mode
+        if self.translation_provider is not None and hasattr(self.translation_provider, "sidecar_path"):
+            manifest_payload["translation_provider_identity"] = {
+                "type": type(self.translation_provider).__name__,
+                "sidecar_path": str(self.translation_provider.sidecar_path),
+                "sidecar_sha256": getattr(self.translation_provider, "expected_content_sha256", None),
+            }
+        if self.config.kis_video_first_config.enabled:
+            manifest_payload["kis_video_first_config"] = dataclasses.asdict(
+                self.config.kis_video_first_config
             )
         _write_json(self.output_root / "session_manifest.json", manifest_payload)
 

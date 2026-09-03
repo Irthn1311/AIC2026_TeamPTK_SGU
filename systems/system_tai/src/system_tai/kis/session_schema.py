@@ -117,6 +117,8 @@ class SessionConfig:
         "ae7baa85da07dbe8e23ac26a9f5ef560c17e2138"
     )
     translation_max_clip_tokens: int = 75
+    profile_name: str | None = None
+    translation_provider_mode: str = "dynamic"
 
     def __post_init__(self) -> None:
         if not 1 <= self.translation_max_clip_tokens <= 75:
@@ -356,8 +358,19 @@ class SessionConfig:
                 ),
             ),
         }
+        if "profile_name" in kis_cfg:
+            kwargs["profile_name"] = kis_cfg["profile_name"]
+        if "translation_provider_mode" in kis_cfg:
+            kwargs["translation_provider_mode"] = kis_cfg["translation_provider_mode"]
         kwargs.update(overrides)
         return cls(**kwargs)
+
+    @classmethod
+    def from_mapping(cls, mapping: dict[str, Any], **overrides: Any) -> SessionConfig:
+        """Construct SessionConfig from a key-value mapping with optional overrides."""
+        payload = dict(mapping)
+        payload.update(overrides)
+        return cls(**payload)
 
 
 @dataclass(frozen=True, slots=True)

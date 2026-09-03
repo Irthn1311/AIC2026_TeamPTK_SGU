@@ -52,6 +52,11 @@ class ImmutableSidecarTranslationProvider:
                     f"Sidecar canonical content SHA256 mismatch for {self.sidecar_path.name}: "
                     f"expected {norm_expected}, got {self._actual_content_sha256}"
                 )
+        self.expected_content_sha256 = (
+            expected_content_sha256.strip().lower()
+            if expected_content_sha256 is not None
+            else self._actual_content_sha256
+        )
 
         raw_obj = json.loads(self.sidecar_path.read_text(encoding="utf-8"))
         self._schema_version = str(raw_obj.get("$schema_version", raw_obj.get("schema_version", "")))

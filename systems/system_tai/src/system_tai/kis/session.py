@@ -56,7 +56,13 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("/kaggle/working/system_tai_operational_session"),
     )
-    parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
+    parser.add_argument(
+        "--profile",
+        choices=("legacy", "kis-v2a-rc1-replay"),
+        default="legacy",
+        help="Named operational profile. 'kis-v2a-rc1-replay' locks the verified RC1 replay baseline.",
+    )
+    parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default=None)
     parser.add_argument("--allow-model-download", action="store_true")
     parser.add_argument("--clip-cache-dir", type=Path)
     parser.add_argument("--enable-dynamic-translation", action="store_true")
@@ -84,16 +90,16 @@ def build_parser() -> argparse.ArgumentParser:
             "restricted full-keyframe search for KIS requests."
         ),
     )
-    parser.add_argument("--kis-selected-video-cap", type=int, default=32)
-    parser.add_argument("--kis-video-nomination-depth", type=int, default=100)
+    parser.add_argument("--kis-selected-video-cap", type=int, default=None)
+    parser.add_argument("--kis-video-nomination-depth", type=int, default=None)
     parser.add_argument(
         "--kis-restricted-frames-per-video-per-variant",
         type=int,
-        default=10,
+        default=None,
     )
-    parser.add_argument("--kis-full-query-weight", type=float, default=1.0)
-    parser.add_argument("--kis-primary-scene-weight", type=float, default=1.0)
-    parser.add_argument("--kis-supporting-attribute-weight", type=float, default=0.35)
+    parser.add_argument("--kis-full-query-weight", type=float, default=None)
+    parser.add_argument("--kis-primary-scene-weight", type=float, default=None)
+    parser.add_argument("--kis-supporting-attribute-weight", type=float, default=None)
     parser.add_argument(
         "--enable-kis-multi-anchor-refinement",
         action="store_true",
@@ -158,11 +164,11 @@ def build_parser() -> argparse.ArgumentParser:
         choices=tuple(policy.value for policy in VisualVerifierFailurePolicy),
         default=VisualVerifierFailurePolicy.FALLBACK_CLIP.value,
     )
-    parser.add_argument("--rrf-constant", type=float, default=60.0)
+    parser.add_argument("--rrf-constant", type=float, default=None)
     parser.add_argument("--chunk-size", type=int, default=4096)
-    parser.add_argument("--default-top-k-per-variant", type=int, default=100)
-    parser.add_argument("--default-output-top-k", type=int, default=100)
-    parser.add_argument("--default-refine-top-n", type=int, default=3)
+    parser.add_argument("--default-top-k-per-variant", type=int, default=None)
+    parser.add_argument("--default-output-top-k", type=int, default=None)
+    parser.add_argument("--default-refine-top-n", type=int, default=None)
     parser.add_argument("--max-requests", type=int)
 
     cont_group = parser.add_mutually_exclusive_group()
@@ -208,7 +214,64 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def session_config_from_args(args: argparse.Namespace) -> SessionConfig:
-    resolved_device = resolve_device(args.device)
+    profile = getattr(args, "profile", "legacy")
+    if profile == "kis-v2a-rc1-replay":
+        # 1. Condition 3: Check conflicting CLI arguments strictly fail-fast
+        if args.device is not None and args.device != "cpu":
+            raise ValueError(
+                f"--profile kis-v2a-rc1-replay strictly requires --device cpu, got '{args.device}'"
+            )
+        if getattr(args, "allow_model_download", False):
+            raise ValueError("--profile kis-v2a-rc1-replay strictly requires allow_model_download=False")
+        if getattr(args, "enable_kis_multi_anchor_refinement", False):
+            raise ValueError("--profile kis-v2a-rc1-replay strictly requires local anchor refinement to be OFF")
+        if getattr(args, "enable_kis_selected_video_timeline_scout", False):
+            raise ValueError("--profile kis-v2a-rc1-replay strictly requires timeline scout to be OFF")
+        if getattr(args, "enable_kis_visual_predicate_verifier", False):
+            raise ValueError("--profile kis-v2a-rc1-replay strictly requires visual verifier to be OFF")
+        if args.kis_selected_video_cap is not None and args.kis_selected_video_cap != 64:
+            raise ValueError(f"--profile kis-v2a-rc1-replay strictly requires --kis-selected-video-cap 64, got {args.kis_selected_video_cap}")
+        if args.kis_video_nomination_depth is not None and args.kis_video_nomination_depth != 100:
+            raise ValueError(f"--profile kis-v2a-rc1-replay strictly requires --kis-video-nomination-depth 100, got {args.kis_video_nomination_depth}")
+        if args.kis_restricted_frames_per_video_per_variant is not None and args.kis_restricted_frames_per_video_per_variant != 20:
+            raise ValueError(f"--profile kis-v2a-rc1-replay strictly requires --kis-restricted-frames-per-video-per-variant 20, got {args.kis_restricted_frames_per_video_per_variant}")
+        if args.kis_full_query_weight is not None and args.kis_full_query_weight != 1.0:
+            raise ValueError(f"--profile kis-v2a-rc1-replay strictly requires --kis-full-query-weight 1.0, got {args.kis_full_query_weight}")
+        if args.kis_primary_scene_weight is not None and args.kis_primary_scene_weight != 1.0:
+            raise ValueError(f"--profile kis-v2a-rc1-replay strictly requires --kis-primary-scene-weight 1.0, got {args.kis_primary_scene_weight}")
+        if args.kis_supporting_attribute_weight is not None and args.kis_supporting_attribute_weight != 0.35:
+            raise ValueError(f"--profile kis-v2a-rc1-replay strictly requires --kis-supporting-attribute-weight 0.35, got {args.kis_supporting_attribute_weight}")
+        if args.rrf_constant is not None and args.rrf_constant != 60.0:
+            raise ValueError(f"--profile kis-v2a-rc1-replay strictly requires --rrf-constant 60.0, got {args.rrf_constant}")
+        if args.default_output_top_k is not None and args.default_output_top_k != 100:
+            raise ValueError(f"--profile kis-v2a-rc1-replay strictly requires --default-output-top-k 100, got {args.default_output_top_k}")
+        if args.default_top_k_per_variant is not None and args.default_top_k_per_variant != 100:
+            raise ValueError(f"--profile kis-v2a-rc1-replay strictly requires --default-top-k-per-variant 100, got {args.default_top_k_per_variant}")
+        if args.default_refine_top_n is not None and args.default_refine_top_n != 0:
+            raise ValueError(f"--profile kis-v2a-rc1-replay strictly requires --default-refine-top-n 0, got {args.default_refine_top_n}")
+
+        from system_tai.kis.profiles import (
+            apply_kis_v2a_rc1_replay_profile,
+            validate_kis_v2a_rc1_replay_config,
+        )
+        base_cfg = SessionConfig(
+            input_root=args.input_root,
+            reuse_manifest=args.reuse_manifest,
+            manifest_cache=args.manifest_cache,
+            output_root=args.output_root,
+            device="cpu",
+            clip_cache_dir=args.clip_cache_dir,
+            session_id=args.session_id,
+            max_requests=args.max_requests,
+        )
+        rc1_cfg = apply_kis_v2a_rc1_replay_profile(base_cfg)
+        validate_kis_v2a_rc1_replay_config(rc1_cfg)
+        return rc1_cfg
+
+    # Legacy profile branch
+    device_val = args.device or "auto"
+    resolved_device = resolve_device(device_val)
+    refine_top_n_val = args.default_refine_top_n if args.default_refine_top_n is not None else 3
     multi_anchor_enabled = getattr(args, "enable_kis_multi_anchor_refinement", False)
     if multi_anchor_enabled and not getattr(
         args, "enable_kis_semantic_video_first", False
@@ -217,7 +280,7 @@ def session_config_from_args(args: argparse.Namespace) -> SessionConfig:
             "--enable-kis-multi-anchor-refinement requires "
             "--enable-kis-semantic-video-first"
         )
-    if multi_anchor_enabled and args.default_refine_top_n <= 0:
+    if multi_anchor_enabled and refine_top_n_val <= 0:
         raise ValueError(
             "--enable-kis-multi-anchor-refinement requires "
             "--default-refine-top-n greater than zero"
@@ -232,7 +295,7 @@ def session_config_from_args(args: argparse.Namespace) -> SessionConfig:
             "--enable-kis-selected-video-timeline-scout requires "
             "--enable-kis-semantic-video-first"
         )
-    if timeline_scout_enabled and args.default_refine_top_n <= 0:
+    if timeline_scout_enabled and refine_top_n_val <= 0:
         raise ValueError(
             "--enable-kis-selected-video-timeline-scout requires "
             "--default-refine-top-n greater than zero"
@@ -249,7 +312,7 @@ def session_config_from_args(args: argparse.Namespace) -> SessionConfig:
     # requires at least one candidate.  The session-level value zero is still
     # the supported switch that disables refinement for every default request;
     # keep a valid dormant template without changing that request semantics.
-    refinement_template_top_n = max(1, args.default_refine_top_n)
+    refinement_template_top_n = max(1, refine_top_n_val)
     ref_config = RefinementConfig(
         device=resolved_device,
         top_candidates_to_refine=refinement_template_top_n,
@@ -272,9 +335,23 @@ def session_config_from_args(args: argparse.Namespace) -> SessionConfig:
         reuse_manifest=args.reuse_manifest,
         manifest_cache=args.manifest_cache,
         output_root=args.output_root,
-        device=args.device,
+        device=device_val,
         allow_model_download=args.allow_model_download,
         clip_cache_dir=args.clip_cache_dir,
+        rrf_constant=args.rrf_constant if args.rrf_constant is not None else 60.0,
+        chunk_size=args.chunk_size,
+        default_top_k_per_variant=(
+            args.default_top_k_per_variant if args.default_top_k_per_variant is not None else 100
+        ),
+        default_output_top_k=(
+            args.default_output_top_k if args.default_output_top_k is not None else 100
+        ),
+        default_refine_top_n=refine_top_n_val,
+        max_requests=args.max_requests,
+        continue_on_request_error=args.continue_on_request_error,
+        fail_fast_protocol=args.fail_fast_protocol,
+        session_id=args.session_id,
+        refinement_config=ref_config,
         enable_dynamic_translation=(
             getattr(args, "enable_dynamic_translation", False)
             or getattr(args, "enable_kis_semantic_video_first", False)
@@ -303,23 +380,27 @@ def session_config_from_args(args: argparse.Namespace) -> SessionConfig:
         ),
         kis_video_first_config=KISVideoFirstConfig(
             enabled=getattr(args, "enable_kis_semantic_video_first", False),
-            selected_video_cap=getattr(args, "kis_selected_video_cap", 32),
-            video_nomination_depth=getattr(
-                args,
-                "kis_video_nomination_depth",
-                100,
+            selected_video_cap=(
+                args.kis_selected_video_cap if args.kis_selected_video_cap is not None else 32
             ),
-            restricted_frames_per_video_per_variant=getattr(
-                args,
-                "kis_restricted_frames_per_video_per_variant",
-                10,
+            video_nomination_depth=(
+                args.kis_video_nomination_depth if args.kis_video_nomination_depth is not None else 100
             ),
-            full_query_weight=getattr(args, "kis_full_query_weight", 1.0),
-            primary_scene_weight=getattr(args, "kis_primary_scene_weight", 1.0),
-            supporting_attribute_weight=getattr(
-                args,
-                "kis_supporting_attribute_weight",
-                0.35,
+            restricted_frames_per_video_per_variant=(
+                args.kis_restricted_frames_per_video_per_variant
+                if args.kis_restricted_frames_per_video_per_variant is not None
+                else 10
+            ),
+            full_query_weight=(
+                args.kis_full_query_weight if args.kis_full_query_weight is not None else 1.0
+            ),
+            primary_scene_weight=(
+                args.kis_primary_scene_weight if args.kis_primary_scene_weight is not None else 1.0
+            ),
+            supporting_attribute_weight=(
+                args.kis_supporting_attribute_weight
+                if args.kis_supporting_attribute_weight is not None
+                else 0.35
             ),
         ),
         video_conditioned_keyframe_config=VideoConditionedKeyframeConfig(
@@ -397,16 +478,6 @@ def session_config_from_args(args: argparse.Namespace) -> SessionConfig:
                 )
             ),
         ),
-        rrf_constant=args.rrf_constant,
-        chunk_size=args.chunk_size,
-        default_top_k_per_variant=args.default_top_k_per_variant,
-        default_output_top_k=args.default_output_top_k,
-        default_refine_top_n=args.default_refine_top_n,
-        max_requests=args.max_requests,
-        continue_on_request_error=args.continue_on_request_error,
-        fail_fast_protocol=args.fail_fast_protocol,
-        session_id=args.session_id,
-        refinement_config=ref_config,
     )
 
 
@@ -426,7 +497,11 @@ def run_session(
     if runtime is None:
         print(f"bootstrapping session at output_root: {config.output_root}", file=err_stream)
         try:
-            runtime = OperationalKISRuntime.bootstrap(config)
+            translation_provider = None
+            if getattr(args, "profile", "legacy") == "kis-v2a-rc1-replay":
+                from system_tai.kis.profiles import get_kis_v2a_rc1_replay_translation_provider
+                translation_provider = get_kis_v2a_rc1_replay_translation_provider()
+            runtime = OperationalKISRuntime.bootstrap(config, translation_provider=translation_provider)
             print(f"session bootstrapped: session_id={runtime.session_id}", file=err_stream)
         except Exception as exc:
             print(f"session bootstrap failed: {type(exc).__name__}: {exc}", file=err_stream)
