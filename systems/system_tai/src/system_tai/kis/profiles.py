@@ -36,7 +36,13 @@ SUPPORTED_PROFILES = ("legacy", KIS_V2A_RC1_REPLAY_PROFILE_NAME)
 
 # Provenance Anchors
 CANONICAL_RC1_TNEW_SHA256 = "545bd4a37c57af53713a1d9f382241ef729c287a1817a5671fdc923115b0be2a"
-EXPECTED_FULL_CORPUS_FINGERPRINT = "398bb60c6ea1c8ebbd787c801836ef96a8398795b61fd6808e996f4ef19c0fa2"
+CANONICAL_PORTABLE_CORPUS_FINGERPRINT = "b0c5ea97a9d5e10dbb7e77dba18d153191218935e2a3275ef888e0a8a83ed6e4"
+CANONICAL_ABSOLUTE_CORPUS_FINGERPRINT = "398bb60c6ea1c8ebbd787c801836ef96a8398795b61fd6808e996f4ef19c0fa2"
+EXPECTED_FULL_CORPUS_FINGERPRINT = CANONICAL_ABSOLUTE_CORPUS_FINGERPRINT
+ALLOWED_CORPUS_FINGERPRINTS = (
+    CANONICAL_PORTABLE_CORPUS_FINGERPRINT,
+    CANONICAL_ABSOLUTE_CORPUS_FINGERPRINT,
+)
 EXPECTED_OPENAI_CLIP_COMMIT = "d05afc436d78f1c48dc0dbf8e5980a9d471f35f6"
 EXPECTED_CLIP_CHECKPOINT_SHA256 = "40d365715913c9da98579312b702a82c18be219cc2a73407c4526f58eba950af"
 
@@ -329,9 +335,9 @@ def validate_kis_v2a_rc1_replay_environment(
         raise AssertionError(f"Fail-closed: Expected 177,321 total rows, found {registry.total_rows}")
     if registry.embedding_dimension != 512:
         raise AssertionError(f"Fail-closed: Expected 512 dimensions, found {registry.embedding_dimension}")
-    if manifest.fingerprint != EXPECTED_FULL_CORPUS_FINGERPRINT:
+    if manifest.fingerprint not in ALLOWED_CORPUS_FINGERPRINTS:
         raise AssertionError(
-            f"Fail-closed: Corpus fingerprint mismatch! Expected {EXPECTED_FULL_CORPUS_FINGERPRINT}, got {manifest.fingerprint}"
+            f"Fail-closed: Corpus fingerprint mismatch! Expected one of {ALLOWED_CORPUS_FINGERPRINTS}, got {manifest.fingerprint}"
         )
 
     # 3. Encoder Invariants
