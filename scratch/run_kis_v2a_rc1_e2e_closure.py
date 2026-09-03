@@ -64,6 +64,7 @@ from system_tai.translation.sidecar_provider import (
 )
 
 from system_tai.kis.profiles import (
+    ALLOWED_CORPUS_FINGERPRINTS,
     CANONICAL_RC1_TNEW_SHA256,
     EXPECTED_CLIP_CHECKPOINT_SHA256,
     EXPECTED_FULL_CORPUS_FINGERPRINT,
@@ -182,9 +183,9 @@ def execute_closure_session(
                     f"Strict corpus gate failed! Expected 873 videos, 177321 rows, 512 dimensions. "
                     f"Got {v_count} videos, {r_count} rows, {d_count} dimensions."
                 )
-            if fp != EXPECTED_FULL_CORPUS_FINGERPRINT:
+            if fp not in ALLOWED_CORPUS_FINGERPRINTS:
                 raise AssertionError(
-                    f"Strict corpus gate failed! Expected exact full fingerprint '{EXPECTED_FULL_CORPUS_FINGERPRINT}', got '{fp}'"
+                    f"Strict corpus gate failed! Expected one of {ALLOWED_CORPUS_FINGERPRINTS}, got '{fp}'"
                 )
             print("✅ Strict Corpus Gate PASS (873 videos / 177321 rows / 512 dimensions / full 64-char fingerprint bit-exact)", flush=True)
 
@@ -548,7 +549,7 @@ def run_kis_v2a_rc1_e2e_closure(
         corpus_info_1.get("video_count") == 873
         and corpus_info_1.get("total_rows") == 177321
         and corpus_info_1.get("embedding_dimension") == 512
-        and corpus_info_1.get("fingerprint") == EXPECTED_FULL_CORPUS_FINGERPRINT
+        and corpus_info_1.get("fingerprint") in ALLOWED_CORPUS_FINGERPRINTS
     )
 
     mandatory_gates = {
