@@ -2,19 +2,32 @@
   "manifest_schema_version": "1.0.0",
   "profile_name": "kis-v2a-rc1-replay",
   "qualification_status": "IN_TREE_FUNCTIONALLY_QUALIFIED_BIT_EXACT_FOR_FIVE_QUERY_REPLAY",
+  "provenance_chain": {
+    "historical_baseline_run": {
+      "commit": "d3b2507b97af03ae9e7067b97e79ecc8488f551c",
+      "scope": "Phase C.1 / RC1 scratch closure runner initial verification"
+    },
+    "replay_tag_v1": {
+      "tag": "KIS_V2A_RC1_REPLAY",
+      "commit": "edfebede48f437479dfb03c7131aae64d863b240",
+      "scope": "In-tree profile wiring, 2-pass deterministic CLI run certified on Kaggle"
+    },
+    "comprehensive_fail_fast_head": {
+      "commit": "bf63d177103a71ec072519c31e59a4655d5910bf",
+      "scope": "Comprehensive fail-fast rejection for all 11 refinement flags + translation/continue/verifier flags"
+    }
+  },
   "audit_verdict": {
     "core_runtime_integration": "PASS",
     "official_cli_replay_five_query": "PASS",
     "two_pass_determinism": "PASS",
     "top_100_historical_golden_parity": "PASS",
     "full_historical_selected_sequence_parity": "SELF_CONSISTENT_TWO_ENTRYPOINT_VERIFIED_INDEPENDENT_HISTORICAL_CROSS_AUDIT_PENDING",
-    "cli_conflict_rejection": "PASS",
+    "cli_conflict_rejection": "PASS_FROM_COMMIT_BF63D17",
     "novel_live_queries": "PENDING_LIVE_QUALIFICATION",
     "keyframe_temporal_localization_quality": "PENDING_LOCALIZATION_QUALIFICATION",
     "latency_optimization_gate": "PENDING_BENCHMARKING"
   },
-  "git_tag": "KIS_V2A_RC1_REPLAY",
-  "target_commit": "edfebede48f437479dfb03c7131aae64d863b240",
   "provenance": {
     "openai_clip_source_commit": "d05afc436d78f1c48dc0dbf8e5980a9d471f35f6",
     "openai_clip_checkpoint_sha256": "40d365715913c9da98579312b702a82c18be219cc2a73407c4526f58eba950af",
