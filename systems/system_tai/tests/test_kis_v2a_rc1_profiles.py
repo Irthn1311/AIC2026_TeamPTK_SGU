@@ -393,6 +393,11 @@ def test_cli_argparse_rc1_replay_refinement_flags_rejected_fail_fast():
         (["--missing-raw-video-policy", "fail-query"], "strictly requires --missing-raw-video-policy keep-original"),
         (["--candidate-failure-policy", "fail-query"], "strictly requires --candidate-failure-policy keep-original"),
         (["--coarse-decode-strategy", "sparse-verified"], "strictly requires --coarse-decode-strategy sequential"),
+        (["--continue-on-request-error"], "strictly requires fail-fast protocol"),
+        (["--translation-allow-model-download"], "strictly requires translation_allow_model_download=False"),
+        (["--translation-device", "cuda"], "strictly requires translation_device 'auto' or 'cpu'"),
+        (["--translation-cache-dir", "/tmp/cache"], "does not allow specifying translation_cache_dir"),
+        (["--kis-visual-verifier-allow-model-download"], "strictly requires kis_visual_verifier_allow_model_download=False"),
     ]
     for flag_args, match_msg in bad_flags:
         args = parser.parse_args(["--profile", "kis-v2a-rc1-replay"] + flag_args)

@@ -175,7 +175,7 @@ def build_parser() -> argparse.ArgumentParser:
     cont_group.add_argument(
         "--continue-on-request-error",
         action="store_true",
-        default=True,
+        default=None,
     )
     cont_group.add_argument(
         "--no-continue-on-request-error",
@@ -273,6 +273,38 @@ def session_config_from_args(args: argparse.Namespace) -> SessionConfig:
             raise ValueError(f"--profile kis-v2a-rc1-replay strictly requires --candidate-failure-policy keep-original, got {args.candidate_failure_policy}")
         if getattr(args, "coarse_decode_strategy", "sequential") != "sequential":
             raise ValueError(f"--profile kis-v2a-rc1-replay strictly requires --coarse-decode-strategy sequential, got {args.coarse_decode_strategy}")
+        if getattr(args, "continue_on_request_error", None) is True:
+            raise ValueError(
+                "--profile kis-v2a-rc1-replay strictly requires fail-fast protocol (cannot specify --continue-on-request-error)"
+            )
+        if getattr(args, "translation_allow_model_download", False):
+            raise ValueError(
+                "--profile kis-v2a-rc1-replay strictly requires translation_allow_model_download=False (sidecar is immutable)"
+            )
+        if getattr(args, "translation_device", "auto") not in {"auto", "cpu"}:
+            raise ValueError(
+                f"--profile kis-v2a-rc1-replay strictly requires translation_device 'auto' or 'cpu', got '{args.translation_device}'"
+            )
+        if getattr(args, "translation_model_name", "vinai/vinai-translate-vi2en-v2") != "vinai/vinai-translate-vi2en-v2":
+            raise ValueError(
+                f"--profile kis-v2a-rc1-replay does not allow overriding translation_model_name, got '{args.translation_model_name}'"
+            )
+        if getattr(args, "translation_revision", "ae7baa85da07dbe8e23ac26a9f5ef560c17e2138") != "ae7baa85da07dbe8e23ac26a9f5ef560c17e2138":
+            raise ValueError(
+                f"--profile kis-v2a-rc1-replay does not allow overriding translation_revision, got '{args.translation_revision}'"
+            )
+        if getattr(args, "translation_cache_dir", None) is not None:
+            raise ValueError(
+                f"--profile kis-v2a-rc1-replay does not allow specifying translation_cache_dir, got '{args.translation_cache_dir}'"
+            )
+        if getattr(args, "translation_max_clip_tokens", 75) != 75:
+            raise ValueError(
+                f"--profile kis-v2a-rc1-replay strictly requires translation_max_clip_tokens 75, got {args.translation_max_clip_tokens}"
+            )
+        if getattr(args, "kis_visual_verifier_allow_model_download", False):
+            raise ValueError(
+                "--profile kis-v2a-rc1-replay strictly requires kis_visual_verifier_allow_model_download=False"
+            )
 
         from system_tai.kis.profiles import (
             apply_kis_v2a_rc1_replay_profile,
@@ -372,7 +404,9 @@ def session_config_from_args(args: argparse.Namespace) -> SessionConfig:
         ),
         default_refine_top_n=refine_top_n_val,
         max_requests=args.max_requests,
-        continue_on_request_error=args.continue_on_request_error,
+        continue_on_request_error=(
+            True if args.continue_on_request_error is None else bool(args.continue_on_request_error)
+        ),
         fail_fast_protocol=args.fail_fast_protocol,
         session_id=args.session_id,
         refinement_config=ref_config,
