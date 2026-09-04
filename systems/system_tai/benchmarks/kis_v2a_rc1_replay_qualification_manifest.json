@@ -12,9 +12,17 @@
       "commit": "edfebede48f437479dfb03c7131aae64d863b240",
       "scope": "In-tree profile wiring, 2-pass deterministic CLI run certified on Kaggle"
     },
-    "comprehensive_fail_fast_head": {
+    "dormant_tuning_flags_hardening": {
       "commit": "53f1f40e4de5aa87a33a795eb792c203631eca4a",
-      "scope": "Comprehensive fail-fast rejection across all enumerated profile-governed CLI flag groups, bit-exact subconfigs, and locked translation parameters"
+      "scope": "Fail-fast rejection of 20 dormant tuning flags across anchor, timeline scout, and visual verifier, plus bit-exact subconfig equality"
+    },
+    "translation_parameter_lock": {
+      "commit": "1d33341f7b257a745cbff90ab6c969e56fe849a3",
+      "scope": "Translation max clip tokens (75), model name, revision, and programmatic validator auto device lock"
+    },
+    "comprehensive_fail_fast_head": {
+      "commit": "7d04ed8eaff851f17de3b95db238f6c275d7a293",
+      "scope": "Strict CLI translation device auto enforcement fail-fast aligned with validator, eliminating silent override"
     }
   },
   "audit_verdict": {
