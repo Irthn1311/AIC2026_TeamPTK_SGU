@@ -14,7 +14,7 @@
     },
     "comprehensive_fail_fast_head": {
       "commit": "53f1f40e4de5aa87a33a795eb792c203631eca4a",
-      "scope": "Comprehensive fail-fast rejection for all 31 CLI flags: 11 refinement, 20 dormant tuning flags, plus translation/continue/verifier flags"
+      "scope": "Comprehensive fail-fast rejection across all enumerated profile-governed CLI flag groups, bit-exact subconfigs, and locked translation parameters"
     }
   },
   "audit_verdict": {
@@ -23,7 +23,7 @@
     "two_pass_determinism": "PASS",
     "top_100_historical_golden_parity": "PASS",
     "full_historical_selected_sequence_parity": "SELF_CONSISTENT_TWO_ENTRYPOINT_VERIFIED_INDEPENDENT_HISTORICAL_CROSS_AUDIT_PENDING",
-    "cli_conflict_rejection": "PASS_ALL_31_CONFLICTING_AND_DORMANT_FLAGS_FROM_COMMIT_53F1F40",
+    "cli_conflict_rejection": "PASS_ACROSS_ALL_ENUMERATED_PROFILE_GOVERNED_CLI_FLAGS",
     "novel_live_queries": "PENDING_LIVE_QUALIFICATION",
     "keyframe_temporal_localization_quality": "PENDING_LOCALIZATION_QUALIFICATION",
     "latency_optimization_gate": "PENDING_BENCHMARKING"

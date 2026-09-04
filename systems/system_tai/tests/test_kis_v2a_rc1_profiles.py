@@ -362,7 +362,7 @@ def test_cli_unknown_query_rejected_fail_closed():
         "request_id": "req-unknown",
         "error_code": "QUERY_EXECUTION_FAILED",
         "error_type": "TranslationError",
-        "message": "TranslationError: Query 'query-unseen-6' not found in immutable sidecar",
+        "message": "TranslationError: Sidecar translation miss for query_id='query-unseen-6', text_sha='abc'",
         "session_continues": False,
     }
 
@@ -456,5 +456,25 @@ def test_validate_kis_v2a_rc1_replay_config_bit_exact_subconfigs():
     bad_verifier_cfg = dataclasses.replace(cfg, selected_video_visual_verifier_config=SelectedVideoVisualVerifierConfig(enabled=False, shortlist_per_video=16))
     with pytest.raises(ValueError, match="strictly requires default SelectedVideoVisualVerifierConfig"):
         validate_kis_v2a_rc1_replay_config(bad_verifier_cfg)
+
+    # 4. Non-default translation_max_clip_tokens
+    bad_tokens_cfg = dataclasses.replace(cfg, translation_max_clip_tokens=74)
+    with pytest.raises(ValueError, match="strictly requires translation_max_clip_tokens=75"):
+        validate_kis_v2a_rc1_replay_config(bad_tokens_cfg)
+
+    # 5. Non-default translation_device
+    bad_dev_cfg = dataclasses.replace(cfg, translation_device="cpu")
+    with pytest.raises(ValueError, match="strictly requires translation_device='auto'"):
+        validate_kis_v2a_rc1_replay_config(bad_dev_cfg)
+
+    # 6. Non-default translation_cache_dir
+    bad_cache_cfg = dataclasses.replace(cfg, translation_cache_dir=Path("/tmp/cache"))
+    with pytest.raises(ValueError, match="strictly requires translation_cache_dir=None"):
+        validate_kis_v2a_rc1_replay_config(bad_cache_cfg)
+
+    # 7. Non-default translation_revision
+    bad_rev_cfg = dataclasses.replace(cfg, translation_revision="other")
+    with pytest.raises(ValueError, match="strictly requires translation_revision="):
+        validate_kis_v2a_rc1_replay_config(bad_rev_cfg)
 
 

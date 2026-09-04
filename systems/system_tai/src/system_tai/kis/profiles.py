@@ -159,7 +159,12 @@ def apply_kis_v2a_rc1_replay_profile(config: SessionConfig) -> SessionConfig:
         allow_model_download=False,
         enable_dynamic_translation=True,
         translation_provider_mode="immutable_sidecar",
+        translation_model_name="vinai/vinai-translate-vi2en-v2",
+        translation_device="auto",
+        translation_cache_dir=None,
         translation_allow_model_download=False,
+        translation_revision="ae7baa85da07dbe8e23ac26a9f5ef560c17e2138",
+        translation_max_clip_tokens=75,
         rrf_constant=60.0,
         chunk_size=4096,
         default_top_k_per_variant=100,
@@ -192,8 +197,28 @@ def validate_kis_v2a_rc1_replay_config(config: SessionConfig) -> None:
         raise ValueError(
             f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires translation_provider_mode='immutable_sidecar', got '{config.translation_provider_mode}'"
         )
+    if config.translation_model_name != "vinai/vinai-translate-vi2en-v2":
+        raise ValueError(
+            f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires translation_model_name='vinai/vinai-translate-vi2en-v2', got '{config.translation_model_name}'"
+        )
+    if config.translation_device != "auto":
+        raise ValueError(
+            f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires translation_device='auto', got '{config.translation_device}'"
+        )
+    if config.translation_cache_dir is not None:
+        raise ValueError(
+            f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires translation_cache_dir=None, got {config.translation_cache_dir}"
+        )
     if config.translation_allow_model_download is not False:
         raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires translation_allow_model_download=False")
+    if config.translation_revision != "ae7baa85da07dbe8e23ac26a9f5ef560c17e2138":
+        raise ValueError(
+            f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires translation_revision='ae7baa85da07dbe8e23ac26a9f5ef560c17e2138', got '{config.translation_revision}'"
+        )
+    if config.translation_max_clip_tokens != 75:
+        raise ValueError(
+            f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires translation_max_clip_tokens=75, got {config.translation_max_clip_tokens}"
+        )
     if config.rrf_constant != 60.0:
         raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires rrf_constant=60.0, got {config.rrf_constant}")
     if config.chunk_size != 4096:
