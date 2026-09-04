@@ -208,14 +208,22 @@ def validate_kis_v2a_rc1_replay_config(config: SessionConfig) -> None:
         raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires continue_on_request_error=False")
     if config.fail_fast_protocol is not True:
         raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires fail_fast_protocol=True")
-    if config.video_conditioned_keyframe_config.enabled:
-        raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires local anchor refinement to be OFF")
-    if config.q3_anchor_refinement_config.enabled:
-        raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires Q3 anchor refinement to be OFF")
-    if config.selected_video_timeline_scout_config.enabled:
-        raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires timeline scout to be OFF")
-    if config.selected_video_visual_verifier_config.enabled:
-        raise ValueError(f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires visual verifier to be OFF")
+    if config.video_conditioned_keyframe_config != VideoConditionedKeyframeConfig(enabled=False):
+        raise ValueError(
+            f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires default VideoConditionedKeyframeConfig(enabled=False), got {config.video_conditioned_keyframe_config}"
+        )
+    if config.q3_anchor_refinement_config != Q3AnchorRefinementConfig(enabled=False):
+        raise ValueError(
+            f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires default Q3AnchorRefinementConfig(enabled=False), got {config.q3_anchor_refinement_config}"
+        )
+    if config.selected_video_timeline_scout_config != SelectedVideoTimelineScoutConfig(enabled=False):
+        raise ValueError(
+            f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires default SelectedVideoTimelineScoutConfig(enabled=False), got {config.selected_video_timeline_scout_config}"
+        )
+    if config.selected_video_visual_verifier_config != SelectedVideoVisualVerifierConfig(enabled=False):
+        raise ValueError(
+            f"Profile '{KIS_V2A_RC1_REPLAY_PROFILE_NAME}' strictly requires default SelectedVideoVisualVerifierConfig(enabled=False), got {config.selected_video_visual_verifier_config}"
+        )
 
     expected_vf = get_kis_v2a_rc1_video_first_config()
     if config.kis_video_first_config != expected_vf:

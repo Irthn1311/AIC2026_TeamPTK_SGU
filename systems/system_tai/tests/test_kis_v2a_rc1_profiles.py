@@ -398,9 +398,63 @@ def test_cli_argparse_rc1_replay_refinement_flags_rejected_fail_fast():
         (["--translation-device", "cuda"], "strictly requires translation_device 'auto' or 'cpu'"),
         (["--translation-cache-dir", "/tmp/cache"], "does not allow specifying translation_cache_dir"),
         (["--kis-visual-verifier-allow-model-download"], "strictly requires kis_visual_verifier_allow_model_download=False"),
+        # 5 anchor dormant tuning flags
+        (["--kis-anchor-video-rank-cap", "99"], "strictly requires default --kis-anchor-video-rank-cap 20"),
+        (["--kis-anchor-max-videos", "99"], "strictly requires default --kis-anchor-max-videos 5"),
+        (["--kis-anchors-per-video", "99"], "strictly requires default --kis-anchors-per-video 6"),
+        (["--kis-anchor-min-gap-seconds", "99.0"], "strictly requires default --kis-anchor-min-gap-seconds 2.0"),
+        (["--kis-max-extra-raw-anchors", "99"], "strictly requires default --kis-max-extra-raw-anchors 12"),
+        # 5 timeline dormant tuning flags
+        (["--kis-timeline-max-videos", "99"], "strictly requires default --kis-timeline-max-videos 3"),
+        (["--kis-timeline-sample-stride-seconds", "99.0"], "strictly requires default --kis-timeline-sample-stride-seconds 1.0"),
+        (["--kis-timeline-max-samples-per-video", "99"], "strictly requires default --kis-timeline-max-samples-per-video 300"),
+        (["--kis-timeline-max-regions-per-video", "99"], "strictly requires default --kis-timeline-max-regions-per-video 3"),
+        (["--kis-timeline-min-region-gap-seconds", "99.0"], "strictly requires default --kis-timeline-min-region-gap-seconds 5.0"),
+        # 10 verifier dormant tuning flags
+        (["--kis-visual-verifier-model", "fake-vlm"], "strictly requires default --kis-visual-verifier-model"),
+        (["--kis-visual-verifier-revision", "v2"], "does not allow specifying --kis-visual-verifier-revision"),
+        (["--kis-visual-verifier-cache-dir", "/tmp/vlm"], "does not allow specifying --kis-visual-verifier-cache-dir"),
+        (["--kis-visual-verifier-shortlist-per-video", "99"], "strictly requires default --kis-visual-verifier-shortlist-per-video 32"),
+        (["--kis-visual-verifier-coverage-bins", "99"], "strictly requires default --kis-visual-verifier-coverage-bins 12"),
+        (["--kis-visual-verifier-temporal-evidence-window-seconds", "99.0"], "strictly requires default --kis-visual-verifier-temporal-evidence-window-seconds 6.0"),
+        (["--kis-visual-verifier-neighbor-radius", "99"], "strictly requires default --kis-visual-verifier-neighbor-radius 1"),
+        (["--kis-visual-verifier-max-new-tokens", "99"], "strictly requires default --kis-visual-verifier-max-new-tokens 512"),
+        (["--kis-visual-verifier-execution-mode", "cpu-fast"], "strictly requires default --kis-visual-verifier-execution-mode 'auto'"),
+        (["--kis-visual-verifier-failure-policy", "fail-query"], "strictly requires default --kis-visual-verifier-failure-policy 'fallback-clip'"),
     ]
     for flag_args, match_msg in bad_flags:
         args = parser.parse_args(["--profile", "kis-v2a-rc1-replay"] + flag_args)
         with pytest.raises(ValueError, match=match_msg):
             session_config_from_args(args)
+
+
+def test_validate_kis_v2a_rc1_replay_config_bit_exact_subconfigs():
+    """Verify validate_kis_v2a_rc1_replay_config rejects non-default disabled subconfigs."""
+    from system_tai.kis.profiles import apply_kis_v2a_rc1_replay_profile, validate_kis_v2a_rc1_replay_config
+    from system_tai.refinement.models import (
+        SelectedVideoTimelineScoutConfig,
+        SelectedVideoVisualVerifierConfig,
+    )
+    from system_tai.retrieval.video_restricted import VideoConditionedKeyframeConfig
+    import dataclasses
+
+    base = SessionConfig()
+    cfg = apply_kis_v2a_rc1_replay_profile(base)
+    validate_kis_v2a_rc1_replay_config(cfg)
+
+    # 1. Non-default VideoConditionedKeyframeConfig (even if enabled=False)
+    bad_anchor_cfg = dataclasses.replace(cfg, video_conditioned_keyframe_config=VideoConditionedKeyframeConfig(enabled=False, max_anchors_per_video=99))
+    with pytest.raises(ValueError, match="strictly requires default VideoConditionedKeyframeConfig"):
+        validate_kis_v2a_rc1_replay_config(bad_anchor_cfg)
+
+    # 2. Non-default SelectedVideoTimelineScoutConfig (even if enabled=False)
+    bad_scout_cfg = dataclasses.replace(cfg, selected_video_timeline_scout_config=SelectedVideoTimelineScoutConfig(enabled=False, max_videos=10))
+    with pytest.raises(ValueError, match="strictly requires default SelectedVideoTimelineScoutConfig"):
+        validate_kis_v2a_rc1_replay_config(bad_scout_cfg)
+
+    # 3. Non-default SelectedVideoVisualVerifierConfig (even if enabled=False)
+    bad_verifier_cfg = dataclasses.replace(cfg, selected_video_visual_verifier_config=SelectedVideoVisualVerifierConfig(enabled=False, shortlist_per_video=16))
+    with pytest.raises(ValueError, match="strictly requires default SelectedVideoVisualVerifierConfig"):
+        validate_kis_v2a_rc1_replay_config(bad_verifier_cfg)
+
 

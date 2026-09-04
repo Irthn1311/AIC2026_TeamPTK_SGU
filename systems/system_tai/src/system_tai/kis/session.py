@@ -306,6 +306,93 @@ def session_config_from_args(args: argparse.Namespace) -> SessionConfig:
                 "--profile kis-v2a-rc1-replay strictly requires kis_visual_verifier_allow_model_download=False"
             )
 
+        # 20 dormant tuning flags must strictly equal their defaults under kis-v2a-rc1-replay
+        # 1. 5 anchor tuning flags
+        if getattr(args, "kis_anchor_video_rank_cap", 20) != 20:
+            raise ValueError(
+                f"--profile kis-v2a-rc1-replay strictly requires default --kis-anchor-video-rank-cap 20 (anchor refinement is OFF), got {args.kis_anchor_video_rank_cap}"
+            )
+        if getattr(args, "kis_anchor_max_videos", 5) != 5:
+            raise ValueError(
+                f"--profile kis-v2a-rc1-replay strictly requires default --kis-anchor-max-videos 5, got {args.kis_anchor_max_videos}"
+            )
+        if getattr(args, "kis_anchors_per_video", 6) != 6:
+            raise ValueError(
+                f"--profile kis-v2a-rc1-replay strictly requires default --kis-anchors-per-video 6, got {args.kis_anchors_per_video}"
+            )
+        if getattr(args, "kis_anchor_min_gap_seconds", 2.0) != 2.0:
+            raise ValueError(
+                f"--profile kis-v2a-rc1-replay strictly requires default --kis-anchor-min-gap-seconds 2.0, got {args.kis_anchor_min_gap_seconds}"
+            )
+        if getattr(args, "kis_max_extra_raw_anchors", 12) != 12:
+            raise ValueError(
+                f"--profile kis-v2a-rc1-replay strictly requires default --kis-max-extra-raw-anchors 12, got {args.kis_max_extra_raw_anchors}"
+            )
+
+        # 2. 5 timeline scout tuning flags
+        if getattr(args, "kis_timeline_max_videos", 3) != 3:
+            raise ValueError(
+                f"--profile kis-v2a-rc1-replay strictly requires default --kis-timeline-max-videos 3 (timeline scout is OFF), got {args.kis_timeline_max_videos}"
+            )
+        if getattr(args, "kis_timeline_sample_stride_seconds", 1.0) != 1.0:
+            raise ValueError(
+                f"--profile kis-v2a-rc1-replay strictly requires default --kis-timeline-sample-stride-seconds 1.0, got {args.kis_timeline_sample_stride_seconds}"
+            )
+        if getattr(args, "kis_timeline_max_samples_per_video", 300) != 300:
+            raise ValueError(
+                f"--profile kis-v2a-rc1-replay strictly requires default --kis-timeline-max-samples-per-video 300, got {args.kis_timeline_max_samples_per_video}"
+            )
+        if getattr(args, "kis_timeline_max_regions_per_video", 3) != 3:
+            raise ValueError(
+                f"--profile kis-v2a-rc1-replay strictly requires default --kis-timeline-max-regions-per-video 3, got {args.kis_timeline_max_regions_per_video}"
+            )
+        if getattr(args, "kis_timeline_min_region_gap_seconds", 5.0) != 5.0:
+            raise ValueError(
+                f"--profile kis-v2a-rc1-replay strictly requires default --kis-timeline-min-region-gap-seconds 5.0, got {args.kis_timeline_min_region_gap_seconds}"
+            )
+
+        # 3. 10 visual verifier tuning flags
+        if getattr(args, "kis_visual_verifier_model", "Qwen/Qwen2.5-VL-3B-Instruct") != "Qwen/Qwen2.5-VL-3B-Instruct":
+            raise ValueError(
+                f"--profile kis-v2a-rc1-replay strictly requires default --kis-visual-verifier-model (visual verifier is OFF), got {args.kis_visual_verifier_model}"
+            )
+        if getattr(args, "kis_visual_verifier_revision", None) is not None:
+            raise ValueError(
+                f"--profile kis-v2a-rc1-replay does not allow specifying --kis-visual-verifier-revision, got {args.kis_visual_verifier_revision}"
+            )
+        if getattr(args, "kis_visual_verifier_cache_dir", None) is not None:
+            raise ValueError(
+                f"--profile kis-v2a-rc1-replay does not allow specifying --kis-visual-verifier-cache-dir, got {args.kis_visual_verifier_cache_dir}"
+            )
+        if getattr(args, "kis_visual_verifier_shortlist_per_video", 32) != 32:
+            raise ValueError(
+                f"--profile kis-v2a-rc1-replay strictly requires default --kis-visual-verifier-shortlist-per-video 32, got {args.kis_visual_verifier_shortlist_per_video}"
+            )
+        if getattr(args, "kis_visual_verifier_coverage_bins", 12) != 12:
+            raise ValueError(
+                f"--profile kis-v2a-rc1-replay strictly requires default --kis-visual-verifier-coverage-bins 12, got {args.kis_visual_verifier_coverage_bins}"
+            )
+        if getattr(args, "kis_visual_verifier_temporal_evidence_window_seconds", 6.0) != 6.0:
+            raise ValueError(
+                f"--profile kis-v2a-rc1-replay strictly requires default --kis-visual-verifier-temporal-evidence-window-seconds 6.0, got {args.kis_visual_verifier_temporal_evidence_window_seconds}"
+            )
+        if getattr(args, "kis_visual_verifier_neighbor_radius", 1) != 1:
+            raise ValueError(
+                f"--profile kis-v2a-rc1-replay strictly requires default --kis-visual-verifier-neighbor-radius 1, got {args.kis_visual_verifier_neighbor_radius}"
+            )
+        if getattr(args, "kis_visual_verifier_max_new_tokens", 512) != 512:
+            raise ValueError(
+                f"--profile kis-v2a-rc1-replay strictly requires default --kis-visual-verifier-max-new-tokens 512, got {args.kis_visual_verifier_max_new_tokens}"
+            )
+        if getattr(args, "kis_visual_verifier_execution_mode", "auto") != "auto":
+            raise ValueError(
+                f"--profile kis-v2a-rc1-replay strictly requires default --kis-visual-verifier-execution-mode 'auto', got {args.kis_visual_verifier_execution_mode}"
+            )
+        if getattr(args, "kis_visual_verifier_failure_policy", "fallback-clip") != "fallback-clip":
+            raise ValueError(
+                f"--profile kis-v2a-rc1-replay strictly requires default --kis-visual-verifier-failure-policy 'fallback-clip', got {args.kis_visual_verifier_failure_policy}"
+            )
+
         from system_tai.kis.profiles import (
             apply_kis_v2a_rc1_replay_profile,
             validate_kis_v2a_rc1_replay_config,
