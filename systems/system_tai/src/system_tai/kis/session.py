@@ -281,9 +281,9 @@ def session_config_from_args(args: argparse.Namespace) -> SessionConfig:
             raise ValueError(
                 "--profile kis-v2a-rc1-replay strictly requires translation_allow_model_download=False (sidecar is immutable)"
             )
-        if getattr(args, "translation_device", "auto") not in {"auto", "cpu"}:
+        if getattr(args, "translation_device", "auto") != "auto":
             raise ValueError(
-                f"--profile kis-v2a-rc1-replay strictly requires translation_device 'auto' or 'cpu', got '{args.translation_device}'"
+                f"--profile kis-v2a-rc1-replay strictly requires translation_device 'auto', got '{args.translation_device}'"
             )
         if getattr(args, "translation_model_name", "vinai/vinai-translate-vi2en-v2") != "vinai/vinai-translate-vi2en-v2":
             raise ValueError(
