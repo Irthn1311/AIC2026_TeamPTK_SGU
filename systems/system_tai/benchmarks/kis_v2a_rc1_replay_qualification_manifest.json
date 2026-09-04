@@ -13,8 +13,8 @@
       "scope": "In-tree profile wiring, 2-pass deterministic CLI run certified on Kaggle"
     },
     "comprehensive_fail_fast_head": {
-      "commit": "bf63d177103a71ec072519c31e59a4655d5910bf",
-      "scope": "Comprehensive fail-fast rejection for all 11 refinement flags + translation/continue/verifier flags"
+      "commit": "53f1f40e4de5aa87a33a795eb792c203631eca4a",
+      "scope": "Comprehensive fail-fast rejection for all 31 CLI flags: 11 refinement, 20 dormant tuning flags, plus translation/continue/verifier flags"
     }
   },
   "audit_verdict": {
@@ -23,7 +23,7 @@
     "two_pass_determinism": "PASS",
     "top_100_historical_golden_parity": "PASS",
     "full_historical_selected_sequence_parity": "SELF_CONSISTENT_TWO_ENTRYPOINT_VERIFIED_INDEPENDENT_HISTORICAL_CROSS_AUDIT_PENDING",
-    "cli_conflict_rejection": "PASS_FROM_COMMIT_BF63D17",
+    "cli_conflict_rejection": "PASS_ALL_31_CONFLICTING_AND_DORMANT_FLAGS_FROM_COMMIT_53F1F40",
     "novel_live_queries": "PENDING_LIVE_QUALIFICATION",
     "keyframe_temporal_localization_quality": "PENDING_LOCALIZATION_QUALIFICATION",
     "latency_optimization_gate": "PENDING_BENCHMARKING"
