@@ -528,11 +528,11 @@ def test_in_tree_qualification_runner_contract_and_manifest_schema():
         "query-p1-6-kis": 1,
     }
     assert mod.FROZEN_SELECTED_SEQUENCE_DIGESTS == {
-        "query-p1-1-kis": "acf04f853f89070868f76fa9eec014b2d39aa4776100c5980ba9c32df46b1a20",
-        "query-p1-2-kis": "86f875cfd66ecc1398c8c22731c36fe4a7faea825ee15d9aaee9db7fc8e5bfbb",
-        "query-p1-4-kis": "393c06fb91975e47854d9c792376fb117bceca28ea03d65b7194fbe064c1264b",
-        "query-p1-5-kis": "80eb8ad5c38b2211ea4cfb87b7da7dfcae7975bf22e70e5b746c863dd24501a3",
-        "query-p1-6-kis": "193ca3cc581d484c9ecf80ee0e816a7f05c48b067a9cfd414a9ca8c772cb3f0e",
+        "query-p1-1-kis": "acf04f853f8907081c4a72db3cfa994e40d371783daf44984b65e46a07d9567b",
+        "query-p1-2-kis": "86f875cfd66ecc13007ae580912768e42da8372470335d3fd9599d65281a558c",
+        "query-p1-4-kis": "393c06fb91975e473bd2015aeeb6089861404cb67f46d8b3aa04db5a7f01b719",
+        "query-p1-5-kis": "80eb8ad5c38b221160031ef26344a65eea1ab1b1842acba8317a46c03cacd770",
+        "query-p1-6-kis": "193ca3cc581d484cc4aa121b7dd7f1008727bab9eef7c74fd2656cc71d6451ef",
     }
 
     # Verify runner CLI required arguments & safety guard

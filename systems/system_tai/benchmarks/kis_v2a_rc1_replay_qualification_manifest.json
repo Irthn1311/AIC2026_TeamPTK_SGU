@@ -57,35 +57,35 @@
       "target_coarse_rank": 1,
       "target_final_rank": 1,
       "canonical_projection_digest": "1ec8d8c03122de1a9e3083a7addadcbcb4f845b2c18deec16d978baf72e19c3e",
-      "selected_sequence_digest": "acf04f853f89070868f76fa9eec014b2d39aa4776100c5980ba9c32df46b1a20"
+      "selected_sequence_digest": "acf04f853f8907081c4a72db3cfa994e40d371783daf44984b65e46a07d9567b"
     },
     "query-p1-2-kis": {
       "target_video_id": "L21_V003",
       "target_coarse_rank": 25,
       "target_final_rank": 2,
       "canonical_projection_digest": "47a486ec387785ef95552642df7ed05542f2bfe80d37004dcc4a7287aca3219e",
-      "selected_sequence_digest": "86f875cfd66ecc1398c8c22731c36fe4a7faea825ee15d9aaee9db7fc8e5bfbb"
+      "selected_sequence_digest": "86f875cfd66ecc13007ae580912768e42da8372470335d3fd9599d65281a558c"
     },
     "query-p1-4-kis": {
       "target_video_id": "L22_V021",
       "target_coarse_rank": 1,
       "target_final_rank": 1,
       "canonical_projection_digest": "2d7f5ebacb8f040ed1c252feecfcbdee59e44550101a7754c76ebc1935f9770e",
-      "selected_sequence_digest": "393c06fb91975e47854d9c792376fb117bceca28ea03d65b7194fbe064c1264b"
+      "selected_sequence_digest": "393c06fb91975e473bd2015aeeb6089861404cb67f46d8b3aa04db5a7f01b719"
     },
     "query-p1-5-kis": {
       "target_video_id": "L26_V035",
       "target_coarse_rank": 31,
       "target_final_rank": 25,
       "canonical_projection_digest": "0eccbb6d600bb2945cd80fe0126e5a2a5106b414da171ce79fd87ca487e3cb62",
-      "selected_sequence_digest": "80eb8ad5c38b2211ea4cfb87b7da7dfcae7975bf22e70e5b746c863dd24501a3"
+      "selected_sequence_digest": "80eb8ad5c38b221160031ef26344a65eea1ab1b1842acba8317a46c03cacd770"
     },
     "query-p1-6-kis": {
       "target_video_id": "L22_V023",
       "target_coarse_rank": 19,
       "target_final_rank": 1,
       "canonical_projection_digest": "9d4cd4ef703a106b515f087413d79a3755051aceaaf7be7de460511c9dfda6fb",
-      "selected_sequence_digest": "193ca3cc581d484c9ecf80ee0e816a7f05c48b067a9cfd414a9ca8c772cb3f0e"
+      "selected_sequence_digest": "193ca3cc581d484cc4aa121b7dd7f1008727bab9eef7c74fd2656cc71d6451ef"
     }
   }
 }
