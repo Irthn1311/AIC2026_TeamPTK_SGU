@@ -5,7 +5,7 @@ Official In-Tree Qualification Runner for Profile `kis-v2a-rc1-replay`.
 This runner implements the strict qualification gate:
 1. Fail-closed repository clean worktree verification (0 untracked / modified / deleted files).
 2. Pinned OpenAI CLIP commit d05afc43... and official ViT-B-32 checkpoint SHA256.
-3. Focused Pytest qualification suite (20 tests in test_kis_v2a_rc1_profiles.py and test_kis_v2a_rc1_e2e_closure.py).
+3. Focused Pytest qualification suite (21 tests in test_kis_v2a_rc1_profiles.py and test_kis_v2a_rc1_e2e_closure.py).
 4. Comprehensive CLI flag conflict rejection gate (13 non-default and dormant flag combinations).
 5. Two independent official CLI passes (pass_1 and pass_2) with session_manifest.json validation.
 6. Bit-exact Top-100 projection digests and ground-truth target coarse/final ranks.
@@ -98,11 +98,12 @@ def get_installed_clip_commit_info() -> str | None:
 def run_qualification(
     *,
     repo_root: Path,
-    expected_commit: str | None,
+    expected_commit: str,
     input_root: Path,
     manifest_cache: Path,
     output_root: Path,
     historical_manifest: Path | None = None,
+    historical_manifest_sha256: str | None = None,
     skip_pip_install: bool = False,
 ) -> int:
     print("=" * 110)
@@ -112,8 +113,9 @@ def run_qualification(
     # 1. Verify Git Commit & Worktree Cleanliness (Fail-Closed)
     active_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo_root, text=True).strip()
     print(f"Active Commit: {active_commit}")
-    if expected_commit:
-        assert active_commit == expected_commit, f"Fail-closed: Commit mismatch! Expected {expected_commit}, got {active_commit}"
+    assert active_commit == expected_commit, (
+        f"Fail-closed: Commit mismatch! Expected {expected_commit}, got {active_commit}"
+    )
 
     status_out = subprocess.check_output(
         ["git", "status", "--porcelain=v1", "--untracked-files=all"],
@@ -160,8 +162,8 @@ def run_qualification(
     assert actual_ckpt_sha.lower() == EXPECTED_CLIP_CHECKPOINT_SHA256.lower(), f"Checkpoint SHA mismatch: {actual_ckpt_sha}"
     print(f"✅ Official CLIP ViT-B-32 checkpoint verified: {actual_ckpt_sha}")
 
-    # 4. Run Pytest Focused Suite (20 tests)
-    print("\nRunning Pytest Profile & Closure Suites (20 tests)...")
+    # 4. Run Pytest Focused Suite (21 tests)
+    print("\nRunning Pytest Profile & Closure Suites (21 tests)...")
     pytest_cmd = [
         sys.executable, "-m", "pytest",
         str(repo_root / "systems" / "system_tai" / "tests" / "test_kis_v2a_rc1_profiles.py"),
@@ -169,7 +171,7 @@ def run_qualification(
         "-v",
     ]
     subprocess.run(pytest_cmd, cwd=repo_root / "systems" / "system_tai", env=env, check=True)
-    print("✅ 20/20 focused qualification tests passed cleanly!")
+    print("✅ 21/21 focused qualification tests passed cleanly!")
 
     # 5. Load Benchmarks & Manifests
     from system_tai.retrieval.canonical_projection import canonical_projection_digest
@@ -354,37 +356,39 @@ def run_qualification(
         assert p1["target_final_rank"] == p2["target_final_rank"], f"Two-pass final rank divergence on {qid}!"
     print("Two-Pass Determinism (Top-100 & Selected-Video Sequence): BIT-EXACT 100% ✅")
 
-    # 9. Historical Closure Cross-Audit (Blocker 2 Fix: Fail-closed against self-generation; only d3b2507 or edfebed)
-    hist_manifest_file = None
-    if historical_manifest and historical_manifest.is_file():
-        hist_manifest_file = historical_manifest
-    else:
-        search_candidates = [
-            Path("/kaggle/working/kis_v2a_rc1_closure/kis_v2a_rc1_closure_manifest.json"),
-        ] + list(Path("/kaggle/working").glob("kis_v2a_rc1_closure_backup_*/kis_v2a_rc1_closure_manifest.json")) + \
-            list(Path("/kaggle/working").glob("**/kis_v2a_rc1_closure_manifest.json")) + \
-            list(Path("/kaggle/input").glob("**/kis_v2a_rc1_closure_manifest.json"))
-        for cand in search_candidates:
-            if cand.is_file():
-                try:
-                    c_data = json.loads(cand.read_text(encoding="utf-8"))
-                    if c_data.get("git_commit_sha") in HISTORICAL_VALID_COMMITS:
-                        hist_manifest_file = cand
-                        break
-                except Exception:
-                    pass
+    # 9. Historical Closure Cross-Audit
+    # (Require explicit artifact path & SHA256; NO loose recursive filesystem globbing)
+    historical_audit_status = "PENDING_EXTERNAL_HISTORICAL_ARTIFACT"
+    historical_manifest_info = ""
 
-    if hist_manifest_file is not None and hist_manifest_file.is_file():
-        print(f"\nFound authentic historical closure manifest: {hist_manifest_file}")
-        h_data = json.loads(hist_manifest_file.read_text(encoding="utf-8"))
-        assert h_data.get("release_candidate") == "KIS_V2A_RC1", "Historical manifest release_candidate is not KIS_V2A_RC1"
-        assert h_data.get("release_qualified") is True, "Historical manifest is not marked release_qualified=True"
-        assert h_data.get("git_commit_sha") in HISTORICAL_VALID_COMMITS, (
-            f"Fail-closed: Historical manifest commit mismatch: expected one of {HISTORICAL_VALID_COMMITS}, got {h_data.get('git_commit_sha')}"
+    if historical_manifest is not None:
+        assert historical_manifest.is_file(), (
+            f"Fail-closed: Provided historical manifest does not exist at {historical_manifest}"
+        )
+        actual_hist_sha = sha256_file(historical_manifest).lower()
+        if historical_manifest_sha256:
+            assert actual_hist_sha == historical_manifest_sha256.lower(), (
+                f"Fail-closed: Historical manifest SHA256 mismatch!\n"
+                f"Expected: {historical_manifest_sha256.lower()}\n"
+                f"Actual:   {actual_hist_sha}"
+            )
+            print(f"✅ Historical manifest file SHA-256 verified: {actual_hist_sha}")
+
+        h_data = json.loads(historical_manifest.read_text(encoding="utf-8"))
+        assert h_data.get("release_candidate") == "KIS_V2A_RC1", (
+            f"Historical manifest release_candidate is not KIS_V2A_RC1 (got {h_data.get('release_candidate')})"
+        )
+        assert h_data.get("release_qualified") is True, (
+            "Historical manifest is not marked release_qualified=True"
+        )
+        hist_commit = h_data.get("git_commit_sha")
+        assert hist_commit in HISTORICAL_VALID_COMMITS, (
+            f"Fail-closed: Historical manifest commit mismatch: expected one of {HISTORICAL_VALID_COMMITS}, got {hist_commit}"
         )
         assert h_data.get("corpus", {}).get("fingerprint") in ALLOWED_CORPUS_FINGERPRINTS, (
             f"Historical manifest corpus fingerprint mismatch: {h_data.get('corpus', {}).get('fingerprint')} not in {ALLOWED_CORPUS_FINGERPRINTS}"
         )
+
         for qid in GOLDEN_DIGESTS:
             hist_q = h_data.get("queries", {}).get(qid, {})
             hist_seq_digest = hist_q.get("selected_sequence_digest")
@@ -401,11 +405,14 @@ def run_qualification(
             assert actual_seq_digest == hist_seq_digest, f"Selected sequence digest divergence vs RC1 closure on {qid}!"
             assert actual_coarse == hist_coarse, f"Target coarse rank divergence vs RC1 closure on {qid}!"
             assert actual_final == hist_final, f"Target final rank divergence vs RC1 closure on {qid}!"
-            print(f"  [{qid}] Bit-exact match with historical closure ({h_data['git_commit_sha'][:8]}): Proj={actual_proj_digest[:16]}... | Seq={actual_seq_digest[:16]}... | Coarse=#{actual_coarse} | Final=#{actual_final} ✅")
-        print("✅ Authentic historical closure manifest cross-audit: CONFIRMED BIT-EXACT PASS!")
+            print(f"  [{qid}] Bit-exact match with historical closure ({hist_commit[:8]}): Proj={actual_proj_digest[:16]}... | Seq={actual_seq_digest[:16]}... | Coarse=#{actual_coarse} | Final=#{actual_final} ✅")
+
+        historical_audit_status = "PASS"
+        historical_manifest_info = f"commit={hist_commit[:8]}, sha256={actual_hist_sha[:16]}..."
+        print(f"✅ Authentic historical closure manifest cross-audit: PASS ({historical_manifest_info})")
     else:
-        print("\nℹ️ Authentic historical closure manifest (d3b2507 / edfebed) not present in working environment.")
-        print("   Verifying selected sequence digests against in-tree canonical frozen fixtures...")
+        print("\nℹ️ No external historical closure manifest (--historical-manifest) specified.")
+        print("   Evaluating selected-sequence digests against in-tree canonical frozen fixtures...")
         for qid, expected_seq_digest in FROZEN_SELECTED_SEQUENCE_DIGESTS.items():
             actual_seq_digest = pass_results["pass_1"][qid]["selected_seq_digest"]
             assert actual_seq_digest == expected_seq_digest, (
@@ -487,7 +494,10 @@ def run_qualification(
     # 12. Concluding Calibrated Banner
     print("\n" + "=" * 110)
     print("🔒 KIS V2-A.3 REPLAY QUALIFICATION: FIVE-QUERY FROZEN REPLAY HARDENING PASS ✅")
-    print("Audit Verdict: Hardened five-query replay qualified; independent historical selected-sequence audit pending.")
+    if historical_audit_status == "PASS":
+        print(f"Audit Verdict: Hardened five-query replay qualified; historical cross-audit: PASS ({historical_manifest_info}).")
+    else:
+        print("Audit Verdict: Hardened five-query replay qualified; independent historical cross-audit: PENDING.")
     print("Next Milestones Pending: Live competition queries (kis-v2a-rc1-live), ground-truth interval evaluator (KISFixtureEvaluator), latency & RAM SLA benchmarking.")
     print("=" * 110)
     return 0
@@ -496,11 +506,12 @@ def run_qualification(
 def main() -> int:
     parser = argparse.ArgumentParser(description="Official In-Tree Qualification Runner for Profile kis-v2a-rc1-replay")
     parser.add_argument("--repo-root", default=None, help="Root path of the repository")
-    parser.add_argument("--expected-commit", default=None, help="Expected Git commit SHA (fail-closed check)")
+    parser.add_argument("--expected-commit", required=True, help="Expected Git commit SHA (fail-closed check)")
     parser.add_argument("--input-root", required=True, help="Path to corpus dataset root")
     parser.add_argument("--manifest-cache", default="/kaggle/working/kis_manifest_cache.json", help="Path to manifest cache file")
     parser.add_argument("--output-root", default="/kaggle/working/kis_v2a_rc1_cli_qualification", help="Output directory for qualification results")
     parser.add_argument("--historical-manifest", default=None, help="Path to authentic historical closure manifest")
+    parser.add_argument("--historical-manifest-sha256", default=None, help="Expected SHA256 hex digest of the historical closure manifest")
     parser.add_argument("--skip-pip-install", action="store_true", help="Skip pip install of CLIP dependencies")
 
     args = parser.parse_args()
@@ -510,6 +521,18 @@ def main() -> int:
     manifest_cache = Path(args.manifest_cache).resolve()
     output_root = Path(args.output_root).resolve()
     historical_manifest = Path(args.historical_manifest).resolve() if args.historical_manifest else None
+
+    # Strict deletion safety guards
+    assert output_root != repo_root, f"Safety guard: output_root cannot be repo_root ({repo_root})"
+    assert output_root != input_root, f"Safety guard: output_root cannot be input_root ({input_root})"
+    assert output_root.parent != output_root, f"Safety guard: output_root cannot be root filesystem ({output_root})"
+    clean_out_str = output_root.as_posix().lower().rstrip("/")
+    assert not (
+        clean_out_str in ("/kaggle", "/kaggle/input", "/kaggle/working")
+        or clean_out_str.endswith(":/kaggle")
+        or clean_out_str.endswith(":/kaggle/input")
+        or clean_out_str.endswith(":/kaggle/working")
+    ), f"Safety guard: output_root cannot be /kaggle, /kaggle/input, or /kaggle/working directly ({output_root})"
 
     if output_root.exists():
         shutil.rmtree(output_root)
@@ -522,6 +545,7 @@ def main() -> int:
         manifest_cache=manifest_cache,
         output_root=output_root,
         historical_manifest=historical_manifest,
+        historical_manifest_sha256=args.historical_manifest_sha256,
         skip_pip_install=args.skip_pip_install,
     )
 

@@ -500,10 +500,54 @@ def test_in_tree_qualification_runner_contract_and_manifest_schema():
     assert mod.EXPECTED_CLIP_CHECKPOINT_SHA256 == EXPECTED_CLIP_CHECKPOINT_SHA256
     assert mod.CANONICAL_PORTABLE_CORPUS_FINGERPRINT == CANONICAL_PORTABLE_CORPUS_FINGERPRINT
     assert mod.CANONICAL_ABSOLUTE_CORPUS_FINGERPRINT == EXPECTED_FULL_CORPUS_FINGERPRINT
-    assert len(mod.GOLDEN_DIGESTS) == 5
-    assert len(mod.FROZEN_SELECTED_SEQUENCE_DIGESTS) == 5
-    assert len(mod.EXPECTED_TARGET_COARSE_RANKS) == 5
-    assert len(mod.EXPECTED_TARGET_RANKS) == 5
+    assert mod.HISTORICAL_RC1_COMMIT == "d3b2507b97af03ae9e7067b97e79ecc8488f551c"
+    assert mod.HISTORICAL_REPLAY_TAG_COMMIT == "edfebede48f437479dfb03c7131aae64d863b240"
+    assert mod.HISTORICAL_VALID_COMMITS == (
+        "d3b2507b97af03ae9e7067b97e79ecc8488f551c",
+        "edfebede48f437479dfb03c7131aae64d863b240",
+    )
+    assert mod.GOLDEN_DIGESTS == {
+        "query-p1-1-kis": "1ec8d8c03122de1a9e3083a7addadcbcb4f845b2c18deec16d978baf72e19c3e",
+        "query-p1-2-kis": "47a486ec387785ef95552642df7ed05542f2bfe80d37004dcc4a7287aca3219e",
+        "query-p1-4-kis": "2d7f5ebacb8f040ed1c252feecfcbdee59e44550101a7754c76ebc1935f9770e",
+        "query-p1-5-kis": "0eccbb6d600bb2945cd80fe0126e5a2a5106b414da171ce79fd87ca487e3cb62",
+        "query-p1-6-kis": "9d4cd4ef703a106b515f087413d79a3755051aceaaf7be7de460511c9dfda6fb",
+    }
+    assert mod.EXPECTED_TARGET_COARSE_RANKS == {
+        "query-p1-1-kis": 1,
+        "query-p1-2-kis": 25,
+        "query-p1-4-kis": 1,
+        "query-p1-5-kis": 31,
+        "query-p1-6-kis": 19,
+    }
+    assert mod.EXPECTED_TARGET_RANKS == {
+        "query-p1-1-kis": 1,
+        "query-p1-2-kis": 2,
+        "query-p1-4-kis": 1,
+        "query-p1-5-kis": 25,
+        "query-p1-6-kis": 1,
+    }
+    assert mod.FROZEN_SELECTED_SEQUENCE_DIGESTS == {
+        "query-p1-1-kis": "acf04f853f89070868f76fa9eec014b2d39aa4776100c5980ba9c32df46b1a20",
+        "query-p1-2-kis": "86f875cfd66ecc1398c8c22731c36fe4a7faea825ee15d9aaee9db7fc8e5bfbb",
+        "query-p1-4-kis": "393c06fb91975e47854d9c792376fb117bceca28ea03d65b7194fbe064c1264b",
+        "query-p1-5-kis": "80eb8ad5c38b2211ea4cfb87b7da7dfcae7975bf22e70e5b746c863dd24501a3",
+        "query-p1-6-kis": "193ca3cc581d484c9ecf80ee0e816a7f05c48b067a9cfd414a9ca8c772cb3f0e",
+    }
+
+    # Verify runner CLI required arguments & safety guard
+    with pytest.raises(SystemExit):
+        with patch.object(sys, "argv", ["runner", "--input-root", "/fake"]):
+            with patch("sys.stderr", new=io.StringIO()):
+                mod.main()
+
+    with pytest.raises(AssertionError, match="Safety guard: output_root cannot be /kaggle, /kaggle/input, or /kaggle/working directly"):
+        with patch.object(
+            sys,
+            "argv",
+            ["runner", "--expected-commit", "dummy", "--input-root", "/fake_in", "--output-root", "/kaggle/working"],
+        ):
+            mod.main()
 
     # 2. Verify session_manifest top-level fields match runner schema expectations
     with tempfile.TemporaryDirectory() as td:
