@@ -499,7 +499,7 @@ def run_qualification(
     unseen_err = json.loads(unseen_lines[0])
     assert unseen_err.get("error_type") == "TranslationError", f"Expected TranslationError, got {unseen_err.get('error_type')}"
     assert "Sidecar translation miss" in unseen_err.get("message", ""), f"Expected 'Sidecar translation miss' in message, got {unseen_err.get('message')}"
-    assert "query-novel-unseen" in unseen_err.get("message", "")
+    assert unseen_err.get("request_id") == "req-unseen", f"Expected request_id 'req-unseen', got {unseen_err.get('request_id')}"
     print("✅ Unseen Query Rejected Fail-Fast with Sidecar translation miss (TranslationError, Code 1)")
 
     # 11. In-Tree Qualification Manifest Provenance Verification
