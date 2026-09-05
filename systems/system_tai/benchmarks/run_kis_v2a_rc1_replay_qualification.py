@@ -27,6 +27,15 @@ import subprocess
 import sys
 import urllib.request
 
+if not __debug__:
+    raise RuntimeError("Qualification runner cannot run with Python optimization (-O) enabled")
+
+
+def paths_overlap(a: Path, b: Path) -> bool:
+    resolved_a = a.resolve()
+    resolved_b = b.resolve()
+    return resolved_a == resolved_b or resolved_a in resolved_b.parents or resolved_b in resolved_a.parents
+
 
 EXPECTED_CLIP_COMMIT = "d05afc436d78f1c48dc0dbf8e5980a9d471f35f6"
 EXPECTED_CLIP_CHECKPOINT_SHA256 = "40d365715913c9da98579312b702a82c18be219cc2a73407c4526f58eba950af"
@@ -535,12 +544,9 @@ def main() -> int:
     historical_manifest = Path(args.historical_manifest).resolve() if args.historical_manifest else None
 
     # Strict deletion safety guards
-    if output_root == repo_root or output_root in repo_root.parents:
-        raise ValueError(f"Safety guard: output_root contains repo_root ({repo_root})")
-    if output_root == input_root or output_root in input_root.parents:
-        raise ValueError(f"Safety guard: output_root contains input_root ({input_root})")
     if output_root.parent == output_root:
         raise ValueError(f"Safety guard: output_root cannot be root filesystem ({output_root})")
+
     clean_out_str = output_root.as_posix().lower().rstrip("/")
     if (
         clean_out_str in ("/kaggle", "/kaggle/input", "/kaggle/working")
@@ -551,6 +557,11 @@ def main() -> int:
         raise ValueError(
             f"Safety guard: output_root cannot be /kaggle, /kaggle/input, or /kaggle/working directly ({output_root})"
         )
+
+    if paths_overlap(output_root, repo_root):
+        raise ValueError(f"Safety guard: output_root overlaps repo_root ({repo_root})")
+    if paths_overlap(output_root, input_root):
+        raise ValueError(f"Safety guard: output_root overlaps input_root ({input_root})")
 
     if output_root.exists():
         shutil.rmtree(output_root)

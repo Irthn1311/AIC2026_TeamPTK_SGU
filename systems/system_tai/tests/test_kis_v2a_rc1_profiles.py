@@ -643,7 +643,7 @@ def test_qualification_runner_safety_guards_and_deep_corpus_discovery():
         fake_repo = tdp / "workspace" / "repo"
         fake_repo.mkdir(parents=True)
         parent_out = tdp / "workspace"
-        with pytest.raises(ValueError, match="Safety guard: output_root contains repo_root"):
+        with pytest.raises(ValueError, match="Safety guard: output_root overlaps repo_root"):
             with patch.object(
                 sys,
                 "argv",
@@ -657,13 +657,33 @@ def test_qualification_runner_safety_guards_and_deep_corpus_discovery():
             ):
                 mod.main()
 
-    # 4. Output root is parent of input_root raises ValueError
+    # 4. Output root is inside repo_root raises ValueError
+    with tempfile.TemporaryDirectory() as td:
+        tdp = Path(td)
+        fake_repo = tdp / "repo"
+        fake_repo.mkdir(parents=True)
+        inside_out = fake_repo / "systems" / "out"
+        with pytest.raises(ValueError, match="Safety guard: output_root overlaps repo_root"):
+            with patch.object(
+                sys,
+                "argv",
+                [
+                    "runner",
+                    "--expected-commit", "dummy",
+                    "--repo-root", str(fake_repo),
+                    "--input-root", str(tdp / "dataset"),
+                    "--output-root", str(inside_out),
+                ],
+            ):
+                mod.main()
+
+    # 5. Output root is parent of input_root raises ValueError
     with tempfile.TemporaryDirectory() as td:
         tdp = Path(td)
         fake_input = tdp / "data" / "corpus"
         fake_input.mkdir(parents=True)
         parent_out = tdp / "data"
-        with pytest.raises(ValueError, match="Safety guard: output_root contains input_root"):
+        with pytest.raises(ValueError, match="Safety guard: output_root overlaps input_root"):
             with patch.object(
                 sys,
                 "argv",
@@ -677,12 +697,32 @@ def test_qualification_runner_safety_guards_and_deep_corpus_discovery():
             ):
                 mod.main()
 
-    # 5. Output root equals repo_root raises ValueError
+    # 6. Output root is inside input_root raises ValueError
+    with tempfile.TemporaryDirectory() as td:
+        tdp = Path(td)
+        fake_input = tdp / "corpus"
+        fake_input.mkdir(parents=True)
+        inside_out = fake_input / "keyframes" / "out"
+        with pytest.raises(ValueError, match="Safety guard: output_root overlaps input_root"):
+            with patch.object(
+                sys,
+                "argv",
+                [
+                    "runner",
+                    "--expected-commit", "dummy",
+                    "--repo-root", str(tdp / "repo"),
+                    "--input-root", str(fake_input),
+                    "--output-root", str(inside_out),
+                ],
+            ):
+                mod.main()
+
+    # 7. Output root equals repo_root raises ValueError
     with tempfile.TemporaryDirectory() as td:
         tdp = Path(td)
         fake_repo = tdp / "repo"
         fake_repo.mkdir(parents=True)
-        with pytest.raises(ValueError, match="Safety guard: output_root contains repo_root"):
+        with pytest.raises(ValueError, match="Safety guard: output_root overlaps repo_root"):
             with patch.object(
                 sys,
                 "argv",
