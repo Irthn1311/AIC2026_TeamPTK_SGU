@@ -5,7 +5,7 @@ Official In-Tree Qualification Runner for Profile `kis-v2a-rc1-replay`.
 This runner implements the strict qualification gate:
 1. Fail-closed repository clean worktree verification (0 untracked / modified / deleted files).
 2. Pinned OpenAI CLIP commit d05afc43... and official ViT-B-32 checkpoint SHA256.
-3. Focused Pytest qualification suite (21 tests in test_kis_v2a_rc1_profiles.py and test_kis_v2a_rc1_e2e_closure.py).
+3. Focused Pytest qualification suite (22 tests in test_kis_v2a_rc1_profiles.py and test_kis_v2a_rc1_e2e_closure.py).
 4. Comprehensive CLI flag conflict rejection gate (13 non-default and dormant flag combinations).
 5. Two independent official CLI passes (pass_1 and pass_2) with session_manifest.json validation.
 6. Bit-exact Top-100 projection digests and ground-truth target coarse/final ranks.
@@ -106,6 +106,11 @@ def run_qualification(
     historical_manifest_sha256: str | None = None,
     skip_pip_install: bool = False,
 ) -> int:
+    if (historical_manifest is None) != (historical_manifest_sha256 is None):
+        raise ValueError(
+            "--historical-manifest and --historical-manifest-sha256 must be provided together"
+        )
+
     print("=" * 110)
     print("🔒 KIS V2-A.3 OFFICIAL CLI QUALIFICATION GATE (PROFILE: kis-v2a-rc1-replay)")
     print("=" * 110)
@@ -162,8 +167,8 @@ def run_qualification(
     assert actual_ckpt_sha.lower() == EXPECTED_CLIP_CHECKPOINT_SHA256.lower(), f"Checkpoint SHA mismatch: {actual_ckpt_sha}"
     print(f"✅ Official CLIP ViT-B-32 checkpoint verified: {actual_ckpt_sha}")
 
-    # 4. Run Pytest Focused Suite (21 tests)
-    print("\nRunning Pytest Profile & Closure Suites (21 tests)...")
+    # 4. Run Pytest Focused Suite (22 tests)
+    print("\nRunning Pytest Profile & Closure Suites (22 tests)...")
     pytest_cmd = [
         sys.executable, "-m", "pytest",
         str(repo_root / "systems" / "system_tai" / "tests" / "test_kis_v2a_rc1_profiles.py"),
@@ -171,7 +176,7 @@ def run_qualification(
         "-v",
     ]
     subprocess.run(pytest_cmd, cwd=repo_root / "systems" / "system_tai", env=env, check=True)
-    print("✅ 21/21 focused qualification tests passed cleanly!")
+    print("✅ 22/22 focused qualification tests passed cleanly!")
 
     # 5. Load Benchmarks & Manifests
     from system_tai.retrieval.canonical_projection import canonical_projection_digest
@@ -362,17 +367,19 @@ def run_qualification(
     historical_manifest_info = ""
 
     if historical_manifest is not None:
-        assert historical_manifest.is_file(), (
-            f"Fail-closed: Provided historical manifest does not exist at {historical_manifest}"
-        )
+        assert historical_manifest_sha256 is not None, "historical_manifest_sha256 must be provided"
+        if not historical_manifest.is_file():
+            raise ValueError(
+                f"Fail-closed: Provided historical manifest does not exist at {historical_manifest}"
+            )
         actual_hist_sha = sha256_file(historical_manifest).lower()
-        if historical_manifest_sha256:
-            assert actual_hist_sha == historical_manifest_sha256.lower(), (
+        if actual_hist_sha != historical_manifest_sha256.lower():
+            raise ValueError(
                 f"Fail-closed: Historical manifest SHA256 mismatch!\n"
                 f"Expected: {historical_manifest_sha256.lower()}\n"
                 f"Actual:   {actual_hist_sha}"
             )
-            print(f"✅ Historical manifest file SHA-256 verified: {actual_hist_sha}")
+        print(f"✅ Historical manifest file SHA-256 verified: {actual_hist_sha}")
 
         h_data = json.loads(historical_manifest.read_text(encoding="utf-8"))
         assert h_data.get("release_candidate") == "KIS_V2A_RC1", (
@@ -516,6 +523,11 @@ def main() -> int:
 
     args = parser.parse_args()
 
+    if (args.historical_manifest is None) != (args.historical_manifest_sha256 is None):
+        raise ValueError(
+            "--historical-manifest and --historical-manifest-sha256 must be provided together"
+        )
+
     repo_root = Path(args.repo_root).resolve() if args.repo_root else Path(__file__).resolve().parent.parent.parent.parent
     input_root = Path(args.input_root).resolve()
     manifest_cache = Path(args.manifest_cache).resolve()
@@ -523,16 +535,22 @@ def main() -> int:
     historical_manifest = Path(args.historical_manifest).resolve() if args.historical_manifest else None
 
     # Strict deletion safety guards
-    assert output_root != repo_root, f"Safety guard: output_root cannot be repo_root ({repo_root})"
-    assert output_root != input_root, f"Safety guard: output_root cannot be input_root ({input_root})"
-    assert output_root.parent != output_root, f"Safety guard: output_root cannot be root filesystem ({output_root})"
+    if output_root == repo_root or output_root in repo_root.parents:
+        raise ValueError(f"Safety guard: output_root contains repo_root ({repo_root})")
+    if output_root == input_root or output_root in input_root.parents:
+        raise ValueError(f"Safety guard: output_root contains input_root ({input_root})")
+    if output_root.parent == output_root:
+        raise ValueError(f"Safety guard: output_root cannot be root filesystem ({output_root})")
     clean_out_str = output_root.as_posix().lower().rstrip("/")
-    assert not (
+    if (
         clean_out_str in ("/kaggle", "/kaggle/input", "/kaggle/working")
         or clean_out_str.endswith(":/kaggle")
         or clean_out_str.endswith(":/kaggle/input")
         or clean_out_str.endswith(":/kaggle/working")
-    ), f"Safety guard: output_root cannot be /kaggle, /kaggle/input, or /kaggle/working directly ({output_root})"
+    ):
+        raise ValueError(
+            f"Safety guard: output_root cannot be /kaggle, /kaggle/input, or /kaggle/working directly ({output_root})"
+        )
 
     if output_root.exists():
         shutil.rmtree(output_root)

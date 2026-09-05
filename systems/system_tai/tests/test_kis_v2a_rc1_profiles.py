@@ -541,7 +541,7 @@ def test_in_tree_qualification_runner_contract_and_manifest_schema():
             with patch("sys.stderr", new=io.StringIO()):
                 mod.main()
 
-    with pytest.raises(AssertionError, match="Safety guard: output_root cannot be /kaggle, /kaggle/input, or /kaggle/working directly"):
+    with pytest.raises(ValueError, match="Safety guard: output_root cannot be /kaggle, /kaggle/input, or /kaggle/working directly"):
         with patch.object(
             sys,
             "argv",
@@ -589,3 +589,121 @@ def test_in_tree_qualification_runner_contract_and_manifest_schema():
         assert data.get("video_count") == 873
         assert data.get("feature_row_count") == 177321
         assert data.get("model_provenance", {}).get("verified_bit_exact") is True
+
+
+def test_qualification_runner_safety_guards_and_deep_corpus_discovery():
+    """Verify runner fail-safe guards (coupled manifest args, parent directory rmtree protection)
+
+    and bounded deep corpus discovery (max_depth=4).
+    """
+    runner_path = (
+        Path(__file__).resolve().parent.parent
+        / "benchmarks"
+        / "run_kis_v2a_rc1_replay_qualification.py"
+    )
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("qualification_runner_guard", runner_path)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    # 1. Manifest path provided without SHA256 raises ValueError
+    with pytest.raises(ValueError, match="must be provided together"):
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "runner",
+                "--expected-commit", "dummy",
+                "--input-root", "/fake_in",
+                "--output-root", "/fake_out/sub",
+                "--historical-manifest", "/fake/manifest.json",
+            ],
+        ):
+            mod.main()
+
+    # 2. SHA256 provided without manifest path raises ValueError
+    with pytest.raises(ValueError, match="must be provided together"):
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "runner",
+                "--expected-commit", "dummy",
+                "--input-root", "/fake_in",
+                "--output-root", "/fake_out/sub",
+                "--historical-manifest-sha256", "0" * 64,
+            ],
+        ):
+            mod.main()
+
+    # 3. Output root is parent of repo_root raises ValueError
+    with tempfile.TemporaryDirectory() as td:
+        tdp = Path(td)
+        fake_repo = tdp / "workspace" / "repo"
+        fake_repo.mkdir(parents=True)
+        parent_out = tdp / "workspace"
+        with pytest.raises(ValueError, match="Safety guard: output_root contains repo_root"):
+            with patch.object(
+                sys,
+                "argv",
+                [
+                    "runner",
+                    "--expected-commit", "dummy",
+                    "--repo-root", str(fake_repo),
+                    "--input-root", str(tdp / "dataset"),
+                    "--output-root", str(parent_out),
+                ],
+            ):
+                mod.main()
+
+    # 4. Output root is parent of input_root raises ValueError
+    with tempfile.TemporaryDirectory() as td:
+        tdp = Path(td)
+        fake_input = tdp / "data" / "corpus"
+        fake_input.mkdir(parents=True)
+        parent_out = tdp / "data"
+        with pytest.raises(ValueError, match="Safety guard: output_root contains input_root"):
+            with patch.object(
+                sys,
+                "argv",
+                [
+                    "runner",
+                    "--expected-commit", "dummy",
+                    "--repo-root", str(tdp / "repo"),
+                    "--input-root", str(fake_input),
+                    "--output-root", str(parent_out),
+                ],
+            ):
+                mod.main()
+
+    # 5. Output root equals repo_root raises ValueError
+    with tempfile.TemporaryDirectory() as td:
+        tdp = Path(td)
+        fake_repo = tdp / "repo"
+        fake_repo.mkdir(parents=True)
+        with pytest.raises(ValueError, match="Safety guard: output_root contains repo_root"):
+            with patch.object(
+                sys,
+                "argv",
+                [
+                    "runner",
+                    "--expected-commit", "dummy",
+                    "--repo-root", str(fake_repo),
+                    "--input-root", str(tdp / "input"),
+                    "--output-root", str(fake_repo),
+                ],
+            ):
+                mod.main()
+
+    # 6. Deep corpus discovery (dataset nested multiple levels deep e.g. /kaggle/input/datasets/user/dataset-aic)
+    from system_tai.data.corpus_discovery import resolve_dataset_root
+    with tempfile.TemporaryDirectory() as td:
+        tdp = Path(td)
+        deep_dataset = tdp / "datasets" / "user" / "dataset-aic"
+        (deep_dataset / "map-keyframes").mkdir(parents=True)
+        (deep_dataset / "clip-features").mkdir(parents=True)
+        (deep_dataset / "keyframes").mkdir(parents=True)
+
+        resolved = resolve_dataset_root(tdp, max_depth=4)
+        assert resolved == deep_dataset.resolve()
