@@ -2,6 +2,7 @@
   "manifest_schema_version": "1.0.0",
   "profile_name": "kis-v2a-rc1-replay",
   "qualification_status": "IN_TREE_FUNCTIONALLY_QUALIFIED_BIT_EXACT_FOR_FIVE_QUERY_REPLAY",
+  "in_tree_qualification_runner": "systems/system_tai/benchmarks/run_kis_v2a_rc1_replay_qualification.py",
   "provenance_chain": {
     "historical_baseline_run": {
       "commit": "d3b2507b97af03ae9e7067b97e79ecc8488f551c",

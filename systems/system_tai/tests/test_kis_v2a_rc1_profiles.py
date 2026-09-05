@@ -25,6 +25,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from system_tai.kis.profiles import (
+    CANONICAL_PORTABLE_CORPUS_FINGERPRINT,
     CANONICAL_RC1_TNEW_SHA256,
     EXPECTED_CLIP_CHECKPOINT_SHA256,
     EXPECTED_FULL_CORPUS_FINGERPRINT,
@@ -479,3 +480,68 @@ def test_validate_kis_v2a_rc1_replay_config_bit_exact_subconfigs():
         validate_kis_v2a_rc1_replay_config(bad_rev_cfg)
 
 
+def test_in_tree_qualification_runner_contract_and_manifest_schema():
+    """Verify in-tree qualification runner constants and session_manifest schema alignment."""
+    runner_path = (
+        Path(__file__).resolve().parent.parent
+        / "benchmarks"
+        / "run_kis_v2a_rc1_replay_qualification.py"
+    )
+    assert runner_path.is_file(), f"Missing in-tree qualification runner at {runner_path}"
+
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("qualification_runner", runner_path)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    # 1. Assert runner constants match canonical frozen constants
+    assert mod.EXPECTED_CLIP_COMMIT == EXPECTED_OPENAI_CLIP_COMMIT
+    assert mod.EXPECTED_CLIP_CHECKPOINT_SHA256 == EXPECTED_CLIP_CHECKPOINT_SHA256
+    assert mod.CANONICAL_PORTABLE_CORPUS_FINGERPRINT == CANONICAL_PORTABLE_CORPUS_FINGERPRINT
+    assert mod.CANONICAL_ABSOLUTE_CORPUS_FINGERPRINT == EXPECTED_FULL_CORPUS_FINGERPRINT
+    assert len(mod.GOLDEN_DIGESTS) == 5
+    assert len(mod.FROZEN_SELECTED_SEQUENCE_DIGESTS) == 5
+    assert len(mod.EXPECTED_TARGET_COARSE_RANKS) == 5
+    assert len(mod.EXPECTED_TARGET_RANKS) == 5
+
+    # 2. Verify session_manifest top-level fields match runner schema expectations
+    with tempfile.TemporaryDirectory() as td:
+        tdp = Path(td)
+        base = SessionConfig(output_root=tdp)
+        rc1_cfg = apply_kis_v2a_rc1_replay_profile(base)
+        provider = get_kis_v2a_rc1_replay_translation_provider()
+
+        mock_runtime = MagicMock()
+        mock_runtime.session_id = "test-schema"
+        mock_runtime.start_time_utc = "2026-09-03T12:00:00Z"
+        mock_runtime.config = rc1_cfg
+        mock_runtime.output_root = tdp
+        mock_runtime.manifest_path = tdp / "feature_manifest.json"
+        mock_runtime.manifest = MagicMock(schema_version="1.0.0", fingerprint=CANONICAL_PORTABLE_CORPUS_FINGERPRINT, videos=tuple(range(873)))
+        mock_runtime.registry = MagicMock(total_rows=177321)
+        mock_runtime.raw_video_registry = MagicMock(records=())
+        mock_runtime.shared_encoder = MagicMock(identifiers={"device": "cpu", "model": "ViT-B/32"})
+        mock_runtime.translation_provider = provider
+        mock_runtime.bootstrap_timings = {}
+        mock_runtime.model_provenance = {
+            "clip_source_commit": EXPECTED_OPENAI_CLIP_COMMIT,
+            "checkpoint_path": "/fake/ViT-B-32.pt",
+            "checkpoint_sha256": EXPECTED_CLIP_CHECKPOINT_SHA256,
+            "verified_bit_exact": True,
+        }
+        mock_runtime._request_count = 0
+        mock_runtime._successful_query_count = 0
+        mock_runtime._failed_query_count = 0
+        mock_runtime._health_request_count = 0
+        mock_runtime._malformed_request_count = 0
+
+        OperationalKISRuntime._save_session_manifest(mock_runtime, shutdown_reason="test_done")
+        manifest_file = tdp / "session_manifest.json"
+        data = json.loads(manifest_file.read_text(encoding="utf-8"))
+
+        # Verify top-level fields asserted by runner
+        assert data.get("manifest_fingerprint") == CANONICAL_PORTABLE_CORPUS_FINGERPRINT
+        assert data.get("video_count") == 873
+        assert data.get("feature_row_count") == 177321
+        assert data.get("model_provenance", {}).get("verified_bit_exact") is True
