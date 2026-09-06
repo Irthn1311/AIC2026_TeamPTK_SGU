@@ -27,7 +27,18 @@ from .kis_benchmark import (
     KISBenchmarkReport,
     NoVerifiedQueriesResult,
 )
-from .kis_fixture import KISFixtureEvaluator
+from .kis_fixture import (
+    DEFAULT_EVALUATION_CUTOFFS,
+    DEFAULT_SCORING_PROTOCOL_ID,
+    EvaluationReport,
+    FrameTimestampResolver,
+    GroundTruthInterval,
+    KISFixtureEvaluator,
+    MappingFrameTimestampResolver,
+    PredictionRecord,
+    QueryEvaluationResult,
+    RScoreScorer,
+)
 from .reports import BenchmarkReportPaths, write_benchmark_reports
 
 __all__ = [
@@ -41,12 +52,21 @@ __all__ = [
     "FusionBenchmarkEvaluator",
     "FusionBenchmarkReport",
     "FusionReportPaths",
+    "DEFAULT_EVALUATION_CUTOFFS",
+    "DEFAULT_SCORING_PROTOCOL_ID",
+    "EvaluationReport",
+    "FrameTimestampResolver",
+    "GroundTruthInterval",
     "KISBenchmark",
     "KISBenchmarkEvaluator",
     "KISBenchmarkReport",
     "NoVerifiedQueriesResult",
     "NoComparableFusionGroupsError",
     "KISFixtureEvaluator",
+    "MappingFrameTimestampResolver",
+    "PredictionRecord",
+    "QueryEvaluationResult",
+    "RScoreScorer",
     "RelevantFrame",
     "VariantType",
     "build_annotation_candidates",

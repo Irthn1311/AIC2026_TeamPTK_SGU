@@ -6,10 +6,13 @@ from pathlib import Path
 from system_tai.evaluation.kis_fixture import KISFixtureEvaluator
 
 
-class ExplicitFailureTests(unittest.TestCase):
-    def test_evaluator_is_explicitly_unimplemented(self) -> None:
-        with self.assertRaises(NotImplementedError):
-            KISFixtureEvaluator().evaluate(Path("predictions.jsonl"), Path("ground_truth.jsonl"))
+class EvaluatorFileInterfaceTests(unittest.TestCase):
+    def test_evaluator_raises_file_not_found_on_missing_inputs(self) -> None:
+        with self.assertRaises(FileNotFoundError):
+            KISFixtureEvaluator().evaluate(
+                Path("non_existent_predictions.jsonl"),
+                Path("non_existent_ground_truth.jsonl"),
+            )
 
 
 if __name__ == "__main__":
