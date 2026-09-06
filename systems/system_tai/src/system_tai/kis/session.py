@@ -473,6 +473,34 @@ def session_config_from_args(args: argparse.Namespace) -> SessionConfig:
         clip_cache_dir=args.clip_cache_dir,
         coarse_decode_strategy=CoarseDecodeStrategy(args.coarse_decode_strategy),
     )
+    selected_video_cap = getattr(args, "kis_selected_video_cap", None)
+    selected_video_cap = 32 if selected_video_cap is None else selected_video_cap
+
+    video_nomination_depth = getattr(args, "kis_video_nomination_depth", None)
+    video_nomination_depth = (
+        100 if video_nomination_depth is None else video_nomination_depth
+    )
+
+    restricted_frames_per_video_per_variant = getattr(
+        args, "kis_restricted_frames_per_video_per_variant", None
+    )
+    restricted_frames_per_video_per_variant = (
+        10
+        if restricted_frames_per_video_per_variant is None
+        else restricted_frames_per_video_per_variant
+    )
+
+    full_query_weight = getattr(args, "kis_full_query_weight", None)
+    full_query_weight = 1.0 if full_query_weight is None else full_query_weight
+
+    primary_scene_weight = getattr(args, "kis_primary_scene_weight", None)
+    primary_scene_weight = 1.0 if primary_scene_weight is None else primary_scene_weight
+
+    supporting_attribute_weight = getattr(args, "kis_supporting_attribute_weight", None)
+    supporting_attribute_weight = (
+        0.35 if supporting_attribute_weight is None else supporting_attribute_weight
+    )
+
     return SessionConfig(
         input_root=args.input_root,
         reuse_manifest=args.reuse_manifest,
@@ -525,28 +553,12 @@ def session_config_from_args(args: argparse.Namespace) -> SessionConfig:
         ),
         kis_video_first_config=KISVideoFirstConfig(
             enabled=getattr(args, "enable_kis_semantic_video_first", False),
-            selected_video_cap=(
-                args.kis_selected_video_cap if args.kis_selected_video_cap is not None else 32
-            ),
-            video_nomination_depth=(
-                args.kis_video_nomination_depth if args.kis_video_nomination_depth is not None else 100
-            ),
-            restricted_frames_per_video_per_variant=(
-                args.kis_restricted_frames_per_video_per_variant
-                if args.kis_restricted_frames_per_video_per_variant is not None
-                else 10
-            ),
-            full_query_weight=(
-                args.kis_full_query_weight if args.kis_full_query_weight is not None else 1.0
-            ),
-            primary_scene_weight=(
-                args.kis_primary_scene_weight if args.kis_primary_scene_weight is not None else 1.0
-            ),
-            supporting_attribute_weight=(
-                args.kis_supporting_attribute_weight
-                if args.kis_supporting_attribute_weight is not None
-                else 0.35
-            ),
+            selected_video_cap=selected_video_cap,
+            video_nomination_depth=video_nomination_depth,
+            restricted_frames_per_video_per_variant=restricted_frames_per_video_per_variant,
+            full_query_weight=full_query_weight,
+            primary_scene_weight=primary_scene_weight,
+            supporting_attribute_weight=supporting_attribute_weight,
         ),
         video_conditioned_keyframe_config=VideoConditionedKeyframeConfig(
             enabled=multi_anchor_enabled,

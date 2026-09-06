@@ -2459,12 +2459,15 @@ class OperationalKISRuntime:
         manifest_payload["translation_provider_mode"] = self.config.translation_provider_mode
         if self.model_provenance is not None:
             manifest_payload["model_provenance"] = self.model_provenance
-        if self.translation_provider is not None and hasattr(self.translation_provider, "sidecar_path"):
-            manifest_payload["translation_provider_identity"] = {
-                "type": type(self.translation_provider).__name__,
-                "sidecar_path": str(self.translation_provider.sidecar_path),
-                "sidecar_sha256": getattr(self.translation_provider, "expected_content_sha256", None),
-            }
+        if self.translation_provider is not None:
+            sidecar_path = getattr(self.translation_provider, "sidecar_path", None)
+            if isinstance(sidecar_path, (str, Path)):
+                sha_val = getattr(self.translation_provider, "expected_content_sha256", None)
+                manifest_payload["translation_provider_identity"] = {
+                    "type": type(self.translation_provider).__name__,
+                    "sidecar_path": str(sidecar_path),
+                    "sidecar_sha256": sha_val if isinstance(sha_val, str) else None,
+                }
         if self.config.kis_video_first_config.enabled:
             manifest_payload["kis_video_first_config"] = dataclasses.asdict(
                 self.config.kis_video_first_config

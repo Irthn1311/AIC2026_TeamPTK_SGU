@@ -379,6 +379,67 @@ def test_cli_rejects_multi_anchor_without_video_first_or_raw_prefix() -> None:
         )
 
 
+def test_session_config_from_legacy_args_without_new_kis_flags() -> None:
+    """Verify that a legacy Args object lacking any new KIS video-first flags
+
+    initializes safely with canonical default values instead of raising AttributeError.
+    """
+    legacy_args = type(
+        "LegacyArgs",
+        (),
+        {
+            "input_root": "/tmp/in",
+            "reuse_manifest": True,
+            "manifest_cache": None,
+            "output_root": "/tmp/out",
+            "device": "cpu",
+            "allow_model_download": False,
+            "clip_cache_dir": None,
+            "rrf_constant": 60.0,
+            "chunk_size": 4096,
+            "default_top_k_per_variant": 100,
+            "default_output_top_k": 100,
+            "default_refine_top_n": 3,
+            "max_requests": 10,
+            "continue_on_request_error": True,
+            "fail_fast_protocol": False,
+            "session_id": "legacy-session",
+            "window_before_seconds": 5.0,
+            "window_after_seconds": 5.0,
+            "coarse_stride_frames": 15,
+            "coarse_top_n": 3,
+            "fine_radius_frames": 30,
+            "fine_stride_frames": 1,
+            "image_batch_size": 32,
+            "max_decoded_frames_per_candidate": 500,
+            "missing_raw_video_policy": "keep-original",
+            "candidate_failure_policy": "keep-original",
+            "coarse_decode_strategy": "sequential",
+        },
+    )()
+
+    for flag in (
+        "kis_selected_video_cap",
+        "kis_video_nomination_depth",
+        "kis_restricted_frames_per_video_per_variant",
+        "kis_full_query_weight",
+        "kis_primary_scene_weight",
+        "kis_supporting_attribute_weight",
+        "enable_kis_semantic_video_first",
+    ):
+        assert not hasattr(legacy_args, flag)
+
+    config = session_config_from_args(legacy_args)
+    assert config.kis_video_first_config.enabled is False
+    assert config.kis_video_first_config.selected_video_cap == 32
+    assert config.kis_video_first_config.video_nomination_depth == 100
+    assert config.kis_video_first_config.restricted_frames_per_video_per_variant == 10
+    assert config.kis_video_first_config.full_query_weight == 1.0
+    assert config.kis_video_first_config.primary_scene_weight == 1.0
+    assert config.kis_video_first_config.supporting_attribute_weight == 0.35
+
+
+
 class _Encoder:
     dimension = 2
     identifiers = {"model": "ViT-B/32", "device": "cpu"}
