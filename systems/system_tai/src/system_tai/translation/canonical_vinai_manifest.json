@@ -1,0 +1,12 @@
+{
+  "model_name": "vinai/vinai-translate-vi2en-v2",
+  "revision": "ae7baa85da07dbe8e23ac26a9f5ef560c17e2138",
+  "checksums": {
+    ".gitattributes": "11ad7efa24975ee4b0c3c3a38ed18737f0658a5f75a0a96787b576a78a023361",
+    "README.md": "a86c785e84af5a3d9f2c93200fb82d361d2eb28344995f098c01dd75c38c290f",
+    "config.json": "6c54363338965c9372344013821c0d2cc225cd18cb7937d0867e27099bb643fe",
+    "generation_config.json": "94d7c8e64fbffa9466b0d95fa03f2b9d94e0761c91ce5b4cc9e666c2736c3f5a",
+    "pytorch_model.bin": "cd3762c85e4c09e84aac3eec2dabcbc2db9160f13ddd806f44ca283e5cb4acd8",
+    "sentencepiece.bpe.model": "cdbd2277deee13a943b702c0131ea9034d00c2288f332ee0c5fea520b07ea936"
+  }
+}

@@ -130,16 +130,36 @@ class EvaluationReport:
 
 ## 3. Translation Architecture: Official Google Cloud + Pinned VinAI Fallback
 
-1. **Google Cloud Translation API Only (Zero Web Scraping)**:
-   - Uses `google-cloud-translate` (v3/v2).
+1. **Google Cloud Translation API Only (Zero Web Scraping, v3-Only)**:
+   - Uses official `google-cloud-translate` v3 client (`v3.TranslationServiceClient`) exclusively; v2 and unofficial scrapers are strictly prohibited and eliminated.
    - ADC / service account credentials from Kaggle Secrets / environment (never committed or logged).
-2. **Pinned VinAI Local Fallback**:
-   - Pinned revision for `vinai/vinai-translate-vi2en-v2`.
-   - `local_files_only=True` in production/air-gapped environments.
+   - Strict fail-closed error sanitation (never leaks credentials, tokens, or absolute paths in exceptions or telemetry).
+
+2. **Pinned VinAI Local Fallback with External Trust Anchor Model**:
+   - Pinned canonical revision: `ae7baa85da07dbe8e23ac26a9f5ef560c17e2138` (all-zero or unapproved revisions are strictly rejected).
+   - **External Trust Anchor Verification**: Manifest integrity is validated against an external trust anchor (source constant `CANONICAL_MANIFEST_SHA256` or explicit caller-provided `trusted_manifest_sha256`). A local snapshot's self-signed `manifest.json` alone is never trusted.
+   - **Storage Layout & Containment**: Full support for Hugging Face cache layouts where snapshot files are symlinked to `../../blobs/<hash>`, while enforcing strict containment within repo bounds. Standalone mirrors require strict snapshot root containment.
+   - **Snapshot File Audit**: Scans and rejects untrusted load-relevant files (`.py`, `.exe`, `.so`, `.dll`, unapproved weights) with `[vinai_untrusted_file]`.
+   - `local_files_only=True` in production/air-gapped environments (`allow_model_download=False`).
    - Records revision, checksum, and device in provenance telemetry (AGPL-3.0 compliance).
-3. **Semantic Sanity Validator**:
-   - Validates numerical counts, negation, left/right polarity, temporal markers ("bắt đầu -> sau đó -> kết thúc"), and entities.
-   - Falls back to VinAI if Google fails semantic validation.
+
+3. **Transparent Cache with Two Explicit Integrity Modes**:
+   - `checksum-only`: Detects file corruption only, makes no claims of anti-tampering/forgery protection.
+   - `hmac-required`: Requires keyed HMAC authentication using at least 32 bytes of key material from Kaggle Secrets or environment. Fails fast if missing.
+   - Strict rejection of conflicting configuration (`require_hmac=True` with `hmac_mode="checksum-only"`).
+   - In `cache.get()`, enforces strict mode matching (`entry["integrity_mode"] == self.integrity_mode`).
+   - Strict error message sanitation (no echoing of user queries or paths).
+
+4. **Clause/Entity-Level Semantic Sanity Validator**:
+   - Represents semantic mentions as `(clause_idx, entity, count, color, spatial, negation, temporal)` to validate fine-grained bindings:
+     - Numerical counts and count swaps across entities (e.g. `Hai người... ba con chó` vs `Three people... two dogs`).
+     - Dropped counts and cardinal vs ordinal mismatches.
+     - Color-entity bindings, dropped colors, and swapped colors without false rejections on multi-color sentences.
+     - Spatial orientation swaps across entities (left vs right, top vs bottom).
+     - Misplaced negation across entities.
+     - Generalized temporal sequence order of entities across clauses.
+   - Strict two-tier diagnostic separation: `ERROR` (triggers fallback) vs `WARNING` (stylistic variation / proper noun retention).
+   - All 18 canonical benchmark pairs verified passing (18/18).
 
 ---
 
