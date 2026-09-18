@@ -1,94 +1,124 @@
-# AIC2026_TeamPTK_SGU
+# TRIAGE-EG — AI Challenge 2026
 
-Repository nền tảng cho đội PTK - SGU tại AI Challenge Ho Chi Minh City 2026.
+Team PTK / Saigon University workspace for **AI Challenge Ho Chi Minh City 2026**.
 
-## TRIAGE-EG
+TRIAGE-EG is an experimental video-retrieval architecture designed around three task families:
 
-**TRIAGE-EG — Tool-Routed Intelligent Agent with Event-Graph Grounding** là kiến trúc dài hạn
-cho ba dạng truy vấn:
+- **Known-Item Search (KIS):** retrieve a target video/frame from a textual description
+- **Question Answering (Q&A):** retrieve evidence and produce an answer
+- **Temporal Retrieval / Event Alignment:** identify a video and align a sequence of relevant events
 
-- Textual Known-Item Search (KIS): trả về `<video_id>, <frame_id>`.
-- Question Answering (Q&A): trả về `<video_id>, <frame_id>, <answer>`.
-- Temporal Retrieval and Alignment of Key Events (TRAKE): trả về một video và chuỗi frame sự kiện.
+> **Status:** active competition project. The repository currently establishes reproducible contracts, data/frame mapping, baseline retrieval, evaluation, and experiment infrastructure. Deferred modules are clearly separated from implemented components.
 
-Luồng mục tiêu là: raw video → data audit → unified frame mapping → hybrid frame bank → feature
-extraction → multimodal retrieval → video ranking → event graph → temporal alignment → semantic
-moment localization → evidence verification → ranked answer list.
-
-## Phạm vi v0.1
-
-Phiên bản này khóa contract và chứng minh pipeline kết nối được cho `common`, `data`, `frame_bank`,
-`features`, `retrieval`, và `evaluation`. Dummy shot detector, center-frame selector, deterministic
-dummy encoder và NumPy brute-force cosine index đều chạy thật nhưng không đo chất lượng AI.
-
-Event Graph, Agent, semantic moment localizer, Q&A model, VLM, OCR, ASR, backend, frontend, graph
-database, microservices, Docker/Kubernetes và DVC đều **Deferred**. Adaptive multiframe chỉ có config
-minh họa, chưa được triển khai trong v0.1.
-
-## Cấu trúc
+## Target pipeline
 
 ```text
-configs/              Cấu hình data, frame bank, feature, retrieval và experiment
-src/triage_eg/        Python package theo src-layout
-scripts/              CLI dùng argparse và demo end-to-end
-tests/                Unit/integration tests và fixture metadata nhỏ
-docs/                 Kiến trúc, module contracts, ADR và ownership
-notebooks/            Kaggle bootstrap; không chứa business logic
-kaggle/               Hướng dẫn và shell bootstrap
+raw video
+  -> data audit
+  -> unified frame mapping
+  -> frame bank
+  -> feature extraction
+  -> multimodal retrieval
+  -> video ranking
+  -> event graph
+  -> temporal / semantic localization
+  -> evidence verification
+  -> ranked answers
 ```
 
-Không có thư mục dữ liệu thật trong repository. `actual_frame_id` luôn là frame ID của raw video
-dùng cho submission; thứ tự keyframe không được thay thế nó.
+Not every block above is implemented yet. The current repository intentionally distinguishes **working baselines** from **planned research modules**.
 
-## Cài đặt và chạy
+## Current implementation
 
-Yêu cầu Python 3.11 trở lên:
+The current baseline provides:
+
+- common data / configuration contracts
+- run manifests tied to exact Git commits and configs
+- metadata audit and frame mapping
+- baseline shot / center-frame selection
+- deterministic dummy encoders for pipeline validation
+- NumPy cosine retrieval for small-scale tests
+- evaluation utilities
+- unit / integration tests
+- local → GitHub → Kaggle reproducibility workflow
+
+## Repository structure
+
+```text
+configs/        experiment and module configuration
+src/triage_eg/  Python package
+scripts/        command-line and demo entry points
+tests/          unit / integration tests and fixtures
+docs/           architecture, contracts, ADRs, ownership
+notebooks/      thin Kaggle bootstrap notebooks
+kaggle/         Kaggle workflow documentation
+```
+
+Large datasets, videos, model checkpoints, extracted features, and indexes are intentionally excluded from Git.
+
+## Quick start
+
+Requires Python 3.11+.
 
 ```bash
 python -m pip install -e ".[dev]"
 ruff check .
 pytest -q
 python scripts/demo_pipeline.py --config configs/experiments/exp001_template.yaml
-python scripts/evaluate.py --task trake --ground-truth tests/fixtures/sample_trake_ground_truth.json --predictions tests/fixtures/sample_trake_predictions.json
 ```
 
-Demo tạo artifact tại `artifacts/demo_pipeline/<run_id>/`, gồm manifest, exact config, frame
-metadata, feature metadata/vectors và kết quả retrieval. `artifacts/` được Git bỏ qua.
+Example evaluation:
 
-## Workflow local → GitHub → Kaggle
+```bash
+python scripts/evaluate.py \
+  --task trake \
+  --ground-truth tests/fixtures/sample_trake_ground_truth.json \
+  --predictions tests/fixtures/sample_trake_predictions.json
+```
 
-1. Code, lint và test nhỏ ở local trên feature branch.
-2. Push code/config/docs lên GitHub qua pull request; `main` phải luôn chạy được.
-3. Trên Kaggle, bootstrap notebook clone đúng `COMMIT_SHA`, cài package rồi gọi script trong repo.
-4. Data/compute lớn ở Kaggle; mỗi output phải gắn `RunManifest` với exact git commit và config.
+Generated artifacts are written outside the tracked source tree and should remain linked to the exact commit/config that produced them.
 
-Private repository phải lấy token từ Kaggle Secrets. Không in token, nhúng token vào URL, hoặc
-commit `.env`, `kaggle.json`, data, video, ảnh, model, checkpoint, feature hay index. Nếu cần fixture
-ảnh cực nhỏ, thêm ngoại lệ `.gitignore` thật hẹp và giải thích trong pull request.
+## Reproducibility workflow
 
-## Trạng thái module
+1. Develop and test on a feature branch.
+2. Merge code/config/docs through GitHub pull requests.
+3. Keep `main` runnable.
+4. On Kaggle, clone an exact `COMMIT_SHA`.
+5. Run experiments from repository scripts rather than notebook-only business logic.
+6. Record the commit and configuration in each run manifest.
 
-| Module | Trạng thái | Ghi chú |
-|---|---|---|
-| Common contracts, config, run manifest | Template | Contract v0.1 |
-| Data audit và frame mapping | Baseline | Chỉ audit metadata |
-| Dummy shot + shot center | Baseline | Không decode video |
-| Deterministic dummy feature | Template | Không có semantic meaning |
-| NumPy cosine retrieval/evaluation | Baseline | Dành cho tập nhỏ |
-| Adaptive multiframe | Experimental | Config example, chưa implementation |
-| Event Graph, semantic localization, Agent | Deferred | Chỉ mô tả kiến trúc |
-| Stable | Chưa có | Chỉ gán sau benchmark và review |
+Secrets are read from Kaggle Secrets / environment variables and must never be committed or embedded in notebook URLs.
+
+## Module status
+
+| Module | Status |
+| --- | --- |
+| Common contracts / run manifest | Working template |
+| Data audit / frame mapping | Baseline |
+| Shot + center-frame selection | Baseline |
+| Dummy feature encoder | Pipeline-validation template |
+| NumPy cosine retrieval / evaluation | Baseline |
+| Adaptive multi-frame | Experimental / incomplete |
+| Event graph | Planned |
+| Semantic localization | Planned |
+| Agent layer | Planned |
+
+A module is not labeled stable until it has been benchmarked and reviewed.
 
 ## Roadmap
 
-1. BTC baseline.
-2. Team Frame Bank.
-3. Feature extraction thật.
-4. Retrieval benchmark.
-5. Event Graph.
-6. Semantic localization.
-7. Agent.
+Current progression:
 
-Chi tiết extension point nằm trong [future_modules.md](docs/architecture/future_modules.md) và tài
-liệu từng module.
+```text
+baseline retrieval
+  -> team frame bank
+  -> real feature extraction
+  -> retrieval benchmark
+  -> event graph
+  -> semantic localization
+  -> agent / evidence verification
+```
 
+## Notes
+
+This repository is deliberately conservative about claims: dummy features validate software contracts, not AI quality. Competition results should only be reported from reproducible runs using the documented evaluation protocol.
